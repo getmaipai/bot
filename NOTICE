@@ -1,0 +1,6 @@
+MaiPai Bot
+Third-Party Licenses and Attributions
+
+This is a fresh repo (the platform rebuild, see docs/dev.md). No
+third-party components are bundled yet. When one lands, its attribution
+goes here, per docs/PACKAGES.md in getmaipai/.github.
