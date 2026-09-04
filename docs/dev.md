@@ -31,7 +31,7 @@ platform plan chapters 1, 3, 7, and 8.
 
 - [x] Repo reset to a clean history, with LICENSE (AGPL-3.0), NOTICE, this
       design record, and `scripts/check.sh` pinned to `@maipai/standards`
-      std-v0.1.0.
+      std-v0.2.0.
 - [ ] Everything else. Robot v0.1 starts once `home/spec/` v0.1 exists (the
       robot pins it as `maipai-spec @ git+...@spec-v0.1.0#subdirectory=spec`).
       Until then this repo stays a skeleton.
