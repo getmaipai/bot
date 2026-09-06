@@ -35,6 +35,9 @@ platform plan chapters 1, 3, 7, and 8.
 - [ ] Everything else. Robot v0.1 starts once `home/spec/` v0.1 exists (the
       robot pins it as `maipai-spec @ git+...@spec-v0.1.0#subdirectory=spec`).
       Until then this repo stays a skeleton.
+- [x] [`docs/BACKLOG.md`](BACKLOG.md) added (2026-09-06) - the scannable
+      what's-built/what's-missing list per `getmaipai/CLAUDE.md`'s Backlog
+      and status standard; feeds the org's status dashboard.
 
 ## Review queue
 
