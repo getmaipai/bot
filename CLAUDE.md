@@ -23,3 +23,11 @@ Stack: Python managed with uv, lint/format with Ruff, tests with pytest.
 Full stack standard:
 [STACK.md](https://github.com/getmaipai/.github/blob/main/STACK.md) in
 `.github`.
+
+Commands: `bash scripts/check.sh` from the repo root before every commit
+— today it only runs the pinned `@maipai/standards` core, and needs a
+sibling `getmaipai/.github` checkout (`../.github` by default, override
+with `MAIPAI_STANDARDS_DIR`), pinned to std-v0.2.0. There is no `uv`
+project or app code yet (no `pyproject.toml`) — don't assume Python
+tooling is already wired up; check `docs/BACKLOG.md` before writing code
+that expects it.
