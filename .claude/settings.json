@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "maipai": {
+      "source": {
+        "source": "github",
+        "repo": "getmaipai/.github"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "maipai@maipai": true
+  }
+}
