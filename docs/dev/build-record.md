@@ -104,3 +104,45 @@ ALLCALL in the driver, both.
 Every stage page of the build guide ends in a check that proves the
 stage worked (the array's wake score on the self-test, the encoder
 sweep, the calibration run's envelope) before the next stage starts.
+
+## Owned parts confirmed against the purchase records (2026-09-14)
+
+The owner's purchase records (kept outside git) answer the "As owned"
+column as follows; the tables above are read with this section.
+
+Confirmed owned: Pi 5 16 GB, the official supply and cooler, the UPS
+HAT (E) with four 21700 cells (cell model unrecorded), the Freenove
+5-inch DSI screen with a 500 mm cable, a boot SSD in an SSK M.2 USB
+enclosure (NVMe/SATA; drive model unrecorded), the ML2020 RTC battery,
+a GPIO breakout kit, the AI HAT+ 2 (ordered 2026-09-14, in transit);
+the head stage complete: XIITIA 2-inch ST7789-class eye modules,
+BTF-LIGHTING WS2812B 8x8 mouth panels, two Pico 2 W, SN74AHCT125N
+level shifters, the Yahboom 2-DOF metal-servo pan-tilt kit, a Dorhea
+PCA9685, two HiLetgo AS5600 encoders, GY-521 MPU-6050 modules, two
+VL53L5CX units (the design's seven are not bought), two 24 GHz
+micro-motion mmWave sensors (exact module unrecorded), a TCA9548A,
+VEML7700 modules, MPR121 touch controllers, the Meshnology ESP32
+1.46-inch rotary display (the "heart"), the reSpeaker XVF3800 array,
+a 1Mii powered 3.5 mm speaker pair, Camera Module 3 (variant
+unrecorded) with two CSI cables; base and safety parts bought: Nilight
+10 A thermal breakers, the RPLIDAR C1, an STM32F103C8T6 board with
+ST-Link V2 and FTDI adapter plus a second ST-Link V2, ADuM1201
+isolators; shell material bought: two 3 mm black acrylic sheets.
+
+Not bought, so the design may specify them and the "fixed hardware"
+rule does not bind them: the 36 V main pack, BMS, charger, converters,
+distribution block, 30 A DC breaker, INA228 board, charge gate; the
+charging dock; the body shell (chassis, visor, head shell), casters and
+deck; a donor hoverboard and brake actuator; the servo bench supply,
+the e-stop and bumper switches; the follow-and-carry parts, rear
+camera, fan, underglow, USB hub, MCP23017, BME688, DS18B20 probes; the
+five further VL53L5CX units.
+
+Consequence for the open questions in dev.md: questions 4, 5, 8 (the
+hub and dock parts), 10 (fan, underglow, follow modules) and the
+"seven ToF" half of 7 are design choices, not owner facts; questions
+1 (the mute mechanism on the owned array and speaker), 2 (the exact
+servos in the Yahboom kit, horn geometry, head mass), 3 (the servo
+rail, since no bench supply is owned yet), 6 (spare e-stop contacts,
+once one is chosen) and 9 (drive model, camera variant, cell model)
+stay with the owner or bring-up.
