@@ -51,9 +51,9 @@ network, name or recording.
 | Touch | MPR121 capacitive controller with copper tape | ? | |
 | Expander | MCP23017 at 0x20 | ? | |
 | Environment | BME688 | ? | |
-| Microphone | Four-mic USB array with echo cancelling and direction finding, XVF3800 class, on a USB 2 port directly, never behind a hub; firmware 2.1.0 or later, checked by the self-test | XVF3800 array | the mute mechanism (question 1) |
+| Microphone | Four-mic USB array with echo cancelling and direction finding, XVF3800 class, on a USB 2 port directly, never behind a hub; firmware 2.1.0 or later, checked by the self-test | XVF3800 array | the mute mechanism (question 1); until answered the product says "software mute" and claims no physical mute |
 | Speaker | A small powered speaker with a 3.5 mm input on the array's line-out, never USB or Bluetooth audio | ? | model and its supply in the finished build (question 8) |
-| Servo rail | An isolated 5 V servo supply separate from compute and audio | ? | the finished rail against the stated stall past 5 A (question 3) |
+| Servo rail | An isolated 5 V servo supply separate from compute and audio | ? | the finished rail against the stated stall past 5 A (question 3); expression is gated on its measurement under a two-servo stall (BODY-04) |
 | Mouth supply | 5 V, 3 A or more, never the Pi's pins | ? | |
 
 ## Bench equipment for the neck test (not robot parts)
@@ -72,7 +72,7 @@ network, name or recording.
 | Pack sensing | INA228 strapped to 0x44, DS18B20 pack thermometers on 1-Wire | ? | shunt rating, probe attachment (question 4) |
 | Drive | Donor hoverboard motors and controller, ADuM1201 isolated UART, ST-Link V2 for firmware | ? | controller, firmware, wheels, brake actuator and feedback (question 5) |
 | Chassis | Three-tier plastic nightstand, about 12.6 x 12.6 x 22.6 in, plywood deck, two 3 to 4 inch rubber swivel casters | ? | caster model, loaded center of gravity (question 5) |
-| Physical safety | 22 mm emergency-stop button, bumper microswitches, in the fail-safe chain that interrupts motion power | ? | spare contacts for a sense line (question 6) |
+| Physical safety | 22 mm emergency-stop button, bumper microswitches, in the fail-safe chain that interrupts motion power and, for the head, the servo rail | ? | spare contacts for a sense line (question 6); the chain proven to cut the servo rail before expression runs (BODY-04) |
 | Body controller | A second Pico 2 | ? | |
 | Body screen and knob | Round "heart" display with rotary control | ? | module (question 10) |
 | Cooling and light | 60 mm fan, 12 V WS2815 underglow | ? | fan, strip length (question 10) |

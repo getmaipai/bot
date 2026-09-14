@@ -24,6 +24,16 @@ acceptance, out of scope, exit check. An item that waits on a hub item
 names it; the hub items themselves are filed by the coordinator in
 `getmaipai/home` and are listed under "Hub dependencies".
 
+Two milestones (`dev.md` section 12, amended on the outside review of
+2026-09-14): **Robot v0.1-standalone**, demonstrable and not a release,
+is the bench Pi with no hub carrying a roster household authored on the
+screen through wake, a turn, a spoken reply, a fact remembered across a
+reboot, the safety floor, a timer, expression cues with onset before the
+acoustic onset, the honestly labeled mute, and M-01, M-02, M-05, M-06,
+M-07, M-08 and M-10 recorded. **Robot v0.1** is that plus the link, tagged
+when hub v0.3 ships it. An item marked "after standalone" starts only
+when the standalone proofs are green.
+
 ## Step 0: repo scaffolding
 
 - [x] Repo reset to a clean history (S): `LICENSE` (AGPL-3.0), `NOTICE`,
@@ -53,15 +63,15 @@ section 12).
 
 | Hub item | What the robot needs from it | Robot items that wait |
 |---|---|---|
-| RUNTIME-01: the household runtime as a workspace package the hub runs | The engine, context, signal, guards, boundary, safety classifier, store, judge, scheduler, people, settings, host and link as one pinned package with injected stores and supervisors | RT-01 to RT-05, LINK-*, BENCH-02 |
+| RUNTIME-01: the household runtime as a workspace package the hub runs, with an explicit package API | The engine, context, signal, guards, boundary, safety classifier, store, judge, scheduler, people, settings, host and link as one pinned package; the injected ports and the exposed calls declared (`dev.md` section 2), the hub its first consumer through that API | RT-00 to RT-06, LINK-*, BENCH-02 |
 | spec-v0.1.0 (Jesse's call) | The tag the robot pins as `maipai-spec` | RT-01, SPEC-* |
-| SPEC (section 3): `Person.source: standalone`, the `alias` op, `speaker_evidence` and `present` on the turn, `age_band_basis: claimed_profile`, the jobs and commands verdict, the `bot` mark on the keys the robot honours | The shapes the robot writes from first boot | RT-02, SPEAK-01, LINK-03 |
+| SPEC (section 3): `Person.source: standalone`, the `alias` op, `speaker_evidence` and `present` on the turn, `age_band_basis: claimed_profile`, the jobs and commands verdict, the `bot` mark on the keys the robot honours | The shapes the robot writes from first boot | RT-02, SPEAK-02, LINK-03 |
 | SURFACE-01: `robot` admitted as an implemented surface with the spoken presentation and the `present` list | Connected mode | LINK-04 |
 | WIRE-01: `signal`, `plan` and `cancel` on the turn stream | The expression cues in connected mode | EXPR-03 |
 | ACT-03 (with CHAT-16): the ReplyPlan at runtime | The plan-driven half of expression | EXPR-03 |
 | `spec/link/` and hub v0.3: the envelope, ops, states, the never-sync allowlist, node rank | Pairing and sync | LINK-01 to LINK-05 |
 | COMP-06 and SPEAK-01 (hub halves) | Bindings synced as records; the voice-print policy | SPEAK-02, SPEAK-03 |
-| `platforms: [home, bot]` on weather, define, joke, trivia, websearch, the almanac and list packages | The Tier 0 set on the robot | RT-04 |
+| `platforms: [home, bot]` on websearch, the almanac, timer, remind and list packages (Tier 0) and on media-lookup and knowledge (Tier 1); weather, define, joke, trivia, math, convert, remember and recall are marked already | The Tier 0 set on the robot; the typed sources under the Deno host | RT-04, RT-06 |
 | The plan amendment recorded by the coordinator: the shared TypeScript interpreter and floor run on the robot; the hub's "Python ports of the shared floor" item retires | Nothing to build; a doc change on the hub | none |
 
 ## Measurements
@@ -72,19 +82,28 @@ one), never a hostname, never a household recording. A measurement's
 decision rule is in `dev.md` section 4; the number decides, the session
 does not.
 
-- [ ] **M-01: the process budget** (S). Objective: RSS, CPU and thermal
-      of the body, the household runtime, the Deno host, three
-      llama-server processes and the vision pipeline together on the
-      16 GB Pi for one hour. Pointers: `scripts/bench/budget.py` (new).
-      Acceptance: the numbers recorded in `budgets.json`'s robot row;
-      swap at zero. Out of scope: tuning. Exit: the recorded table.
-      Waits on RT-01 for the runtime's share; the body's share first.
+- [ ] **M-01: the process budget** (S). Objective: the body, the
+      household runtime, the Deno host, three llama-server processes and
+      the vision pipeline together on the 16 GB Pi for one hour: RSS and
+      headroom, CPU per process and total, sustained power draw from the
+      UPS HAT's and the INA228's telemetry (and a bench meter where one
+      is owned), SoC temperature, and the firmware's throttle flags.
+      Pointers: `scripts/bench/budget.py` (new). Acceptance: the numbers
+      recorded in `budgets.json`'s robot row; swap at zero; zero
+      throttling over the hour. Out of scope: tuning. Exit: the recorded
+      table. Waits on RT-01 for the runtime's share; the body's share
+      first.
 - [ ] **M-02: the chat model on the Pi** (M). Objective: the hub's real
       rendered prompt with the ordinary tool set, three seeded fixture
       runs per candidate (Qwen3-1.7B, Qwen3-4B, Q4_K_M, llama-server
       pinned to four cores, `--cache-reuse 256`), first delta p50 and
-      p95, generation rate, RSS. Acceptance: the decision rule applied
-      and the model named. Waits on RT-01.
+      p95, generation rate, RSS, and the quality gates in the same run:
+      the fixture's hard rows (credential, cross-person, unsafe-and-
+      crisis, consequential-once), the guard corpus at the hub's floor,
+      and the legacy honesty method's raw and guarded columns as a
+      recorded score. Acceptance: the decision rule applied (latency
+      under the rule and every hard row green) and the model named; the
+      honesty score handed to the owner (question 13). Waits on RT-01.
 - [ ] **M-03: the Hailo provider option** (M, only if M-02's rule promotes
       it or v0.2 asks). Objective: the rendered prompt's token count
       against the 2,048-token ceiling, first reply with retained context
@@ -92,23 +111,41 @@ does not.
       "fits and faster" or "closed", with numbers.
 - [ ] **M-04: embed latency** (S). nomic-embed-text-v1.5 through
       llama-server on the Pi; acceptance under 60 ms warm per utterance.
-- [ ] **M-05: the judge drain** (S). The 4B per judged turn with the
-      prompt cache and `--cache-ram 0`; a 300-turn day against the idle
-      hours; a Repair when it does not fit, never a smaller judge.
-- [ ] **M-06: endpoint to transcript** (S). Moonshine and Silero on the
-      array, p50 and p95 on the wake rows of `dev.md` section 11.
+- [ ] **M-05: the judge drain and its preemption** (S). First the
+      mechanism: llama-server's freeing of a slot when the client aborts
+      the request, verified in the installed source with the line cited
+      in `docs/dev/measurements.md`. Then the abort-at-arrival test: the
+      chat engine's first-token delay with a judge decode aborted at the
+      interactive arrival against an idle judge, acceptance within 100
+      ms; the 4B per judged turn with the prompt cache and `--cache-ram
+      0`; a 300-turn day against the idle hours; a Repair when it does
+      not fit, never a smaller judge.
+- [ ] **M-06: endpoint to transcript** (S). Moonshine and Silero in the
+      body's speech process on the array, p50 and p95 on the wake rows of
+      `dev.md` section 11. Needs only VOICE-01, not the runtime.
 - [ ] **M-07: speaker evidence on the array** (S). SPEAK-01's acceptance
       (three enrolled roster voices, an unenrolled voice unknown, a
-      change mid-conversation), the threshold and margin set by the run.
+      change mid-conversation), the threshold and margin set by the run
+      against the gates of `dev.md` section 11: at most one false accept
+      in a hundred stranger utterances, at most one false reject in ten
+      household utterances, the unenrolled voice unknown every time.
 - [ ] **M-08: the wake word on the array** (M). False accepts per hour and
       false rejects on held-out real-microphone recordings at the runtime
-      threshold, the near-miss set included; the shared front-end
-      models' license verified in the same record.
+      threshold, the near-miss set included, against the gates of
+      `dev.md` section 11 (at most one false accept per two hours on the
+      negative bank at room level; at least nine wakes in ten at one
+      meter quiet and eight in ten at three meters with a television on;
+      the near-miss set never waking); the shared front-end models'
+      license verified in the same record. A miss on any gate is a
+      finding and the alternative (the keyword spotter) is measured the
+      same way, never a threshold moved to pass.
 - [ ] **M-09: time to first audio** (S). Per voice package on the Pi,
       Pocket TTS as the candidate beside Piper.
 - [ ] **M-10: the concurrent load** (S). Capture and tracking, wake, an
       interactive turn and playback together for an hour: CPU, RSS,
-      thermal. Rides with M-01 once the runtime exists.
+      thermal, sustained power, capture dropouts and playback underruns
+      from the device counters (acceptance: zero of each). Rides with
+      M-01 once the runtime exists.
 
 ## Body: bring-up and calibration
 
@@ -122,17 +159,23 @@ The body track starts now; nothing here waits on the hub.
       from-to tables. Acceptance: no question mark left on a Stage 1
       row; every wiring row names both ends. Out of scope: later
       stages' parts. Exit: `bash scripts/check.sh`.
-- [ ] **BODY-02: the HAL drivers, lifted as drivers** (M). Objective:
-      `body/hal/` with the PCA9685, AS5600 through the TCA9548A, the
-      MPU-6050, the VL53L5CX units, the radars, the VEML7700, the MPR121,
-      the UPS HAT, the INA228 and DS18B20 when fitted, the Pico face
-      controller link, one Picamera2 capture owner, and the Hailo
-      pipelines (YOLO, SCRFD, ArcFace, pose) with derived observations
-      only, each behind the typed HAL seam with a fake for tests.
-      Pointers: the mirror's `robot/robot/hal/drivers/`. Acceptance:
-      every driver's fake passes the same pytest suite as the hardware
-      run; the capture pipeline's measured frame rate recorded. Out of
-      scope: the drive controller, the brake. Exit: `bash
+- [ ] **BODY-02: the head-and-voice HAL, lifted as drivers** (M).
+      Objective: `body/hal/` with the PCA9685, AS5600 through the
+      TCA9548A, the MPU-6050, the MPR121 (the near-hand freeze), the UPS
+      HAT, the Pico face controller link, one Picamera2 capture owner
+      and the Hailo tracking pipelines (YOLO, SCRFD, pose) with derived
+      observations only, each behind the typed HAL seam with a fake for
+      tests. Pointers: the mirror's `robot/robot/hal/drivers/`.
+      Acceptance: every driver's fake passes the same pytest suite as the
+      hardware run; the capture pipeline's measured frame rate recorded.
+      Out of scope: the room sensors (BODY-09), ArcFace (SPEAK-04), the
+      drive controller, the brake. Exit: `bash scripts/check.sh`.
+- [ ] **BODY-09: the room sensors** (S, after standalone). Objective: the
+      VL53L5CX units, the radars, the VEML7700, the BME688, the MCP23017,
+      the INA228 and DS18B20 when fitted, behind the same seam with
+      fakes; the ToF near-face rule joins the freeze. Acceptance: the
+      fakes and the hardware run agree; the count and positions from the
+      owner's answer (question 7) recorded. Exit: `bash
       scripts/check.sh`.
 - [ ] **BODY-03: the array self-test** (S). Objective: `body/audio/` opens
       the XVF3800 directly (never behind a hub), reads its firmware
@@ -145,10 +188,13 @@ The body track starts now; nothing here waits on the hub.
 - [ ] **BODY-04: calibration mode and the head envelope** (M). Objective:
       find the stops per axis from the encoders, set soft limits inside
       them, measure servo current unloaded and with the shell, settling
-      time, the rail's sustainable velocity, and pinch clearances; write
-      the envelope (amplitude, velocity, acceleration, jerk, current cap)
-      into device-scope settings with the run date; refuse expression
-      without it. Pointers: `body/head/calibrate.py`, `body/head/
+      time, the rail's sustainable velocity, and pinch clearances, with
+      the servo rail measured under a two-servo stall and the e-stop
+      chain proven to cut that rail in the same run; write the envelope
+      (amplitude, velocity, acceleration, jerk, current cap) into
+      device-scope settings with the run date; refuse expression without
+      the whole gate of `dev.md` section 10 (the rail, the e-stop, the
+      mute answered, the clearances). Pointers: `body/head/calibrate.py`, `body/head/
       controller.py` (one controller, encoder feedback, target expiry,
       disagreement and stall detection, the priority order of `dev.md`
       section 5). Acceptance: the envelope recorded; a fake encoder
@@ -189,26 +235,32 @@ The body track starts now; nothing here waits on the hub.
 
 ## Voice loop
 
-- [ ] **VOICE-01: capture, wake, endpointing** (M). Objective:
-      `body/audio/` runs capture at 16 kHz in 32 ms blocks, the wake
-      scorer (the trained artifact through ONNX with its front-end,
-      never the stock phrase), Silero VAD, the 0.3 s pre-roll trimmed
-      while waiting, the retry from the onset byte, the 6 s patience,
-      the tail-syllable rule, and hands frames and events over the
-      socket; playback through the array's line-out with a ledger of
-      what was actually spoken. Mirror: the mirror's
-      `robot/robot/hal/drivers/voice.py`. Acceptance: the wake and
-      endpointing rows of `dev.md` section 11 pass with recorded
-      fixtures; M-06 and M-08 recorded. Out of scope: STT and TTS (the
-      runtime's). Exit: `bash scripts/check.sh`.
+- [ ] **VOICE-01: the speech process** (M). Objective: `body/speech/`
+      is the robot's one speech process on one `sherpa-onnx` runtime:
+      capture at 16 kHz in 32 ms blocks, the wake scorer (the trained
+      artifact through ONNX with its front-end, never the stock phrase),
+      Silero VAD, the 0.3 s pre-roll trimmed while waiting, the retry
+      from the onset byte, the 6 s patience, the tail-syllable rule,
+      Moonshine STT, synthesis, and the CAM++ embedder, served to the
+      runtime as the `spec/voice/` contract (STT stream, synthesis,
+      the wake and endpoint events), with playback through the array's
+      line-out and a ledger of what was actually spoken. Audio never
+      crosses the socket. Mirror: the mirror's
+      `robot/robot/hal/drivers/voice.py`; the hub's `spec/voice/ts/`
+      client and stub server as the contract's shape. Acceptance: the
+      wake and endpointing rows of `dev.md` section 11 pass with recorded
+      fixtures; the hub's voice-contract client talks to the body's
+      server in a test; M-06 and M-08 recorded. Out of scope: the
+      runtime. Exit: `bash scripts/check.sh`.
 - [ ] **VOICE-02: barge-in and double-talk** (S, after VOICE-01).
       Objective: a "stop" over playback cuts playback locally within one
       block, sends `cancel` to the runtime, and the ledger holds the
       exact spoken prefix. Acceptance: the double-talk rows pass on the
       bench array at real playback levels with zero self-wakes. Exit:
       `bash scripts/check.sh`.
-- [ ] **VOICE-03: the voice packages on the robot** (S, after RT-01).
-      Objective: a Piper voice package through the shared voice contract;
+- [ ] **VOICE-03: the voice packages on the robot** (S, after VOICE-01).
+      Objective: a Piper voice package served by the body's speech
+      process through the shared voice contract;
       the companion's voice binding resolved to an installed voice with
       the "voice not available on this robot" row when it is not; M-09.
       Acceptance: the same text through the hub's normalizer and the
@@ -217,16 +269,39 @@ The body track starts now; nothing here waits on the hub.
 
 ## Household runtime on the robot
 
-Every item waits on RUNTIME-01 and spec-v0.1.0.
+Every item waits on RUNTIME-01 and spec-v0.1.0, and RT-00 and IPC-01 are
+written and reviewed before any of the others is coded.
 
+- [ ] **RT-00: the runtime API contract, consumed** (S, before code).
+      Objective: a written record in `docs/dev/runtime-api.md` of the
+      ports the robot injects (the store, the supervisors and the launch
+      adapter, the voice-contract client, the package host, the data
+      directory, the surface, the clock) and the calls it uses, each
+      mapped to RUNTIME-01's declared API by name, so the robot depends
+      on the API and never on a module path. Acceptance: every port and
+      call names its counterpart in the hub's package; nothing else is
+      imported. Exit: `bash scripts/check.sh` (doc gate).
+- [ ] **IPC-01: the body contract** (S, before code). Objective:
+      `body/contract/` declares once, as a versioned schema, the
+      observations (speaker evidence, presence, mute, stop, power and
+      thermal, the admission budget), the host calls, the expression
+      cues and cancellation with deadlines; types generated for both
+      sides; a version handshake on connect that refuses a mismatch; an
+      unknown message answers an error and never disconnects. Mirror:
+      the link envelope's own rules (plan 7.2). Acceptance: the
+      generated types on both sides pass one fixture set; a mismatched
+      version is refused in a test. Exit: `bash scripts/check.sh`.
 - [ ] **RT-01: pin and boot the household runtime** (M). Objective:
       `runtime/` pins the hub's runtime package and the spec tag by
-      version and digest, boots it on Bun with the robot's data
-      directory, the encrypted store, the outbox and watermark spools,
-      the HLC seeded from every HLC-bearing table, and the pinned
-      artifacts checked; the socket to the body; no ready badge on a
-      stub engine. Acceptance: the spec fixtures round-trip through the
-      robot's store; a boot with a missing artifact shows the Repair and
+      version and digest in the lockfile, boots it on Bun with the
+      robot's data directory, the encrypted store, the outbox and
+      watermark spools, the HLC seeded from every HLC-bearing table, and
+      the pinned artifacts checked; the socket to the body; no ready
+      badge on a stub engine. Acceptance: the spec fixtures round-trip
+      through the robot's store; a boot check refuses a package whose
+      version or digest differs from the lockfile and refuses a path
+      dependency (the robot consumes the tagged package, never a source
+      snapshot); a boot with a missing artifact shows the Repair and
       still answers wake and stop. Out of scope: pairing. Exit: `bash
       scripts/check.sh`.
 - [ ] **RT-02: the robot's records from first boot** (S, after the spec
@@ -237,19 +312,39 @@ Every item waits on RUNTIME-01 and spec-v0.1.0.
       round-trips byte-identical through the hub's validator. Exit:
       `bash scripts/check.sh`.
 - [ ] **RT-03: the local engines** (M). Objective: llama-server for chat
-      (the model M-02 names), embed (nomic) and the judge (the 4B, lowest
-      priority, preempted per fact), through the shared supervisors with
-      the robot's launch adapter (four cores, Q4_K_M, `--cache-reuse` on
-      chat only, `enable_thinking: false`). Acceptance: M-02, M-04, M-05
-      recorded; the judge never runs during an interactive turn (the
-      activity window test). Exit: `bash scripts/check.sh`.
-- [ ] **RT-04: the package host and the Tier 0 set** (M). Objective: the
-      shared Deno host as one process with Workers on the Pi, the bundled
-      packages marked for the bot platform installed from the same
-      signed bundle, `timeout_ms` 4000, the budget from M-01. Acceptance:
-      the recipe conformance fixtures pass on the robot's host; a
-      package reading outside its directory fails. Exit: `bash
+      (the model M-02 names), embed (nomic) and the judge (the 4B, its
+      own process at a lower CPU weight, its in-flight request aborted
+      on an interactive arrival, resumed from the per-fact checkpoint),
+      through the shared supervisors with the robot's launch adapter
+      (four cores, Q4_K_M, `--cache-reuse` on chat only,
+      `enable_thinking: false`). Acceptance: M-02, M-04, M-05 recorded;
+      the abort-at-arrival test in the deterministic suite with the stub
+      engine. Exit: `bash scripts/check.sh`.
+- [ ] **RT-04: the Tier 0 set in the interpreter** (S). Objective: the
+      bundled Tier 0 packages marked for the bot platform installed from
+      the same signed bundle and run by the shared TypeScript recipe
+      interpreter inside the runtime, no Deno process yet. Acceptance:
+      the recipe conformance fixtures pass on the robot; a package's
+      `platforms` without `bot` is refused at install. Exit: `bash
       scripts/check.sh`.
+- [ ] **RT-06: the Deno package host** (M, after standalone). Objective:
+      the shared Deno host as one process with Workers on the Pi, the
+      Tier 1 packages (media-lookup, knowledge) under it, `timeout_ms`
+      4000, the budget from M-01. Acceptance: a package reading outside
+      its directory fails; the typed-source rows of the fixture pass
+      robot-only with internet. Exit: `bash scripts/check.sh`.
+- [ ] **GOV-01: one resource governor** (S, with BODY-06 and RT-03).
+      Objective: the body computes the admission budget from power and
+      thermal state and publishes it on the contract; the runtime's
+      governor reads it and admits Bun, Deno, llama-server and the Hailo
+      pipelines by that one policy; no process keeps its own. Acceptance:
+      a fake thermal ceiling in the body pauses the judge and the idle
+      motion in the deterministic test. Exit: `bash scripts/check.sh`.
+- [ ] **UPD-01: self-update with rollback** (M, after standalone).
+      Objective: the robot's own update path per UPDATES.md: stage, swap,
+      health check, rollback, the runtime pin and the body versioned
+      together, a backup taken first. Acceptance: a deliberately broken
+      build rolls back on the bench Pi. Exit: `bash scripts/check.sh`.
 - [ ] **RT-05: the spoken surface** (S, after SURFACE-01). Objective:
       turns run with `surface: robot`, one sentence on voice, links
       never read aloud, the `present` list supplied by the body, the
@@ -272,18 +367,25 @@ Every item waits on RUNTIME-01 and spec-v0.1.0.
       encoder trace per primitive recorded. Out of scope: the engine's
       cues. Exit: `bash scripts/check.sh`.
 - [ ] **EXPR-02: motion onset measurement** (S, after EXPR-01 and
-      VOICE-01). Objective: the body stamps `t_heard`, `t_cue_received`,
-      `t_motion_command`, `t_encoder_onset`, `t_first_audio_out` on the
-      monotonic clock and reports cue-to-command p50 and p95, cue-to-
-      onset p50 and p95, the ordering result per row, and suppressed
-      counts with reasons. Acceptance: the numbers in the bench header;
-      a scripted late cue is dropped and counted. Exit: `bash
+      VOICE-01). Objective: the stamps of `dev.md` section 5
+      (`t_heard`, `t_cue_emitted`, `t_cue_received`, `t_motion_command`,
+      `t_encoder_onset`, `t_first_audio_out`, `t_acoustic_onset` from the
+      array's own capture of the playback) on the one monotonic clock;
+      cue-to-command p50 and p95 measured after the socket with the
+      socket leg beside it, cue-to-acoustic-onset p50 and p95, the
+      ordering result per row against the acoustic onset, the device's
+      output latency recorded once, suppressed rows failed unless a
+      listed safety reason was present. Acceptance: the numbers in the
+      bench header; the negative rows (a dropped, duplicated and late
+      cue, a deep playback buffer, a socket loss, a disagreeing hub
+      stamp) each behave as section 5 says. Exit: `bash
       scripts/check.sh`.
 - [ ] **EXPR-03: the engine's cues** (M, after WIRE-01 for connected mode
       and RT-01 for local; the plan half after ACT-03). Objective: the
       runtime emits `ExpressionCue` at the phases of `dev.md` section 5
-      for every reply path (the inventory in that section, each path a
-      test), locally over the socket and over the link; cue ids cleared
+      for every reply path and every infrastructure path (both
+      inventories in that section, each path a test), locally over the
+      socket and over the link; cue ids cleared
       on link loss; the same primitive from the same signal in all
       three modes. Acceptance: the expression rows of section 11 in the
       three modes; onset before the first audio sample on every eligible
@@ -297,21 +399,33 @@ Every item waits on RUNTIME-01 and spec-v0.1.0.
 
 ## Speaker evidence and presence
 
-- [ ] **SPEAK-01: voice and face evidence in the body** (M, after
-      BODY-02, VOICE-01). Objective: CAM++ embeddings on speech of two
-      seconds or more, ArcFace on the speaking track, direction of
-      arrival tying voice to track, the three-way answer (known,
-      unknown with candidates on a close tie, unavailable), enrollment
-      with consent on the screen, templates sealed locally and deleted
-      with the person; M-07. Acceptance: SPEAK-01's real-microphone
-      acceptance recorded; templates absent from every export and sync
-      payload (the grep test). Exit: `bash scripts/check.sh`.
+- [ ] **SPEAK-01: voice evidence in the body** (M, after VOICE-01).
+      Objective: CAM++ embeddings on speech of two seconds or more in
+      the speech process, direction of arrival tying a voice to a
+      track, the three-way answer (known, unknown with candidates on a
+      close tie, unavailable), enrollment with consent on the screen,
+      templates sealed locally and deleted with the person; the screen
+      sign-in as the `signed_in` basis; M-07 against its gates.
+      Acceptance: SPEAK-01's real-microphone acceptance recorded within
+      the gates; templates absent from every export and sync payload
+      (the grep test). Out of scope: face evidence. Exit: `bash
+      scripts/check.sh`.
+- [ ] **SPEAK-04: face evidence and fusion** (M, after standalone).
+      Objective: ArcFace on the speaking track, the confirmed and
+      tentative fusion rules of `dev.md` section 6, conflicting face
+      and voice as unknown, face templates under the same consent,
+      sealing and deletion rules. Acceptance: the conflicting-evidence
+      and visitor rows of section 11; templates absent from every
+      payload. Exit: `bash scripts/check.sh`.
 - [ ] **SPEAK-02: `speaker_evidence` and `present` on the turn** (S,
       after the spec fields and RT-05). Objective: the body's evidence
       typed on every turn; `claimed` from the who-ask; confirmed and
       signed-in the only levels that open the ceiling, disclosure,
       `sensitive`, consequential actions and settings; the child band on
-      unknown; "present and alone" computed and rechecked at delivery.
+      unknown; "present and alone" (exactly one entry in the list, at
+      confirmed, the speaker) computed and rechecked at delivery; only
+      the derived fields of section 6 leave the robot, with the stated
+      readers and retention.
       Acceptance: the speaker rows of section 11; the band-claim and
       unknown-speaker rows from the hub's fixture pass on the robot.
       Exit: `bash scripts/check.sh`.
@@ -340,17 +454,25 @@ Every item waits on RUNTIME-01 and spec-v0.1.0.
       entirely on the screen converses and survives a reboot; the
       screenshot set generated and judged. Exit: `bash
       scripts/check.sh`.
-- [ ] **SETUP-03: USB export and restore** (S, after RT-02). Objective:
-      the export bundle in spec shapes plus the separately protected
-      node keys; restore on a fresh image; robot-owned credentials
-      re-entered when they cannot be restored securely. Acceptance: a
-      seeded household exported, wiped, restored, counts equal. Exit:
-      `bash scripts/check.sh`.
+- [ ] **SETUP-03: USB export and restore, and the store's recovery** (S,
+      after RT-02). Objective: the export bundle in spec shapes plus the
+      separately protected node keys; the encrypted store's key lives on
+      the device (the keystore pattern) and a restore on a fresh image
+      needs the key file from the emergency kit; what is lost without it
+      (everything in the store; the templates always) is stated on the
+      screen before an export; robot-owned credentials re-entered when
+      they cannot be restored securely. Acceptance: a seeded household
+      exported, wiped, restored, counts equal; a restore without the key
+      file refuses with the stated message. Exit: `bash
+      scripts/check.sh`.
 - [ ] **SETUP-04: the robot's privacy page** (S). Objective: the "what
       leaves the robot" table (the hub, the configured sources, the
-      update check) and the mute's honest label. Acceptance: every
-      outbound endpoint in the code has a row. Exit: `bash
-      scripts/check.sh`.
+      update check), the derived speaker and presence fields with their
+      readers and retention, and the mute's honest label ("software
+      mute" wherever the product speaks of it until a physical cut
+      exists). Acceptance: every outbound endpoint in the code has a
+      row; the words "physical mute" appear nowhere while question 1 is
+      open. Exit: `bash scripts/check.sh`.
 
 ## Link and sync
 
@@ -368,19 +490,28 @@ All after `spec/link/` and hub v0.3.
       circuit breaker, no hedging, telemetry droppable and durable ops
       never. Acceptance: the link-loss rows of section 11.
 - [ ] **LINK-03: the oplog and merge** (L). The hub's HLC with the node
-      rank tie authority, the outbox and watermark spools, push then
-      pull, append-only union for memory, per-field LWW for settings,
+      rank tie authority and its lifecycle (`dev.md` section 7), the
+      clock quarantine past one hour ahead with the re-stamp rule for
+      unsent ops, the outbox and watermark spools, push then pull,
+      append-only union for memory, per-field LWW for settings,
       hub-authoritative people with restrictive-wins, tombstones forever,
-      the snapshot at a log position, the never-sync allowlist with its
-      grep test, property tests with Hypothesis on the robot side.
-      Acceptance: the plan's 7.3 test list plus section 11's sync rows.
+      the snapshot at a log position, the alias, delete and forget
+      precedence of section 3, the never-sync allowlist with its grep
+      test, property tests with Hypothesis on the robot side over
+      arbitrary interleavings including alias races. Acceptance: the
+      plan's 7.3 test list plus section 11's sync rows and its adoption,
+      restore and forget table.
 - [ ] **LINK-04: connected turns** (M, after SURFACE-01, WIRE-01). The
       hub as the brain with the robot's persona block, conversation id,
       `surface: robot`, the `present` list and the spoken policy; the
       cues over the link; the local continuation with the spoken prefix
-      on loss; the side-effect ledger consulted on reconnect.
-      Acceptance: the cable-pull row from chapter 13's proof.
-- [ ] **LINK-05: adoption, unpair, replacement** (M). The `alias` op, the
+      on loss; the five-state effect ledger (requested, sent, confirmed,
+      unknown, failed) consulted on reconnect, the executor queried
+      before any retry, the state said out loud, a stale unknown as a
+      Repair. Acceptance: the cable-pull row from chapter 13's proof and
+      the lost-ack-after-a-lock row with the spoken state.
+- [ ] **LINK-05: adoption, unpair, replacement** (M, after standalone and
+      LINK-03). The `alias` op, the
       adoption screen's link, create or keep-local per person, counts
       verified both sides, resumable; unpair's keep-or-wipe; a replaced
       hub as a new pairing; restore with `409 rewind`. Acceptance: the
@@ -428,8 +559,9 @@ All after `spec/link/` and hub v0.3.
       connected after LINK-04). The transport adapter and the body's
       measurement adapter on the hub's `conversationLive.ts`, the three
       fresh states, the header, three seeded runs each. Acceptance: the
-      robot-only rows added to the fixture as failing rows first, then
-      green.
+      robot-only rows, the negative timing rows and the adoption,
+      restore and forget table of `dev.md` section 11 added to the
+      fixture as failing rows first, then green.
 - [ ] **BENCH-03: the physical proofs** (S, per stage). Encoder motion,
       clearance, stability, safe stop and the mic-to-speaker timeline
       on the final parts, each recorded with the header. Acceptance: the

@@ -59,6 +59,45 @@ runs in three complete modes.
 
 ## The design
 
+### Decisions in one line
+
+Kept current as the record is amended (last: the outside review of
+2026-09-14, reconciled below).
+
+1. Two processes on the Pi: the hub's TypeScript household runtime on
+   Bun as the same pinned package, consumed through an explicit package
+   API; a Python body that owns every piece of hardware and is the
+   robot's one speech process behind `spec/voice/`.
+2. No private record shape, ever, even for a day: a field the pinned
+   spec lacks travels in memory to the engine and is not persisted.
+3. Chat on llama-server CPU, the model chosen by M-02's latency and
+   quality rule; a Hailo path only ever as a local provider; the hub's
+   nomic embed on the robot; the 4B judge preempted by aborting its
+   in-flight request.
+4. Expression is a robot package driven by a typed cue at fixed points
+   of every reply path and every infrastructure path; onset is proven
+   acoustically, on one clock, with suppressions counted as failures
+   unless a listed safety reason was present.
+5. Speaker evidence is per turn: a claim personalizes, never grants
+   access; "alone" means no other person present at any level; only
+   derived fields leave the robot, with a stated retention.
+6. HLC ties by a link-assigned rank (the plan's "hub lowest", made
+   deterministic); a clock more than an hour ahead is quarantined;
+   forget outranks alias; consequential effects have a ledger with an
+   unknown state that is said out loud.
+7. The generic web rung is off until the household connects a search
+   server; a robot-hosted one is a v0.2 measurement.
+8. The mute is a physical cut or it is labeled "software mute"
+   everywhere the product speaks of it.
+9. Expression waits for the calibration gate, which includes the servo
+   rail and the e-stop cutting it; charging control waits for the
+   owner's parts answers; the drive is out of v0.1.
+10. Robot v0.1 has a demonstrable standalone milestone first
+    (v0.1-standalone: conversation, memory, voice, safety, expression
+    on the bench Pi with no hub) and is tagged when hub v0.3 ships the
+    link; adoption, replacement, face fusion, the Deno host, the room
+    sensors and the Hailo provider come after the standalone proofs.
+
 ### 1. Three modes, one product
 
 | Mode | What runs where | What the family notices |
@@ -78,6 +117,33 @@ robot tracks both and never confuses "the hub is down" with "the web is
 down": a typed source (weather, the media package, the knowledge package)
 works robot-only with internet and no hub; a hub-owned integration (a
 credential the hub holds) does not.
+
+**The capability matrix.** What a family actually gets in each mode,
+with what each cell needs. "Same package" never means same
+capability: a cell says what is there. "Waits" names the hub item;
+"v0.2" means not in Robot v0.1 at all. The review queue's "Merge"
+verdicts point into this table for availability.
+
+| Capability | Connected | Paired, unreachable | Robot-only | Needs network | Needs a credential | In v0.1 |
+|---|---|---|---|---|---|---|
+| Conversation, memory, recall, the guards, the safety floor | the hub's engine and model | the same runtime, the local model | the same | no | no | yes, v0.1-standalone (waits on RUNTIME-01 and the spec tag) |
+| Timers, reminders, lists, "when I say X" commands | the hub owns, the robot delivers | local, delivered locally | local | no | no | yes (waits on the jobs and commands spec verdict for the persisted shape) |
+| Math, convert, remember, recall, define, joke, trivia, weather | the hub's package | the same package locally | the same | weather, define, joke, trivia: yes | no | yes (`platforms: [home, bot]` already) |
+| The almanac, timer, remind, list packages | the hub's | local | local | no | no | waits on the `platforms` mark on those packages |
+| The media package and the knowledge package (typed sources) | the hub's | local, Tier 1 under the Deno host | the same | yes | no | after v0.1-standalone (waits on the `platforms` mark and the Deno host, RT-06) |
+| Web search (the generic rung) | the hub's search server | the household's search server if configured | the same | yes | a search server URL | yes, opt-in |
+| Home Assistant lights and locks | the hub's integration or the robot's own key | the robot's own key, if HA is reachable | the robot's own key | LAN | the robot's HA key | with the link milestone (LINK-06) |
+| Calendar, email, streaming accounts, people location | the hub's connectors | unavailable unless the robot holds its own | unavailable | yes | yes | no |
+| Media playback on the robot | a player device of the hub | unavailable (a later download cache) | local files only, later | LAN | no | v0.2 |
+| Image and video generation | offered to the hub | unavailable, said once | unavailable | no | no | no |
+| A still image reasoned about by the hub | v0.2 host call | unavailable | unavailable | LAN | no | v0.2 |
+| Speaker evidence: the screen sign-in and the voice print | local | local | local | no | no | yes, v0.1-standalone |
+| Face evidence fused with voice | local | local | local | no | no | after v0.1-standalone (SPEAK-04) |
+| Companion bindings per person and device | synced records | the replica | authored on the screen | no | no | waits on COMP-06 |
+| Sensitive records on a shared device | withheld unless present and alone | the same | the same | no | no | waits on the `present` spec field; withheld entirely until then |
+| Expression: listen, glance, tilt, nod, perk, attend, settle, breathe, track, stop | the hub's cues over the link (waits on WIRE-01) | the local engine's cues | the same | no | no | yes on scripted cues, then on the local engine; the plan-driven half waits on ACT-03 |
+| Pairing, sync, adoption, replacement | the link | the outbox, reconciled later | not needed; can pair later | LAN | the pairing code | the link milestone (hub v0.3) |
+| Autonomous driving, following, docking, patrols | no | no | no | no | no | no (the drive stage has its own design pass) |
 
 ### 2. The shared-runtime boundary (the draft's P0, decided)
 
@@ -117,16 +183,23 @@ Why this and not the alternatives:
 What the hub must do first (named hub items, filed by the coordinator):
 
 - **RUNTIME-01 (hub):** the household runtime as a workspace package the
-  hub itself runs. Today the engine is a set of files under
-  `backend/src/lib` reaching the hub's database, settings, package host
-  and supervisors through `@/` imports. The extraction makes the stores,
-  the supervisors and the surface-specific pieces (the voice sidecar,
-  the platform launch adapter, the data directory) injected
-  dependencies of one package, with the hub as its first consumer.
-  Only after the hub runs it can the robot pin it; the robot never
-  copies files. `turnSignal.ts` and `turnContext.ts` are already leaf
-  modules (no engine, no database); `hlc.ts` needs only its seed
-  function injected.
+  hub itself runs, with an explicit package API. Today the engine is a
+  set of files under `backend/src/lib` reaching the hub's database,
+  settings, package host and supervisors through `@/` imports. The
+  extraction declares the ports the package needs injected (the record
+  store, the engine supervisors and their launch adapter, the voice
+  contract client, the package host, the data directory, the surface,
+  the clock) and the calls it exposes (run a turn, stream a turn,
+  cancel, the judge tick, the scheduler tick, the link's apply and
+  emit), and the hub becomes its first consumer through that API. The
+  robot's `runtime/` consumes only the API, never a module path inside
+  the package. Only after the hub runs it can the robot pin it; the
+  robot never copies files. `turnSignal.ts` and `turnContext.ts` are
+  already leaf modules (no engine, no database); `hlc.ts` needs only
+  its seed function injected. The pin is a version and a digest in the
+  lockfile, and a boot check refuses a mismatch and refuses a path
+  dependency, so the robot consumes the tagged package and never a
+  source snapshot.
 - **SURFACE-01 (hub):** `robot` admitted to `IMPLEMENTED_SURFACES`
   (`turnEngine.ts:79`, rejected today at `:98`), with the surface
   discriminator the plan promises: spoken presentation (one sentence,
@@ -154,18 +227,34 @@ are language-neutral (Go may need a third); under this design they have
 no production consumer on the robot, and that is recorded rather than
 hidden: nothing on the robot runs a recipe through Python.
 
-The voice seam is `spec/voice/`, the same contract the hub's own STT and
-TTS use. Capture, AEC (on the array, from its own line-out reference),
-wake, VAD, endpointing and direction of arrival are the body's, because
-they are always-on, latency-critical and tied to the audio device and
-the physical mute. Speech to text and synthesis are the household
-runtime's, through the same `sherpa-onnx` binding and voice packages the
-hub uses, because that is the same code. Audio crosses the socket as
-16 kHz mono frames; the pre-roll cap (0.3 s of audio kept ahead of the
-speech onset and trimmed while waiting, because Moonshine tiny returns
-nothing behind half a second of silent head), the retry from the onset
-byte and the 6 s wake patience live on the capture side, where the
-legacy robot fixed them (`hal/drivers/voice.py` in the mirror).
+The voice seam is `spec/voice/`, the contract the hub's own STT and TTS
+already sit behind (the hub's TTS is a separate Python sidecar behind
+it today). **The body is the robot's one speech process** (amended on
+the outside review, which found the earlier split a second speech
+path): capture, AEC (on the array, from its own line-out reference),
+wake, VAD, endpointing, direction of arrival, speech to text, synthesis
+and speaker embedding all run in the body's single `sherpa-onnx`
+process on one ONNX runtime, exactly as plan chapter 8 says, and the
+body serves the voice contract to the household runtime, which is the
+contract's client the way the hub is a client of its own sidecar. Audio
+never crosses the socket as frames; the runtime receives transcripts
+and hands back text, and the same voice packages and the same speech
+normalization fixtures apply on both nodes. The pre-roll cap (0.3 s of
+audio kept ahead of the speech onset and trimmed while waiting, because
+Moonshine tiny returns nothing behind half a second of silent head),
+the retry from the onset byte and the 6 s wake patience live in the
+body, where the legacy robot fixed them (`hal/drivers/voice.py` in the
+mirror).
+
+The other seam is the body contract: observations (speaker evidence,
+presence, the mute state, the stop state, power and thermal, the
+admission budget), host calls the runtime makes to the body (a still
+image later, the head's attention target), the expression cues, and
+cancellation with deadlines. It is declared once, in `body/contract/`,
+as a versioned schema from which both sides' types are generated, with
+a version handshake on connect that refuses a mismatch; a message the
+receiver does not know answers an error and never disconnects, the
+link's own rule applied locally.
 
 Boot order, every mode: the body first (safe outputs, the mute state
 read from hardware, the interlocks, capture, wake), then the household
@@ -180,7 +269,11 @@ badge never lights on a stub engine.
 Every record the robot writes is the spec shape from first boot. Where
 the spec is silent, the change goes to `home/spec/` first, as a proposal
 this section states and the coordinator files; the robot never writes a
-private shape and never fills a field with a lie to pass a fixture.
+private shape and never fills a field with a lie to pass a fixture. The
+rule has no temporary exception: a value the pinned spec cannot carry
+(a speaker's evidence before the turn record has the field) travels in
+memory to the engine for that turn and is not persisted anywhere, so a
+later spec bump is an addition, never a migration of a robot-only table.
 
 - **Person provenance for a household that has no hub.** Today
   `Person.source` is `hub | local`, with `local` defined as "a robot-only
@@ -200,7 +293,16 @@ private shape and never fills a field with a lie to pass a fixture.
   7.4). Sealed local templates relink their subject key locally without
   the template ever moving. An interrupted adoption resumes from the
   job, idempotently, never a half-adopted household. Local-only people
-  stay local by explicit choice on the adoption screen.
+  stay local by explicit choice on the adoption screen. Precedence when
+  ops race (the property tests in LINK-03 drive every interleaving): a
+  forget or a tombstone on either id survives the alias and applies to
+  the merged id; the receiver keeps the alias table forever and maps a
+  later op that still names the old id, never rejecting it; a delete of
+  the person being adopted aborts the adoption job and leaves the local
+  person as it was; two aliases for one id are a `409` the adoption
+  screen resolves. The reference inventory the counts are checked
+  against is generated from the spec's own id-bearing fields, never a
+  hand-kept list.
 - **Device ownership on a shared robot.** `Device.person_id` stays
   required and means "paired by": the admin who approved pairing holds
   the doorkey token (plan 7.4 says exactly this). Who is speaking is
@@ -243,22 +345,31 @@ the measurement that decides where a decision is still open:
 
 | Role | v0.1 decision | Measurement first |
 |---|---|---|
-| chat | llama-server on the Pi's CPU, `taskset` to four cores, Q4_K_M, `--cache-reuse 256`, the prefix cache primed with the same stable prefix as the hub. Candidate models in order: Qwen3-1.7B, then Qwen3-4B if it fits the budget. | **M-02:** the hub's real rendered prompt (stable prefix plus a volatile zone of the bench's own turns, the ordinary tool set) on the owned Pi, three seeded runs of the conversation fixture per model, first delta p50 and p95, generation tokens per second, RSS. Decision rule: the largest model whose first delta p95 is under 2.5 s with the prefix cached ships; if the 1.7B misses it, M-03 is promoted into v0.1. |
+| chat | llama-server on the Pi's CPU, `taskset` to four cores, Q4_K_M, `--cache-reuse 256`, the prefix cache primed with the same stable prefix as the hub. Candidate models in order: Qwen3-1.7B, then Qwen3-4B if it fits the budget. | **M-02:** the hub's real rendered prompt (stable prefix plus a volatile zone of the bench's own turns, the ordinary tool set) on the owned Pi, three seeded runs of the conversation fixture per model, first delta p50 and p95, generation tokens per second, RSS, and the quality gates in the same run: every hard row of the fixture (credential, cross-person, unsafe-and-crisis, consequential-once) green, the guard corpus at the hub's floor, and the legacy honesty method (raw and guarded columns on real turns) recorded as a score. Decision rule: the largest model whose first delta p95 is under 2.5 s with the prefix cached and whose hard rows are green ships; the honesty score is recorded for the owner's confirmation (question 13); if the 1.7B misses the latency rule, M-03 is promoted into v0.1. |
 | a Hailo chat provider | Not an engine. If it is ever used it is a local OpenAI-compatible provider under plan 4.11's own rule ("any OpenAI-compatible endpoint is a provider"), a `platforms: [bot]` sidecar the household runtime addresses by URL exactly as `MAIPAI_LLAMA_SERVER_URL` works today, with its own `ModelCapabilities` record and the same safety floor outside it. Not in v0.1 by default. | **M-03:** the rendered prompt's token count against the HEF's 2,048-token ceiling (CHAT-12's budget applies; nothing required is dropped to fit), the legacy 0.62 s first reply with retained context re-measured on the current HailoRT, and the cost of sharing the HAT with vision (one LLM or VLM resident, a 3.5 to 7.6 s swap). If the prompt does not fit, the option closes. |
 | embed | The hub's nomic-embed-text-v1.5 Q4_K_M (84 MB, 768 dimensions) through llama-server, so the robot is in the hub's vector space: the routing corpus embeds once, ACT-02's heads load, and `embedding_space` reads `hub-nomic` on both nodes. The plan's "MiniLM on the robot" line is superseded by this measurement unless it fails. Embeddings are still regenerated on receipt and never sync. | **M-04:** embed latency per utterance on the Pi (the routing path pays one embed on a literal miss); acceptance under 60 ms warm. |
-| judge and background | The 4B (Jesse's decision, MEM-05), on the CPU at the lowest priority, preempted per fact by any interactive turn as the hub's judge is, draining only the robot's own offline turns when paired (the hub judges hub-owned turns) and every turn when robot-only. | **M-05:** seconds per judged turn on the Pi with the prompt cache, and the RSS with `--cache-ram 0`; the drain of a household day (about 300 turns) must fit the robot's idle hours on the dock. If it does not, the queue is bounded and reported as a Repair, never a smaller judge chosen silently. |
-| stt and vad | Moonshine tiny and Silero through `sherpa-onnx`, the hub's own `stt.ts`, in the household runtime. | **M-06:** endpoint-to-transcript latency on the array, p50 and p95, on the robot-only bench rows (same-breath command, long pause, tail-syllable wake, empty transcript). |
-| tts | A voice package with a Piper backend through `sherpa-onnx` (the lineage proven on the Pi), behind the same `spec/voice/` contract as the hub's Pocket TTS. The companion's `voice` binding names a voice package; if that package is not installable on the bot platform, the robot uses its default voice and shows "voice not available on this robot" on the companion's settings row, never a silent substitution and never a different companion. | **M-09:** time to first audio sample for a one-sentence reply per voice, and Pocket TTS on the Pi as the measured candidate. |
-| speaker id | `sherpa-onnx`'s CAM++ speaker embedding, local, in the body. | **M-07:** the SPEAK-01 acceptance on the array with three enrolled roster voices; the threshold and margin are set by that run, never the legacy defaults (0.6 and 0.10). |
+| judge and background | The 4B (Jesse's decision, MEM-05), its own llama-server process on the CPU. Preemption is real, not a priority hint (amended on the outside review: a scheduler cannot stop a decode already running): on an interactive arrival the runtime aborts the judge's in-flight HTTP request, which llama-server answers by freeing the slot, and the judge's per-fact checkpoint (the hub's own design) makes the aborted turn resume later without duplicate facts; the judge process also runs at a lower CPU weight so a decode that has not been aborted yet yields the cores. It drains only the robot's own offline turns when paired (the hub judges hub-owned turns) and every turn when robot-only. | **M-05:** the cancellation verified in the installed llama-server source and the line cited before anything relies on it; the chat engine's first-token delay with a judge decode aborted at arrival against an idle judge (acceptance: within 100 ms of idle); seconds per judged turn with the prompt cache; the RSS with `--cache-ram 0`; the drain of a household day (about 300 turns) against the robot's idle hours on the dock. If it does not fit, the queue is bounded and reported as a Repair, never a smaller judge chosen silently. |
+| stt and vad | Moonshine tiny and Silero through `sherpa-onnx` in the body's one speech process, served to the runtime over `spec/voice/` (the hub's own `stt.ts` is a client-side binding of the same contract and the same models). | **M-06:** endpoint-to-transcript latency on the array, p50 and p95, on the robot-only bench rows (same-breath command, long pause, tail-syllable wake, empty transcript). |
+| tts | A voice package with a Piper backend through `sherpa-onnx` in the body's speech process, behind the same `spec/voice/` contract as the hub's Pocket TTS sidecar. The companion's `voice` binding names a voice package; if that package is not installable on the bot platform, the robot uses its default voice and shows "voice not available on this robot" on the companion's settings row, never a silent substitution and never a different companion. | **M-09:** time to first audio sample for a one-sentence reply per voice, and Pocket TTS on the Pi as the measured candidate. |
+| speaker id | `sherpa-onnx`'s CAM++ speaker embedding, local, in the body's speech process. | **M-07:** the SPEAK-01 acceptance on the array with three enrolled roster voices; the threshold and margin are set by that run, never the legacy defaults (0.6 and 0.10). |
 | wake | Our own trained model only, in the openWakeWord format both trainers produce (the legacy robot shipped its own `hey_maipai.onnx`, v2 calibrated at 0.8, with an in-source claim of zero false accepts per hour at 85 percent recall on real audio whose recording set must be re-verified before the number is trusted), scored in the body through the ONNX runtime with the feature front-end the trainer used. The stock `hey_jarvis` (the hub's phase-1 detector, non-commercial) never ships on the robot; the license of the shared front-end models the artifact needs is verified by the coordinator before v0.1. `sherpa-onnx`'s keyword spotter (Apache 2.0, a phrase from text, no training) is the measured alternative if the trained model misses the gate. | **M-08:** false accepts per hour and false rejects on held-out real-microphone recordings through the array, at the runtime threshold, plus the near-miss set ("hey my bike"); the artifact ships only with those numbers recorded. |
 | vision | The Hailo's YOLO, SCRFD, ArcFace and pose pipelines lifted from legacy (measured 19, 20, 2 and 28 ms), one capture owner, derived observations only. The still-image request the hub can make is a v0.2 host call. | **M-10:** the full concurrent load (capture and tracking, wake, an interactive turn, playback) on the Pi: CPU, RSS, thermal over an hour, so the concurrency numbers are real before the head moves. |
 | generation | Unavailable on the robot; a request is answered honestly and, when paired, offered to the hub. | none |
 
-Process and memory budget: **M-01** measures the resident set of the
-body, the household runtime, the Deno host, the three llama-server
-processes and the vision pipeline together on the 16 GB Pi with the
-chosen chat model, and records it in `budgets.json`'s robot row. No robot
-code that depends on the runtime split lands before M-01 is recorded.
+Process and memory budget: **M-01** measures the body, the household
+runtime, the Deno host, the three llama-server processes and the vision
+pipeline together on the 16 GB Pi with the chosen chat model, for one
+hour, and records in `budgets.json`'s robot row: the resident set and
+the headroom, CPU utilization per process and in total, the sustained
+power draw (from the UPS HAT's and the INA228's own telemetry, and a
+bench meter where one is owned), the SoC temperature, and the throttle
+flags the firmware raises (`get_throttled`), with zero throttling as the
+acceptance. No robot code that depends on the runtime split lands
+before M-01 is recorded. One resource governor spans every process:
+the body computes the admission budget from the power and thermal
+state and the runtime's governor reads it, so Bun, Python, Deno,
+llama-server and the Hailo pipelines are admitted by one policy
+(GOV-01), never each by its own.
 
 Two rules the measurements cannot move: `enable_thinking: false` on
 every request (a robot reciting its chain of thought is a correctness
@@ -312,6 +423,19 @@ enumeration:
 | `done` | the turn finalized | every turn |
 | `cancel` | barge-in, an abort, a link loss mid-turn, an engine error after `turn_meta` | the streaming path's abort signal; the body's own barge-in; the link's circuit breaker |
 
+Paths outside the engine, mapped to the same contract so "every path"
+has no gap:
+
+| Situation | What the body shows and the cue it raises |
+|---|---|
+| Boot: the runtime not yet up, or an artifact missing | the state machine shows "starting" or the Repair; no turn exists, so no turn cue; wake and stop work |
+| The socket between the processes lost | every open turn gets `cancel` (reason `ipc_lost`); the head settles; the eyes show "thinking stopped"; speech in flight finishes the sentence from the ledger and stops |
+| The link lost in connected mode | `cancel` for the wire turn; the local continuation's own cues (section 7) |
+| Playback failure (device gone, underrun) | `cancel` (reason `playback_failed`); the reply is logged as unspoken from the ledger; the screen shows the text |
+| A body-originated stop (e-stop, touch, near face, tip) | `stop` immediately in the body, then `cancel` to the runtime with the reason |
+| Thermal or power admission refused | no cue; the idle policy and the envelope shrink, the state machine shows the reduction, the runtime's governor reads the budget |
+| Safe shutdown | `cancel` for every turn, the settle primitive at the slow rate, the goodbye grace, then power off |
+
 Where the cue is authoritative: in connected mode the hub's engine emits
 it over the link (WIRE-01) and the robot renders it; in the other two
 modes the same engine emits it locally over the socket. The body never
@@ -323,16 +447,30 @@ nod never fires twice. Engine-down and a stream error produce no
 `TurnValue` on the hub today; on the robot they produce `cancel` with a
 reason, and the eyes show "thinking stopped", never a frozen pose.
 
-**Timing.** Measured on the body's monotonic clock: `t_heard`,
-`t_cue_received`, `t_motion_command`, `t_encoder_onset` (the first AS5600
-delta above the noise floor), `t_first_audio_out` (the first sample
-handed to the playback device). Acceptance: cue to command under 50 ms
-p95; encoder onset before the first audio sample on every eligible row,
-with p50 and p95 of cue to onset reported, never a mean; suppressed rows
-counted with their reason. The audio scheduler may hold a ready first
-word for at most 100 ms waiting for a safe onset; if motion cannot start
-safely it is suppressed and speech continues. An urgent safety utterance
-is never held for an animation.
+**Timing.** Every stamp is `CLOCK_MONOTONIC` on the one Pi, so the body
+and the runtime share a clock; the hub's stamps in connected mode are
+on another clock and are recorded but never used for ordering. The
+stamps: `t_heard`, `t_cue_emitted` (the runtime, before the socket),
+`t_cue_received` (the body, after it), `t_motion_command`,
+`t_encoder_onset` (the first AS5600 delta above the noise floor),
+`t_first_audio_out` (the first sample handed to the playback device) and
+`t_acoustic_onset` (the sound actually leaving the speaker, measured in
+the physical bench by the array's own capture of the playback, with the
+device's output latency between the two recorded once per bench).
+Acceptance: cue to command under 50 ms p95, measured in the body from
+`t_cue_received`, with the socket leg (`t_cue_emitted` to
+`t_cue_received`) reported beside it; encoder onset before the acoustic
+onset on every eligible row, with p50 and p95 of cue to onset reported,
+never a mean. A suppressed row is a failed row unless the bench asserts
+the suppression reason was one of the safety reasons in the primitive
+table and that condition was actually present; speech continuing over
+an unexplained suppression is a failure, not a pass with a note. The
+audio scheduler may hold a ready first word for at most 100 ms waiting
+for a safe onset. An urgent safety utterance is never held for an
+animation. Negative rows exist for a dropped cue, a duplicated cue, a
+cue after `done`, a playback device with a deep buffer, a socket loss
+between the two processes, and a hub stamp that disagrees with the
+local clock.
 
 **Arbitration.** One controller in the body reads encoder feedback,
 expires targets and detects disagreement and stall. Priority: physical
@@ -371,9 +509,12 @@ Rules:
   one signal alone below the confirmed bar. Direction of arrival ties a
   voice to a track; it never identifies anyone.
 - `claimed` is the answer to the who-is-speaking ask, or "it's me,
-  Sage". A claim selects the person for personalization: their own
-  companion binding, their person-scope recall of ordinary records, and
-  the attribution of what they said. A claim is never access: the
+  Sage". Before the answer nothing personal is read (the unknown rule
+  below); the answer is what establishes the identity the pass's
+  section 13 names ("identified by ... the who-is-speaking ask"). A
+  claim selects the person for personalization: their own companion
+  binding, their person-scope recall of ordinary records, and the
+  attribution of what they said. A claim is never access: the
   content ceiling, `adult_only` disclosure, `sensitive` records,
   unrestricted mode, a consequential action and any settings write
   need `confirmed` or `signed_in`. The band for a claim is the claimed
@@ -395,7 +536,10 @@ Rules:
 - `present` is the body's list of people with a fresh track or a fresh
   voice in the last thirty seconds (a starting value, measured), each
   at its own level. "Confirmed present and alone" is exactly one entry
-  at `confirmed` and no unknown track; `sensitive` records enter the
+  in the whole list, at `confirmed`, and it is the speaker: a second
+  person at any level, known, tentative or unknown, means not alone
+  (amended on the outside review, which found the earlier wording let a
+  tentative second person through); `sensitive` records enter the
   context only then, and the audience is rechecked at speech delivery,
   not only at turn start: a new face during a sensitive sentence stops
   the sentence and the settle primitive plays.
@@ -408,6 +552,24 @@ The device token is a doorkey; the wake word is a slot; the person is
 the evidence. A PIN on the screen or the hub's approval is the authority
 for anything consequential.
 
+What leaves the robot, exactly: on the turn record, `speaker_evidence`
+(the person id or null, the basis, the level) and `present` (ids and
+levels); in the `robot.state` frame, the same `present` list and the
+activity. Never a score, an embedding, a track's geometry or a face
+crop. Readers: the engine for that turn, and admins on the hub's Robots
+page; a child's or a guest's turn shows no `present` list to anyone but
+an admin. Retention: with the turn, under the conversation retention
+setting (ninety days by default, then the summary, which carries no
+presence), and in the state projection only as "last seen"; `present`
+is one of the declared state fields the household may switch off (plan
+7.5), and switching it off withholds `sensitive` records on the robot
+entirely rather than guessing.
+
+The v0.1-standalone identity floor needs no hub work: the screen sign-in
+and the enrolled voice print are the body's own; face evidence and its
+fusion with voice join after the standalone proofs are green (SPEAK-04),
+and until then a face is at most a track for the head to look at.
+
 ### 7. Pairing and sync semantics
 
 Plan 7.1 to 7.4 are the design; this section decides what they leave
@@ -419,14 +581,29 @@ open.
   identical `wall_ms` and `counter` are resolved by a `node_rank` the
   link assigns (the hub is 0, each robot its pairing sequence), looked
   up from the device table, so "the hub wins ties" is a policy in the
-  merge, not an accident of device id strings. The hub's comparator
-  gains the rank lookup in `spec/link/`'s item. On receipt, the local
-  clock advances to `max(local, remote) + 1` per the HLC algorithm; a
-  remote `wall_ms` more than an hour ahead of local wall time still
-  merges (order is the clock's job) and raises a Repair naming the
-  drift. A robot with no time source since boot keeps stamping from its
-  RTC and marks time unsynced; relative timers work, absolute ones say
-  so.
+  merge, not an accident of device id strings. This is the plan's own
+  policy ("ties by node id with the hub lowest", 7.3) made
+  deterministic: the rank is the node id's ordering, assigned rather
+  than hoped for. The hub's comparator gains the rank lookup in
+  `spec/link/`'s item. Rank lifecycle: the hub is rank 0 for the life
+  of its instance id; a robot's rank is assigned at pairing from the
+  hub's device sequence and kept across reconnects; a re-pairing is a
+  new device row and a new rank (the spec's own rule); a replacement
+  hub is a new pairing, so every rank is reassigned by it; an op from a
+  node with no device row is refused, never merged; a restored device
+  table restores the ranks with it, since they live on the rows. On
+  receipt, the local clock advances to `max(local, remote) + 1` per the
+  HLC algorithm, but never past the receiver's trusted time plus one
+  hour: an op stamped further ahead is quarantined (held, not applied)
+  with a Repair naming the sender and the drift, so a wrong or hostile
+  clock cannot own the ordering (amended on the outside review). The
+  sender learns the receiver's time on the link, corrects its clock,
+  and re-stamps only the ops in its outbox that no other node has ever
+  seen, which is safe because an unsent op has no reader; a sent stamp
+  is immutable. The hub is the time authority on the link; a robot with
+  no time source since boot keeps stamping from its RTC, marks time
+  unsynced, and syncs from the hub before its first push; relative
+  timers work, absolute ones say so.
 - **The bootstrap snapshot** is taken inside one read transaction on
   the hub at a log position, and the pull starts at that position, so
   nothing written during the snapshot is lost between snapshot and
@@ -436,12 +613,20 @@ open.
   oldest" is rejected). Under disk pressure the robot raises a Repair
   and pauses non-durable telemetry, never the outbox. A forget on
   either side wins against any stale replica or restore.
-- **Side effects.** Every consequential action has an operation id.
-  After a disconnect with an unknown outcome the robot asks the hub
-  for the turn's status on reconnect before anything is retried; if
-  the hub is unreachable a consequential action is never re-executed
-  to finish a sentence; an idempotent op (a list add, a memory) is safe
-  to resend by id. The reply says what is unknown.
+- **Side effects.** Every consequential action has an operation id and
+  an effect ledger entry with one of five states: `requested`, `sent`,
+  `confirmed`, `unknown`, `failed`. After a disconnect with an unknown
+  outcome the robot asks the executor before anything is retried: the
+  hub for a hub-run turn's status on reconnect, and the integration's
+  own state where it can be read (a lock reports locked or not; a light
+  reports on or off), which turns `unknown` into `confirmed` or `failed`
+  without a second execution. If the executor is unreachable the entry
+  stays `unknown`, a consequential action is never re-executed to
+  finish a sentence, and the person hears the state in words ("I asked
+  for the garage to close but never heard back; it reads closed now",
+  or "I can't tell yet"), never a confident claim. An idempotent op (a
+  list add, a memory) is safe to resend by id. An `unknown` older than
+  an hour becomes a Repair.
 - **Continuation after a lost link mid-turn.** Plan 7.2 says a turn in
   flight is never resumed on the wire; plan 7.5 says the local model
   continues mid-sentence. Both hold: the wire turn is dead; the local
@@ -478,9 +663,9 @@ screen offers "connect a search server" as the opt-in, with the privacy
 row shown, and until then a question that needs the web rung ends the
 ladder honestly ("I can't check the web from here") once, in the
 register guard's voice. A time-sensitive question never gets a model
-guess. The robot does not host a search server itself in v0.1 (RAM and
-update burden on the Pi; M-01's budget decides whether v0.2 offers it
-as a package). A direct keyless search provider is rejected outright:
+guess. The robot does not host a search server itself in v0.1; that is not a
+rejection, it is unmeasured: M-01's recorded headroom decides whether
+v0.2 offers one as a package. A direct keyless search provider is rejected outright:
 no verified maintained provider, and "we are the user" forbids the
 scraping and the block-handling it would need.
 
@@ -520,7 +705,15 @@ scraping and the block-handling it would need.
 
 Nothing in software certifies a mechanism. The envelopes come from
 measurements on the assembled owned parts, and the body refuses
-expression until they exist.
+expression until the whole gate is met: the calibration run below, the
+servo rail measured under a two-servo stall and found to hold its
+voltage on the compute and audio rails (question 3), the e-stop chain
+proven to cut that rail (question 6), the mute mechanism answered
+(question 1), and the pinch clearances measured on the final shell.
+Charging control stays disabled until the owner's answers on the pack,
+the charger, the gate and the interlocks (question 4) are recorded.
+Until the gate is met the product makes no claim of expressive motion
+and no claim of a physical mute.
 
 - **The head.** A calibration mode runs first: find the mechanical stops
   per axis from the encoders, set soft limits inside them by a margin,
@@ -628,6 +821,32 @@ Robot-only rows, in the fixture's own expectation kinds plus the body's:
   preemption, a model crash, a missing artifact, a full disk, internet
   down against hub down.
 
+Gates with numbers, as starting values the first physical run confirms
+and the owner may move: speaker evidence (M-07) at most one false accept
+in a hundred stranger utterances and at most one false reject in ten
+household utterances on the roster recordings, an unenrolled voice
+reported unknown every time; the wake word (M-08) at most one false
+accept per two hours on the negative bank at real room levels, at least
+nine wakes in ten at one meter in a quiet room and eight in ten at three
+meters with a television on, and the near-miss set never waking; the
+concurrent load (M-10) with zero capture dropouts and zero playback
+underruns over the hour, and the sustained power draw recorded; the
+judge (M-05) with the abort-at-arrival test.
+
+Adoption, replacement, restore and forget, row by row, the expected
+identity and tombstone outcome stated so the runs are judged and not
+read:
+
+| Row | Expected |
+|---|---|
+| A robot-only household with three roster people pairs; two are linked to existing hub people, one is created on the hub | every referencing record carries the hub id afterward on both sides; the counts match; the local templates relink; the created person carries `source: hub` with the robot's HLC node; no record is duplicated |
+| A local-only guest at adoption | stays local, never appears in a sync payload, shows read-only on the hub |
+| A forget on the robot while offline, then reconnect | the tombstone wins on the hub; the text and embedding are gone on both; a hub restore from before the forget cannot resurrect it (`409 rewind` reconciles the log) |
+| A person deleted on the hub while the robot is offline | on reconnect the robot tombstones the person and every person-scope record, deletes the templates, and the robot-side memories about them held by others are kept |
+| A replacement hub with the old name and address | refused until re-paired; the robot keeps working locally; adoption runs into the replacement; every rank reassigned |
+| A robot restored from a USB backup taken before an adoption | the alias table restores with the backup; ops that named the old id are mapped; the restore reports the count of records behind the hub's watermark |
+| The hub restored from a backup behind the robot's watermark | `409 rewind`; the robot re-pushes from the hub's new watermark; nothing forgotten comes back |
+
 Deterministic tests drive fake sensors and scripted cues through the
 repo's own pytest and `bun:test` structures; physical tests then prove
 encoder motion, clearance, stability, safe stop and the mic-to-speaker
@@ -669,6 +888,23 @@ the request); "turn off the kitchen light" works with the hub off and
 owner's constraint as a v0.1 proof: motion begins before the first word
 on the bench's eligible rows, in all three modes, with the numbers in
 the run header.
+
+Because the tag waits on the link while the standalone work does not,
+v0.1 has a named milestone before the tag (amended on the outside
+review): **Robot v0.1-standalone**, demonstrable and not a release. Its
+proof: on the bench Pi with no hub, a roster household authored on the
+screen; wake, a turn, a reply spoken, a fact remembered across a
+reboot, the safety floor refusing its corpus, a timer that fires, the
+expression cues from the local engine with onset before the acoustic
+onset on the eligible rows, the software mute honestly labeled, and
+M-01, M-02, M-05, M-06, M-07, M-08 and M-10 recorded. What waits until
+those proofs are green, in this order: the Deno host and the Tier 1
+packages (RT-06), face evidence and its fusion (SPEAK-04), the room
+sensors beyond the head (BODY-09), self-update with rollback (UPD-01),
+the Hailo provider measurement (M-03), and, with the link, pairing,
+adoption and replacement (LINK-01 to LINK-06). Contracts come before
+code: the runtime API (RT-00) and the body contract (IPC-01) are
+declared and reviewed before either process is written.
 
 ## The outside draft, reconciled
 
@@ -740,10 +976,150 @@ by" and putting the speaker on the turn.
 **Rejected.** The draft's suggestion that the plan's Python recipe
 interpreter is the robot's production Tier 0 runtime: under section 2
 the shared TypeScript interpreter runs on the robot and the Python one
-stays the public conformance oracle. The draft's implication that a
+stays the public conformance oracle, its equivalence proven on every
+hub commit by the shared recipe fixtures `home`'s `check.sh` runs through
+both interpreters. The draft's implication that a
 Python port of the safety floor is required for v0.1: the floor runs
 on the robot as the same code. The direct keyless search provider, in
 any form. A separate robot mood or emotion inference of any kind.
+
+## Outside review, 2026-09-14, reconciled
+
+An outside reading of f719a03 arrived the same day (six sections:
+coherence, the three modes, cost and physical behavior, sync and
+identity, sequencing and testability). Each amendment is taken with the
+change made in place above, or rejected here with the reason, the way
+the hub's chat design pass handled its outside reviews.
+
+**Taken, and changed in place.**
+
+- *RUNTIME-01 must produce an explicit package API and an injection
+  boundary before the robot builds on it.* Section 2 now names the
+  injected ports and the exposed calls, the robot consumes only the API,
+  and RT-00 in the backlog is the contract item before any code.
+- *A manifest-to-runtime compatibility check proving the robot consumes
+  the exact tagged package.* Section 2: the lockfile pins version and
+  digest, the boot check refuses a mismatch and a path dependency (RT-01's
+  acceptance).
+- *One speech-process ownership model.* The review was right that STT
+  and TTS in the runtime with capture in the body was a second speech
+  path against plan chapter 8. Section 2 now makes the body the robot's
+  one speech process, serving `spec/voice/` to the runtime as the hub's
+  own sidecar does; audio never crosses the socket; M-06 no longer
+  waits on the runtime. The hub's in-process STT binding is a hub
+  implementation detail behind the same contract, not a second
+  definition.
+- *Document the IPC if it stays split.* The body contract is declared
+  once in `body/contract/` as a versioned schema with generated types
+  and a handshake (section 2, IPC-01).
+- *Move the proposed turn fields into the spec first; do not write them
+  privately.* Section 3 now states the rule with no temporary
+  exception: a value the pinned spec cannot carry travels in memory for
+  the turn and is not persisted. The evidence is passed to the engine
+  in memory until `speaker_evidence` lands.
+- *The interpreters' equivalence must be continuously proven.* It is,
+  in `home`'s `check.sh`, which runs the recipe fixtures through both;
+  stated in section 2's "Rejected" note on the draft and here.
+- *A capability matrix in the record with connected, paired-unreachable,
+  robot-only, network-required, credential-required and not-in-v0.1
+  cells, and the robot-only fallback per row.* Added to section 1, with
+  the `platforms` marks verified in the hub's bundled packages (weather,
+  define, joke, trivia, math, convert, remember and recall are marked
+  for the robot; the almanac, timer, remind, list, media, knowledge and
+  websearch packages are home-only today, which the hub dependency table
+  carries).
+- *"Merge" must not imply parity.* The review queue's intro now says a
+  Merge names the capability and the matrix says the availability. The
+  verdict word itself is kept (below).
+- *CPU, power, temperature, throttling and judge-interruption
+  acceptance.* M-01 gains CPU per process, sustained power from the
+  owned telemetry, SoC temperature and the throttle flags with zero
+  throttling as acceptance; M-10 gains capture dropouts, playback
+  underruns and power; M-05 gains the abort-at-arrival test, and the
+  judge's preemption is now a real mechanism (abort the in-flight
+  request, verified in the installed llama-server source before
+  anything relies on it) rather than a priority hint.
+- *Model quality in M-02.* The fixture's hard rows, the guard corpus
+  and the legacy honesty method are in the same run, and the decision
+  rule requires the hard rows green.
+- *Measure to acoustic output, define the 50 ms leg, make suppression
+  plus speech an explicit failure.* Section 5's timing paragraph now has
+  `t_cue_emitted`, `t_acoustic_onset` from the array's own capture, the
+  50 ms measured after the socket with the socket leg beside it, one
+  monotonic clock on the Pi with hub stamps never used for ordering,
+  suppressed rows failing unless a listed safety reason was actually
+  present, and the negative rows (dropped, duplicated and late cues, a
+  deep audio buffer, a socket loss, a disagreeing hub stamp).
+- *The non-model and infrastructure paths mapped to the cue contract.*
+  Section 5 gains the table for boot, socket loss, link loss, playback
+  failure, body-originated stops, thermal admission and safe shutdown.
+- *Block expression and charging claims until the rail, the e-stop, the
+  mute and the clearances are proven.* Section 10's gate now lists all
+  five, and the product claims nothing before it.
+- *Reconcile the HLC tie policy with the plan and specify the rank
+  lifecycle.* Section 7: the rank is the plan's "node id with the hub
+  lowest" made deterministic, with the lifecycle for pairing,
+  re-pairing, replacement, unknown devices and restored tables.
+- *Future-dated clocks must not dominate.* Section 7: quarantine past
+  one hour ahead with a Repair, the hub as time authority, unsent
+  outbox ops re-stamped after a correction, sent stamps immutable.
+- *Alias, delete and forget precedence with property tests.* Section 3,
+  with the reference inventory generated from the spec's id-bearing
+  fields.
+- *Effect-status states for consequential integrations and the user-
+  facing resolution.* Section 7: the five-state ledger, the executor
+  queried, the state said out loud, a stale unknown as a Repair.
+- *The alone predicate must exclude every additional person.* Section
+  6: exactly one entry in the whole list, at confirmed, the speaker.
+- *State which derived speaker and presence fields leave the robot, who
+  reads them, how long they persist.* Section 6's new paragraph.
+- *Split v0.1 into a demonstrable standalone milestone and the pairing
+  milestone; defer adoption, replacement, biometric fusion, the Deno
+  host and the Hailo provider until the standalone proofs are green.*
+  Section 12 names Robot v0.1-standalone with its proof and the order
+  of what follows; the backlog splits BODY-02, RT-04 and SPEAK-01
+  accordingly and adds RT-06, SPEAK-04, BODY-09.
+- *Missing items.* RT-00 (the runtime API contract), IPC-01 (the body
+  contract), the pin check (RT-01), the store's recovery semantics
+  (SETUP-03: the store key lives on the device, a USB restore needs the
+  key file, and what is lost without it is stated), UPD-01 (self-update
+  with stage, swap, health check and rollback per UPDATES.md), GOV-01
+  (one governor across the processes), and the model-quality gates
+  (M-02) are all in the backlog now.
+- *Adoption, replacement, restore and forget rows with expected
+  outcomes.* Section 11's new table.
+- *The robot-local search server is unmeasured, not rejected.* Section
+  8's wording now says so.
+
+**Rejected, with the reason.**
+
+- *Rename "Merge" to "future shared capability" where the package is
+  not yet available.* The four verdicts (rebuild as designed, redesign,
+  merge, drop) are the platform's one vocabulary (plan 5.8) and the
+  hub's review queue uses the same four; availability is a separate
+  fact the matrix carries. Two vocabularies for one column is the drift
+  the pass exists to prevent.
+- *The claimed-identity rule contradicts the unknown-speaker rule.* It
+  does not: the unknown rule withholds personal memory until identity is
+  established, and the pass's section 13 part 6 lists the who-is-
+  speaking ask as one of the three ways identity is established. A
+  claim reads ordinary person-scope records and never the ceiling,
+  disclosure, sensitive records or an action; section 6's wording is
+  tightened to say the ask's answer is the establishing step.
+- *Robot-only conversation may degrade to anonymous child-band behavior
+  without the hub's speaker work.* The screen sign-in and the enrolled
+  voice print are the body's own and need no hub work; the v0.1-
+  standalone identity floor is stated in section 6. What waits on the
+  hub is the persistence of the evidence and the bindings, not the
+  identification.
+- *"Complete episode recall" and "all 83 legacy verdicts" as v0.1
+  over-design.* Episode recall is part of the runtime the robot pins
+  and is not separable; the 83 verdicts are a record, not work, and
+  the org rule requires them before anything is built.
+- *A concrete resource governor spanning every process as a missing
+  design.* It was under-stated, not missing: section 4 now names GOV-01
+  and the one admission policy, but it is the hub's governor reading
+  the body's budget, not a new governor.
 
 ## Review queue
 
@@ -757,7 +1133,12 @@ drops the old implementation for the named shared capability;
 a commitment; "Rebuild as designed" means the robot's own package built
 to this record. A family-use verdict from the owner is still owed on the
 rows that say so; nothing on this list is a requirement by virtue of
-having existed.
+having existed. A "Merge" verdict names the shared capability and says
+nothing about when it is available on the robot: the capability matrix
+in section 1 says which shared packages are on the robot today, which
+wait on a `platforms` mark, a hub item or the Deno host, and what the
+robot-only fallback is meanwhile (an honest "I can't do that here" once,
+in the register guard's voice, never a stub).
 
 | Legacy skill | Verdict | Reason |
 |---|---|---|
