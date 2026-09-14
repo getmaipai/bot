@@ -1297,6 +1297,15 @@ Product owner's calls:
     honesty is the owner's to confirm (the legacy bench moved 14 traps
     on a stack change alone).
 
+Answered 2026-09-14 (Jesse, through the coordinator): 11, the seven
+rows stay on the backlog as their own items, decided when each is
+reached, none dropped now; 12, `spec-v0.1.0` is cut after SPEC-02
+lands (one tag with the companions and manifest changes), and
+RUNTIME-01 sits after CHAT-16 in Session A's queue; the ear gates in
+section 6 (speaker evidence and wake) stand as starting values, moved
+only with a measurement and a recorded reason. 13 stays open until
+M-02 reports.
+
 ## Notes for later
 
 Not actionable yet. Captured so the pre-rebuild robot's hard-won numbers
