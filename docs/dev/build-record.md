@@ -133,7 +133,7 @@ Not bought, so the design may specify them and the "fixed hardware"
 rule does not bind them: the 36 V main pack, BMS, charger, converters,
 distribution block, 30 A DC breaker, INA228 board, charge gate; the
 charging dock; the body shell (chassis, visor, head shell), casters and
-deck; a donor hoverboard and brake actuator; the servo bench supply,
+deck; the brake actuator (a donor hoverboard, with its motors, wheels, controller and pack, is owned, model unrecorded; question 5 stays for its controller firmware, wheel size and brake feedback); the servo bench supply,
 the e-stop and bumper switches; the follow-and-carry parts, rear
 camera, fan, underglow, USB hub, MCP23017, BME688, DS18B20 probes; the
 five further VL53L5CX units.
