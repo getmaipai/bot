@@ -24,8 +24,8 @@ never as a requirement of what gets rebuilt.
 
 ## Development
 
-See [docs/dev.md](docs/dev.md) for the design record and the current
-step-0 checklist. `scripts/check.sh` runs the pinned `@maipai/standards`
+See [docs/dev.md](docs/dev.md) for the design record and
+[docs/BACKLOG.md](docs/BACKLOG.md) for what's built and what's missing. `scripts/check.sh` runs the pinned `@maipai/standards`
 core; it needs a sibling checkout of `getmaipai/.github`.
 
 ---

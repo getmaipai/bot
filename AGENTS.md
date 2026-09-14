@@ -19,15 +19,19 @@ Hailo-10H model, ~90 skills) is preserved locally as
 `legacy-backups/bot-legacy.git`, reference only for hard-won logic, never
 a requirement of feature scope.
 
-Stack: Python managed with uv, lint/format with Ruff, tests with pytest.
-Full stack standard:
+Stack: Python managed with uv, lint/format with Ruff, tests with pytest,
+for the body (everything that touches hardware). The household runtime
+(the turn engine, memory, guards, the link) is the hub's own TypeScript
+code, pinned and run on Bun as the same package, per the design record's
+section 2, a written deviation from the stack standard. Full stack
+standard:
 [STACK.md](https://github.com/getmaipai/.github/blob/main/STACK.md) in
 `.github`.
 
-Commands: `bash scripts/check.sh` from the repo root before every commit
-— today it only runs the pinned `@maipai/standards` core, and needs a
+Commands: `bash scripts/check.sh` from the repo root before every commit.
+Today it only runs the pinned `@maipai/standards` core, and needs a
 sibling `getmaipai/.github` checkout (`../.github` by default, override
 with `MAIPAI_STANDARDS_DIR`), pinned to std-v0.2.0. There is no `uv`
-project or app code yet (no `pyproject.toml`) — don't assume Python
+project or app code yet (no `pyproject.toml`): don't assume Python
 tooling is already wired up; check `docs/BACKLOG.md` before writing code
 that expects it.
