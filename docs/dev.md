@@ -1306,6 +1306,23 @@ section 6 (speaker evidence and wake) stand as starting values, moved
 only with a measurement and a recorded reason. 13 stays open until
 M-02 reports.
 
+## The Stack (2026-09-17, awaiting this design pass's verdict)
+
+The hub's engine layer became its own product the same day:
+MaiPai Stack (`getmaipai/stack`, `docs/dev.md` and
+`docs/integrations.md`). Its proposed place in this design leaves
+sections 2 and 4 intact: the robot runs its own Linux ARM Stack for the
+three language roles (`chat`, `embed`, `judge`, the same llama-server
+pins and flags as section 4), the body keeps speech over `spec/voice/`
+and is registered with the Stack as a managed engine so the identity
+contract holds on both nodes, GOV-01's one governor is the Stack's fed
+by the body's power and thermal budget, and RUNTIME-01's "engine
+supervisors and their launch adapter" port is satisfied by a Stack
+client rather than an in-process supervisor. The robot builds on the
+Stack and never requires the hub. This design pass confirms or amends
+that reading here before STACK-17 (the Linux profile) starts; M-01
+through M-10 are unchanged by it.
+
 ## Notes for later
 
 Not actionable yet. Captured so the pre-rebuild robot's hard-won numbers
