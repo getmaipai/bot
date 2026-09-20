@@ -38,7 +38,7 @@ when the standalone proofs are green.
 
 - [x] Repo reset to a clean history (S): `LICENSE` (AGPL-3.0), `NOTICE`,
       `README.md`, `docs/dev.md`, `scripts/check.sh` pinned to
-      `@maipai/standards` std-v0.2.0. Verified by `git log` (`f217451`,
+      `@maipai/standards` std-v0.3.0. Verified by `git log` (`f217451`,
       `578c43c`).
 - [x] Port the pre-rebuild bench and wake-word learnings into `docs/dev.md`
       (S): done 2026-09-06 (`f4e9c9a`), corrected against the mirror
@@ -56,6 +56,7 @@ when the standalone proofs are green.
       scripts/check.sh` green. Verified at this commit: runtime block
       proven with a deliberate type error, body block by the identical
       guard.
+- [x] the standards pin resolves through a per-tag worktree and pins std-v0.3.0 (verified at this commit)
 
 ## Hub dependencies
 

@@ -32,9 +32,10 @@ standard:
 `.github`.
 
 Commands: `bash scripts/check.sh` from the repo root before every commit.
-Today it only runs the pinned `@maipai/standards` core, and needs a
-sibling `getmaipai/.github` checkout (`../.github` by default, override
-with `MAIPAI_STANDARDS_DIR`), pinned to std-v0.2.0. There is no `uv`
+Today it only runs the pinned `@maipai/standards` core, and the gate
+resolves std-v0.3.0 into `../.github-tags/std-v0.3.0` through `.github`'s
+`ensure-tag.sh` (`MAIPAI_STANDARDS_DIR` names where the `.github` repo
+is). There is no `uv`
 project or app code yet (no `pyproject.toml`): don't assume Python
 tooling is already wired up; check `docs/BACKLOG.md` before writing code
 that expects it.
