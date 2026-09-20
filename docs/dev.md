@@ -1306,22 +1306,34 @@ section 6 (speaker evidence and wake) stand as starting values, moved
 only with a measurement and a recorded reason. 13 stays open until
 M-02 reports.
 
-## The Stack (2026-09-17, awaiting this design pass's verdict)
+## The Stack (2026-09-17; refocused 2026-09-20)
 
-The hub's engine layer became its own product the same day:
-MaiPai Stack (`getmaipai/stack`, `docs/dev.md` and
-`docs/integrations.md`). Its proposed place in this design leaves
-sections 2 and 4 intact: the robot runs its own Linux ARM Stack for the
-three language roles (`chat`, `embed`, `judge`, the same llama-server
-pins and flags as section 4), the body keeps speech over `spec/voice/`
-and is registered with the Stack as a managed engine so the identity
-contract holds on both nodes, GOV-01's one governor is the Stack's fed
-by the body's power and thermal budget, and RUNTIME-01's "engine
-supervisors and their launch adapter" port is satisfied by a Stack
-client rather than an in-process supervisor. The robot builds on the
-Stack and never requires the hub. This design pass confirms or amends
-that reading here before STACK-17 (the Linux profile) starts; M-01
-through M-10 are unchanged by it.
+The hub's engine layer became MaiPai Stack on 2026-09-17, and on
+2026-09-20 the owner refocused it (`.github/docs/DECISIONS.md`): the
+Stack is the engine foundation of MaiPai Home, the headless service
+that installs, sizes, runs, watches, updates and tests the engines and
+models behind Home and gives Home one stable address by role. It has
+no interface and no users of its own; Home is its only caller. Home's
+installer installs the Stack; a person never installs the Stack by
+itself. For the robot that means: Bot runs Home's platform code, so the
+robot's own Linux ARM Stack (STACK-17) is installed by that code the
+same way, and the robot is Home's replica calling it on loopback. Its
+place in this design leaves sections 2 and 4 intact: the three language
+roles (`chat`, `embed`, `judge`, the same llama-server pins and flags
+as section 4) are Stack roles on the robot; the body keeps speech over
+`spec/voice/` and is registered with the Stack as a managed engine so
+the identity contract holds on both nodes; GOV-01's one governor is
+the Stack's, fed by the body's power and thermal budget; RUNTIME-01's
+"engine supervisors and their launch adapter" port is satisfied by the
+Stack client Home already carries (`stack/docs/plans/
+home-adoption-2026-09-20.md`, HOME-STACK-02), never an in-process
+supervisor. The robot builds on the Stack and never requires the hub.
+The wire shapes (role request and reply headers, the event feed, the
+health item, the settings and precious-state declarations) are the
+Stack's `backend/src/spec/` schemas, moving to `shared/spec`, and the
+Python body pins that package at Home's version. This design pass
+confirms or amends that reading before STACK-17 starts; M-01 through
+M-10 are unchanged by it.
 
 ## Notes for later
 
