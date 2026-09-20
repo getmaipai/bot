@@ -75,6 +75,9 @@ section 12).
 | COMP-06 and SPEAK-01 (hub halves) | Bindings synced as records; the voice-print policy | SPEAK-02, SPEAK-03 |
 | `platforms: [home, bot]` on websearch, the almanac, timer, remind and list packages (Tier 0) and on media-lookup and knowledge (Tier 1); weather, define, joke, trivia, math, convert, remember and recall are marked already | The Tier 0 set on the robot; the typed sources under the Deno host | RT-04, RT-06 |
 | The plan amendment recorded by the coordinator: the shared TypeScript interpreter and floor run on the robot; the hub's "Python ports of the shared floor" item retires | Nothing to build; a doc change on the hub | none |
+| HOME-STACK-02 (the Stack client and the role wire in Home's backend) and STACK-17 (the Stack's Linux ARM profile: `chat`, `embed`, `judge` on pinned llama-server, the body's speech as a managed engine, systemd from STACK-95) | The robot runs Home's platform code, so its own Stack is installed and called the way Home's is; RUNTIME-01's supervisor port is that client, never an in-process supervisor | RT-01, M-01 through M-10, BODY-02 |
+| RF-05b (the Stack's wire shapes move into `shared/spec`: role request and reply headers, the event feed, the health item, the settings and precious-state declarations) | The Python body pins `maipai-spec` at Home's version and speaks those shapes to the robot's Stack | RT-01, SPEC-* |
+| HOME-STACK-04 and 05 (the Engines page, the Updates and Repairs wiring in Home's admin) | The robot's engines, updates and repairs appear on the same pages when it is paired, behind the same admin sign-in; the Stack itself has no login | Pairing items under `spec/link/` |
 
 ## Measurements
 
