@@ -12,8 +12,11 @@ CLAUDE.md (source:
 Fresh rebuild on the platform design, started 2026-09-03: see
 [docs/dev.md](docs/dev.md) for the design record and
 [docs/BACKLOG.md](docs/BACKLOG.md) for what's built and what's missing.
-This repo stays a skeleton until `home/spec/` reaches v0.1, which it pins
-as `maipai-spec @ git+...@spec-v0.1.0#subdirectory=spec`. The pre-rebuild
+The shared record shapes live in `getmaipai/shared`'s `spec/` workspace
+(tagged `spec-v0.1.1` on 2026-09-20); this repo's Python body pins it as
+`maipai-spec @ git+https://github.com/getmaipai/shared@spec-v0.1.1#subdirectory=spec`
+at the same tag Home pins, and stays a skeleton until the runtime work in
+`docs/BACKLOG.md` starts. The pre-rebuild
 robot (bench-proven on Pi 5 hardware: wake word, sherpa-onnx speech stack,
 Hailo-10H model, ~90 skills) is preserved locally as
 `legacy-backups/bot-legacy.git`, reference only for hard-won logic, never
