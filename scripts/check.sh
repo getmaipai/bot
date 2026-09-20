@@ -27,6 +27,10 @@ fi
 
 STANDARDS_REPO="${MAIPAI_STANDARDS_DIR:-../.github}"
 STD_TAG="std-v0.3.0"
+if [ ! -x "$STANDARDS_REPO/standards/bin/ensure-tag.sh" ]; then
+  echo "getmaipai/.github is missing at $STANDARDS_REPO or older than std-v0.3.0 (set MAIPAI_STANDARDS_DIR to a checkout that has standards/bin/ensure-tag.sh)"
+  exit 1
+fi
 STANDARDS_DIR="$(bash "$STANDARDS_REPO/standards/bin/ensure-tag.sh" "$STD_TAG")"
 if [ "$(cat "$STANDARDS_DIR/standards/VERSION")" != "${STD_TAG#std-v}" ]; then
   echo "@maipai/standards at $STANDARDS_DIR is $(cat "$STANDARDS_DIR/standards/VERSION"), but the tag is $STD_TAG"
