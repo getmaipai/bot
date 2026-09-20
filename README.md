@@ -37,4 +37,10 @@ trademarks belong to their respective owners. You are responsible for
 complying with the terms and laws that apply to you and the services you
 access.
 
+The AI in this product runs on third-party models you choose to
+download. What they say can be wrong, offensive, or harmful; it is not
+medical, legal, or professional advice; and you are responsible for
+how you use it. Parents decide what children in the household can
+reach.
+
 Licensed under [AGPL-3.0](LICENSE).
