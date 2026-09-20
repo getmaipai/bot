@@ -47,13 +47,15 @@ when the standalone proofs are green.
 - [x] The design pass (L): `docs/dev.md` rewritten as the design record
       with the 83 legacy verdicts, this backlog, and the build record,
       2026-09-14.
-- [ ] **`check.sh` grows its own steps** (S). Objective: when `body/` and
+- [x] **`check.sh` grows its own steps** (S). Objective: when `body/` and
       `runtime/` exist, `scripts/check.sh` runs Ruff, pytest, `bun test`
       and the spec fixtures before the standards core; `--docs` runs the
       core alone. Mirror: `home/scripts/check.sh`. Acceptance: a
       deliberate lint error in each tree fails the gate; a docs-only
       commit passes in seconds. Out of scope: CI. Exit: `bash
-      scripts/check.sh` green.
+      scripts/check.sh` green. Verified at this commit: runtime block
+      proven with a deliberate type error, body block by the identical
+      guard.
 
 ## Hub dependencies
 
