@@ -700,6 +700,28 @@ written and reviewed before any of the others is coded.
       stale or conflicting track; breathing on the idle policy with its
       suppressions. Acceptance: the deterministic trajectory tests; the
       physical run recorded. Exit: `bash scripts/check.sh`.
+- [ ] **EXPR-05: a body-agnostic web dashboard** (M, sim; owner's ask,
+      2026-09-27). Objective: a small web page (a lightweight Python
+      HTTP server in `body/`, no framework beyond what a health check
+      needs) that shows a body's live state - head pose, antennas, body
+      yaw, direction of arrival - as a 2D schematic and simple telemetry
+      readout, and lets someone trigger any expression primitive by
+      name, all through the HAL seam alone: the fake, the Reachy Mini
+      client, and the MaiPai build's own client once it exists all work
+      against the identical page with zero changes to it. A live 3D
+      view (loading real meshes in a browser, matching Pollen's own
+      MuJoCo viewer) is explicitly out of scope for this item - it is a
+      real, separate undertaking (WebGL, a model per body), tracked
+      here only as a possible follow-up once the 2D dashboard is real
+      and useful. Pointers: `docs/dev/hal-seam.md`'s own "what's
+      deliberately not built yet" note; `maipai_body.expression.engine`
+      and `maipai_body.presence.observations` as the two things the
+      page actually calls. Acceptance: the dashboard renders and
+      accepts commands against the fake in a deterministic test (no
+      browser needed - assert on the HTTP/WS responses); a live check
+      against the Reachy Mini simulator, screenshotted and opened.
+      Out of scope: a 3D view; anything MaiPai-build-specific. Exit:
+      `bash scripts/check.sh` and the live check.
 
 ## Speaker evidence and presence
 
