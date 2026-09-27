@@ -330,6 +330,29 @@ the image release and the profile id in the header.
       handled, the stop event honored); the install script is
       idempotent. Out of scope: the password rotation (RM-08, a hub
       flow). Exit: `bash scripts/check.sh` and the simulator run.
+      **Not fully landed:** `scripts/install-reachy.sh` does not yet
+      remove pre-shipped vendor apps, one clause of this item's own
+      objective, so the box stays unchecked rather than done with a
+      caveat. Everything else below is landed and verified.
+      Verified at this commit: `bash scripts/check.sh` green; live
+      against `reachy-mini-daemon` 1.11.0 (`--sim --headless`) with
+      `maipai-body` installed into its own venv, `POST
+      /api/apps/start-app/maipai_bot` moved the app to `running`
+      (confirmed by `/api/state/full` showing a near-neutral held
+      pose), and `POST /api/apps/stop-current-app` stopped it cleanly
+      in about a second, released the robot-app lock, and the daemon
+      returned the robot to its zero position on its own. Finding worth
+      recording: the daemon starts an installed app by running its
+      entry point's *module* as `python -m <module>` in a subprocess,
+      never by importing the class directly, so `app.py` needs its own
+      `if __name__ == "__main__":` block (the first live start finished
+      instantly with no error because that block was missing). Not run:
+      `scripts/install-reachy.sh` against a real unit (none reachable;
+      the SSH steps are syntax-checked and its argument validation is
+      tested, not the scp/ssh/systemctl calls themselves), and removing
+      pre-shipped vendor apps (the sim ships with none to remove, and
+      guessing their real entry-point names without a unit would be
+      unverified; carried into RM-08 or the unit's first day, RM-07).
 - [ ] **RM-04: the `pod`-tier speech path** (M, sim then unit, after
       ROBOT-ROUTES-01). Objective: wake, Silero VAD, endpointing and
       direction of arrival in the body from the daemon's 16 kHz audio,

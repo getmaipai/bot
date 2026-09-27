@@ -25,6 +25,9 @@ dependencies = [
     # to fix unilaterally).
 ]
 
+[project.entry-points."reachy_mini_apps"]
+maipai_bot = "maipai_body.app:MaiPaiBody"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
