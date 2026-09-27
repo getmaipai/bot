@@ -1418,6 +1418,20 @@ exactly the kind of vendor behavior `dev.md` section 9 already says
 must be measured before trust, and belongs in RM-07's isolated-network
 capture.
 
+**Landed 2026-09-27 (RM-06):** the HAL seam gains a `FaceTracker`
+protocol (`enable_tracking`, `disable_tracking`, `get_face_target`,
+never an identity); `body/maipai_body/presence/` declares the
+arbitration priority (`arbitration.py`) and the tip and freefall reads
+from the IMU (`safety.py`, design-default thresholds pending a
+physical run). This item's own backlog wording had the arbitration
+order backwards from the design record section 6 it names as its
+source: section 6 states tracking outranks expression ("consented
+tracking sits below inhibit, reflex and service, above expression and
+idle"), and that reading is what is built and tested, recorded here
+per the corrected backlog note. BODY-05's own funnel state machine
+does not exist yet (it needs a turn-aware runtime); this item lands
+that funnel's inputs, not the state machine itself.
+
 ## Research notes
 
 - [`dev/research-minicpm5-reachy-mini-2026-09-27.md`](dev/research-minicpm5-reachy-mini-2026-09-27.md):

@@ -100,6 +100,15 @@ class ImuReading(BaseModel):
     temperature_c: float
 
 
+class FaceTrackTarget(BaseModel):
+    """The latest face a body's own tracker sees. No identity, ever (design record section 6)."""
+
+    detected: bool = False
+    x: float | None = None
+    y: float | None = None
+    roll: float | None = None
+
+
 class StateFrame(BaseModel):
     """One state-feed sample, typed and stamped on receipt.
 
@@ -207,4 +216,26 @@ class Imu(Protocol):
 
     def read(self) -> ImuReading | None:
         """Return the latest IMU reading, or ``None`` if unavailable."""
+        ...
+
+
+@runtime_checkable
+class FaceTracker(Protocol):
+    """A body's own visual head tracking; RM-06's presence funnel is its consumer.
+
+    No identity is ever inferred from a tracked face (design record
+    section 6): a body implementing this reports only "a face is
+    tracked" and where, never who.
+    """
+
+    def enable_tracking(self, weight: float = 1.0) -> None:
+        """Let tracking bias or own the head, per ``weight`` in ``[0, 1]``."""
+        ...
+
+    def disable_tracking(self) -> None:
+        """Stop tracking (pauses detection, frees the head)."""
+        ...
+
+    def get_face_target(self) -> FaceTrackTarget:
+        """Return the latest tracked face, or a target with ``detected=False``."""
         ...

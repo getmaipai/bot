@@ -24,6 +24,7 @@ from maipai_body.hal.seam import (
     AntennaPositions,
     BodyProfile,
     DirectionOfArrival,
+    FaceTrackTarget,
     HeadPose,
     ImuReading,
     InterpolationMethod,
@@ -68,6 +69,9 @@ class FakeReachyMiniClient:
         self._current_pose = HeadPose()
         self._current_antennas = AntennaPositions(left=0.0, right=0.0)
         self._current_body_yaw = 0.0
+        self.tracking_enabled = False
+        self.tracking_weight = 0.0
+        self.face_target = FaceTrackTarget(detected=False)
 
     # -- test control, not part of the seam --
 
@@ -176,6 +180,22 @@ class FakeReachyMiniClient:
     def read(self) -> ImuReading | None:
         self._require_connected()
         return None
+
+    # -- FaceTracker --
+
+    def enable_tracking(self, weight: float = 1.0) -> None:
+        self._require_connected()
+        self.tracking_enabled = True
+        self.tracking_weight = weight
+
+    def disable_tracking(self) -> None:
+        self._require_connected()
+        self.tracking_enabled = False
+        self.tracking_weight = 0.0
+
+    def get_face_target(self) -> FaceTrackTarget:
+        self._require_connected()
+        return self.face_target
 
     # -- StateFeed --
 

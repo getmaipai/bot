@@ -406,6 +406,29 @@ the image release and the profile id in the header.
       IMU's tip and freefall observations. Acceptance: the funnel's
       state tests on the fake; tracking yields to expression and stop.
       Out of scope: identity. Exit: `bash scripts/check.sh`.
+      **This item's own acceptance line has the priority backwards**
+      from the design record section 6 it names as its source
+      ("consented tracking sits below inhibit, reflex and service,
+      above expression and idle"): tracking outranks expression and
+      only yields to a stop or service condition, the opposite of
+      "tracking yields to expression." Implemented and tested against
+      the corrected, sourced reading
+      (`body/maipai_body/presence/arbitration.py`). Box stays
+      unchecked: BODY-05's own funnel (a `speaking`/`thinking`/
+      `listening`/`idle` state machine) needs a turn-aware runtime to
+      mean anything and does not exist; this item lands the funnel's
+      own inputs (face target, direction of arrival and speech flag,
+      IMU tip and freefall) and the arbitration rule, not the state
+      machine BODY-05 will consume them into. Landed and verified: the
+      HAL seam's `FaceTracker` protocol
+      (`enable_tracking`/`disable_tracking`/`get_face_target`), the
+      arbitration priority with tests for every ranking, and tip and
+      freefall detection from the IMU (design-default thresholds, not
+      a validated safety limit, same framing as `expression/
+      envelope.py`); exercised live against `reachy-mini-daemon`
+      1.11.0, which honestly reports no face, no IMU and no direction
+      of arrival in this sim scene, so only the mechanism (no crash, a
+      well-typed absence) was proven live, not a real detection.
 - [ ] **RM-07: privacy on the unit** (S, unit, first day). Objective:
       the unit on an isolated network with every outbound connection
       captured for 24 hours before and after the MaiPai install, the

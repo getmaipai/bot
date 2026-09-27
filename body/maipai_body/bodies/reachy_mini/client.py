@@ -36,6 +36,7 @@ from maipai_body.hal.seam import (
     AntennaPositions,
     BodyProfile,
     DirectionOfArrival,
+    FaceTrackTarget,
     HeadPose,
     ImuReading,
     InterpolationMethod,
@@ -212,6 +213,38 @@ class ReachyMiniClient:
             quaternion=tuple(data["quaternion"]),
             temperature_c=data["temperature"],
         )
+
+    # -- FaceTracker --
+
+    def enable_tracking(self, weight: float = 1.0) -> None:
+        self._require_connected()
+        try:
+            self._reachy.start_head_tracking(weight)
+        except _CONNECTION_LOST_ERRORS as error:
+            self._mark_lost(error)
+
+    def disable_tracking(self) -> None:
+        self._require_connected()
+        try:
+            self._reachy.stop_head_tracking()
+        except _CONNECTION_LOST_ERRORS as error:
+            self._mark_lost(error)
+
+    def get_face_target(self) -> FaceTrackTarget:
+        self._require_connected()
+        try:
+            # A short wait, not wait=False: the SDK's own get_status()
+            # asserts a status has already arrived when it does not wait,
+            # which raises AssertionError on a fresh connection with no
+            # status yet. TimeoutError here means "nothing observed in
+            # time", not a lost connection, so it is caught on its own
+            # rather than folded into _CONNECTION_LOST_ERRORS.
+            target = self._reachy.get_tracked_face(wait=True, timeout=1.0)
+        except TimeoutError:
+            return FaceTrackTarget(detected=False)
+        except _CONNECTION_LOST_ERRORS as error:
+            self._mark_lost(error)
+        return FaceTrackTarget(detected=target.detected, x=target.x, y=target.y, roll=target.roll)
 
     # -- StateFeed --
 
