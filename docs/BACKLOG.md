@@ -17,7 +17,11 @@ pytest: the hardware supervisor), `runtime/` (Bun: the pinned household
 runtime's robot adapter and its `bun:test` suite), `packages/` (the
 robot-only catalog packages), `docs/`, `scripts/`. Nothing in `body/`
 or `packages/` may copy a hub package or a hub record type
-(`dev.md` section 2).
+(`dev.md` section 2). Since 2026-09-27 `body/bodies/` holds one
+profile per supported body behind the HAL seam (`maipai/` for the
+owned build, `reachy_mini/` for the daemon client): the bodies design,
+[`dev/design-reachy-mini-2026-09-27.md`](dev/design-reachy-mini-2026-09-27.md),
+and the "Reachy Mini body" area below.
 
 Every item is pickup-ready: objective, pointers, a pattern to mirror,
 acceptance, out of scope, exit check. An item that waits on a hub item
@@ -69,8 +73,11 @@ section 12).
 | RUNTIME-01: the household runtime as a workspace package the hub runs, with an explicit package API | The engine, context, signal, guards, boundary, safety classifier, store, judge, scheduler, people, settings, host and link as one pinned package; the injected ports and the exposed calls declared (`dev.md` section 2), the hub its first consumer through that API | RT-00 to RT-06, LINK-*, BENCH-02 |
 | spec-v0.1.0 (Jesse's call) | The tag the robot pins as `maipai-spec` | RT-01, SPEC-* |
 | SPEC (section 3): `Person.source: standalone`, the `alias` op, `speaker_evidence` and `present` on the turn, `age_band_basis: claimed_profile`, the jobs and commands verdict, the `bot` mark on the keys the robot honours | The shapes the robot writes from first boot | RT-02, SPEAK-02, LINK-03 |
-| SURFACE-01: `robot` admitted as an implemented surface with the spoken presentation and the `present` list | Connected mode | LINK-04 |
-| WIRE-01: `signal`, `plan` and `cancel` on the turn stream | The expression cues in connected mode | EXPR-03 |
+| SURFACE-01: `robot` admitted as an implemented surface with the spoken presentation and the `present` list (landed on the hub 2026-09-15) | Connected mode | LINK-04, RM-05 |
+| WIRE-01: `signal`, `plan` and `cancel` on the turn stream (`signal` and `cancel` landed 2026-09-15; `plan` follows ACT-03) | The expression cues in connected mode | EXPR-03, RM-05 |
+| ROBOT-DEVICE-01 (hub, filed 2026-09-27 for the bodies design): the Devices page's "Add a robot": find a unit advertised on the LAN, accept the code the robot spoke or showed on its own page, mint a device token of kind `robot` (the kind exists in `devices.ts` and nothing mints it), rotate the unit's default password into the credentials center as part of the add | Pairing for a body with no screen | RM-05, RM-08 |
+| ROBOT-ROUTES-01 (hub, filed 2026-09-27): the turn stream, `POST /api/turn/{id}/cancel`, and the `stt` and `tts` routes accept a `robot` device token with `surface: robot`, scoped to that device's conversation | The `pod`-tier speech path and the connected turn | RM-04, RM-05 |
+| ROBOT-CARD-01 (hub, filed 2026-09-27): the robot's card on the Devices page from the device's live state (listening, thinking, speaking, muted, tracking, on battery with level unknown where the body cannot read it), and the body's daemon version with its update as a row on the Updates page, a person's click | The states this body cannot show on itself; the daemon's update | RM-05, RM-08 |
 | ACT-03 (with CHAT-16): the ReplyPlan at runtime | The plan-driven half of expression | EXPR-03 |
 | `spec/link/` and hub v0.3: the envelope, ops, states, the never-sync allowlist, node rank | Pairing and sync | LINK-01 to LINK-05 |
 | COMP-06 and SPEAK-01 (hub halves) | Bindings synced as records; the voice-print policy | SPEAK-02, SPEAK-03 |
@@ -242,6 +249,202 @@ The body track starts now; nothing here waits on the hub.
       and the link, never gated by software. Acceptance: the fake and
       the bench both show the state flip within one tick. Exit: `bash
       scripts/check.sh`.
+
+## Reachy Mini body (2026-09-27)
+
+The second supported body: the bodies design
+[`dev/design-reachy-mini-2026-09-27.md`](dev/design-reachy-mini-2026-09-27.md)
+(cited below by section). The unit is ordered with a lead time of up
+to 90 days; Pollen's MuJoCo simulator (`reachy-mini-daemon --sim`,
+`mjpython` on the dev Mac) serves the identical API and is the bench
+for every item until the box lands. Items marked "unit" need the
+hardware. Measurements M-R1 to M-R6 are the design's section 12 and
+are recorded in `docs/dev/measurements.md` with the daemon version,
+the image release and the profile id in the header.
+
+- [ ] **RM-00: the body-capability vocabulary** (S, spec first, filed
+      in `commons` as BODY-VOCAB-01). Objective:
+      `spec/vocab/capabilities.json` gains the ids a body profile
+      declares (section 2): `head_6dof`, `head_pan_tilt`, `roll`,
+      `antennas`, `body_yaw`, `eyes`, `mouth`, `light_ring`, `doa`,
+      `state_feed`, `encoders`, `touch`, `distance`, `imu`,
+      `battery_readout`, `physical_mute`, `camera_shutter`,
+      `moves_recorded`, plus the speech placement `speech_pod` and
+      `speech_robot`; a `Device.capabilities` fixture for a Reachy Mini
+      row and one for the MaiPai build. Mirror: CAP-VOCAB-01 in
+      `commons/docs/BACKLOG.md`. Acceptance: both fixtures validate in
+      TypeScript and Python; the tag is bumped and `bot` pins it.
+      Out of scope: any renderer. Exit: `commons` `bash
+      scripts/check.sh` and the tag.
+- [ ] **RM-01: the profile and the daemon client** (M, sim). Objective:
+      `body/bodies/reachy_mini/` wraps the `reachy-mini` SDK (PyPI,
+      Apache-2.0) behind the HAL seam BODY-02 names, declaring the
+      profile (section 2) from RM-00's ids: the state feed from
+      `ws://…/api/state/ws/full` as the encoder stand-in, `goto_target`
+      and `set_target` as the actuator, `get_DoA`, the audio sample
+      calls, `get_frame`, the IMU, motors enable and disable; a fake
+      built from responses recorded against the simulator, passing the
+      same pytest suite as the live run. If BODY-02 has not declared
+      the seam yet, this item declares it with this profile as its
+      first implementation and BODY-02 becomes its second. Pointers:
+      `body/hal/` (BODY-02), the daemon's `/openapi.json`. Acceptance:
+      the suite green on the fake and on the simulator; the profile's
+      declaration is the one place the axes and limits are named;
+      `scripts/check.sh` runs the body block. Out of scope: expression,
+      speech. Exit: `bash scripts/check.sh` and the simulator run.
+- [ ] **RM-02: the expression column on the simulator** (M, sim, with
+      EXPR-01). Objective: the primitive table's Reachy Mini column
+      (section 5: roll for the tilt, the antennas as a channel, body
+      yaw following the head past the delta limit, the `speak` sway on
+      the playback ledger's audio envelope, the muted pose) rendered by
+      EXPR-01's package on this profile, with the envelope as fractions
+      of the daemon's declared limits written into device-scope
+      settings with the run's date, `minjerk` for the primitives,
+      `set_target` only for track, breathe, speak and stop. Acceptance:
+      every primitive renders from its cue in the deterministic test
+      with the fake; the suppression table holds; M-R2's simulator rows
+      (cue to first state-feed delta, amplitude, peak velocity, settling
+      time per primitive) recorded. Out of scope: the unit's numbers.
+      Exit: `bash scripts/check.sh` and the recorded rows.
+- [ ] **RM-03: the app packaging and the install scripts** (S, sim).
+      Objective: `maipai-bot` as a Python package exposing
+      `MaiPaiBody(ReachyMiniApp)` under the `reachy_mini_apps`
+      entry-point group, scaffolded with `reachy-mini-app-assistant`
+      and run by the daemon as its app (section 3); `scripts/
+      install-reachy.sh` performing the documented offline install
+      over SSH (copy the wheel, `pip install` into `/venvs/apps_venv/`,
+      register, remove the vendor apps, restart `reachy-mini-daemon`),
+      and `scripts/build-space.sh` producing the Hugging Face Space
+      layout (tag `reachy_mini_python_app`) from a release, never
+      pushed by the script. Acceptance: the daemon's app list shows the
+      app on the simulator and starts and stops it cleanly (SIGINT
+      handled, the stop event honored); the install script is
+      idempotent. Out of scope: the password rotation (RM-08, a hub
+      flow). Exit: `bash scripts/check.sh` and the simulator run.
+- [ ] **RM-04: the `pod`-tier speech path** (M, sim then unit, after
+      ROBOT-ROUTES-01). Objective: wake, Silero VAD, endpointing and
+      direction of arrival in the body from the daemon's 16 kHz audio,
+      the pre-roll and wake-patience fixes of VOICE-01; the endpointed
+      utterance (wake word to end of speech, nothing before) to the
+      hub's `stt` route; the hub's `tts` stream to the daemon's
+      speaker with the same chunked playback the browser uses; barge-in
+      through the chip's echo cancellation; the honest software mute.
+      Pointers: `body/speech/` (VOICE-01), home's `stt` and `tts`
+      routes and `streamingWavPlayer.ts` for the chunk handling.
+      Acceptance: a spoken question on the simulator's software echo
+      path round-trips to a spoken reply; "stop" over playback is heard;
+      nothing ambient leaves the body (a test asserts the bytes sent are
+      the endpointed span). Out of scope: the `robot` tier (M-R1
+      decides). Exit: `bash scripts/check.sh` and the round trip.
+- [ ] **RM-05: the hub client** (M, sim, after ROBOT-DEVICE-01 and
+      ROBOT-ROUTES-01). Objective: pairing by the spoken code and the
+      app's own page (section 9), the token sealed and the fingerprint
+      pinned, the link states; the turn stream with `surface: robot`,
+      `speaker_evidence` and `present`; the `signal` and `cancel`
+      events driving EXPR-01's package (the `plan` event when it
+      exists), scripted cues on the bench before; the device state
+      frame (activity, muted, tracking, on battery) for ROBOT-CARD-01;
+      the one register-guard line when the hub is unreachable and
+      silence about a hub it was never paired with. Acceptance: a
+      three-turn conversation on the simulator with cues rendered
+      before the first audio sample on eligible rows; M-R5's link-loss
+      rows behave as section 7 says. Out of scope: the oplog and the
+      replica (no runtime on this body). Exit: `bash scripts/check.sh`
+      and the simulator run.
+- [ ] **RM-06: presence and tracking** (S, sim, after RM-01).
+      Objective: the daemon's face tracking as the `track` source under
+      the arbitration priority, its "a face is tracked" fact plus the
+      array's direction of arrival and speech flag as the presence
+      funnel's observations (BODY-05's funnel, this body's inputs), the
+      IMU's tip and freefall observations. Acceptance: the funnel's
+      state tests on the fake; tracking yields to expression and stop.
+      Out of scope: identity. Exit: `bash scripts/check.sh`.
+- [ ] **RM-07: privacy on the unit** (S, unit, first day). Objective:
+      the unit on an isolated network with every outbound connection
+      captured for 24 hours before and after the MaiPai install, the
+      vendor's apps removed and the store token never set; the list on
+      the robot's privacy page (SETUP-04's page, this body's rows) and
+      in `measurements.md`; the "what leaves the robot" table in the
+      design's section 8 words. Acceptance: the capture recorded; the
+      page's rows match it; the software mute and camera-off are
+      labelled so. Out of scope: fixing the vendor's image. Exit: the
+      recorded capture and the page.
+- [ ] **RM-08: install and update from Home** (M, unit, after
+      ROBOT-DEVICE-01 and ROBOT-CARD-01). Objective: the Devices page's
+      add flow runs RM-03's offline install over SSH and rotates the
+      default password into the credentials center (refusing to finish
+      while it stands); Bot's release pushes the wheel the same way;
+      the daemon's PyPI update surfaced as a row and applied only on a
+      click. Mirror: UPDATES.md; CREDENTIALS.md. Acceptance: a fresh
+      unit joins Home with no terminal and no third-party account; the
+      daemon version appears on the card and in the update row. Out of
+      scope: the Space listing (owner's call). Exit: the flow exercised
+      on the unit and its captures.
+- [ ] **RM-09: the user guide** (S, with RM-08). Objective: the
+      user-tier page from the box to the first conversation (the
+      vendor's Wi-Fi setup, Add a robot in Home, the spoken code, what
+      the antennas mean, the honest limits: software mute, software
+      camera-off, no battery readout, no screen), with generated
+      screenshots of the Devices flow. Mirror: DOCS-02. Acceptance: the
+      dad test on the page; every screenshot opened and judged. Exit:
+      the standards core.
+- [ ] **MOVES-01: the recorded moves package** (S, after RM-02, after
+      v0.1). Objective: a catalog package (`platforms: [bot]`, category
+      Robot body, `requires: ["moves_recorded"]`) that fetches Pollen's
+      emotions library (Apache-2.0) and dances library (licence
+      unverified; excluded until stated) on demand at a pinned revision
+      with a checksum, never vendored, and plays a named move through
+      the body at the plan's `react` slot or on a person's ask, never
+      on sentiment. Mirror: the org's "download, don't vendor" rule;
+      a Tier 0 package's manifest. Acceptance: "do the happy dance"
+      plays the move on the simulator; the reply path's cues are
+      untouched (a test asserts no move plays from a cue). Exit: the
+      catalog's CI and `bash scripts/check.sh`.
+- [ ] **MOVES-02: teach it a move** (S, after MOVES-01). Objective: a
+      catalog app: gravity compensation on, a person moves the head
+      and antennas by hand, the body records the trajectory in the
+      vendor's move JSON shape, names it, replays it; offline, no
+      model. Acceptance: a recorded move replays on the simulator
+      within the envelope. Exit: the catalog's CI.
+- [ ] **GUEST-01: a store app as a guest** (M, after v0.1; the design's
+      section 11). Objective: a catalog package of kind `app` wrapping
+      a Hugging Face Space at a pinned revision with its `data_sources`
+      and `permissions` declared and the supply-chain gate passed; Home
+      launches it, the body stops itself, the daemon starts the guest,
+      and MaiPai restarts when the guest exits or Home says stop; the
+      card says wake, stop and the safety floor are unavailable for the
+      duration. Acceptance: one reviewed community app (no cloud model,
+      no store token) runs and yields on the simulator. Exit: the
+      catalog's CI and `bash scripts/check.sh`.
+- [ ] **M-R1: the Compute Module budget** (S, unit). The daemon alone;
+      with the `pod`-tier body; with `stt` and `tts` on the robot: RSS,
+      CPU, temperature and throttle flags over an hour with a turn
+      every two minutes. Decision rule in section 12: the `robot` tier
+      only if endpoint-to-transcript p95 is under M-06's figure plus
+      500 ms and nothing throttles.
+- [ ] **M-R2: cue to motion** (S, sim then unit). Cue to first
+      state-feed delta p50 and p95 per primitive; the stall behaviour
+      under a held head at each fraction; amplitude, peak velocity and
+      settling time against the declared limits.
+- [ ] **M-R3: wake and direction of arrival on this array** (S, unit).
+      False accepts per hour and recall at section 6's ear gates on the
+      daemon's 16 kHz path; bearing error at eight angles; barge-in
+      through the chip's echo cancellation at conversation level.
+- [ ] **M-R4: battery** (S, unit). Runtime idle, in conversation, and
+      with tracking, by the clock to the LED's red; whether any
+      readable fact exists; whether it runs while charging. The card
+      says "battery level unknown" until this row exists.
+- [ ] **M-R5: the link** (S, sim then unit). Wi-Fi loss mid-turn and
+      mid-sentence: `cancel` raised, the pose settled, the one line on
+      reconnect; reconnection p50 and p95.
+- [ ] **M-R6: the household runtime on the Compute Module** (M, unit,
+      after v0.1, after RT-01). Bun, the pinned runtime, the embed model
+      and MiniCPM5-1B at Q4_K_M beside the daemon and the `pod`-tier
+      body on 4 GB: boots or not, first delta p95 with the prefix
+      cached, the hard rows. M-02's decision rule. A pass opens a
+      paired-unreachable mode for this body as its own design
+      amendment; a fail is recorded and the product table's wording
+      stands.
 
 ## Voice loop
 

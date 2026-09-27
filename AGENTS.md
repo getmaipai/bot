@@ -3,7 +3,12 @@
 The robot companion: a body that pairs with the hub like a pod, keeping a
 full replica of the household and running the same packages under the
 same rules, using the hub as its brain when reachable and its own model
-when not. Standalone it is a complete product, never a stub.
+when not. Standalone it is a complete product, never a stub. It runs on
+any supported body: the MaiPai build of `docs/dev/build-record.md`
+carries the standalone promise; Reachy Mini (Pollen Robotics) is the
+second body, a connected one whose turns the hub runs, designed in
+`docs/dev/design-reachy-mini-2026-09-27.md`. A body is a profile under
+`body/bodies/` behind one HAL seam, never a fork of anything above it.
 
 Org standards apply and are auto-loaded from the parent directory
 CLAUDE.md (source:

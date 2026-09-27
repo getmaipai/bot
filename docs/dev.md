@@ -97,6 +97,16 @@ Kept current as the record is amended (last: the outside review of
     on the bench Pi with no hub) and is tagged when hub v0.3 ships the
     link; adoption, replacement, face fusion, the Deno host, the room
     sensors and the Hailo provider come after the standalone proofs.
+11. MaiPai Bot is the robot companion on any supported body (added
+    2026-09-27, [`dev/design-reachy-mini-2026-09-27.md`](dev/design-reachy-mini-2026-09-27.md)):
+    the body's hardware layer is a set of profiles behind the one HAL
+    seam, each declaring its capabilities in the spec's vocabulary;
+    Reachy Mini is the second profile, running MaiPai as the daemon's
+    own app, a connected body whose turns the hub runs, its speech
+    placement chosen by measurement, its recorded moves a catalog
+    package and never a second expression vocabulary. Principle 2's
+    standalone promise stays the MaiPai build's until M-R6 says
+    otherwise.
 
 ### 1. Three modes, one product
 
@@ -393,7 +403,7 @@ bench and the screen all read:
 |---|---|---|---|
 | listen | wake, or a person addressing the robot before wake | eyes open toward the speaker's direction, a small yaw toward the direction of arrival, neck steady | mute engaged (eyes show the mute state instead) |
 | glance | a new speaker's direction, or plan `react` with a real physical target | a short yaw excursion toward the target and back, eyes leading the neck | no target with a fresh track; never a sweep through a person's face; `point` never invents a physical place for a source |
-| tilt | signal `question`, or plan `ask_back` | a small pitch change with a slight yaw and an eye pose; there is no roll axis, so the "curious tilt" is pitch and eyes, never a promised lateral tilt | the question is a safety refusal or a confirmation ask (a steady look instead) |
+| tilt | signal `question`, or plan `ask_back` | a small pitch change with a slight yaw and an eye pose; there is no roll axis on the MaiPai build, so the "curious tilt" is pitch and eyes there, never a promised lateral tilt (the Reachy Mini profile has roll and renders a real tilt: the bodies design, section 5) | the question is a safety refusal or a confirmation ask (a steady look instead) |
 | nod | signal `inform` with an allowed `react` or `say`, or a backchannel | one compact pitch dip and recovery; it means "heard you", never "saved that" or "that is true" | plan `say` forbidden by the guards (an unsupported claim), `defer`, a safety line, a tool failure |
 | perk | `happiness` at `moderate` or `high` with `react` allowed | a slight pitch rise, quicker but inside the envelope, eyes brightened | the companion forbids playfulness, the child band's negative-emotion rule, any intensity never exceeds the envelope |
 | attend | plan `care`, or `sadness` or `fear` at any intensity | a minimal orient and hold, a slower settle, eyes soft | never a dramatic imitation, never a shake, never an approach |
@@ -1335,13 +1345,37 @@ Python body pins that package at Home's version. This design pass
 confirms or amends that reading before STACK-17 starts; M-01 through
 M-10 are unchanged by it.
 
+## Bodies (2026-09-27)
+
+The owner ordered a Reachy Mini Wireless and asked for it to be an
+officially supported body. The design is
+[`dev/design-reachy-mini-2026-09-27.md`](dev/design-reachy-mini-2026-09-27.md):
+`bot` is the robot companion on any supported body; `body/bodies/`
+holds one profile per body (the MaiPai build of the build record, and
+Reachy Mini) behind the HAL seam BODY-02 names, each declaring its
+capabilities in the spec vocabulary so a hub with several robots of
+different kinds is several device rows and every renderer reads the
+list. On Reachy Mini, MaiPai is the daemon's own app; the hub runs
+every turn (a connected body, the first non-browser client of the
+hub's routes); speech is placed by measurement (the `pod` tier as the
+baseline, the `robot` tier if the Compute Module carries it); the
+primitive table gains a column with roll, the antennas and body yaw;
+the vendor's recorded emotions and dances are a catalog package on the
+plan's `react` slot; privacy is measured on an isolated network before
+the unit joins the household's; and everything the body cannot show or
+sense is labelled rather than claimed. Sections 1, 5, 9 and 10 above
+are unchanged for the MaiPai build; the design says where each applies
+to the second body. What "officially supported" means is its section
+13, and the work is the "Reachy Mini body" area of the backlog.
+
 ## Research notes
 
 - [`dev/research-minicpm5-reachy-mini-2026-09-27.md`](dev/research-minicpm5-reachy-mini-2026-09-27.md):
   MiniCPM5-1B (a third M-02 candidate, blocked on its tool-call format
   parsing through llama-server) and Reachy Mini (the closest prebuilt
   match to the section 5 expression layer; a hub-attached body, not a
-  standalone robot, on its 4 GB CM4). Neither decided.
+  standalone robot, on its 4 GB CM4). The Reachy half became the bodies
+  design above the same day; the MiniCPM5 half is undecided.
 
 ## Notes for later
 
