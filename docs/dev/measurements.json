@@ -1,0 +1,90 @@
+[
+  {
+    "primitive": "listen",
+    "frames": 53,
+    "cue_to_onset_ms": 118.498708,
+    "amplitude_rad": 0.4544618922233352,
+    "peak_velocity_rad_s": 2.486431738143788,
+    "cue_to_settled_ms": 1124.875375
+  },
+  {
+    "primitive": "glance",
+    "frames": 60,
+    "cue_to_onset_ms": 116.915958,
+    "amplitude_rad": 0.5354640964196428,
+    "peak_velocity_rad_s": 4.774192338779257,
+    "cue_to_settled_ms": 1260.3015
+  },
+  {
+    "primitive": "tilt",
+    "frames": 56,
+    "cue_to_onset_ms": 119.178833,
+    "amplitude_rad": 0.6284115578399276,
+    "peak_velocity_rad_s": 2.939564793203225,
+    "cue_to_settled_ms": 949.592583
+  },
+  {
+    "primitive": "nod",
+    "frames": 62,
+    "cue_to_onset_ms": 216.943875,
+    "amplitude_rad": 0.06864319104113478,
+    "peak_velocity_rad_s": 0.611443050439269,
+    "cue_to_settled_ms": 869.783875
+  },
+  {
+    "primitive": "perk",
+    "frames": 51,
+    "cue_to_onset_ms": 83.779375,
+    "amplitude_rad": 0.7850883947174385,
+    "peak_velocity_rad_s": 6.74132489391723,
+    "cue_to_settled_ms": 738.3505
+  },
+  {
+    "primitive": "attend",
+    "frames": 62,
+    "cue_to_onset_ms": 183.513208,
+    "amplitude_rad": 0.25161499003787063,
+    "peak_velocity_rad_s": 0.9320647555873736,
+    "cue_to_settled_ms": 1113.171375
+  },
+  {
+    "primitive": "settle",
+    "frames": 68,
+    "cue_to_onset_ms": 840.150958,
+    "amplitude_rad": 0.01809034518661036,
+    "peak_velocity_rad_s": 0.05304413324978507,
+    "cue_to_settled_ms": 978.159833
+  },
+  {
+    "primitive": "breathe",
+    "frames": 45,
+    "cue_to_onset_ms": 45.621167,
+    "amplitude_rad": 0.15713719694031195,
+    "peak_velocity_rad_s": 2.0110802489024326,
+    "cue_to_settled_ms": 319.546292
+  },
+  {
+    "primitive": "track",
+    "frames": 45,
+    "cue_to_onset_ms": 74.671666,
+    "amplitude_rad": 0.391495354519657,
+    "peak_velocity_rad_s": 4.59318533016168,
+    "cue_to_settled_ms": 865.557916
+  },
+  {
+    "primitive": "speak",
+    "frames": 45,
+    "cue_to_onset_ms": 10.509167,
+    "amplitude_rad": 0.1571488552062877,
+    "peak_velocity_rad_s": 2.836929708678061,
+    "cue_to_settled_ms": 286.193
+  },
+  {
+    "primitive": "stop",
+    "frames": 45,
+    "cue_to_onset_ms": null,
+    "amplitude_rad": 0.0009012728956685903,
+    "peak_velocity_rad_s": 0.014520750782725845,
+    "cue_to_settled_ms": null
+  }
+]

@@ -1385,6 +1385,39 @@ flat-layout autodiscovery across the whole spec workspace, and RM-01
 needs no spec shapes to proceed (see the comment in
 `body/pyproject.toml`).
 
+**Landed 2026-09-27 (EXPR-01, RM-02):**
+`body/maipai_body/expression/` maps a cue to a primitive
+(`cue.py`), checks the suppression table (`suppression.py`), and
+renders the primitive on the Reachy Mini profile through the HAL seam
+(`reachy_mini_renderer.py`), scaled by fractions of the profile's
+declared axis limits (`envelope.py`). Both items stay unchecked in
+`docs/BACKLOG.md`: there is no arbitration or blending limiter yet
+(each primitive issues its own commands independently), body yaw does
+not yet follow the head past its delta limit, and there is no `muted`
+pose (this profile has no mute mechanism at all yet). `EXPR-01`'s own
+pointer names `body/head/controller.py` (BODY-04) as the actuator;
+BODY-04 does not exist (it needs the MaiPai build's own physical
+calibration run), so this was built against the seam's generic
+`HeadActuator` instead, the reading recorded here rather than guessed
+silently. M-R2's simulator rows (cue-to-onset, amplitude, peak
+velocity, settling time, all eleven primitives) were recorded from a
+real run against `reachy-mini-daemon` 1.11.0, in
+`docs/dev/measurements.md`.
+
+**Privacy finding, 2026-09-27 (worth carrying into RM-07):** running
+the simulator on a dev Mac, the daemon's own media pipeline falls back
+to the host machine's real microphone as its audio input source
+whenever no Reachy Mini audio hardware is found ("No Reachy Mini Audio
+Source card found... using default audio source" on every sim start),
+with no consent prompt. Nothing in `body/`'s own code reads that
+stream (`get_audio_sample()` is never called outside the seam's own
+pass-through), but the daemon itself holds the input open. `--no-media`
+avoids it entirely for testing that does not need audio. On the real
+unit this is moot (the array is the only input device), but it is
+exactly the kind of vendor behavior `dev.md` section 9 already says
+must be measured before trust, and belongs in RM-07's isolated-network
+capture.
+
 ## Research notes
 
 - [`dev/research-minicpm5-reachy-mini-2026-09-27.md`](dev/research-minicpm5-reachy-mini-2026-09-27.md):

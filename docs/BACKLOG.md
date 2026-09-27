@@ -315,6 +315,21 @@ the image release and the profile id in the header.
       (cue to first state-feed delta, amplitude, peak velocity, settling
       time per primitive) recorded. Out of scope: the unit's numbers.
       Exit: `bash scripts/check.sh` and the recorded rows.
+      **Not fully landed**, box stays unchecked: body yaw does not yet
+      follow the head past the 65-degree delta limit (that is a
+      tracking-loop behavior, EXPR-04's, not one primitive's own
+      render) and there is no rendered `muted` pose yet (this profile
+      has no mute mechanism wired up at all; `physical_cuts` is empty
+      and no software mute exists to render against). "Device-scope
+      settings" is a Python dict (`expression/envelope.py`) with a
+      source and date, the same shape as `profile.py`'s axes, since no
+      settings store exists in this repo yet. Landed and verified:
+      every other primitive (listen, glance, tilt, nod, perk, attend,
+      settle, breathe, track, speak, stop) renders on this profile
+      through the HAL seam, `minjerk` for the goto-driven primitives,
+      `set_target` for exactly track/breathe/speak/stop; M-R2's rows
+      recorded in `docs/dev/measurements.md` from a real run against
+      `reachy-mini-daemon` 1.11.0.
 - [ ] **RM-03: the app packaging and the install scripts** (S, sim).
       Objective: `maipai-bot` as a Python package exposing
       `MaiPaiBody(ReachyMiniApp)` under the `reachy_mini_apps`
@@ -611,6 +626,27 @@ written and reviewed before any of the others is coded.
       thermal, mute, stale track) holds for each; a physical run's
       encoder trace per primitive recorded. Out of scope: the engine's
       cues. Exit: `bash scripts/check.sh`.
+      **Not fully landed**, box stays unchecked: no arbitration
+      controller and no blending limiter exist (`dev.md` section 5's
+      priority order and "a full-amplitude track plus an expression is
+      never summed and clipped after" rule are unimplemented; each
+      primitive issues its own commands independently, with nothing
+      stopping two from firing back to back). Built at
+      `body/maipai_body/expression/` against the HAL seam's generic
+      `HeadActuator`, not `body/head/controller.py` (BODY-04): BODY-04
+      and the MaiPai build's own profile do not exist yet (they need
+      the owner's physical calibration run), and the seam is what both
+      bodies' controllers implement, so this is the more general
+      reading of "the only actuator," recorded here rather than
+      guessed silently. Landed and verified: the cue-to-primitive
+      mapping (`cue.py`), the suppression table for the six named
+      reasons (`suppression.py`), every primitive rendering from a
+      scripted bench sequence (`scripted_source.py`, `engine.py`)
+      against the fake in the deterministic suite, and a real run's
+      state-feed trace per primitive recorded in
+      `docs/dev/measurements.md` (Reachy Mini has no encoders; the
+      state feed is RM-01's own stand-in, same as its acceptance
+      already established).
 - [ ] **EXPR-02: motion onset measurement** (S, after EXPR-01 and
       VOICE-01). Objective: the stamps of `dev.md` section 5
       (`t_heard`, `t_cue_emitted`, `t_cue_received`, `t_motion_command`,
