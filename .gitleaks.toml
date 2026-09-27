@@ -1,0 +1,19 @@
+title = "MaiPai Bot gitleaks config"
+
+# Extends gitleaks' own default rule set (no rules redefined here) - this
+# file exists only to skip one known false positive, never to weaken
+# detection.
+[extend]
+useDefault = true
+
+# `body/maipai_body/bodies/reachy_mini/fixtures/README.md` documents the
+# sha256 checksum of the recorded `openapi.json` fixture (a public
+# schema fetched from a local simulator, never a credential). The 64
+# hex character checksum trips gitleaks' entropy-based generic-api-key
+# rule; every future fixture recording will produce a different hash in
+# the same spot, so this allowlists the file, not today's specific
+# value.
+[allowlist]
+paths = [
+  '''(^|/)bodies/reachy_mini/fixtures/README\.md$''',
+]

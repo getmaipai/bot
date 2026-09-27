@@ -23,10 +23,10 @@ bench-proven on real hardware and is preserved locally as a reference,
 never as a requirement of what gets rebuilt.
 
 MaiPai Bot runs on more than one body. The MaiPai build (the robot in
-the build guide) is in build; Reachy Mini by Pollen Robotics is in
-design ([docs/dev/design-reachy-mini-2026-09-27.md](docs/dev/design-reachy-mini-2026-09-27.md)),
-and neither is supported until every row of that design's section 13
-is true.
+the build guide) is in build; Reachy Mini by Pollen Robotics
+([docs/dev/design-reachy-mini-2026-09-27.md](docs/dev/design-reachy-mini-2026-09-27.md))
+is in build too, behind the same HAL seam, and neither is supported
+until every row of that design's section 13 is true.
 
 ## Development
 

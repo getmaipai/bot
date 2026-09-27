@@ -1,0 +1,27 @@
+{
+  "type": "daemon_status",
+  "robot_name": "reachy_mini",
+  "state": "running",
+  "wireless_version": false,
+  "desktop_app_daemon": false,
+  "simulation_enabled": true,
+  "mockup_sim_enabled": false,
+  "no_media": false,
+  "media_released": false,
+  "camera_specs_name": "mujoco",
+  "backend_status": {
+    "motor_control_mode": "enabled",
+    "error": null
+  },
+  "error": null,
+  "wlan_ip": null,
+  "version": "1.11.0",
+  "hardware_id": null,
+  "face_target": {
+    "detected": false,
+    "x": null,
+    "y": null,
+    "roll": null,
+    "ts": null
+  }
+}

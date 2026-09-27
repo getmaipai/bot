@@ -276,7 +276,7 @@ the image release and the profile id in the header.
       TypeScript and Python; the tag is bumped and `bot` pins it.
       Out of scope: any renderer. Exit: `commons` `bash
       scripts/check.sh` and the tag.
-- [ ] **RM-01: the profile and the daemon client** (M, sim). Objective:
+- [x] **RM-01: the profile and the daemon client** (M, sim). Objective:
       `body/bodies/reachy_mini/` wraps the `reachy-mini` SDK (PyPI,
       Apache-2.0) behind the HAL seam BODY-02 names, declaring the
       profile (section 2) from RM-00's ids: the state feed from
@@ -292,6 +292,15 @@ the image release and the profile id in the header.
       declaration is the one place the axes and limits are named;
       `scripts/check.sh` runs the body block. Out of scope: expression,
       speech. Exit: `bash scripts/check.sh` and the simulator run.
+      Verified at this commit: `bash scripts/check.sh` green (the body
+      block runs Ruff, `ruff format --check` and the deterministic
+      pytest suite); the full suite (15 tests) also run and passed live
+      against `reachy-mini-daemon` 1.11.0 in `--sim --headless` mode
+      with `MAIPAI_BODY_LIVE=1`, including a real goto-then-hold trace
+      recorded into `fixtures/state_frames.jsonl` and a real connection
+      loss (closing the daemon socket underneath a live client) proving
+      `BodyLost`. Not run: anything needing the physical unit (up to 90
+      days out per the design record).
 - [ ] **RM-02: the expression column on the simulator** (M, sim, with
       EXPR-01). Objective: the primitive table's Reachy Mini column
       (section 5: roll for the tilt, the antennas as a channel, body

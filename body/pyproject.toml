@@ -1,0 +1,62 @@
+[project]
+name = "maipai-body"
+version = "0.1.0"
+description = "MaiPai Bot: the Python body that owns hardware behind the HAL seam, one profile per supported body."
+requires-python = ">=3.12"
+dependencies = [
+    "reachy-mini[mujoco]==1.11.0",
+    "pydantic>=2.13,<3",
+    "websockets>=15.0,<16",
+    "requests>=2.34,<3",
+    # AGENTS.md names maipai-spec, pinned at the same tag Home pins
+    # (spec-v0.1.48), as this body's dependency once it consumes spec
+    # shapes. Not pinned yet: commons/spec/pyproject.toml has no
+    # [build-system] table, so `pip`/`uv` fall back to setuptools'
+    # legacy flat-layout autodiscovery over the whole spec/ workspace
+    # and refuse to build ("Multiple top-level packages discovered":
+    # ui, llm, gen, vocab, voice, stack, safety, errors, records,
+    # schemas, settings, fixtures, emulators, streaming, diagnostics,
+    # interpreters) -- nobody has made this git-installable pattern
+    # work yet. RM-01 needs no spec shapes (the HAL seam's own pydantic
+    # models are self-contained; household-record shapes are RT-00
+    # onward, which AGENTS.md already says this repo waits on), so this
+    # profile does not block on it. Add the pin back once commons/spec
+    # ships real packaging metadata (a commons issue, not this repo's
+    # to fix unilaterally).
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.16",
+]
+
+[tool.uv]
+# reachy-mini pulls PyGObject only under sys_platform == "linux" (a
+# gstreamer-bundle wheel covers macOS and Windows instead); universal
+# locking still tries to resolve PyGObject's metadata by building its
+# sdist with this host's toolchain, which fails on a bench Mac with no
+# cairo/pkg-config installed. RM-01's bench is the dev Mac
+# (docs/dev/design-reachy-mini-2026-09-27.md section 12: "the simulator
+# is the bench until the unit arrives"); the robot's own Linux install
+# goes through RM-03's wheel and scripts/install-reachy.sh, not this
+# lockfile, so scoping resolution to darwin is honest, not a workaround.
+environments = ["sys_platform == 'darwin'"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["maipai_body"]

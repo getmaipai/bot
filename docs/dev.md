@@ -1368,6 +1368,23 @@ are unchanged for the MaiPai build; the design says where each applies
 to the second body. What "officially supported" means is its section
 13, and the work is the "Reachy Mini body" area of the backlog.
 
+**Landed 2026-09-27 (RM-01):** `body/bodies/reachy_mini/` wraps the
+`reachy-mini` SDK (pinned `1.11.0`) behind the HAL seam declared in
+`body/hal/seam.py`, with `profile.py` as the one place this body's
+numeric limits appear (pitch and roll +/-40 degrees, head yaw +/-180
+degrees, body yaw +/-160 degrees, the head-to-body delta 65 degrees,
+all from the design record's section 1; the antenna range +/-pi radians,
+read live from the daemon's own `/api/kinematics/urdf`) and a fake
+(`fake.py`) that replays a real goto-then-hold trace recorded against
+the MuJoCo simulator (`fixtures/`). The suite runs on the fake always
+and on the live simulator when `MAIPAI_BODY_LIVE=1`; both passed on
+this commit. The `maipai-spec` pin AGENTS.md names is not yet in
+`body/pyproject.toml`: `commons/spec/pyproject.toml` has no
+`[build-system]` table, so a git-installed build fails on setuptools'
+flat-layout autodiscovery across the whole spec workspace, and RM-01
+needs no spec shapes to proceed (see the comment in
+`body/pyproject.toml`).
+
 ## Research notes
 
 - [`dev/research-minicpm5-reachy-mini-2026-09-27.md`](dev/research-minicpm5-reachy-mini-2026-09-27.md):
