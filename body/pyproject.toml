@@ -21,6 +21,9 @@ dependencies = [
     # `commons/spec` is pip-installable.
 ]
 
+[project.entry-points."reachy_mini_apps"]
+maipai_body = "maipai_body.app:MaiPaiBody"
+
 [dependency-groups]
 dev = [
     "pytest>=8.3",

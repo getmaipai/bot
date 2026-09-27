@@ -315,8 +315,25 @@ the image release and the profile id in the header.
       (cue to first state-feed delta, amplitude, peak velocity, settling
       time per primitive) recorded. Out of scope: the unit's numbers.
       Exit: `bash scripts/check.sh` and the recorded rows.
-- [ ] **RM-03: the app packaging and the install scripts** (S, sim).
-      Objective: `maipai-bot` as a Python package exposing
+- [x] **RM-03: the app packaging and the install scripts** (S, sim).
+      Verified at this commit: the daemon's `/api/apps/list-available`
+      showed `maipai_body` after `uv sync` installed it into the same
+      venv as `reachy-mini-daemon`; `start-app`/`stop-current-app`
+      against the simulator ran it cleanly (state logged at each
+      transition, motors disabled and released on stop, done twice);
+      `scripts/build-space.sh` assembled `dist/space/` from a built
+      wheel; unit tests drove `MaiPaiBody`'s run loop against the fake
+      and a plain `threading.Event`, including a simulated `BodyLost`
+      mid-hold. Not run: `scripts/install-reachy.sh` end to end (no
+      unit; its argument validation and idempotent-reinstall command
+      were exercised, its SSH steps were not). The app was hand-written
+      to the shape `reachy-mini-app-assistant create` scaffolds (a
+      `ReachyMiniApp` subclass, the entry-point group, the
+      `wrapped_run`/`stop` `__main__` block, confirmed by scaffolding it
+      into a scratch directory and comparing) rather than by running
+      the assistant against `body/` itself, since its scaffold writes a
+      fresh setuptools project and would have discarded RM-01's uv
+      layout. Objective: `maipai-bot` as a Python package exposing
       `MaiPaiBody(ReachyMiniApp)` under the `reachy_mini_apps`
       entry-point group, scaffolded with `reachy-mini-app-assistant`
       and run by the daemon as its app (section 3); `scripts/

@@ -254,18 +254,24 @@ class ReachyMiniBody:
     imu: Imu
     sdk: ReachyMini
     connection: ConnectionState
+    owns_sdk: bool = True
 
     def reconnect(self) -> None:
         """Clear the lost flag once the daemon connection is re-established."""
         self.connection.clear()
 
     def close(self) -> None:
-        self.sdk.__exit__(None, None, None)
+        """Disconnect the SDK, unless something else owns its lifecycle.
+
+        `wrap_connected_sdk` sets `owns_sdk=False`: the daemon's own app
+        framework connected that `ReachyMini` instance and tears it down
+        itself when `run()` returns, so this body must not double-close it.
+        """
+        if self.owns_sdk:
+            self.sdk.__exit__(None, None, None)
 
 
-def build_live_body(host: str = "localhost", port: int = 8000) -> ReachyMiniBody:
-    """Connect to a running reachy-mini-daemon and wire up the seam."""
-    sdk = ReachyMini(host=host, port=port, spawn_daemon=False)
+def _wire_seam(sdk: ReachyMini, host: str, port: int, owns_sdk: bool) -> ReachyMiniBody:
     state = ConnectionState()
     return ReachyMiniBody(
         profile=PROFILE,
@@ -276,4 +282,23 @@ def build_live_body(host: str = "localhost", port: int = 8000) -> ReachyMiniBody
         imu=ReachyMiniImu(sdk, state),
         sdk=sdk,
         connection=state,
+        owns_sdk=owns_sdk,
     )
+
+
+def build_live_body(host: str = "localhost", port: int = 8000) -> ReachyMiniBody:
+    """Connect to a running reachy-mini-daemon and wire up the seam."""
+    sdk = ReachyMini(host=host, port=port, spawn_daemon=False)
+    return _wire_seam(sdk, host, port, owns_sdk=True)
+
+
+def wrap_connected_sdk(
+    sdk: ReachyMini, host: str = "localhost", port: int = 8000
+) -> ReachyMiniBody:
+    """Wire the seam around an already-connected `ReachyMini` instance.
+
+    Used by the app entry point (`app.py`): the daemon's own
+    `ReachyMiniApp.wrapped_run` constructs and connects the SDK object
+    before handing it to `run()`, so this body never closes it.
+    """
+    return _wire_seam(sdk, host, port, owns_sdk=False)
