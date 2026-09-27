@@ -1,0 +1,47 @@
+[project]
+name = "maipai-body"
+version = "0.1.0"
+description = "MaiPai Bot: the Python body behind the HAL seam (hardware and speech services)."
+requires-python = ">=3.12"
+dependencies = [
+    "reachy-mini[mujoco]==1.11.0",
+    "pydantic>=2.13",
+    "websockets>=15.0",
+    "requests>=2.32",
+    # maipai-spec is not yet a dependency here: pinning it as AGENTS.md
+    # describes (`git+https://github.com/getmaipai/commons@spec-v0.1.48
+    # #subdirectory=spec`) fails to build. `commons/spec` has no
+    # `[build-system]` table and its root holds sixteen top-level
+    # directories (ui, llm, gen, vocab, ...), most of them not Python at
+    # all; setuptools' default package discovery refuses with "Multiple
+    # top-level packages discovered in a flat-layout" for any consumer,
+    # not just uv. Verified 2026-09-27 with `uv sync` against
+    # spec-v0.1.48. RM-01 reads and writes no spec record (that is
+    # RT-02's job), so nothing here needs it yet; re-add it once
+    # `commons/spec` is pip-installable.
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.6",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+markers = [
+    "live: needs a running reachy-mini-daemon on localhost:8000 (MAIPAI_BODY_LIVE=1)",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["maipai_body"]

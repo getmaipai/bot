@@ -276,7 +276,16 @@ the image release and the profile id in the header.
       TypeScript and Python; the tag is bumped and `bot` pins it.
       Out of scope: any renderer. Exit: `commons` `bash
       scripts/check.sh` and the tag.
-- [ ] **RM-01: the profile and the daemon client** (M, sim). Objective:
+- [x] **RM-01: the profile and the daemon client** (M, sim). Verified at
+      this commit: `bash scripts/check.sh` green (Ruff, `ruff format
+      --check`, pytest); the deterministic suite passed on the fake and,
+      separately, live against `reachy-mini-daemon --sim --headless` on
+      the simulator (`MAIPAI_BODY_LIVE=1`), including a goto reaching the
+      daemon, an out-of-envelope goto raising before the daemon saw it,
+      `hold()` stopping motion, monotonic state frames, and a simulated
+      connection loss refusing further commands. `maipai-spec` is not
+      pinned (see the landed note in `dev.md`'s "Bodies" section). Not
+      run: anything against the physical unit (not yet owned). Objective:
       `body/bodies/reachy_mini/` wraps the `reachy-mini` SDK (PyPI,
       Apache-2.0) behind the HAL seam BODY-02 names, declaring the
       profile (section 2) from RM-00's ids: the state feed from

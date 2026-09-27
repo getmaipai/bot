@@ -1368,6 +1368,17 @@ are unchanged for the MaiPai build; the design says where each applies
 to the second body. What "officially supported" means is its section
 13, and the work is the "Reachy Mini body" area of the backlog.
 
+**Landed 2026-09-27 (RM-01):** `body/` is a uv project; `body/bodies/
+reachy_mini/` wraps the `reachy-mini` SDK (1.11.0) behind `body/hal/
+seam.py`, with a fake replaying fixtures recorded from Pollen's
+simulator. The profile is the sole source of this body's limits (pitch
+and roll +/-40 degrees, head yaw +/-180 degrees, body yaw +/-160
+degrees, the head-to-body delta at 65 degrees, the antenna range from
+the SDK's own URDF), proven live against the simulator as well as on
+the fake. `maipai-spec` is not yet a dependency: `commons/spec`
+(checked at spec-v0.1.48) has no `[build-system]` table and fails to
+build as an installable package; deferred until that is fixed.
+
 ## Research notes
 
 - [`dev/research-minicpm5-reachy-mini-2026-09-27.md`](dev/research-minicpm5-reachy-mini-2026-09-27.md):
