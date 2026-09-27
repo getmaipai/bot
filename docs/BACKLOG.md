@@ -101,7 +101,11 @@ does not.
       first.
 - [ ] **M-02: the chat model on the Pi** (M). Objective: the hub's real
       rendered prompt with the ordinary tool set, three seeded fixture
-      runs per candidate (Qwen3-1.7B, Qwen3-4B, Q4_K_M, llama-server
+      runs per candidate (Qwen3-1.7B, Qwen3-4B, and MiniCPM5-1B as the
+      third candidate since 2026-09-27, see
+      `dev/research-minicpm5-reachy-mini-2026-09-27.md`: its XML tool
+      calls must parse to `tool_calls` through llama-server before its
+      latency run counts; Q4_K_M, llama-server
       pinned to four cores, `--cache-reuse 256`), first delta p50 and
       p95, generation rate, RSS, and the quality gates in the same run:
       the fixture's hard rows (credential, cross-person, unsafe-and-

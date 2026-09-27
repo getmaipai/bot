@@ -1335,6 +1335,14 @@ Python body pins that package at Home's version. This design pass
 confirms or amends that reading before STACK-17 starts; M-01 through
 M-10 are unchanged by it.
 
+## Research notes
+
+- [`dev/research-minicpm5-reachy-mini-2026-09-27.md`](dev/research-minicpm5-reachy-mini-2026-09-27.md):
+  MiniCPM5-1B (a third M-02 candidate, blocked on its tool-call format
+  parsing through llama-server) and Reachy Mini (the closest prebuilt
+  match to the section 5 expression layer; a hub-attached body, not a
+  standalone robot, on its 4 GB CM4). Neither decided.
+
 ## Notes for later
 
 Not actionable yet. Captured so the pre-rebuild robot's hard-won numbers
