@@ -1502,8 +1502,23 @@ the output stream once across repeated pushes and keeps a timestamped
 ledger, cleared on `stop()`, for G8's future barge-in accounting. 12 new
 deterministic tests (exact 93-block count from a synthetic 3 s WAV,
 exact 0.3 s pre-roll sizing, idempotent stream-open, ledger duration,
-raises-after-disconnect) pass alongside the full suite (140 passed, 7
-skipped). Live-verified against the real `reachy-mini-daemon --sim`:
+raises-after-disconnect) pass alongside the full suite (142 passed, 7
+skipped). A `code-review` medium pass on this diff found six real gaps,
+all fixed before commit: the seam's own completeness test
+(`test_hal_seam.py`) hadn't been extended for the six new `AudioIO`
+methods, so it silently stopped guarding the exact contract it exists
+to check; `AudioCapture.start()`/`stop()` had no idempotency guard,
+unlike `AudioPlayback`'s, so a second `start()` mid-recording would
+have discarded the pre-roll ring; `poll_blocks()` re-concatenated the
+whole growing buffer on every loop iteration, O(n^2) against a real
+queue backlog, now collected into a list and concatenated once;
+`BLOCK_SAMPLES` was hardcoded despite the seam's own "never assume
+16 kHz" contract, now derived from the stream's real reported rate in
+`start()`; the fake's replay-from-start semantics on a second
+`start_recording()` were undocumented, now a docstring says why; and
+three tests reached into the fake's private `_mic_cursor`/`_mic_samples`
+instead of asserting on `poll_blocks()`'s own public return value, now
+fixed. Live-verified against the real `reachy-mini-daemon --sim`:
 captured 3.46 s of real queued audio to a 16 kHz mono WAV over a 5 s
 window, pushed a 1 kHz tone with no exceptions or underrun warnings.
 Found and fixed along the way, not previously documented: a cached

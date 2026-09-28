@@ -36,12 +36,11 @@ def test_a_3s_fixture_yields_about_94_blocks_of_512_mono_samples(tmp_path):
     capture = AudioCapture(client)
     capture.start()
 
-    blocks: list[np.ndarray] = []
-    while True:
-        new_blocks = capture.poll_blocks()
-        if not new_blocks and client._mic_cursor >= len(client._mic_samples):
-            break
-        blocks.extend(new_blocks)
+    # A single poll_blocks() call drains the whole fixture (it loops
+    # get_audio_sample() internally until the fake returns None), so one
+    # call is all a fully-drained read needs - see the next test for the
+    # explicit assertion of that behavior.
+    blocks = capture.poll_blocks()
 
     # 3 s at 16 kHz / 512 samples per block = 93.75 - 93 whole blocks, the
     # last partial one held as leftover rather than padded or dropped.
@@ -65,7 +64,9 @@ def test_a_single_poll_drains_every_buffer_queued_since_the_last_one(tmp_path):
     blocks = capture.poll_blocks()
 
     assert len(blocks) == 93
-    assert client._mic_cursor >= len(client._mic_samples)
+    # Exhausted: a second poll gets nothing more, the same public signal a
+    # real caller would see once the daemon's own queue runs dry.
+    assert capture.poll_blocks() == []
 
 
 def test_the_preroll_ring_holds_the_last_0_3_seconds(tmp_path):
@@ -75,11 +76,7 @@ def test_the_preroll_ring_holds_the_last_0_3_seconds(tmp_path):
     client = FakeReachyMiniClient(microphone_wav=wav_path)
     capture = AudioCapture(client)
     capture.start()
-
-    while True:
-        new_blocks = capture.poll_blocks()
-        if not new_blocks and client._mic_cursor >= len(client._mic_samples):
-            break
+    capture.poll_blocks()  # one call drains the whole fixture
 
     preroll = capture.preroll()
     # Rounds up, not to nearest: the ring must hold at least 0.3 s.
@@ -99,6 +96,26 @@ def test_poll_blocks_returns_nothing_before_start_or_under_one_block(tmp_path):
 
     capture.start()
     assert capture.poll_blocks() == []  # under one block's worth queued
+
+
+def test_start_is_idempotent_and_keeps_the_preroll_ring(tmp_path):
+    """A second start() call mid-recording must not discard what
+    poll_blocks() already captured into the pre-roll ring - it would, if
+    start() called the client's start_recording() again unconditionally,
+    since the fake resets its own cursor on every start_recording() call."""
+    wav_path = tmp_path / "tone-1s.wav"
+    _write_tone_wav(wav_path, seconds=1.0)
+
+    client = FakeReachyMiniClient(microphone_wav=wav_path)
+    capture = AudioCapture(client)
+    capture.start()
+    capture.poll_blocks()
+    preroll_before = capture.preroll()
+    assert len(preroll_before) > 0
+
+    capture.start()  # idempotent: already recording, must be a no-op
+
+    assert np.array_equal(capture.preroll(), preroll_before)
 
 
 def test_poll_blocks_raises_after_a_connection_loss_like_any_other_seam_call():

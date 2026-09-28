@@ -7,7 +7,17 @@ from maipai_body.bodies.reachy_mini.fake import FakeReachyMiniClient
 
 _SEAM_METHODS = {
     "HeadActuator": ["goto", "set_target", "hold", "enable", "disable"],
-    "AudioIO": ["get_audio_sample", "push_audio_sample", "get_doa"],
+    "AudioIO": [
+        "start_recording",
+        "stop_recording",
+        "get_audio_sample",
+        "get_input_audio_samplerate",
+        "start_playing",
+        "push_audio_sample",
+        "stop_playing",
+        "get_output_audio_samplerate",
+        "get_doa",
+    ],
     "Camera": ["get_frame"],
     "Imu": ["read"],
     "FaceTracker": ["enable_tracking", "disable_tracking", "get_face_target"],

@@ -20,7 +20,8 @@ import numpy.typing as npt
 
 from maipai_body.hal.seam import AudioIO
 
-BLOCK_SAMPLES = 512  # 32 ms at 16 kHz - EXPR-01's own "one control tick" scale
+BLOCK_DURATION_S = 0.032  # 32 ms - EXPR-01's own "one control tick" scale
+BLOCK_SAMPLES = 512  # BLOCK_DURATION_S at 16 kHz, the only rate any real body reports today
 PRE_ROLL_S = 0.3
 
 
@@ -36,7 +37,9 @@ class AudioCapture:
 
     def __init__(self, client: AudioIO) -> None:
         self._client = client
+        self._recording = False
         self._sample_rate = 0
+        self._block_samples = BLOCK_SAMPLES  # sized to the real rate once start() knows it
         self._leftover: npt.NDArray[np.float32] = np.zeros(0, dtype=np.float32)
         preroll_blocks = 1  # replaced once start() knows the real sample rate
         self._preroll: deque[npt.NDArray[np.float32]] = deque(maxlen=preroll_blocks)
@@ -44,18 +47,31 @@ class AudioCapture:
     def start(self) -> None:
         """Open the input stream and size the pre-roll ring to at least 0.3 s.
 
-        Rounds up to a whole block count: a wake word's leading syllable
-        must not be clipped, so the ring holds slightly more than 0.3 s
-        rather than rounding to the nearest block and risking less.
+        Idempotent, like :meth:`AudioPlayback.start`: a second call while
+        already recording would otherwise discard ``_leftover`` and the
+        pre-roll ring for no reason. Sizes ``_block_samples`` from the
+        stream's own reported rate rather than assuming 16 kHz - the seam's
+        own contract (``hal/seam.py``) - even though every real body today
+        happens to report that rate. Rounds the pre-roll ring up to a whole
+        block count: a wake word's leading syllable must not be clipped, so
+        the ring holds slightly more than 0.3 s rather than rounding to the
+        nearest block and risking less.
         """
+        if self._recording:
+            return
         self._client.start_recording()
+        self._recording = True
         self._sample_rate = self._client.get_input_audio_samplerate()
-        preroll_blocks = max(1, math.ceil((PRE_ROLL_S * self._sample_rate) / BLOCK_SAMPLES))
+        self._block_samples = round(BLOCK_DURATION_S * self._sample_rate)
+        preroll_blocks = max(1, math.ceil((PRE_ROLL_S * self._sample_rate) / self._block_samples))
         self._preroll = deque(maxlen=preroll_blocks)
         self._leftover = np.zeros(0, dtype=np.float32)
 
     def stop(self) -> None:
+        if not self._recording:
+            return
         self._client.stop_recording()
+        self._recording = False
 
     def poll_blocks(self) -> list[npt.NDArray[np.float32]]:
         """Drain whatever is queued right now into complete 32 ms mono blocks.
@@ -74,20 +90,25 @@ class AudioCapture:
         for no documented benefit. Returns ``[]``, never ``None``, when
         nothing new is queued.
         """
-        buffer = self._leftover
+        # Collected into a list and concatenated once at the end, not
+        # re-concatenated on every loop iteration: a real queue backlog of
+        # many small buffers would otherwise copy the whole growing buffer
+        # each time, turning a catch-up poll into O(n^2) work.
+        chunks = [self._leftover]
         while True:
             sample = self._client.get_audio_sample()
             if sample is None:
                 break
             mono = sample[:, 0] if sample.ndim == 2 else sample
-            buffer = np.concatenate([buffer, mono.astype(np.float32)])
-        n_blocks = len(buffer) // BLOCK_SAMPLES
+            chunks.append(mono.astype(np.float32))
+        buffer = np.concatenate(chunks)
+        n_blocks = len(buffer) // self._block_samples
         blocks: list[npt.NDArray[np.float32]] = []
         for i in range(n_blocks):
-            block = buffer[i * BLOCK_SAMPLES : (i + 1) * BLOCK_SAMPLES]
+            block = buffer[i * self._block_samples : (i + 1) * self._block_samples]
             blocks.append(block)
             self._preroll.append(block)
-        self._leftover = buffer[n_blocks * BLOCK_SAMPLES :]
+        self._leftover = buffer[n_blocks * self._block_samples :]
         return blocks
 
     def preroll(self) -> npt.NDArray[np.float32]:

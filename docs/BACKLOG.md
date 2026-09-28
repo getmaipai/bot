@@ -635,6 +635,22 @@ the image release and the profile id in the header.
       `None` indistinguishable from a live mic's idle `None` - fine for
       a fixture sized to its test's own polling window, a footgun for
       one that isn't.
+      A second `/code-review medium` pass (parallel session, same commit's
+      diff) caught six more before this follow-up: `test_hal_seam.py`'s
+      own `AudioIO` completeness list still named the pre-G1 three
+      methods, silently no longer guarding the six new ones; `poll_blocks()`
+      re-concatenated the whole growing buffer on every loop iteration
+      (`O(n^2)` against a real queue backlog), now collected into a list
+      and concatenated once; `BLOCK_SAMPLES` was a fixed 512 despite the
+      seam's own "never assume 16 kHz" docstring, now derived from
+      `get_input_audio_samplerate()` in `start()`; `AudioCapture.start()`/
+      `stop()` had no idempotency guard unlike `AudioPlayback`'s, so a
+      stray second `start()` mid-recording silently dropped the pre-roll
+      ring; the fake's replay-from-start semantics on a second
+      `start_recording()` were undocumented, now a docstring says why;
+      three tests reached into the fake's private `_mic_cursor`/
+      `_mic_samples` for loop control instead of asserting on
+      `poll_blocks()`'s own public return, now fixed. Re-reviewed clean.
 
 ## Voice loop
 

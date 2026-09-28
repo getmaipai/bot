@@ -219,6 +219,12 @@ class FakeReachyMiniClient:
     # loaded once, duplicated to stereo if it was recorded mono.
 
     def start_recording(self) -> None:
+        """Resets the cursor to 0 on every call, replaying the fixture from
+        the start rather than resuming - deliberate fake semantics, not a
+        real microphone's behavior: each test constructs one client per
+        utterance it wants to feed, so a start/stop/start within the same
+        test is "the next test wants the same fixture again," never "the
+        mic kept recording while stopped."""
         self._require_connected()
         self._recording = True
         self._mic_cursor = 0
