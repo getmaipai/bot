@@ -18,9 +18,12 @@ your family.
 
 Fresh rebuild in progress. This repo was reset to a clean history on
 2026-09-03 to start over on the platform design (see
-[docs/dev.md](docs/dev.md)); nothing runs yet. The prior version was
-bench-proven on real hardware and is preserved locally as a reference,
-never as a requirement of what gets rebuilt.
+[docs/dev.md](docs/dev.md)). As of v0.1.0, Reachy Mini moves, expresses
+itself, tracks a face, captures and plays audio, and listens for its
+own wake word ("hey maipai") - not yet a complete conversational robot;
+see [docs/BACKLOG.md](docs/BACKLOG.md) for what's still missing. The
+prior version was bench-proven on real hardware and is preserved
+locally as a reference, never as a requirement of what gets rebuilt.
 
 MaiPai Bot runs on more than one body. The MaiPai build (the robot in
 the build guide) is in build; Reachy Mini by Pollen Robotics
