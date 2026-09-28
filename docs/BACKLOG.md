@@ -1222,13 +1222,20 @@ the image release and the profile id in the header.
       route, or consent-flow code - all wait on the `vision` role
       existing on the hub side.
 - [ ] **FACE-01: face and voice identity on the robot** (L, needs a
-      further design pass on the exact model/wire details -
+      further design pass, narrowed 2026-09-28 - see below).
       `docs/dev/face-voice-recognition-design-2026-09-28.md` is the
       feasibility study; `design-reachy-mini-2026-09-27.md` section 4's
       amendment is the design record's own verdict, reversing the prior
       exclusion; both dated 2026-09-28, the owner's call, confirmed
-      live). Objective: opportunistic, capped-rate face-embedding
-      extraction (triggered by the presence system's own
+      live. **`dev.md` section 6 ("Speaker evidence on a shared
+      device") is the canonical spec this item implements, not a
+      parallel design** - the exact `speaker_evidence` wire shape, the
+      confirmed/tentative fusion rules, the close-tie and far-miss
+      rules, the "present and alone" logic, and the strict "never a
+      score, an embedding, a track's geometry or a face crop leaves the
+      robot" privacy line are all already decided there and must not be
+      re-derived or diverge. Objective: opportunistic, capped-rate
+      face-embedding extraction (triggered by the presence system's own
       `get_face_target()`, RM-06, never continuous) and per-utterance
       speaker-embedding extraction, matched locally against the
       household's own reference embeddings (synced down from the hub,
@@ -1236,27 +1243,51 @@ the image release and the profile id in the header.
       `SpeakerEvidence` (`basis: "face"|"voice"|"voice_and_face"` -
       already a valid wire value `home`'s `turnEngine.ts:384` and
       `turnContext.ts:44-57` already consume correctly) over the
-      existing turn stream - never raw video, audio, or a fresh
-      embedding leaving the body. Pointers: `hal/seam.py`'s `Camera`
-      protocol and G11-VISION's own fixture-backed fake above; the
-      vendored `reachy_mini.vision.face_detector.FaceDetector` (YuNet,
-      bounding boxes and keypoints only, checked in the installed
-      source - the likely face-crop step before an embedding model,
-      not an embedding model itself); `presence/observations.py`'s
-      `read_presence()` as the trigger source. Acceptance: a real,
-      recorded CPU-cost measurement of the capped-rate face check plus
-      per-utterance speaker embedding on the target hardware, proving
-      it doesn't starve wake-word/audio (flagged as unmeasured in the
-      feasibility doc); a deterministic test suite against a
-      fixture-backed fake (known faces/voices, known non-matches);
-      enrollment revocation removes local matching for that person
-      within one sync. Out of scope: the hub-side enrollment UI and
-      encrypted embedding storage (a `home` item, filed there, not
-      here); gesture recognition on the hub/web and Go surfaces
-      (confirmed in scope by Jesse 2026-09-28, but not analyzed - its
-      own feasibility pass first, a `home`/`go` item regardless). Exit:
-      `bash scripts/check.sh`, plus the CPU measurement recorded in
-      `docs/dev/measurements.md`.
+      existing turn stream.
+      **The one piece `dev.md` section 6 does NOT answer for this body,
+      and the real reason this needs its own design pass, not just an
+      implementation:** section 6's own model choices (`dev.md`'s
+      stack table, checked 2026-09-28) are CAM++ for voice and ArcFace
+      for vision, both measured on the *other* build - CAM++ runs
+      inside `sherpa-onnx`, which is that build's one local speech
+      process (STT, TTS and speaker-ID together); ArcFace runs on that
+      build's Hailo-10H accelerator at a measured 19ms. This body has
+      neither: no local speech process (G3+G6's revised design streams
+      raw audio to the hub's own STT instead), and no hardware
+      accelerator (a CM4-class CPU only) - the same ArcFace weights on
+      bare CPU are very likely far slower than 19ms (ArcFace's usual
+      backbones are ResNet-scale, not the MobileFaceNet-class model the
+      feasibility doc estimated 5-15ms for), and pulling in the whole
+      `sherpa-onnx` runtime just for CAM++, on a body that uses it for
+      nothing else, is real new weight to justify. **A genuine
+      constraint neither doc named before**: embedding spaces are
+      model-specific, not a universal metric - whichever model extracts
+      the household's reference embeddings at enrollment is the one
+      every matching device must run, exactly, or matches silently
+      fail. That decision belongs wherever enrollment happens (the hub,
+      per section 4's amendment) and binds this body's own choice, not
+      the reverse. Pointers: `hal/seam.py`'s `Camera` protocol and
+      G11-VISION's own fixture-backed fake above; the vendored
+      `reachy_mini.vision.face_detector.FaceDetector` (YuNet, bounding
+      boxes and keypoints only, checked in the installed source - a
+      face-crop step, not an embedding model); `presence/
+      observations.py`'s `read_presence()` as the trigger source.
+      Acceptance: the model-reuse-vs-lighter-model question above
+      settled and recorded (a design-resolver pass or the owner's call,
+      whichever it turns out to be) before any embedding code is
+      written; a real, recorded CPU-cost measurement of the capped-rate
+      face check plus per-utterance speaker embedding on the target
+      hardware, proving it doesn't starve wake-word/audio (flagged as
+      unmeasured in the feasibility doc); a deterministic test suite
+      against a fixture-backed fake (known
+      faces/voices, known non-matches); enrollment revocation removes
+      local matching for that person within one sync. Out of scope: the
+      hub-side enrollment UI and encrypted embedding storage (a `home`
+      item, filed there, not here); gesture recognition on the hub/web
+      and Go surfaces (confirmed in scope by Jesse 2026-09-28, but not
+      analyzed - its own feasibility pass first, a `home`/`go` item
+      regardless). Exit: `bash scripts/check.sh`, plus the CPU
+      measurement recorded in `docs/dev/measurements.md`.
 
 ## Voice loop
 

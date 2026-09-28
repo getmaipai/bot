@@ -111,6 +111,25 @@ often people talk), never as a continuous background stream. This needs
 a real measurement on the simulator or the unit before being called
 done, the same as every other primitive's envelope in this repo.
 
+**Correction, 2026-09-28 (found writing FACE-01's backlog entry): this
+"MobileFaceNet-class" estimate was made without checking whether the
+household already has a chosen model.** It does: `dev.md`'s own stack
+table already names CAM++ (voice, via `sherpa-onnx`) and ArcFace
+(face, measured at 19ms on the other build's Hailo-10H accelerator) -
+section 6's canonical speaker-evidence design assumes one of these,
+not a MobileFaceNet-class stand-in. Those numbers do not transfer to
+this body's bare CM4 CPU (no accelerator, ArcFace's usual backbones
+are heavier than MobileFaceNet-class), and this body has no local
+speech process to host `sherpa-onnx` inside. Worse, embedding spaces
+are model-specific: a MobileFaceNet embedding and an ArcFace embedding
+are not comparable, so this body cannot simply pick its own lighter
+model independently of whatever model the hub uses to create the
+household's reference embeddings at enrollment - see FACE-01's own
+backlog entry for the resulting open question (reuse the heavier,
+already-chosen model for cross-device consistency, measuring it on
+bare CPU before assuming it's too slow, or make a deliberate,
+documented exception for this body specifically). Not resolved here.
+
 **The hub.** Whatever machine runs `home` (the dev machine alone spans
 an M4 Pro 24 GB to an M5 Max 128 GB per `home/docs/dev.md`'s own
 measurement headers) has an order of magnitude more headroom than a Pi
