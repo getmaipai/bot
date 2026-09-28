@@ -103,7 +103,7 @@ answers `get_face_target()`/`get_doa()`/`read()` for the IMU.
 
 | Body | Status | Where |
 |---|---|---|
-| Reachy Mini (Pollen Robotics) | Profile, daemon client, fake, expression column and presence inputs landed against the simulator (RM-01, RM-03, EXPR-01/RM-02, RM-06); live-verified against `reachy-mini-daemon` 1.11.0. Not yet: the arbitration/blending limiter, the muted pose (no mute mechanism on this body yet), body yaw following past the head delta limit, anything needing the physical unit. | `body/bodies/reachy_mini/` |
+| Reachy Mini (Pollen Robotics) | Profile, daemon client, fake, expression column and presence inputs landed against the simulator (RM-01, RM-03, EXPR-01/RM-02, RM-06); live-verified against `reachy-mini-daemon` 1.11.0. The muted pose (antennas down, 0.30 of range) renders edge-triggered from `set_muted()`, gated by arbitration, not from cue suppression. Not yet: full trajectory blending, body yaw following past the head delta limit, anything needing the physical unit. | `body/bodies/reachy_mini/` |
 | The MaiPai build (the owned hardware) | Not started. Needs BODY-02 (the HAL drivers: PCA9685, AS5600, the Pico face controller, the Hailo pipelines) and BODY-04 (the physical calibration run that produces this body's own axis limits) before a `profile.py` can be written at all - a body's limits have to come from a real measurement, not a placeholder. | `body/bodies/maipai/` (not created yet) |
 | A third body | Whatever the next owned or purchased robot turns out to be. The seam doesn't change; a new `body/bodies/<id>/` and a registered expression renderer are the whole addition. | - |
 

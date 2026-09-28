@@ -7,7 +7,7 @@ import pytest
 from maipai_body.bodies.reachy_mini.envelope import clamp_target
 from maipai_body.bodies.reachy_mini.fake import FakeReachyMiniClient
 from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
-from maipai_body.expression.primitives import PRIMITIVE_NAMES
+from maipai_body.expression.primitives import MUTED_STATE, PRIMITIVE_NAMES
 from maipai_body.expression.reachy_mini_renderer import build_steps, render
 
 # track and stop take a different path (set_target with a caller-given
@@ -15,15 +15,22 @@ from maipai_body.expression.reachy_mini_renderer import build_steps, render
 GOTO_PRIMITIVES = [p for p in PRIMITIVE_NAMES if p not in ("track", "stop", "breathe", "speak")]
 SET_TARGET_PRIMITIVES = ("track", "breathe", "speak")
 
+# A code review (2026-09-27) found MUTED_STATE excluded from PRIMITIVE_NAMES
+# (correctly - it is a state, not a cue-driven primitive, primitives.py's
+# own contract) also meant it was excluded from these two tests, so a
+# later fraction change to the muted pose would render and clamp-check
+# nothing at all. Renderable, not cue-driven: covered here, not there.
+RENDERABLE_NAMES = (*PRIMITIVE_NAMES, MUTED_STATE)
 
-@pytest.mark.parametrize("primitive", PRIMITIVE_NAMES)
+
+@pytest.mark.parametrize("primitive", RENDERABLE_NAMES)
 def test_every_primitive_renders_without_raising(primitive):
     client = FakeReachyMiniClient()
     render(primitive, client, REACHY_MINI_PROFILE)
     assert client.sent_commands, f"{primitive} reached no command at all"
 
 
-@pytest.mark.parametrize("primitive", PRIMITIVE_NAMES)
+@pytest.mark.parametrize("primitive", RENDERABLE_NAMES)
 @pytest.mark.parametrize("doa_angle_rad", [0.5, -0.5])
 def test_every_primitive_stays_within_the_declared_envelope(primitive, doa_angle_rad):
     """Every step a primitive builds passes the same clamp a live goto/set_target would.

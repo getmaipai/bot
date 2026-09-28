@@ -26,6 +26,7 @@ from typing import Any, NoReturn
 import numpy as np
 import requests
 from reachy_mini import ReachyMini
+from reachy_mini.io.protocol import StopMoveCmd
 from reachy_mini.utils.rotation import Rotation
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import ClientConnection
@@ -134,15 +135,23 @@ class ReachyMiniClient:
             self._mark_lost(error)
 
     def hold(self) -> None:
-        """Stop drift by re-issuing the present pose as an immediate target.
+        """Cancel whatever is in flight, then re-issue the present pose as an
+        immediate target so nothing drifts once it's cancelled.
 
-        Matches ``dev.md`` section 5's own words for ``stop``: cancel into
-        the present pose and hold it through ``set_target``. Routes the
-        read-back pose through this class's own ``set_target`` so it is
-        clamped like any other target, rather than reaching the backend
-        directly.
+        A code review (2026-09-27) found this only did the second half:
+        without ``StopMoveCmd`` first, a `goto` task keeps writing
+        interpolated targets until its own duration elapses
+        (``reachy_mini/daemon/backend/abstract.py``'s goto loop polls the
+        stop flag that command sets), so "stop" during a goto was a fight
+        the goto won until it finished. ``StopMoveCmd`` is acked
+        idempotently (``stopped: false`` when nothing was running, never an
+        error), so sending it unconditionally is safe.
         """
         self._require_connected()
+        try:
+            self._reachy.client.send_command(StopMoveCmd())
+        except _CONNECTION_LOST_ERRORS as error:
+            self._mark_lost(error)  # NoReturn: raises BodyLost
         base = self._reachy._daemon_http_url
         try:
             pose = HeadPose(**requests.get(f"{base}/api/state/present_head_pose", timeout=5).json())
@@ -151,7 +160,7 @@ class ReachyMiniClient:
             ).json()
             body_yaw = float(requests.get(f"{base}/api/state/present_body_yaw", timeout=5).json())
         except (*_CONNECTION_LOST_ERRORS, requests.RequestException) as error:
-            self._mark_lost(error)
+            self._mark_lost(error)  # NoReturn: raises BodyLost
         self.set_target(
             pose=pose, antennas=AntennaPositions(left=left, right=right), body_yaw=body_yaw
         )

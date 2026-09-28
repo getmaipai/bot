@@ -328,14 +328,25 @@ the image release and the profile id in the header.
       track/breathe/speak/stop; M-R2's rows recorded in
       `docs/dev/measurements.md` from a real run against
       `reachy-mini-daemon` 1.11.0.
-      **2026-09-27 addition: the muted pose.** dev.md's suppression
-      table already suppressed `listen`/`breathe` when muted; the
-      engine now renders this body's own muted pose (antennas fully
-      down, head neutral, `expression/envelope.py`'s new `"muted"` row)
-      in their place instead of leaving the antennas wherever they last
-      were, and `stop` still always renders normally regardless (its
-      suppression reason is always `None`). Tested against the fake;
-      not yet run against a live daemon.
+      **2026-09-27 addition: the muted pose, corrected by a same-day
+      audit.** A first cut rendered the muted pose from cue suppression
+      (every suppressed `listen`/`breathe` cue re-rendered it), which a
+      Fable-model audit caught as wrong on three counts: it fought the
+      design's own contract ("muted is a state, not a cue-driven
+      primitive," `primitives.py`), it never consulted
+      `presence/arbitration.py` so it fought the daemon's own tracker
+      every tick once EXPR-04's idle loop exists, and there was no
+      unmute transition. `ExpressionEngine.set_muted(muted, arbitration)`
+      replaces that: edge-triggered (renders once per state change, a
+      repeat call is a no-op), gated by `expression_may_drive()`, and
+      renders `settle` on the falling edge. `handle()` went back to
+      plain `rendered=False` suppression. Antennas fully down is 0.30
+      of range (`envelope.py`'s new `"muted"` row), not the daemon's
+      full range - deliberately conservative per section 7's "no
+      full-range excursions" (this body has no near-hand sensor).
+      `stop` still always renders normally regardless (its suppression
+      reason is always `None`; see 2026-09-27's second addition below).
+      Tested against the fake; not yet run against a live daemon.
 - [x] **RM-03: the app packaging and the install scripts** (S, sim).
       Objective: `maipai-bot` as a Python package exposing
       `MaiPaiBody(ReachyMiniApp)` under the `reachy_mini_apps`
@@ -351,19 +362,29 @@ the image release and the profile id in the header.
       handled, the stop event honored); the install script is
       idempotent. Out of scope: the password rotation (RM-08, a hub
       flow). Exit: `bash scripts/check.sh` and the simulator run.
-      **2026-09-27 addition: vendor-app removal.** `install-reachy.sh`
-      now removes every installed app except `maipai_bot` between
-      registering the startup app and restarting the daemon, over the
-      daemon's own `/api/apps` job API (`list-available/installed`,
-      `remove/{name}`, polled via `job-status/{job_id}`) - the earlier
-      plan to guess vendor entry-point names was dropped in favor of
-      enumerating whatever the daemon actually reports installed, so
-      nothing needs guessing. Verified against a stand-in HTTP server
-      built from `reachy_mini/daemon/app/routers/apps.py`'s own request
-      and response shapes (read directly from the installed
+      **2026-09-27 addition: vendor-app removal, with a post-condition
+      added the same day by an audit.** `install-reachy.sh` now removes
+      every installed app except `maipai_bot` between registering the
+      startup app and restarting the daemon, over the daemon's own
+      `/api/apps` job API (`list-available/installed`, `remove/{name}`,
+      polled via `job-status/{job_id}`) - the earlier plan to guess
+      vendor entry-point names was dropped in favor of enumerating
+      whatever the daemon actually reports installed, so nothing needs
+      guessing. A Fable-model audit found the daemon's own "done" status
+      proves nothing: `pip` and `uv` both exit 0 with a "not installed"
+      warning when the entry-point name doesn't match the actual
+      distribution name, which is exactly the mismatch our own app has
+      (`maipai_bot` the entry point, `maipai-body` the distribution -
+      recorded as its own gap in `dev/reachy-mini-gap-audit-2026-09-27.md`'s
+      G12, not fixed here). The script now re-lists installed apps after
+      the loop and fails if anything but `maipai_bot` remains, instead
+      of trusting the job status. Verified against a stand-in HTTP
+      server built from `reachy_mini/daemon/app/routers/apps.py`'s own
+      request and response shapes (read directly from the installed
       `reachy-mini` 1.11.0 package, not assumed): confirms `maipai_bot`
-      is excluded, every other installed app is removed, and a failed
-      removal job fails the script. Not yet run against a live or
+      is excluded, every other installed app is removed, a failed
+      removal job fails the script, and a job that reports "done" while
+      the app is still listed also fails the script. Not yet run against a live or
       simulated daemon (none was reachable this session), so the actual
       HTTP calls over a real SSH session remain unverified end to end -
       the next simulator run should exercise this step for real before
@@ -676,19 +697,34 @@ written and reviewed before any of the others is coded.
       half of this note is stale: `dev.md` section 5's priority order
       (inhibit/reflex, service, tracking, expression, idle) is RM-06's
       `presence/arbitration.py`, landed after this item.
-      **2026-09-27 addition:** the vendor SDK's own `goto_target` blocks
-      the calling thread until the daemon's task completes (verified in
-      the installed `reachy_mini` package's `wait_for_task_completion`
-      call), so two primitives cannot collide on a single calling
-      thread today; `ExpressionEngine` now also holds a lock around
-      every render, closing the "nothing stopping two from firing back
-      to back" case for a second thread (EXPR-04's continuous
-      idle/track/breathe loop, once it exists, calling `handle()`
-      beside the turn-driven discrete cues). Verified against a fake
-      that blocks like the real client, from two real threads. This
-      closes the collision risk, not blending itself - two renders now
-      queue cleanly one after another rather than interleaving, they
-      still don't merge into one smoother motion. Built at
+      **2026-09-27 addition, corrected the same day by an audit:** the
+      vendor SDK's own `goto_target` blocks the calling thread until the
+      daemon's task completes (verified in the installed `reachy_mini`
+      package's `wait_for_task_completion` call), so two primitives
+      cannot collide on a single calling thread today; `ExpressionEngine`
+      holds a lock around every render, closing the "nothing stopping
+      two from firing back to back" case for a second thread (EXPR-04's
+      continuous idle/track/breathe loop, once it exists, calling
+      `handle()` beside the turn-driven discrete cues). A Fable-model
+      audit found this locked `stop` too, inverting `suppression.py`'s
+      own "stop is never suppressed" rule the instant a second thread
+      exists: a `goto` in flight on one thread would make a `stop`
+      handled on another thread wait for it, when `stop` is supposed to
+      preempt everything. `stop` now bypasses the lock and is issued
+      immediately; the audit also found `hold()` never sent the
+      daemon's own `StopMoveCmd`, so a goto's task kept winning the
+      pose regardless (`client.py`'s `hold()` sends it now, before
+      re-holding the present pose - idempotent, acked even when nothing
+      was running). Neither fix helps a `stop` cue arriving on the same
+      thread as the blocking goto it's meant to cancel; that needs gotos
+      issued from a worker the engine never blocks on, EXPR-04's own
+      shape, not something a lock can do on one thread. Verified against
+      a fake that blocks like the real client, from two real threads,
+      including a case proving `stop` returns before a slow goto on
+      another thread finishes. This closes the collision and preemption
+      risk, not blending itself - two non-stop renders still queue
+      cleanly one after another rather than interleaving; they don't
+      merge into one smoother motion. Built at
       `body/maipai_body/expression/` against the HAL seam's generic
       `HeadActuator`, not `body/head/controller.py` (BODY-04): BODY-04
       and the MaiPai build's own profile do not exist yet (they need

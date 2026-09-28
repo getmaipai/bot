@@ -89,13 +89,25 @@ for name in vendor_apps:
         if job["status"] == "done":
             break
         if job["status"] == "failed":
-            print(f"failed to remove {name}: {job['logs']}", file=sys.stderr)
+            print(f"failed to remove {name}:\n" + "\n".join(job["logs"]), file=sys.stderr)
             sys.exit(1)
         time.sleep(1)
     else:
         print(f"timed out removing {name}", file=sys.stderr)
         sys.exit(1)
     print(f"removed {name}")
+
+# A code review (2026-09-27) found the daemon's own "done" status is not
+# proof of anything: both pip and uv exit 0 with a "Skipping X as it is
+# not installed" warning when the entry-point name doesn't match the
+# actual distribution name (verified on this machine), so a job can
+# report done while the app survives. Re-list rather than trust the
+# job status.
+with urllib.request.urlopen(f"{base}/list-available/installed") as resp:
+    remaining = [app["name"] for app in json.load(resp) if app["name"] != keep]
+if remaining:
+    print(f"still installed after removal: {', '.join(remaining)}", file=sys.stderr)
+    sys.exit(1)
 REMOVE_VENDOR_APPS
 
 echo "== restarting reachy-mini-daemon"

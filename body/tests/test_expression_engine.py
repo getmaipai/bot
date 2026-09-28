@@ -12,6 +12,7 @@ from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.scripted_source import scripted_bench_sequence
 from maipai_body.expression.suppression import SuppressionContext
 from maipai_body.hal.seam import HeadPose
+from maipai_body.presence.arbitration import ArbitrationState
 
 
 class _SlowGotoClient(FakeReachyMiniClient):
@@ -85,24 +86,93 @@ def test_a_suppressed_primitive_never_reaches_the_client():
     assert client.sent_commands == []
 
 
-def test_muted_renders_the_muted_pose_instead_of_the_suppressed_primitive():
-    """dev.md's table suppresses listen/breathe when muted; the design record's
-    own table says what that looks like on this body - antennas fully down,
-    not silence."""
+def test_muted_suppresses_a_cue_to_nothing_rendered_from_handle():
+    """`muted` is a state, not a cue-driven primitive (primitives.py's own
+    contract): handle() only ever suppresses for it, exactly like any other
+    reason. set_muted() below is the mute contract's own render."""
     client = FakeReachyMiniClient()
     engine = ExpressionEngine(client, REACHY_MINI_PROFILE)
 
     outcome = engine.handle(Cue(phase=Phase.HEARD, cue_seq=0), SuppressionContext(muted=True))
 
-    assert outcome.rendered is True
+    assert outcome.rendered is False
     assert outcome.primitive == "listen"
     assert outcome.suppressed_reason == "muted"
-    assert outcome.rendered_primitive == "muted"
+    assert client.sent_commands == []
+
+
+def test_set_muted_renders_the_pose_once_on_the_rising_edge_only():
+    client = FakeReachyMiniClient()
+    engine = ExpressionEngine(client, REACHY_MINI_PROFILE)
+    arbitration = ArbitrationState(expression_active=True)
+
+    first = engine.set_muted(True, arbitration)
+    second = engine.set_muted(True, arbitration)  # no edge: already muted
+
+    assert first is not None
+    assert first.rendered_primitive == "muted"
+    assert second is None
     assert len(client.sent_commands) == 1
     sent = client.sent_commands[0]
     assert sent.antennas.left < 0
     assert sent.antennas.right < 0
     assert sent.pose == HeadPose()
+
+
+def test_set_muted_settles_once_on_the_falling_edge():
+    client = FakeReachyMiniClient()
+    engine = ExpressionEngine(client, REACHY_MINI_PROFILE)
+    arbitration = ArbitrationState(expression_active=True)
+
+    engine.set_muted(True, arbitration)
+    outcome = engine.set_muted(False, arbitration)
+
+    assert outcome is not None
+    assert outcome.rendered_primitive == "settle"
+    assert len(client.sent_commands) == 2
+    settle_command = client.sent_commands[1]
+    assert settle_command.antennas.left == 0.0
+    assert settle_command.antennas.right == 0.0
+    assert settle_command.pose == HeadPose()
+
+
+def test_set_muted_defers_to_a_higher_priority_render():
+    """expression_may_drive() says nothing under tracking/service/stop; a
+    mute edge while tracking owns the head renders nothing to it."""
+    client = FakeReachyMiniClient()
+    engine = ExpressionEngine(client, REACHY_MINI_PROFILE)
+    tracking = ArbitrationState(tracking_active=True)
+
+    outcome = engine.set_muted(True, tracking)
+
+    assert outcome is None
+    assert client.sent_commands == []
+    # still deferred, so a repeat call with the same value keeps trying
+    # rather than looking like "no edge, already handled":
+    assert engine.set_muted(True, tracking) is None
+
+
+def test_set_muted_catches_up_once_arbitration_releases():
+    """A code review (2026-09-27) found a mute requested while tracking
+    owned the head was never rendered even after tracking ended, because
+    the edge was consumed (self._muted updated) the moment it was first
+    deferred, leaving nothing to trigger a render once arbitration
+    allowed it. The fix: the edge stays pending until it actually
+    renders, so the same `muted` value tried again after tracking ends
+    (the docstring's own "every tick") renders the pose then."""
+    client = FakeReachyMiniClient()
+    engine = ExpressionEngine(client, REACHY_MINI_PROFILE)
+    tracking = ArbitrationState(tracking_active=True)
+    idle = ArbitrationState(expression_active=True)
+
+    deferred = engine.set_muted(True, tracking)
+    assert deferred is None
+    assert client.sent_commands == []
+
+    tracking_ends = engine.set_muted(True, idle)
+    assert tracking_ends is not None
+    assert tracking_ends.rendered_primitive == "muted"
+    assert len(client.sent_commands) == 1
 
 
 def test_a_cues_own_target_direction_reaches_the_renderer():
@@ -128,6 +198,35 @@ def test_stop_still_renders_normally_while_muted():
     assert outcome.rendered is True
     assert outcome.rendered_primitive == "stop"
     assert client.sent_commands[0].kind == "hold"
+
+
+def test_stop_preempts_a_render_in_flight_on_another_thread():
+    """A code review (2026-09-27) found the render lock made `stop` wait
+    behind whatever was already in flight, inverting suppression.py's
+    "stop is never suppressed" rule the moment a second thread exists.
+    `stop` bypasses the lock, so handling it returns almost immediately
+    even while a slow goto is still in flight on another thread - proof
+    it did not queue behind the lock that goto is holding."""
+    client = _SlowGotoClient(hold_s=0.3)
+    engine = ExpressionEngine(client, REACHY_MINI_PROFILE)
+    settle_cue = Cue(phase=Phase.DONE, cue_seq=0)
+    stop_cue = Cue(phase=Phase.CANCEL, cue_seq=1)
+
+    goto_thread = threading.Thread(target=engine.handle, args=(settle_cue, SuppressionContext()))
+    goto_thread.start()
+    time.sleep(0.05)  # let the slow goto actually be in flight
+
+    stop_start = time.monotonic()
+    engine.handle(stop_cue, SuppressionContext())
+    stop_returned_at = time.monotonic()
+
+    goto_thread.join(timeout=5)
+
+    assert client.windows, "the settle goto never completed"
+    goto_end = client.windows[0][1]
+    assert stop_returned_at - stop_start < 0.1, "stop waited - it queued behind the goto"
+    assert stop_returned_at < goto_end, "stop should have returned before the goto finished"
+    assert any(c.kind == "hold" for c in client.sent_commands)
 
 
 def test_the_render_lock_serializes_two_threads_calling_handle_concurrently():

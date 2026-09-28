@@ -124,6 +124,13 @@ class FakeReachyMiniClient:
 
     def hold(self) -> None:
         self._require_connected()
+        # A code review (2026-09-27) noted: this reads _current_pose/
+        # _current_antennas as separate, non-atomic attribute assignments,
+        # so a concurrent goto()'s own _apply() could interleave a torn
+        # read here (a stop's `hold` recording half the old pose, half
+        # the new). Real risk only in this fake's shared in-process
+        # state, never the real client (an HTTP call per connection, no
+        # shared Python object); not exercised by any current test.
         self.sent_commands.append(
             SentCommand(
                 kind="hold",

@@ -11,8 +11,10 @@ import threading
 from dataclasses import dataclass
 
 from maipai_body.hal.seam import BodyProfile, HeadActuator
+from maipai_body.presence.arbitration import ArbitrationState, expression_may_drive
 
 from .cue import Cue, map_cue_to_primitive
+from .primitives import MUTED_STATE
 from .renderers import renderer_for
 from .suppression import SuppressionContext, suppression_reason
 
@@ -25,9 +27,10 @@ class ExpressionOutcome:
     primitive: str | None
     suppressed_reason: str | None
     rendered: bool
-    # What actually reached the renderer, when it differs from `primitive`
-    # (the muted pose standing in for a cue suppressed for being muted).
-    # None when nothing rendered, or equal to `primitive` on a normal render.
+    # What actually reached the renderer. None when nothing rendered
+    # (`primitive` is None, or the cue was suppressed), equal to
+    # `primitive` on a normal render, or a set_muted() outcome's own
+    # rendered_primitive ("muted" or "settle") when cue_seq is -1.
     rendered_primitive: str | None = None
 
 
@@ -38,20 +41,25 @@ class ExpressionEngine:
     never a hardcoded body's module, so a second body's own column is a
     registration, not an edit here.
 
-    A ``threading.Lock`` serializes every render: the real client's own
-    ``goto()`` blocks the calling thread until the daemon's task completes
-    (the vendor SDK's ``goto_target`` calls ``wait_for_task_completion``
-    before returning - verified in the installed ``reachy_mini`` package,
-    not assumed), so two primitives cannot collide on a single calling
-    thread today. The lock is what closes the gap once a second thread
-    exists to call it from - EXPR-04's continuous idle/track/breathe loop
-    running beside the turn-driven discrete cues this ``handle()`` already
-    serves - so a `goto` in flight on one thread cannot be interleaved with
-    a `set_target` from another. Full trajectory blending (merging two
-    compatible small motions into one interpolated command, EXPR-01's
-    other named gap) stays undesigned: there is no spec yet for what
-    "compatible" means numerically, and guessing one would be exactly the
-    kind of hand-built heuristic the org's standards ask to avoid.
+    A ``threading.Lock`` serializes every render except ``stop``: the real
+    client's own ``goto()`` blocks the calling thread until the daemon's
+    task completes (the vendor SDK's ``goto_target`` calls
+    ``wait_for_task_completion`` before returning - verified in the
+    installed ``reachy_mini`` package, not assumed), so two primitives
+    cannot collide on a single calling thread today. The lock is what
+    closes the gap once a second thread exists to call it from - EXPR-04's
+    continuous idle/track/breathe loop running beside the turn-driven
+    discrete cues this ``handle()`` already serves - so a `goto` in flight
+    on one thread cannot be interleaved with a `set_target` from another.
+    ``stop`` bypasses the lock (a code review, 2026-09-27, found the lock
+    otherwise makes `stop` wait behind whatever is already in flight,
+    inverting the one priority `dev.md` makes absolute) and is issued
+    immediately regardless of what else is rendering. Full trajectory
+    blending (merging two compatible small motions into one interpolated
+    command, EXPR-01's other named gap) stays undesigned: there is no spec
+    yet for what "compatible" means numerically, and guessing one would be
+    exactly the kind of hand-built heuristic the org's standards ask to
+    avoid.
     """
 
     def __init__(self, client: HeadActuator, profile: BodyProfile) -> None:
@@ -59,6 +67,7 @@ class ExpressionEngine:
         self._profile = profile
         self._render = renderer_for(profile.id)
         self._render_lock = threading.Lock()
+        self._muted = False
 
     def handle(
         self, cue: Cue, context: SuppressionContext, *, doa_angle_rad: float = 0.0
@@ -79,20 +88,11 @@ class ExpressionEngine:
 
         reason = suppression_reason(primitive, context)
         if reason is not None:
-            if reason == "muted":
-                # dev.md's generic table only says muted suppresses this
-                # primitive; the design record's own table (section 5) says
-                # what that looks like on this body - antennas fully down,
-                # not just frozen wherever they last were.
-                with self._render_lock:
-                    self._render("muted", self._client, self._profile)
-                return ExpressionOutcome(
-                    cue_seq=cue.cue_seq,
-                    primitive=primitive,
-                    suppressed_reason=reason,
-                    rendered=True,
-                    rendered_primitive="muted",
-                )
+            # Plain "rendered=False", exactly as dev.md's generic table
+            # says - `muted` is a state, not a cue-driven primitive
+            # (primitives.py's own contract), so it is never rendered from
+            # here; see set_muted() for the mute contract's own edge-driven
+            # render, gated by arbitration.
             return ExpressionOutcome(
                 cue_seq=cue.cue_seq, primitive=primitive, suppressed_reason=reason, rendered=False
             )
@@ -100,11 +100,67 @@ class ExpressionEngine:
         direction = (
             cue.target_direction_rad if cue.target_direction_rad is not None else doa_angle_rad
         )
-        with self._render_lock:
+        if primitive == "stop":
+            # A code review (2026-09-27) found the render lock inverts
+            # `stop`'s absolute priority (suppression.py: "stop is never
+            # suppressed") the moment a second thread exists: a `goto` in
+            # flight on one thread blocks for its whole duration (the
+            # vendor SDK's own `wait_for_task_completion`), so a `stop`
+            # handled on another thread would wait behind it before its
+            # own `hold()` even reached the wire. `stop` bypasses the lock
+            # so it is always issued immediately; `hold()` itself now sends
+            # the daemon's own StopMoveCmd before re-holding the present
+            # pose (client.py), so it actually cancels the in-flight motion
+            # rather than losing a race with it. This does not help a
+            # `stop` cue arriving on the SAME thread as a blocking goto -
+            # that needs gotos issued from a worker the engine never
+            # blocks on, EXPR-04's shape, not a lock change.
             self._render(primitive, self._client, self._profile, doa_angle_rad=direction)
+        else:
+            with self._render_lock:
+                self._render(primitive, self._client, self._profile, doa_angle_rad=direction)
         return ExpressionOutcome(
             cue_seq=cue.cue_seq,
             primitive=primitive,
+            suppressed_reason=None,
+            rendered=True,
+            rendered_primitive=primitive,
+        )
+
+    def set_muted(self, muted: bool, arbitration: ArbitrationState) -> ExpressionOutcome | None:
+        """The mute contract's own entry point - a state change, not a cue.
+
+        Edge-triggered: renders the muted pose once when ``muted`` turns
+        true and ``settle`` once when it turns back false, each gated by
+        ``expression_may_drive()`` so a mute during an active turn or
+        under `stop`/service doesn't fight whatever the daemon's own
+        tracker or a higher-priority render currently owns the head. A
+        call with no edge (``muted`` unchanged) does nothing and returns
+        ``None`` - idempotent, so a caller may report the mute state on
+        every tick without re-rendering.
+
+        A code review (2026-09-27) found the edge was consumed even when
+        arbitration deferred the render: muting during tracking updated
+        ``self._muted`` regardless, so once tracking ended there was no
+        edge left to render the pose from, and the robot showed no
+        visual mute for as long as anything higher-priority happened to
+        be active at the exact moment mute was requested. ``self._muted``
+        now only updates once a render actually happens, so a deferred
+        edge stays pending and a later call with the same ``muted``
+        value (the docstring's own "every tick") keeps retrying until
+        arbitration allows it.
+        """
+        if muted == self._muted:
+            return None
+        if not expression_may_drive(arbitration):
+            return None
+        self._muted = muted
+        primitive = MUTED_STATE if muted else "settle"
+        with self._render_lock:
+            self._render(primitive, self._client, self._profile)
+        return ExpressionOutcome(
+            cue_seq=-1,
+            primitive=None,
             suppressed_reason=None,
             rendered=True,
             rendered_primitive=primitive,

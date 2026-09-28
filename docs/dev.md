@@ -1432,6 +1432,50 @@ per the corrected backlog note. BODY-05's own funnel state machine
 does not exist yet (it needs a turn-aware runtime); this item lands
 that funnel's inputs, not the state machine itself.
 
+**Landed 2026-09-27 (a Fable-model audit's defects, fixed): the muted
+pose is edge-triggered, `stop` actually cancels, vendor removal has a
+post-condition.** The muted pose above (this section's own earlier
+"there is no `muted` pose" line, and RM-02's stale BACKLOG note, are
+corrected by this entry) was first built to re-render from cue
+suppression on every suppressed `listen`/`breathe` cue, contradicting
+`primitives.py`'s own contract ("muted is a state, not a cue-driven
+primitive") and fighting the daemon's own tracker every tick with no
+arbitration check and no unmute transition. `ExpressionEngine.set_muted()`
+replaces that: an edge-triggered state (`muted` in the class), gated by
+`presence.arbitration.expression_may_drive()`, that renders the pose
+once on the rising edge and `settle` once on the falling edge;
+`handle()` goes back to plain `rendered=False` suppression, exactly as
+the generic table says. A same-day `code-review` skill run (the proper
+kind, not the prior ad-hoc pass) caught one more: the edge was consumed
+even when arbitration deferred the render, so a mute requested while
+tracking owned the head never rendered even after tracking ended, with
+nothing left to trigger it. `self._muted` now only updates once a
+render actually happens, so a deferred edge stays pending and catches
+up on the next call with the same value once arbitration allows it.
+Separately, the render lock added the same day
+made `stop` queue behind an in-flight goto (inverting `dev.md`'s own
+"stop is never suppressed" rule the moment a second thread exists), and
+`hold()` never sent the daemon's `StopMoveCmd`, so a goto's own task
+kept winning the pose until its duration elapsed regardless. `stop` now
+bypasses the render lock and is issued immediately; `hold()` sends
+`StopMoveCmd()` before re-holding the present pose. Note this does not
+help a `stop` cue arriving on the *same* thread as a blocking goto - the
+real fix for that is gotos issued from a worker the engine never blocks
+on, EXPR-04's shape, not something a lock can do. Also fixed:
+`scripts/install-reachy.sh`'s vendor-app removal now re-lists installed
+apps after the loop and fails if anything but `maipai_bot` remains
+(the daemon's own `pip`/`uv` uninstall exits 0 even when nothing was
+removed, so the prior version could report success while an app
+survived); the muted pose was added to `test_expression_renderer.py`'s
+clamp-check parametrization, which excludes it from `PRIMITIVE_NAMES`
+on purpose and so was silently never checking it. Not fixed here,
+recorded for RM-07 or RM-08: the entry-point/distribution name mismatch
+(`maipai_bot` vs `maipai-body`) that would make the daemon's own remove
+and update paths silently no-op on our own app too (G12 in
+`dev/reachy-mini-gap-audit-2026-09-27.md`), and the antenna sign
+convention (down is negative), which only a physical unit's own state
+feed can confirm.
+
 ## Research notes
 
 - [`dev/research-minicpm5-reachy-mini-2026-09-27.md`](dev/research-minicpm5-reachy-mini-2026-09-27.md):
