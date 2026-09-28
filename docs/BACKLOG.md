@@ -1333,13 +1333,29 @@ the image release and the profile id in the header.
       pinned-URL-and-checksum download mechanism (G2's own wake-word
       module used to own this outright; now both share it, kept
       behavior-identical - its existing suite still passes). 26 new
-      tests. **Not yet built:** any call into this pipeline from
-      `run_loop.py` (the capture cadence off `read_presence()`, and
-      populating `speaker_evidence` on the outgoing turn) - deliberately
-      a separate, later change against already-reviewed G9 code, not
-      bundled in; the real print record (still a `commons` item); the
-      CPU measurement (needs the unit, not just this session's own Mac
-      sanity numbers).
+      tests.
+      **Landed 2026-09-28: the run-loop wiring.** `_presence_loop()`
+      runs a capped-rate (3s) check when a face is detected; `_run_turn()`
+      populates `speaker_evidence` (person/basis/level only, never the
+      verdict's own score or candidates) from the most recent verdict
+      under a 10s staleness bound, validated against the hub's own
+      person-id format (`commons/spec`'s `conversation_turn_schema.py`,
+      checked directly) before sending, downgrading rather than
+      risking the hub's schema refusing the whole turn. The actual
+      recognition work runs on its own thread, off the presence
+      thread's own tick, so it can't delay tracking's own enable/
+      disable decisions; a camera or pipeline failure leaves a
+      still-fresh verdict alone rather than wiping it. Two review
+      passes (8 findings, all fixed, two hand-verified by reverting
+      and confirming the new test fails). 5 more tests (23 total in
+      `test_run_loop.py`).
+      **Not yet built:** the real print record (still a `commons`
+      item, blocking anything from actually matching); real
+      `FiveLandmarkDetector`/`SFaceEmbedder`/`FaceGallery` construction
+      wherever the daemon actually boots the loop (nothing does yet -
+      the model needs downloading and there's nothing to match
+      against); the CPU measurement (needs the unit, not just this
+      session's own Mac sanity numbers).
 
 ## Voice loop
 
