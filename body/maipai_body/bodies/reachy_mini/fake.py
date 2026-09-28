@@ -101,6 +101,7 @@ class FakeReachyMiniClient:
         self,
         profile: BodyProfile = REACHY_MINI_PROFILE,
         microphone_wav: Path | None = None,
+        camera_frame: npt.NDArray[np.uint8] | None = None,
     ) -> None:
         self.profile = profile
         self._lost = False
@@ -118,6 +119,11 @@ class FakeReachyMiniClient:
         self._recording = False
         self._playing = False
         self.pushed_audio: list[npt.NDArray[np.float32]] = []
+        # A real array when a caller wants a deterministic frame (the
+        # design-vision-still-image-2026-09-28.md fixture pattern), None
+        # otherwise - matching the real client's own `object | None`
+        # contract rather than a MagicMock standing in for "unavailable."
+        self._camera_frame = camera_frame
 
     # -- test control, not part of the seam --
 
@@ -289,7 +295,7 @@ class FakeReachyMiniClient:
 
     def get_frame(self) -> Any:
         self._require_connected()
-        return None
+        return self._camera_frame
 
     # -- Imu --
 

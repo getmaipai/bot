@@ -238,7 +238,12 @@ class AudioIO(Protocol):
 
 @runtime_checkable
 class Camera(Protocol):
-    """The camera call a body exposes; RM-06 is its real consumer."""
+    """The camera call a body exposes. Checked 2026-09-28
+    (`docs/dev/design-vision-still-image-2026-09-28.md`): RM-06 never
+    calls this - it only ever consumes `FaceTracker`. Nothing in this
+    repo calls `get_frame()` yet; the still-image design note above is
+    its first named future consumer, once the hub's `vision` role
+    exists to receive a frame."""
 
     def get_frame(self) -> object | None:
         """Return the latest camera frame, or ``None`` if unavailable."""
