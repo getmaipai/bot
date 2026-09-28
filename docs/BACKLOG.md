@@ -1187,13 +1187,76 @@ the image release and the profile id in the header.
       `test_presence_enables_tracking_when_face_present_and_not_speaking`
       and `test_presence_never_enables_tracking_while_already_speaking`.
       **Not yet built - the rest of G11 is real vision, not the floor**:
-      the still-image call (consent prompt, one-shot capture, the hub
-      route, the Stack's `vision` role) remains its own design item per
-      the audit's own instruction, not started; face identity remains
-      explicitly out of scope (section 4: the CM4 has no room beside
-      speech). Live tracking against the real simulator with a face
-      injected into the scene (the audit's own acceptance for this
-      floor) is deferred with G9's own live-verification gap above.
+      the still-image call's own design note is done, see G11-VISION
+      below. Face identity is no longer out of scope (reversed
+      2026-09-28, `design-reachy-mini-2026-09-27.md` section 4's
+      amendment; see FACE-01 below) - a separate track from this
+      item's own presence/tracking floor, which stays anonymous. Live
+      tracking against the real simulator with a face injected into
+      the scene (the audit's own acceptance for this floor) is
+      deferred with G9's own live-verification gap above.
+- [x] **G11-VISION: design note for the still-image call** (S, design
+      only - `docs/dev/design-vision-still-image-2026-09-28.md`).
+      Objective: the gap audit's own instruction ("record the
+      still-image call as its own design item... before any code") for
+      G11's still-image, general-scene-understanding call - not
+      identity, see FACE-01 below for that separate track. Landed: the
+      consent question resolved without a screen (the spoken request
+      itself is the consent event, matching the wake-word precedent,
+      never a modal this body cannot render - confirmed against
+      section 5's "no eye, mouth, ring or screen" fact); the capture
+      and hub-route shape (reusing `document_attachments`'s own wire
+      shape and the `cancel` route's own request pattern, a `home`-side
+      decision named but not built here); the one real blocker named
+      honestly - the Stack's `vision` role is declared in three places
+      (`wire.ts`, `stack/backend/src/roles.ts`, `home`'s `llm.ts`) and
+      wired to zero engines or models anywhere, so no end-to-end path
+      exists today regardless of what this repo builds. A stale
+      `Camera` seam docstring claiming "RM-06 is its real consumer" was
+      checked and found false (RM-06 only ever consumes `FaceTracker`);
+      corrected. Also landed, the one piece real regardless of the hub
+      blocker: `FakeReachyMiniClient.get_frame()` now returns a real
+      given frame instead of always `None` (`camera_frame` constructor
+      param, mirroring the audio fixture pattern), 3 new tests in
+      `test_camera_frame.py`. **Not built:** any turn-loop wiring, hub
+      route, or consent-flow code - all wait on the `vision` role
+      existing on the hub side.
+- [ ] **FACE-01: face and voice identity on the robot** (L, needs a
+      further design pass on the exact model/wire details -
+      `docs/dev/face-voice-recognition-design-2026-09-28.md` is the
+      feasibility study; `design-reachy-mini-2026-09-27.md` section 4's
+      amendment is the design record's own verdict, reversing the prior
+      exclusion; both dated 2026-09-28, the owner's call, confirmed
+      live). Objective: opportunistic, capped-rate face-embedding
+      extraction (triggered by the presence system's own
+      `get_face_target()`, RM-06, never continuous) and per-utterance
+      speaker-embedding extraction, matched locally against the
+      household's own reference embeddings (synced down from the hub,
+      never computed fresh there), reporting the result as
+      `SpeakerEvidence` (`basis: "face"|"voice"|"voice_and_face"` -
+      already a valid wire value `home`'s `turnEngine.ts:384` and
+      `turnContext.ts:44-57` already consume correctly) over the
+      existing turn stream - never raw video, audio, or a fresh
+      embedding leaving the body. Pointers: `hal/seam.py`'s `Camera`
+      protocol and G11-VISION's own fixture-backed fake above; the
+      vendored `reachy_mini.vision.face_detector.FaceDetector` (YuNet,
+      bounding boxes and keypoints only, checked in the installed
+      source - the likely face-crop step before an embedding model,
+      not an embedding model itself); `presence/observations.py`'s
+      `read_presence()` as the trigger source. Acceptance: a real,
+      recorded CPU-cost measurement of the capped-rate face check plus
+      per-utterance speaker embedding on the target hardware, proving
+      it doesn't starve wake-word/audio (flagged as unmeasured in the
+      feasibility doc); a deterministic test suite against a
+      fixture-backed fake (known faces/voices, known non-matches);
+      enrollment revocation removes local matching for that person
+      within one sync. Out of scope: the hub-side enrollment UI and
+      encrypted embedding storage (a `home` item, filed there, not
+      here); gesture recognition on the hub/web and Go surfaces
+      (confirmed in scope by Jesse 2026-09-28, but not analyzed - its
+      own feasibility pass first, a `home`/`go` item regardless). Exit:
+      `bash scripts/check.sh`, plus the CPU measurement recorded in
+      `docs/dev/measurements.md`.
 
 ## Voice loop
 

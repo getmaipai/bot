@@ -141,6 +141,28 @@ profile specifically, this needs the enrolling adult's own consent, not
 the child's - the same posture as everything else `SAFETY.md` treats as
 architecture rather than a setting.
 
+## 5b. Resolved live, 2026-09-28
+
+Jesse confirmed directly, in conversation:
+
+- **Yes, this is a real request**, not a misread - identity recognition
+  (face and voice) on both this body and the hub, as described above.
+- **Item 3's open question is answered.** "The home hub needs this"
+  means the hub (and, when it ships, Go) consumes recognition results
+  from whatever surface did the capturing - the PWA's own browser
+  camera via `getUserMedia` for a web session, a future Go client's own
+  device camera - never a camera bolted to the physical hub server.
+  Section 4 of `design-reachy-mini-2026-09-27.md` now carries this as
+  its own amendment.
+- **Scope is wider than this doc analyzed: gesture recognition too**,
+  on the hub/web and Go surfaces specifically ("facial and gesture
+  recognition" on the hub's own web access, same for Go). This doc's
+  feasibility analysis above covers face and voice identity only - it
+  does not cover gesture recognition, which needs its own feasibility
+  pass (a different model class, no existing wire-shape precedent the
+  way `SpeakerEvidence.basis` already gives face/voice). Not started;
+  flagged here so it isn't lost, not analyzed.
+
 ## 6. Recommendation
 
 **Buildable within the existing privacy architecture and wire contract**
@@ -149,27 +171,26 @@ architecture rather than a setting.
 done and already tested. **But it is not a quick add**, and it does
 reverse a documented design decision:
 
-1. **The design record needs a formal amendment to section 4** before
-   this is built against the robot, per the org's own "every feature is
-   reviewed... a one-line verdict recorded before it is built" rule -
-   this doc is evidence for that amendment, not a substitute for
-   writing it. The amendment should state plainly that identity
-   inference is now in scope, why (the owner's own call, dated), and
-   under what constraint (on-device only, opportunistic capture rate,
-   explicit consent).
+1. **Done, 2026-09-28.** The design record's section 4 now carries a
+   formal amendment stating identity inference is in scope, why (the
+   owner's own call, confirmed live the same day), and under what
+   constraint (on-device only, opportunistic capture rate, explicit
+   enrollment).
 2. **Two real backlog items, not one**, since the two bodies have
    different jobs and different constraints: a hub-side item
    (enrollment UI, encrypted embedding storage, sync to paired
    devices) and a robot-side item (camera capture at a capped rate,
    the embedding model, local matching, reporting `SpeakerEvidence`
    over the existing wire shape) - they share a model format and a
-   consent posture but are separately scoped work.
-3. **Open question only Jesse can answer**: does "the home hub needs
-   this" mean the hub consumes evidence from connected surfaces
-   (robot, pod, the PWA's own browser camera) - the reading this doc
-   assumes - or does he want the physical hub machine itself to have
-   its own camera/mic as a first-class sensor. That changes whether
-   there's a third, hub-hardware-specific piece of work here at all.
+   consent posture but are separately scoped work. Not yet filed;
+   FACE-01 (robot-side) is named in the design amendment but still
+   needs its own `docs/BACKLOG.md` entry in this repo; the hub-side
+   item belongs in `home`'s own backlog, out of scope to file from
+   here.
+3. **Resolved live, 2026-09-28** (see section 5b above): the hub
+   consumes recognition results from whatever surface captured them
+   (this body, the PWA's own browser camera, a future Go client) -
+   never a camera on the physical hub server.
 4. **A CPU budget question for the robot specifically**: opportunistic,
    capped-rate face checks plus per-utterance speaker embedding is the
    recommended shape to avoid starving wake-word/audio, but this is a

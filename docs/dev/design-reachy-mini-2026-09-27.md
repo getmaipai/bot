@@ -217,7 +217,7 @@ what is there, never a stub.
 | Expression: listen, glance, tilt, nod, perk, attend, settle, breathe, track, stop | the hub's cues over the stream (the `signal` and `cancel` events landed on the hub 2026-09-15; the `plan` event follows ACT-03; the scripted bench before either) | breathe, track and stop from the body's own state | yes |
 | Speaker evidence | the voice print in the body (`pod` tier: the hub's `stt` returns the transcript; the embedding is the body's, never sent) | the same | after v0.1-standalone's SPEAK-01, as on the MaiPai build |
 | Presence and `present` | the daemon's face tracking plus direction of arrival, as observations | the same | yes (the `present` spec field, as designed) |
-| Face identity | no (the CM4 has no room for it beside speech; an explicit still image to the hub is v0.2, as designed) | no | no |
+| Face identity | on-device matching, opportunistic rate, explicit enrollment at the hub (reversed 2026-09-28, below) | no | after v0.1 (FACE-01) |
 | Recorded moves and dances a person asks for | the catalog package, played by the body | unavailable (the package is a hub tool) | after v0.1 (MOVES-01) |
 | Media playback on the robot | a player device of the hub (plan 7.5) | unavailable | v0.2 |
 | The household runtime on the robot (the paired-unreachable and robot-only modes of the MaiPai build) | | | no; M-R6 decides whether it ever is |
@@ -225,6 +225,51 @@ what is there, never a stub.
 The one line for the unreachable case is the register guard's, once
 per outage, and the robot never mentions a hub it has not been paired
 with: unpaired, it says the pairing code (section 9) and nothing else.
+
+**Amendment, 2026-09-28 (owner's call): face identity reversed.**
+Jesse asked directly for actual identity recognition (which specific
+family member, not just "a face is present"), confirmed again live in
+conversation the same day, on both this body and the hub - a real
+product decision, recorded here per the org's "every feature is
+reviewed and rebuilt, a one-line verdict recorded before it is built"
+rule. The feasibility and the concrete shape are in
+[`docs/dev/face-voice-recognition-design-2026-09-28.md`](face-voice-recognition-design-2026-09-28.md);
+this note is the design record's own verdict, not a restatement. The
+row's original argument ("the CM4 has no room for it beside speech")
+was a hardware-budget concern, not a privacy-policy ban, and it still
+holds as a constraint on the shape, not a reason to exclude the
+feature: recognition itself runs on-device (a review, 2026-09-28,
+caught the original wording here overclaiming "identity inference runs
+on-device only" without saying what still crosses the network - fixed
+below to say exactly). Concretely, per
+`face-voice-recognition-design-2026-09-28.md` section 3's own split:
+raw image, video and audio never leave the capturing device; a fresh
+embedding extracted for an ongoing recognition is matched locally
+against the household's own reference embeddings (synced down from
+the hub), so only the match *result* (`{person, basis, level}`, the
+existing `SpeakerEvidence` shape) crosses the network for that -
+never a fresh embedding. The one embedding that does cross the network
+is the reference embedding created once, at enrollment, from a photo
+or voice sample captured and processed at the hub itself - a durable
+biometric identifier, stored there encrypted at rest
+(`lib/secrets.ts`'s existing pattern), synced to paired devices for
+their own local matching. All of this runs at an opportunistic, capped
+rate driven off the existing presence system (never a continuous
+background stream competing with wake-word and audio), and only for a
+person explicitly, revocably enrolled by an adult - never inferred
+from repeated appearances. `docs/PRIVACY.md`'s
+"zero phone-home, no MaiPai-operated service in a user data path"
+already constrains this to entirely local models and local storage;
+nothing here asks for an exception. Also confirmed live, 2026-09-28:
+"the home hub needs this" means the hub consumes recognition results
+from whatever surface did the capturing (this body, the PWA's own
+browser camera via `getUserMedia`, a future Go client's own camera) -
+not that the physical hub server needs a camera or microphone bolted
+to it. The hub and Go's own browser/device-camera-driven facial *and
+gesture* recognition are `home`/`go` items, out of scope for this
+record and this repo. Gesture recognition on this body specifically
+is not analyzed here; FACE-01 (below) covers face and voice identity
+only.
 
 ## 5. Expression on this body
 
@@ -284,7 +329,11 @@ source under the arbitration priority (consented tracking sits below
 inhibit, reflex and service, above expression and idle), and its
 "a face is tracked" fact is the presence funnel's first observation on
 this body, beside the array's direction of arrival and speech flag. No
-identity is inferred from it. The IMU is read for the tip and freefall
+identity is inferred from *this* signal - tracking stays anonymous
+presence, never a lookup (section 4's amendment adds identity as a
+separate, explicitly-enrolled inference elsewhere in the pipeline, not
+by teaching this observation to recognize anyone). The IMU is read for
+the tip and freefall
 observations the safety section uses. Frames never leave the body
 process; a still image for the hub is the v0.2 host call the design
 already names, consented and explicit.
