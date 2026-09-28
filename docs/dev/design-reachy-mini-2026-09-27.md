@@ -248,7 +248,16 @@ embedding extracted for an ongoing recognition is matched locally
 against the household's own reference embeddings (synced down from
 the hub), so only the match *result* (`{person, basis, level}`, the
 existing `SpeakerEvidence` shape) crosses the network for that -
-never a fresh embedding. The one embedding that does cross the network
+never a fresh embedding. (Precision added 2026-09-28, with the model
+decision in
+[`design-face-recognition-models-2026-09-28.md`](design-face-recognition-models-2026-09-28.md):
+"audio never leaves" holds before the wake word only. After it, this
+body already streams the utterance to the hub's STT session by the
+owner's own G3+G6 ask, so the voice print is computed on the hub from
+that same stream, ephemeral, and matched there; nothing beyond what
+G3+G6 already sends leaves the robot, and no voice model runs on this
+body. Image and video are unchanged: the face model runs here and only
+the result crosses.) The one embedding that does cross the network
 is the reference embedding created once, at enrollment, from a photo
 or voice sample captured and processed at the hub itself - a durable
 biometric identifier, stored there encrypted at rest

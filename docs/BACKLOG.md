@@ -1239,73 +1239,81 @@ the image release and the profile id in the header.
       `test_camera_frame.py`, 3 in `test_vision_capture.py`).
       **Not built:** any turn-loop wiring, hub route, or consent-flow
       code - all wait on the `vision` role existing on the hub side.
-- [ ] **FACE-01: face and voice identity on the robot** (L, needs a
-      further design pass, narrowed 2026-09-28 - see below).
+- [ ] **FACE-01: face identity on the robot** (M, after the spec's
+      print record; models resolved 2026-09-28, the design pass this
+      entry used to ask for is done). The chain of record:
       `docs/dev/face-voice-recognition-design-2026-09-28.md` is the
       feasibility study; `design-reachy-mini-2026-09-27.md` section 4's
-      amendment is the design record's own verdict, reversing the prior
-      exclusion; both dated 2026-09-28, the owner's call, confirmed
-      live. **`dev.md` section 6 ("Speaker evidence on a shared
-      device") is the canonical spec this item implements, not a
-      parallel design** - the exact `speaker_evidence` wire shape, the
-      confirmed/tentative fusion rules, the close-tie and far-miss
-      rules, the "present and alone" logic, and the strict "never a
-      score, an embedding, a track's geometry or a face crop leaves the
-      robot" privacy line are all already decided there and must not be
-      re-derived or diverge. Objective: opportunistic, capped-rate
-      face-embedding extraction (triggered by the presence system's own
-      `get_face_target()`, RM-06, never continuous) and per-utterance
-      speaker-embedding extraction, matched locally against the
-      household's own reference embeddings (synced down from the hub,
-      never computed fresh there), reporting the result as
-      `SpeakerEvidence` (`basis: "face"|"voice"|"voice_and_face"` -
-      already a valid wire value `home`'s `turnEngine.ts:384` and
-      `turnContext.ts:44-57` already consume correctly) over the
-      existing turn stream.
-      **The one piece `dev.md` section 6 does NOT answer for this body,
-      and the real reason this needs its own design pass, not just an
-      implementation:** section 6's own model choices (`dev.md`'s
-      stack table, checked 2026-09-28) are CAM++ for voice and ArcFace
-      for vision, both measured on the *other* build - CAM++ runs
-      inside `sherpa-onnx`, which is that build's one local speech
-      process (STT, TTS and speaker-ID together); ArcFace runs on that
-      build's Hailo-10H accelerator at a measured 19ms. This body has
-      neither: no local speech process (G3+G6's revised design streams
-      raw audio to the hub's own STT instead), and no hardware
-      accelerator (a CM4-class CPU only) - the same ArcFace weights on
-      bare CPU are very likely far slower than 19ms (ArcFace's usual
-      backbones are ResNet-scale, not the MobileFaceNet-class model the
-      feasibility doc estimated 5-15ms for), and pulling in the whole
-      `sherpa-onnx` runtime just for CAM++, on a body that uses it for
-      nothing else, is real new weight to justify. **A genuine
-      constraint neither doc named before**: embedding spaces are
-      model-specific, not a universal metric - whichever model extracts
-      the household's reference embeddings at enrollment is the one
-      every matching device must run, exactly, or matches silently
-      fail. That decision belongs wherever enrollment happens (the hub,
-      per section 4's amendment) and binds this body's own choice, not
-      the reverse. Pointers: `hal/seam.py`'s `Camera` protocol and
-      G11-VISION's own fixture-backed fake above; the vendored
-      `reachy_mini.vision.face_detector.FaceDetector` (YuNet, bounding
-      boxes and keypoints only, checked in the installed source - a
-      face-crop step, not an embedding model); `presence/
-      observations.py`'s `read_presence()` as the trigger source.
-      Acceptance: the model-reuse-vs-lighter-model question above
-      settled and recorded (a design-resolver pass or the owner's call,
-      whichever it turns out to be) before any embedding code is
-      written; a real, recorded CPU-cost measurement of the capped-rate
-      face check plus per-utterance speaker embedding on the target
-      hardware, proving it doesn't starve wake-word/audio (flagged as
-      unmeasured in the feasibility doc); a deterministic test suite
-      against a fixture-backed fake (known
-      faces/voices, known non-matches); enrollment revocation removes
-      local matching for that person within one sync. Out of scope: the
-      hub-side enrollment UI and encrypted embedding storage (a `home`
-      item, filed there, not here); gesture recognition on the hub/web
-      and Go surfaces (confirmed in scope by Jesse 2026-09-28, but not
-      analyzed - its own feasibility pass first, a `home`/`go` item
-      regardless). Exit: `bash scripts/check.sh`, plus the CPU
-      measurement recorded in `docs/dev/measurements.md`.
+      amendment is the design record's verdict reversing the prior
+      exclusion (the owner's call, confirmed live);
+      **`docs/dev/design-face-recognition-models-2026-09-28.md` is the
+      model decision**, and **`dev.md` section 6 ("Speaker evidence on
+      a shared device") is the canonical spec this item implements**:
+      the `speaker_evidence` wire shape, the confirmed/tentative
+      fusion, the close-tie and far-miss rules, "present and alone",
+      and the "never a score, an embedding, a track's geometry or a
+      face crop leaves the robot" line are decided there and must not
+      diverge. Decided (the models doc has the checks): the face model
+      is OpenCV Zoo's SFace (`face_recognition_sface_2021dec.onnx`,
+      Apache-2.0, MobileFaceNet backbone, 112x112 in, 128-d out,
+      sha256 `0ba9fbfa...`, 68.8 ms published on a Raspberry Pi 4B,
+      the CM4's own SoC), one file on every surface that matches a
+      face; the voice model is the legacy CAM++ pin, byte-identical
+      (512-d, read off the graph), and **it runs on the hub inside
+      the STT session this body already streams to after the wake
+      word (G3+G6), never on this body**: no `sherpa-onnx` here, no
+      per-utterance embedding here, and the `voice` evidence joins
+      the turn on the hub. The earlier text's "ArcFace's usual
+      backbones are ResNet-scale" was wrong for the artifact legacy
+      actually pinned (Hailo's `arcface_mobilefacenet`, 2.04M
+      parameters), which is unusable here anyway: a `.hef` runs on no
+      CPU, and its InsightFace weights are non-commercial. Objective:
+      opportunistic, capped-rate face identity, triggered by the
+      presence system's own `get_face_target()` (RM-06), never
+      continuous: a subclass of the vendored
+      `reachy_mini.vision.face_detector.FaceDetector` whose `_decode`
+      keeps all five YuNet landmarks (the shipped `Face` keeps three;
+      the `kps_*` outputs carry ten values; composition, never an
+      edit to the vendored file); a `numpy` similarity transform to
+      SFace's 112x112 five-point template (verify the template in the
+      installed OpenCV source, not from memory); one single-thread
+      SFace session; a local gallery of the household's synced face
+      prints that loads only prints whose model id and sha256 match
+      the model it runs and raises a Repair for any other; the
+      per-modality verdict (threshold, margin, `confirmed` /
+      `tentative` / `unknown` with candidates, thresholds set by the
+      measurement, the legacy 0.36 a starting value only); the result
+      on the turn request as `speaker_evidence` `basis: "face"`, which
+      the hub's engine fuses with its own voice result. Dependencies
+      added: none (`onnxruntime` 1.30.0 and `numpy` are already base
+      dependencies through `reachy-mini`; the model file comes through
+      the same pinned-URL-and-checksum pack pattern the wake word
+      uses). Pointers: `hal/seam.py`'s `Camera` protocol and
+      G11-VISION's fixture-backed `get_frame()`; `presence/
+      observations.py`'s `read_presence()` as the trigger;
+      `body/maipai_body/speech/wake.py` for the model-pack pattern;
+      the mirror's `perception/enroll.py` `FaceGallery.identify`
+      (best score per person, margin against the runner-up) as the
+      reference for the verdict, not lifted. Acceptance: the spec's
+      print record exists first (a `commons` item, named in the models
+      doc section 5, not filed from here); a deterministic suite
+      against the fixture-backed fake (recorded aligned crops, known
+      prints, a close pair, a far miss, a print from a foreign model
+      id refused with a Repair), sharing the spec's fusion fixtures;
+      enrollment revocation removes local matching for that person
+      within one sync; a recorded CPU measurement of the capped-rate
+      check on the unit beside the daemon, the wake scorer and the
+      audio stream (an M-R-style row in `docs/dev/measurements.md`).
+      Out of scope, each named in the models doc for the repo that
+      owns it: the print record (`commons/spec`); the enrollment UI,
+      the encrypted store and the sync, the voice print in the STT
+      session, the turn engine's fusion, and the browser-side matcher
+      (`home`); the robot's guided in-person enrollment ceremony (a
+      later item here, on top of the same record); gesture recognition
+      on the hub/web and Go surfaces (confirmed in scope by Jesse
+      2026-09-28, not analyzed, a `home`/`go` item regardless). Exit:
+      `bash scripts/check.sh`, plus the CPU measurement recorded in
+      `docs/dev/measurements.md`.
 
 ## Voice loop
 
