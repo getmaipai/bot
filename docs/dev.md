@@ -1670,6 +1670,37 @@ legitimate, recorded as one line in section 9 of
 `docs/dev/design-reachy-mini-2026-09-27.md` and as its own backlog item
 (G4b, blocking family use) rather than left as a silent gap.
 
+**G3+G6 (2026-09-28), landed:** the streaming turn round trip, per the
+revised design that folds G3 entirely into G6's own send side - no
+local VAD, no endpointer, no local `Utterance`, just a 6s wake-
+patience timer cancelled by a real `vad` event from the hub's own STT
+session. `speech/stt_stream.py`'s `SttStreamClient` opens the WS with
+`websockets`' sync client (already a dependency), forwards G1 blocks
+from the wake instant. `speech/turn_client.py`'s `TurnClient` posts
+the transcript, parses real NDJSON (not SSE), and turns `signal`
+events into `Cue`s through the `expression/cue.py` mapping EXPR-01
+already built - no new cue logic invented here. 16 tests, all against
+real local stand-in servers (a real `websockets.sync.server`, a real
+`http.server` streaming real NDJSON), which caught two real bugs a
+mock would have missed: the give-up path didn't handle the hub
+closing the connection without ever answering `{t:"end"}`, and a
+leftover unused constant implied a per-error-code cue mapping that
+was never wired up. Not yet built: G9's own run loop, which calls
+these two clients back to back and actually renders the cues.
+
+A second review pass (medium) found three more: the same give-up
+path's own `send()` call, right before the guarded `recv()`, wasn't
+itself guarded, so a hub closing the connection at that exact instant
+still raised unhandled - both calls now share one guard. `TurnClient`
+conflated an auth failure (401/403) with a genuine dropped connection,
+both becoming `TurnLinkLost` - a caller has no way to know from that
+alone whether to reconnect or re-redeem through `HubLinkClient`; a new
+`TurnAuthFailed` covers the auth case specifically. And both clients
+now raise a clear error immediately if constructed with an empty
+session cookie, instead of silently sending `Cookie: session=None`
+when a caller reads `HubLinkClient.session_cookie` before pairing has
+ever succeeded.
+
 ## Research notes
 
 - [`dev/research-minicpm5-reachy-mini-2026-09-27.md`](dev/research-minicpm5-reachy-mini-2026-09-27.md):

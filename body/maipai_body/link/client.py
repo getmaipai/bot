@@ -96,6 +96,17 @@ class HubLinkClient:
         self._session = session or requests.Session()
         self._discover = discover
 
+    @property
+    def session_cookie(self) -> str | None:
+        """The hub's own `session` cookie from the last successful
+        redeem, or `None` before one has happened. Other clients that
+        talk to the hub over a different transport (`speech/stt_stream.
+        py`'s WebSocket, for one - `websockets` doesn't share `requests`'
+        own cookie jar) authenticate by sending this value as a `Cookie`
+        header, the same credential `requireAuth`'s own middleware reads
+        for every other authenticated hub route."""
+        return self._session.cookies.get("session")
+
     def _base_url(self, address: HubAddress) -> str:
         scheme = "https" if address.tls else "http"
         return f"{scheme}://{address.host}:{address.port}"

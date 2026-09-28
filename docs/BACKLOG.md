@@ -932,6 +932,73 @@ the image release and the profile id in the header.
       front-end. Out of scope: any clip beyond the four phrase classes
       named above - a new hub-unreachable line discovered later gets its
       own clip added to the same bundle, not a special case.
+- [x] **G3+G6: the streaming turn round trip** (M, revised design -
+      `docs/dev/robot-streaming-turn-2026-09-28.md`, superseding the
+      original gap-audit's own batch-WAV G3/G6). Objective: after G2's
+      wake fires, stream captured audio to the hub's own streaming STT
+      session instead of buffering and uploading a WAV; give up cleanly
+      if nobody follows the wake with speech; call the turn route with
+      whatever transcript comes back and translate the reply's own
+      event stream into expression cues. Landed:
+      `body/maipai_body/speech/stt_stream.py` (`SttStreamClient` -
+      opens `wss://.../api/stt/stream` using `websockets`' own sync
+      client, already a bot dependency, no new one added; forwards G1
+      capture blocks as binary frames from the wake instant; the whole
+      of G3 folds in here as one small piece of logic, not a separate
+      module - a `WAKE_PATIENCE_S = 6.0` timer that cancels on a real
+      `{t:"vad",speaking:true}` and otherwise sends `{t:"end"}` and
+      gives up, exactly as the revised design specifies, with no local
+      VAD, no endpointer, no local `Utterance` object at all);
+      `body/maipai_body/speech/turn_client.py` (`TurnClient` - `POST
+      /api/turn/stream`, real newline-delimited JSON parsing per
+      `home`'s own route source, not SSE; `signal` becomes a `Cue`
+      through the already-built `expression/cue.py` from EXPR-01, not
+      a new mapping; accumulated `delta` text becomes the reply on
+      `done`; every `error` kind becomes `CANCEL` at the floor, since
+      nothing calls for a per-code cue yet). `HubLinkClient` gained a
+      `session_cookie` property so a different transport (`websockets`
+      doesn't share `requests`' own cookie jar) can authenticate with
+      the same redeemed session.
+      16 deterministic tests, all against real local servers standing
+      in for the hub (a real `websockets.sync.server` for STT, a real
+      `http.server` streaming real NDJSON for the turn route) - proving
+      the actual wire protocol, not a mocked response object. Two real
+      bugs found this way, neither of which a mock would have caught:
+      `SttStreamClient._give_up()` didn't handle the hub closing the
+      connection without ever answering `{t:"end"}` (a real
+      `ConnectionClosed`, not a timeout - now treated as a successful
+      give-up, since there's nothing left to wait for either way); a
+      leftover unused `_CANCEL_CODES` constant in `turn_client.py`
+      implied a per-error-code cue mapping that was never actually
+      wired up, removed in favor of an honest comment (every error kind
+      maps to `CANCEL` at the floor, deliberately, not by omission).
+      **Not yet built:** the actual run loop that calls these two
+      clients back to back and renders the cues they produce - that's
+      G9's own job, which assembles G2 through G8 into one state
+      machine. This lands the two clients proven correct in isolation,
+      ready for G9 to wire in.
+      `/code-review medium` (one pass) caught three more real defects,
+      all fixed: `_give_up()`'s own `ws.send({"t":"end"})` call sat
+      outside the `try/except ConnectionClosed` that guarded the
+      `recv()` right after it, so a hub closing the connection at that
+      exact moment raised an unhandled `SttStreamError` instead of the
+      intended graceful timeout - both the send and the recv are now
+      inside the one guard. `TurnClient.stream()` mapped every
+      `requests.RequestException`, 401/403 included, to `TurnLinkLost`,
+      indistinguishable from a genuine dropped connection - a caller
+      built to "reconnect" on `TurnLinkLost` had no way to know it
+      actually needed to re-redeem through `HubLinkClient` instead; a
+      new `TurnAuthFailed` now covers 401/403 specifically, checked
+      before `raise_for_status()`, matching the same pattern
+      `HubLinkClient._redeem()` already uses. Both `SttStreamClient` and
+      `TurnClient` now raise a clear `ValueError` immediately if
+      constructed with an empty `session_cookie`, rather than silently
+      sending the literal header `Cookie: session=None` when a caller
+      reads `HubLinkClient.session_cookie` before any successful pairing
+      (its type is `str | None` for exactly this reason). 5 new tests,
+      including one that reverts the `_give_up` fix and confirms it
+      genuinely fails without it, matching the session's own standing
+      rigor for a review-caught fix.
 
 ## Voice loop
 
