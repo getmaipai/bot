@@ -50,6 +50,14 @@ maipai_bot = "maipai_body.app:MaiPaiBody"
 # run reachy-mini-daemon` this repo's docstrings used to show.
 [project.optional-dependencies]
 sim = ["reachy-mini[mujoco]==1.11.0"]
+# G2: wake-word scoring. Pulls onnxruntime, scikit-learn, scipy, requests
+# and tqdm transitively - real weight on a CM4, so it's opt-in like `sim`,
+# not a base dependency every body profile pays for whether or not it
+# does its own audio. `uv sync --extra voice` for the dev bench; the
+# robot's own install (scripts/install-reachy.sh) adds it explicitly.
+# onnxruntime's own version is forced correct via [tool.uv]
+# override-dependencies below, not pinned here - see that comment for why.
+voice = ["openwakeword>=0.6.0,<0.7"]
 
 [dependency-groups]
 dev = [
@@ -58,6 +66,18 @@ dev = [
 ]
 
 [tool.uv]
+# reachy-mini==1.11.0 hard-pins onnxruntime==1.27.0. Verified on this
+# machine (G2, 2026-09-28) that 1.27.0 silently mis-scores the wake-word
+# pipeline's own ONNX models (near-zero on a clear "hey maipai" sample
+# that 1.30.0 scores correctly at 0.94, no error either way - a version-
+# caused false negative, not a crash). Also verified reachy-mini's own
+# bundled kinematics models (fknetwork.onnx, iknetwork.onnx) produce
+# byte-identical output under 1.27.0 and 1.30.0, so its exact pin looks
+# like "pin to what shipped with the model," not a real behavioral
+# dependency - overriding it here is a deliberate, checked choice, not a
+# guess. Not verified the same way: reachy_mini/vision/face_detector.py's
+# own onnx model (no consumer built yet, G11's own scope).
+override-dependencies = ["onnxruntime==1.30.0"]
 # reachy-mini pulls PyGObject only under sys_platform == "linux" (a
 # gstreamer-bundle wheel covers macOS and Windows instead); universal
 # locking still tries to resolve PyGObject's metadata by building its

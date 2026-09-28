@@ -663,6 +663,98 @@ the image release and the profile id in the header.
       idempotency guard with sizing never completed, now `_recording` flips
       only after sizing succeeds. Both new tests, one proving the raise, one
       (already added) proving idempotency doesn't discard the pre-roll ring.
+- [ ] **G2: wake word on the robot** (M, `docs/dev/reachy-mini-gap-audit-2026-09-27.md`,
+      `docs/dev/wakeword-community-research-2026-09-28.md`). Objective:
+      score G1's capture blocks against MaiPai's own trained "hey maipai"
+      detector, fire once per phrase, capture DoA at the wake instant.
+      Landed: `body/maipai_body/speech/wake.py` (`WakeEngine` Protocol,
+      `WakeScorer` driving it over G1 blocks with `WAKE_THRESHOLD = 0.8`,
+      `OpenWakeWordEngine` wrapping openWakeWord's own `Model` class
+      directly - not a hand-rolled mel-spectrogram/embedding pipeline,
+      matching what the legacy driver already did and for the same
+      reason, avoiding a heavier dependency footprint than needed);
+      `body/maipai_body/speech/models.py` (the pinned-URL/checksum
+      on-demand fetcher, the two shared openWakeWord front-end assets
+      real and fetchable, ported from `home`'s own `wakewordAssets.ts`
+      pattern with corrected checksums - see below); `[project.optional-
+      dependencies] voice` in `body/pyproject.toml` (`openwakeword`,
+      opt-in like `sim`, not a base dependency). 19 deterministic tests:
+      the scorer's threshold/reset/DoA-capture logic against a scripted
+      fake engine (no model needed), the fetcher's download/checksum/
+      caching logic against a real local HTTP server. Gated, not part of
+      the always-on suite (real binary model files, never tracked):
+      `MAIPAI_WAKEWORD_MODELS_DIR`/`MAIPAI_WAKEWORD_FIXTURES_DIR`-driven
+      tests verified locally against the actual extracted
+      `trained_hey_maipai_v2.onnx` (from `legacy-backups/home-legacy.git`)
+      and the real openWakeWord front-end - a synthetic "hey maipai"
+      sample scored 0.94 (threshold 0.8), a synthetic "hey my car" scored
+      0.05, and `reset()` was proven to actually clear the model's own
+      rolling window (0.94 on silence right after a wake without it, 0.0
+      with it).
+      **Acceptance correction, verified against real data, not guessed:**
+      the audit's own acceptance named "hey my bike" as the near-miss
+      fixture; `home` issue #5 (closed, real-speech bench table) shows
+      the trained v2 model reliably false-fires on that exact phrase
+      ("MaiPai" is phonetically "my pie," a permanent, untrainable
+      collision) - so the real near-miss test uses "hey my car" instead
+      (v2 cleanly rejects it on both real speech and this session's own
+      synthetic sample), and "hey my bike" is documented, not chased, in
+      `wake.py`'s own `WAKE_THRESHOLD` docstring.
+      **A silent, version-specific bug found and fixed:** `reachy-mini==
+      1.11.0` hard-pins `onnxruntime==1.27.0`, which was verified on this
+      machine to silently mis-score every wake-word inference (near-zero
+      on a clear wake sample, no error) while `1.30.0` scores the same
+      files correctly. Verified before overriding it, not just forced:
+      `reachy-mini`'s own bundled kinematics models (`fknetwork.onnx`,
+      `iknetwork.onnx`) produce byte-identical output under both
+      versions, so the exact pin isn't a real behavioral dependency for
+      motion - `[tool.uv] override-dependencies = ["onnxruntime==1.30.0"]`
+      forces the version proven to work, with the reasoning and the one
+      unverified residual (`reachy_mini/vision/face_detector.py`'s own
+      model, no consumer built yet) recorded in `pyproject.toml`'s own
+      comment. Both onnxruntime wheels and openwakeword's pure-Python
+      wheel confirmed available for aarch64 Linux (the robot's real
+      target), satisfying the audit's own (b).
+      **A separate bug found and filed, not fixed here:** every checksum
+      in `home`'s own `wakewordAssets.ts` is one hex character short of
+      a valid sha256, so its own wake-word downloads can never pass
+      verification - filed as
+      [home#185](https://github.com/getmaipai/home/issues/185), fixed
+      with freshly recomputed values in this repo's own `models.py`.
+      **Not done, and cannot be from this repo alone:** the audit's own
+      (a), "shipped the org's way" - `trained_hey_maipai_v2.onnx` has no
+      real release URL yet. Cutting a Bot release to host it is Jesse's
+      own call (CLAUDE.md's Releases section), not something a session
+      does unilaterally; `models.py`'s `WAKE_PHRASE` asset has an empty
+      `url` and raises a named `WakewordModelUnavailable` rather than
+      failing silently until one exists. This is why G2 stays unchecked
+      despite everything else landing: the scorer, the fetcher, and the
+      real-model tests are all proven correct, but the one artifact that
+      makes it real in production isn't fetchable yet.
+      `/code-review medium` (one pass) caught three real defects, all
+      fixed: the onnxruntime fix above was verified only against `uv
+      sync` (the dev bench) - `scripts/install-reachy.sh` installs onto
+      the real unit with plain `pip` over SSH, which never sees `[tool.uv]
+      override-dependencies` (a uv-resolver-only directive, not wheel
+      metadata) and would re-resolve straight back to reachy-mini's own
+      broken `onnxruntime==1.27.0` pin, so the fix never reached
+      production until this pass caught it; the script now installs with
+      the `[voice]` extra and force-installs `onnxruntime==1.30.0`
+      explicitly afterward, every run. `models.py`'s `ensure_asset` let a
+      raw `requests` exception (offline, DNS failure) propagate
+      unwrapped, against the org's own "clear failure message when
+      offline" standard for third-party model fetches - now wrapped in
+      `WakewordModelUnavailable` with a clear message, cleaning up the
+      `.part` file first. The real-model test's own `_max_score_over`
+      helper had an off-by-one (`range`'s stop was `len - block`, not
+      `len - block + 1`), silently dropping the last complete block
+      whenever a fixture's sample count was an exact multiple of the
+      block size - exactly the block most likely to hold the peak score.
+      Fixing the install script's own client-side variable expansion
+      (`'$REMOTE_WHEEL[voice]'` needed braces, `'${REMOTE_WHEEL}[voice]'`
+      - bash read the bare form as an array subscript and expanded to
+      nothing, caught by `shellcheck`, not the review) was a second-order
+      fix the review's own finding required to actually work.
 
 ## Voice loop
 

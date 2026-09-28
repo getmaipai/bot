@@ -50,5 +50,16 @@ into `../.github-tags/std-v0.3.0` through `.github`'s `ensure-tag.sh`
 deterministic suite runs against a fake built from recorded fixtures on
 every commit; the same suite also runs against Pollen's MuJoCo simulator
 when `MAIPAI_BODY_LIVE=1` is set and a `reachy-mini-daemon --sim` answers
-on port 8000. Check `docs/BACKLOG.md` before assuming a given piece of
+on port 8000. G2's real-model wake-word tests are gated the same way:
+they run only when `MAIPAI_WAKEWORD_MODELS_DIR` points at a local
+directory holding `melspectrogram.onnx`, `embedding_model.onnx`, and
+`trained_hey_maipai_v2.onnx` (fetchable via `speech.models`, except the
+last, which has no release asset yet), and skip otherwise; two of them
+also want `MAIPAI_WAKEWORD_FIXTURES_DIR` pointing at real or synthesized
+speech samples (`hey_maipai.wav`, `hey_my_car.wav`), skipping cleanly
+without it. `uv sync --extra voice` pulls the wake-word runtime
+(`openwakeword`, with `onnxruntime` forced to 1.30.0 via
+`[tool.uv] override-dependencies` - `body/pyproject.toml`'s own comment
+explains why `reachy-mini`'s exact `onnxruntime==1.27.0` pin is
+overridden). Check `docs/BACKLOG.md` before assuming a given piece of
 Python tooling (the household runtime, a package) is already wired up.

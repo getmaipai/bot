@@ -1542,6 +1542,33 @@ restoring it after; recorded in `docs/BACKLOG.md`'s G1 entry as a known
 dev-bench gotcha for whoever hits it next, not scoped as a fix since it
 only affects a machine with a cached token, not a shipped robot.
 
+**G2 (2026-09-28), mostly landed, one piece genuinely blocked:** the
+wake scorer (`speech/wake.py`) and the pinned-asset fetcher
+(`speech/models.py`) are built, tested (19 deterministic tests against
+a scripted fake engine and a real local HTTP server, no model files
+needed), and separately verified against the real extracted
+`trained_hey_maipai_v2.onnx` and openWakeWord's real front-end (gated
+tests, `MAIPAI_WAKEWORD_MODELS_DIR`). Two findings worth carrying
+forward: the gap-audit's own near-miss fixture, "hey my bike," is a
+documented, permanent false-accept on real speech per `home` issue #5
+(closed, not a bug - "MaiPai" is phonetically "my pie"), so the real
+near-miss test uses "hey my car" instead; and `reachy-mini==1.11.0`'s
+hard pin to `onnxruntime==1.27.0` silently mis-scored every wake
+inference on this machine (near-zero on a clear "hey maipai" sample
+that 1.30.0 scored at 0.94, no error either way) - verified safe to
+override before doing so, not just forced, by confirming
+`reachy-mini`'s own bundled kinematics models score byte-identical
+under both versions. `docs/BACKLOG.md`'s G2 entry has the full
+breakdown, including a separate bug found and filed upstream in `home`
+(`wakewordAssets.ts`'s checksums are each one hex character short,
+home#185) rather than fixed there since this session was working in
+`bot`. **What's genuinely not done:** the trained model itself has no
+real release URL - shipping it "the org's way" needs a Bot release,
+which is Jesse's call to cut, not a session's; `models.py`'s fetcher
+raises a named, clear error for that one asset rather than failing
+silently, and G2 stays unchecked in the backlog until a release makes
+it fetchable.
+
 ## Research notes
 
 - [`dev/research-minicpm5-reachy-mini-2026-09-27.md`](dev/research-minicpm5-reachy-mini-2026-09-27.md):

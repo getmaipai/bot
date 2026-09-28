@@ -96,12 +96,17 @@ class AudioCapture:
 
         Downmixes multi-channel input to mono by taking channel 0 - the
         gap-audit's own G1 section named this as the simpler of its two
-        listed options ("channel 0, or the mean"); nothing in the vendor
-        SDK or the design record documents which physical array element
-        either channel actually is, so averaging would risk silently
-        blending in whatever the array's second channel turns out to be,
-        for no documented benefit. Returns ``[]``, never ``None``, when
-        nothing new is queued.
+        listed options ("channel 0, or the mean"); the Reachy SDK itself
+        doesn't document which channel is which, but the legacy driver
+        this session ported G2 from does (`legacy-backups/bot-legacy.git:
+        robot/robot/hal/drivers/voice.py`'s own comment): the XVF3800's
+        default firmware sends two processed channels, 0 the Conference
+        tuning, 1 the ASR tuning, and channel 0 measured better for wake
+        word on the legacy bench (0.9986). Channel 0 was already the
+        right choice here by that evidence, found after the fact, not
+        before - averaging would still risk blending in a differently-
+        tuned second channel for no benefit. Returns ``[]``, never
+        ``None``, when nothing new is queued.
         """
         # Collected into a list and concatenated once at the end, not
         # re-concatenated on every loop iteration: a real queue backlog of

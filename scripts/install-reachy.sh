@@ -45,7 +45,22 @@ echo "== copying $WHEEL_FILE to $SSH_USER@$HOST:$REMOTE_WHEEL"
 scp "$WHEEL_PATH" "$SSH_USER@$HOST:$REMOTE_WHEEL"
 
 echo "== installing into $APPS_VENV"
-ssh "$SSH_USER@$HOST" "$APPS_VENV/bin/pip install --force-reinstall '$REMOTE_WHEEL'"
+# [voice]: G2's wake-word scoring is core to a conversational robot, not
+# an optional extra an operator has to remember to ask for separately.
+ssh "$SSH_USER@$HOST" "$APPS_VENV/bin/pip install --force-reinstall '${REMOTE_WHEEL}[voice]'"
+
+# reachy-mini==1.11.0 hard-pins onnxruntime==1.27.0, verified (G2,
+# docs/BACKLOG.md) to silently mis-score every wake-word inference with
+# no error. The dev bench's `[tool.uv] override-dependencies` in
+# body/pyproject.toml fixes this for `uv sync`, but that directive is
+# uv-resolver-only - it never reaches a real install, and this script
+# installs with plain pip over SSH, which would otherwise re-resolve
+# straight back to reachy-mini's own broken pin (worse, the
+# --force-reinstall above actively pulls it back down if a prior run
+# somehow had the right version). Force it explicitly, every install,
+# so this fix actually reaches the unit, not just the dev bench.
+echo "== forcing onnxruntime to the version verified to score correctly (reachy-mini's own 1.27.0 pin silently breaks wake word)"
+ssh "$SSH_USER@$HOST" "$APPS_VENV/bin/pip install --force-reinstall 'onnxruntime==1.30.0'"
 
 echo "== registering $APP_NAME as the startup app"
 ssh "$SSH_USER@$HOST" \
