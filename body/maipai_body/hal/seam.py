@@ -238,15 +238,22 @@ class AudioIO(Protocol):
 
 @runtime_checkable
 class Camera(Protocol):
-    """The camera call a body exposes. Checked 2026-09-28
+    """The camera calls a body exposes. Checked 2026-09-28
     (`docs/dev/design-vision-still-image-2026-09-28.md`): RM-06 never
-    calls this - it only ever consumes `FaceTracker`. Nothing in this
-    repo calls `get_frame()` yet; the still-image design note above is
-    its first named future consumer, once the hub's `vision` role
-    exists to receive a frame."""
+    calls either - it only ever consumes `FaceTracker`. `get_frame_jpeg()`
+    is the still-image call's own capture path (`vision/capture.py`,
+    its first named consumer): the vendor SDK already encodes JPEG
+    itself (`media_manager.py`'s own `get_frame_jpeg()`), so nothing
+    here re-encodes a raw frame - no new image dependency needed."""
 
     def get_frame(self) -> object | None:
-        """Return the latest camera frame, or ``None`` if unavailable."""
+        """Return the latest camera frame (BGR, ``(h, w, 3)`` uint8), or
+        ``None`` if unavailable."""
+        ...
+
+    def get_frame_jpeg(self) -> bytes | None:
+        """Return the latest camera frame already JPEG-encoded, or
+        ``None`` if unavailable."""
         ...
 
 

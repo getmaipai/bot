@@ -39,3 +39,33 @@ def test_get_frame_raises_body_lost_after_disconnect():
 
     with pytest.raises(BodyLost):
         client.get_frame()
+
+
+def test_get_frame_jpeg_default_construction_returns_none():
+    client = FakeReachyMiniClient()
+
+    assert client.get_frame_jpeg() is None
+
+
+def test_get_frame_jpeg_returns_the_given_bytes_exactly():
+    jpeg_bytes = b"\xff\xd8\xff\xe0fake-but-real-bytes\xff\xd9"
+    client = FakeReachyMiniClient(camera_frame_jpeg=jpeg_bytes)
+
+    assert client.get_frame_jpeg() is jpeg_bytes
+
+
+def test_get_frame_jpeg_is_independent_of_get_frame():
+    frame = np.zeros((4, 4, 3), dtype=np.uint8)
+    jpeg_bytes = b"\xff\xd8\xff\xd9"
+    client = FakeReachyMiniClient(camera_frame=frame, camera_frame_jpeg=jpeg_bytes)
+
+    assert client.get_frame() is frame
+    assert client.get_frame_jpeg() is jpeg_bytes
+
+
+def test_get_frame_jpeg_raises_body_lost_after_disconnect():
+    client = FakeReachyMiniClient(camera_frame_jpeg=b"\xff\xd8\xff\xd9")
+    client.simulate_disconnect()
+
+    with pytest.raises(BodyLost):
+        client.get_frame_jpeg()

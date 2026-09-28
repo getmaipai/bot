@@ -102,6 +102,7 @@ class FakeReachyMiniClient:
         profile: BodyProfile = REACHY_MINI_PROFILE,
         microphone_wav: Path | None = None,
         camera_frame: npt.NDArray[np.uint8] | None = None,
+        camera_frame_jpeg: bytes | None = None,
     ) -> None:
         self.profile = profile
         self._lost = False
@@ -124,6 +125,10 @@ class FakeReachyMiniClient:
         # otherwise - matching the real client's own `object | None`
         # contract rather than a MagicMock standing in for "unavailable."
         self._camera_frame = camera_frame
+        # Independent of `_camera_frame`: the vendor SDK JPEG-encodes
+        # itself (`get_frame_jpeg()`), so this fake does no encoding
+        # either - a test wanting real JPEG bytes back supplies them.
+        self._camera_frame_jpeg = camera_frame_jpeg
 
     # -- test control, not part of the seam --
 
@@ -296,6 +301,10 @@ class FakeReachyMiniClient:
     def get_frame(self) -> Any:
         self._require_connected()
         return self._camera_frame
+
+    def get_frame_jpeg(self) -> bytes | None:
+        self._require_connected()
+        return self._camera_frame_jpeg
 
     # -- Imu --
 

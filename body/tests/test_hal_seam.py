@@ -18,7 +18,7 @@ _SEAM_METHODS = {
         "get_output_audio_samplerate",
         "get_doa",
     ],
-    "Camera": ["get_frame"],
+    "Camera": ["get_frame", "get_frame_jpeg"],
     "Imu": ["read"],
     "FaceTracker": ["enable_tracking", "disable_tracking", "get_face_target"],
     "StateFeed source": ["state_feed"],

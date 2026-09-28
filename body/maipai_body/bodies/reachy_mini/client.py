@@ -228,6 +228,10 @@ class ReachyMiniClient:
         self._require_connected()
         return self._reachy.media.get_frame()
 
+    def get_frame_jpeg(self) -> bytes | None:
+        self._require_connected()
+        return self._reachy.media.get_frame_jpeg()
+
     # -- Imu --
 
     def read(self) -> ImuReading | None:

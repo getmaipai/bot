@@ -1218,9 +1218,27 @@ the image release and the profile id in the header.
       blocker: `FakeReachyMiniClient.get_frame()` now returns a real
       given frame instead of always `None` (`camera_frame` constructor
       param, mirroring the audio fixture pattern), 3 new tests in
-      `test_camera_frame.py`. **Not built:** any turn-loop wiring, hub
-      route, or consent-flow code - all wait on the `vision` role
-      existing on the hub side.
+      `test_camera_frame.py`.
+      **Extended same day:** found the vendor SDK already JPEG-encodes
+      a frame on the daemon's own side (`media_manager.py`'s
+      `get_frame_jpeg() -> bytes | None`) - no image-processing
+      dependency needed here at all. Added `Camera.get_frame_jpeg()` to
+      the seam, wired on the real client and the fake (a
+      `camera_frame_jpeg` constructor param, independent of
+      `camera_frame`); `body/maipai_body/vision/capture.py`
+      (`capture_frame_data_uri()`) wraps it as a `data:image/jpeg;
+      base64,...` URI, verified against `home`'s own
+      `document_attachments` validation regex in the new test.
+      **Live-verified against the real `reachy-mini-daemon --sim`:**
+      both `get_frame()` and `get_frame_jpeg()` return `None` cleanly
+      against a real client and an empty sim scene (no crash, correct
+      propagation), and `capture_frame_data_uri()` raises
+      `CameraUnavailable` exactly as designed - the same "mechanism
+      proven, not real content" honesty RM-06 already established for
+      face/IMU/DoA in this scene. 7 new tests total (4 in
+      `test_camera_frame.py`, 3 in `test_vision_capture.py`).
+      **Not built:** any turn-loop wiring, hub route, or consent-flow
+      code - all wait on the `vision` role existing on the hub side.
 - [ ] **FACE-01: face and voice identity on the robot** (L, needs a
       further design pass, narrowed 2026-09-28 - see below).
       `docs/dev/face-voice-recognition-design-2026-09-28.md` is the
