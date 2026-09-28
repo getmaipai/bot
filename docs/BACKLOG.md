@@ -437,7 +437,16 @@ the image release and the profile id in the header.
       rows behave as section 7 says. Out of scope: the oplog and the
       replica (no runtime on this body). Exit: `bash scripts/check.sh`
       and the simulator run.
-- [ ] **RM-06: presence and tracking** (S, sim, after RM-01).
+      **Implementation landed across G4** (pairing, the sealed token,
+      the link states) **and G9** (the turn stream driving cues through
+      the real run loop, deterministic tests proving cue order before
+      the first audio sample). Box stays unchecked: this item's own
+      acceptance is a live simulator run of a three-turn conversation,
+      not exercised yet - see G9's own entry above for what's built and
+      what a live run would still need (a combined stand-in, or a real
+      `reachy-mini-daemon --sim` session). The device state frame for
+      ROBOT-CARD-01 is G10's own item, not started.
+- [x] **RM-06: presence and tracking** (S, sim, after RM-01).
       Objective: the daemon's face tracking as the `track` source under
       the arbitration priority, its "a face is tracked" fact plus the
       array's direction of arrival and speech flag as the presence
@@ -452,14 +461,8 @@ the image release and the profile id in the header.
       only yields to a stop or service condition, the opposite of
       "tracking yields to expression." Implemented and tested against
       the corrected, sourced reading
-      (`body/maipai_body/presence/arbitration.py`). Box stays
-      unchecked: BODY-05's own funnel (a `speaking`/`thinking`/
-      `listening`/`idle` state machine) needs a turn-aware runtime to
-      mean anything and does not exist; this item lands the funnel's
-      own inputs (face target, direction of arrival and speech flag,
-      IMU tip and freefall) and the arbitration rule, not the state
-      machine BODY-05 will consume them into. Landed and verified: the
-      HAL seam's `FaceTracker` protocol
+      (`body/maipai_body/presence/arbitration.py`). Landed and
+      verified: the HAL seam's `FaceTracker` protocol
       (`enable_tracking`/`disable_tracking`/`get_face_target`), the
       arbitration priority with tests for every ranking, and tip and
       freefall detection from the IMU (design-default thresholds, not
@@ -468,6 +471,16 @@ the image release and the profile id in the header.
       1.11.0, which honestly reports no face, no IMU and no direction
       of arrival in this sim scene, so only the mechanism (no crash, a
       well-typed absence) was proven live, not a real detection.
+      **Box checked 2026-09-28:** the one thing that kept it open -
+      "BODY-05's own funnel... needs a turn-aware runtime to mean
+      anything and does not exist" - is no longer true. G9 built that
+      funnel (`ConversationLoop`, `idle`/`listening`/`thinking`/
+      `speaking`) and wired these exact observations into it
+      (`_presence_loop()`), with tests proving tracking engages with a
+      face present and disengages while speaking, matching the
+      corrected priority above. Live detection against a real face
+      still waits on a sim scene (or unit) that actually has one to
+      detect, same caveat as before.
 - [ ] **RM-07: privacy on the unit** (S, unit, first day). Objective:
       the unit on an isolated network with every outbound connection
       captured for 24 hours before and after the MaiPai install, the
