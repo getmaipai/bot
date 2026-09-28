@@ -8,27 +8,27 @@ and the same real checksums `home`'s own `wakewordAssets.ts` already
 uses for its stock detector (home issue #185: that file's own recorded
 checksums are each truncated by one hex character and can never verify;
 the values below were independently recomputed against the actual
-downloaded files, not copied from that file).
+downloaded files, not copied from that file). The download-verify
+mechanism itself lives in `maipai_body.model_assets` (extracted
+2026-09-28 when vision's SFace model, FACE-01, needed the same
+pattern) - the names below are kept as this module's own public API so
+nothing that already imports from here breaks.
 """
 
 from __future__ import annotations
 
-import hashlib
-from dataclasses import dataclass
 from pathlib import Path
 
-import requests
+from maipai_body.model_assets import AssetUnavailable, PinnedAsset
+from maipai_body.model_assets import ChecksumMismatch as ChecksumMismatch
+from maipai_body.model_assets import asset_path as asset_path
+from maipai_body.model_assets import ensure_asset as ensure_asset
+from maipai_body.model_assets import is_installed as is_installed
 
 _OWW_RELEASE_BASE = "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1"
 
-_CHUNK_BYTES = 1 << 16
-
-
-@dataclass(frozen=True)
-class WakewordAsset:
-    file: str
-    url: str
-    sha256: str
+WakewordAsset = PinnedAsset
+WakewordModelUnavailable = AssetUnavailable
 
 
 # Shared by every detector - required before any wake-word inference can run.
@@ -55,77 +55,19 @@ WAKE_PHRASE = WakewordAsset(
     file="trained_hey_maipai_v2.onnx",
     url="https://github.com/getmaipai/bot/releases/download/v0.1.0/trained_hey_maipai_v2.onnx",
     sha256="6fbff74699801dabf931166badcc51fd655570469fb6d10da1ee5f64b4cba190",
+    # A review (2026-09-28) caught the extraction to model_assets.py
+    # silently dropping this operator guidance behind a generic
+    # message - restored via PinnedAsset's own unavailable_hint, kept
+    # here (not there) in case a future release ever pulls this asset
+    # and the URL is cleared again.
+    unavailable_hint=(
+        "It's MaiPai's own trained model, which ships as a Bot release "
+        "asset once one is cut. Until then, provide it locally (see "
+        "docs/BACKLOG.md's G2 entry)."
+    ),
 )
 
 ALL_ASSETS = (MELSPECTROGRAM, EMBEDDING, WAKE_PHRASE)
-
-
-class WakewordModelUnavailable(RuntimeError):
-    """A pinned model isn't fetchable yet (no release asset exists)."""
-
-
-class ChecksumMismatch(RuntimeError):
-    """A downloaded file's sha256 didn't match its pinned value."""
-
-
-def asset_path(asset: WakewordAsset, cache_dir: Path) -> Path:
-    return cache_dir / asset.file
-
-
-def is_installed(asset: WakewordAsset, cache_dir: Path) -> bool:
-    return asset_path(asset, cache_dir).exists()
-
-
-def _sha256_of(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(_CHUNK_BYTES), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def ensure_asset(asset: WakewordAsset, cache_dir: Path) -> Path:
-    """Downloads ``asset`` into ``cache_dir`` if not already present,
-    verifying its checksum either way. Downloads to a ``.part`` sibling
-    first and renames on success, so a killed download never leaves a
-    file that looks installed but isn't."""
-    if asset.url == "":
-        raise WakewordModelUnavailable(
-            f"{asset.file} has no pinned URL yet - it's MaiPai's own trained "
-            "model, which ships as a Bot release asset once one is cut. "
-            "Until then, provide it locally (see docs/BACKLOG.md's G2 entry)."
-        )
-    dest = asset_path(asset, cache_dir)
-    if dest.exists():
-        actual = _sha256_of(dest)
-        if actual == asset.sha256:
-            return dest
-        dest.unlink()
-
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    part = dest.with_suffix(dest.suffix + ".part")
-    try:
-        with requests.get(asset.url, stream=True, timeout=30) as response:
-            response.raise_for_status()
-            with part.open("wb") as f:
-                for chunk in response.iter_content(chunk_size=_CHUNK_BYTES):
-                    f.write(chunk)
-    except requests.exceptions.RequestException as exc:
-        part.unlink(missing_ok=True)
-        raise WakewordModelUnavailable(
-            f"{asset.file} could not be fetched from {asset.url}: {exc}. "
-            "Check the network connection; wake word needs this asset "
-            "the first time, then reuses the cached copy offline."
-        ) from exc
-
-    actual = _sha256_of(part)
-    if actual != asset.sha256:
-        part.unlink()
-        raise ChecksumMismatch(
-            f"{asset.file}: sha256 {actual[:12]}... != expected {asset.sha256[:12]}..."
-        )
-    part.rename(dest)
-    return dest
 
 
 def ensure_wakeword_models(cache_dir: Path) -> dict[str, Path]:

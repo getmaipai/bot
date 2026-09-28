@@ -109,6 +109,19 @@ def test_an_asset_with_no_pinned_url_raises_a_named_error(tmp_path):
         ensure_asset(asset, tmp_path)
 
 
+def test_wake_phrase_carries_its_own_operator_guidance_if_unpinned(tmp_path, monkeypatch):
+    """A review (2026-09-28) caught the model_assets.py extraction
+    silently dropping this asset's own operator-facing guidance behind
+    a generic message - this proves it survives, not just that some
+    error is raised."""
+    import maipai_body.speech.models as models_module
+
+    monkeypatch.setattr(models_module, "WAKE_PHRASE", replace(models_module.WAKE_PHRASE, url=""))
+
+    with pytest.raises(WakewordModelUnavailable, match="docs/BACKLOG.md's G2 entry"):
+        ensure_asset(models_module.WAKE_PHRASE, tmp_path)
+
+
 def test_a_network_failure_raises_a_clear_error_not_a_raw_requests_exception(tmp_path):
     """The org standard for a third-party model fetch: 'a clear failure
     message when offline,' not a bare socket/DNS traceback."""
