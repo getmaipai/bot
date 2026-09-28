@@ -651,6 +651,18 @@ the image release and the profile id in the header.
       three tests reached into the fake's private `_mic_cursor`/
       `_mic_samples` for loop control instead of asserting on
       `poll_blocks()`'s own public return, now fixed. Re-reviewed clean.
+      A third `/code-review low` pass, on that follow-up's own diff, caught
+      two more low-severity edge cases in the same `start()`: deriving
+      `_block_samples` from `get_input_audio_samplerate()` with no floor
+      meant a vendor call returning `0` would size to a non-positive block
+      count and raise `ZeroDivisionError` on every subsequent `poll_blocks()`
+      instead of failing where the bad value actually came from, now a
+      `ValueError` raised in `start()` itself; `_recording` was set `True`
+      before sizing was known to succeed, so a `get_input_audio_samplerate()`
+      exception would leave a retried `start()` silently swallowed by the
+      idempotency guard with sizing never completed, now `_recording` flips
+      only after sizing succeeds. Both new tests, one proving the raise, one
+      (already added) proving idempotency doesn't discard the pre-roll ring.
 
 ## Voice loop
 

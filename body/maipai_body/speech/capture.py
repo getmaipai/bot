@@ -56,16 +56,29 @@ class AudioCapture:
         block count: a wake word's leading syllable must not be clipped, so
         the ring holds slightly more than 0.3 s rather than rounding to the
         nearest block and risking less.
+
+        ``_recording`` flips only once sizing has actually succeeded: if
+        ``get_input_audio_samplerate()`` raises, a retried ``start()`` must
+        not be silently swallowed by the idempotency guard above with
+        sizing left stale.
         """
         if self._recording:
             return
         self._client.start_recording()
-        self._recording = True
-        self._sample_rate = self._client.get_input_audio_samplerate()
-        self._block_samples = round(BLOCK_DURATION_S * self._sample_rate)
+        sample_rate = self._client.get_input_audio_samplerate()
+        block_samples = round(BLOCK_DURATION_S * sample_rate)
+        if block_samples <= 0:
+            raise ValueError(
+                f"get_input_audio_samplerate() returned {sample_rate!r}, "
+                "which sizes to a non-positive block; the seam contract "
+                "requires a real positive sample rate"
+            )
+        self._sample_rate = sample_rate
+        self._block_samples = block_samples
         preroll_blocks = max(1, math.ceil((PRE_ROLL_S * self._sample_rate) / self._block_samples))
         self._preroll = deque(maxlen=preroll_blocks)
         self._leftover = np.zeros(0, dtype=np.float32)
+        self._recording = True
 
     def stop(self) -> None:
         if not self._recording:

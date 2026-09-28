@@ -1518,7 +1518,15 @@ queue backlog, now collected into a list and concatenated once;
 `start_recording()` were undocumented, now a docstring says why; and
 three tests reached into the fake's private `_mic_cursor`/`_mic_samples`
 instead of asserting on `poll_blocks()`'s own public return value, now
-fixed. Live-verified against the real `reachy-mini-daemon --sim`:
+fixed. A third `low` pass on that follow-up's own diff caught two more:
+deriving `_block_samples` from the stream's reported rate with no floor
+meant a `0` from `get_input_audio_samplerate()` raised
+`ZeroDivisionError` inside every later `poll_blocks()` instead of
+failing at its actual source, now a `ValueError` in `start()` itself;
+`_recording` flipped `True` before sizing was known to succeed, now
+only after, so a failed `start()` isn't silently swallowed by its own
+idempotency guard on retry. 144 tests total. Live-verified against the
+real `reachy-mini-daemon --sim`:
 captured 3.46 s of real queued audio to a 16 kHz mono WAV over a 5 s
 window, pushed a 1 kHz tone with no exceptions or underrun warnings.
 Found and fixed along the way, not previously documented: a cached

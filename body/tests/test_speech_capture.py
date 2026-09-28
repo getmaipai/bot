@@ -118,6 +118,22 @@ def test_start_is_idempotent_and_keeps_the_preroll_ring(tmp_path):
     assert np.array_equal(capture.preroll(), preroll_before)
 
 
+def test_start_raises_on_a_non_positive_sample_rate():
+    """A vendor call returning 0 (or anything sizing to a non-positive
+    block count) must fail loudly here, not divide by zero deep inside
+    every subsequent poll_blocks() call."""
+
+    class _ZeroRateClient(FakeReachyMiniClient):
+        def get_input_audio_samplerate(self) -> int:  # type: ignore[override]
+            return 0
+
+    client = _ZeroRateClient()
+    capture = AudioCapture(client)
+
+    with pytest.raises(ValueError):
+        capture.start()
+
+
 def test_poll_blocks_raises_after_a_connection_loss_like_any_other_seam_call():
     client = FakeReachyMiniClient()
     capture = AudioCapture(client)
