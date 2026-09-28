@@ -54,6 +54,50 @@ ssh "$SSH_USER@$HOST" \
     -H 'Content-Type: application/json' \
     -d '{\"startup_app\": \"$APP_NAME\"}'"
 
+echo "== removing vendor apps (design record: 'any app the unit ships with is removed by the install step')"
+ssh "$SSH_USER@$HOST" python3 - "$DAEMON_PORT" "$APP_NAME" <<'REMOVE_VENDOR_APPS'
+import json
+import sys
+import time
+import urllib.request
+
+port, keep = sys.argv[1], sys.argv[2]
+base = f"http://localhost:{port}/api/apps"
+
+with urllib.request.urlopen(f"{base}/list-available/installed") as resp:
+    installed = json.load(resp)
+
+# maipai_bot is already registered as the startup app by the time this
+# runs (the daemon's own "installed" listing is entry points in the
+# shared apps_venv - reachy_mini_apps - which now includes it), so
+# excluding it by name is what keeps this idempotent on a re-run rather
+# than removing and immediately needing to reinstall our own app.
+vendor_apps = [app["name"] for app in installed if app["name"] != keep]
+if not vendor_apps:
+    print("no vendor apps installed")
+    sys.exit(0)
+
+for name in vendor_apps:
+    print(f"removing {name}")
+    req = urllib.request.Request(f"{base}/remove/{name}", method="POST")
+    with urllib.request.urlopen(req) as resp:
+        job_id = json.load(resp)["job_id"]
+
+    for _ in range(30):
+        with urllib.request.urlopen(f"{base}/job-status/{job_id}") as resp:
+            job = json.load(resp)
+        if job["status"] == "done":
+            break
+        if job["status"] == "failed":
+            print(f"failed to remove {name}: {job['logs']}", file=sys.stderr)
+            sys.exit(1)
+        time.sleep(1)
+    else:
+        print(f"timed out removing {name}", file=sys.stderr)
+        sys.exit(1)
+    print(f"removed {name}")
+REMOVE_VENDOR_APPS
+
 echo "== restarting reachy-mini-daemon"
 ssh "$SSH_USER@$HOST" "sudo systemctl restart reachy-mini-daemon"
 

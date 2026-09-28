@@ -179,6 +179,18 @@ def build_steps(primitive: str, profile: BodyProfile, *, doa_angle_rad: float = 
             )
         ]
 
+    if primitive == "muted":
+        left_amplitude = _amplitude_rad(profile, "antenna_left", spec.antenna_fraction)
+        right_amplitude = _amplitude_rad(profile, "antenna_right", spec.antenna_fraction)
+        return [
+            Step(
+                method="goto",
+                pose=HeadPose(),
+                antennas=AntennaPositions(left=-left_amplitude, right=-right_amplitude),
+                duration_s=spec.duration_s,
+            )
+        ]
+
     if primitive == "speak":
         left_amplitude = _amplitude_rad(profile, "antenna_left", spec.antenna_fraction)
         right_amplitude = _amplitude_rad(profile, "antenna_right", spec.antenna_fraction)

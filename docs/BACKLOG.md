@@ -318,19 +318,25 @@ the image release and the profile id in the header.
       **Not fully landed**, box stays unchecked: body yaw does not yet
       follow the head past the 65-degree delta limit (that is a
       tracking-loop behavior, EXPR-04's, not one primitive's own
-      render) and there is no rendered `muted` pose yet (this profile
-      has no mute mechanism wired up at all; `physical_cuts` is empty
-      and no software mute exists to render against). "Device-scope
-      settings" is a Python dict (`expression/envelope.py`) with a
-      source and date, the same shape as `profile.py`'s axes, since no
-      settings store exists in this repo yet. Landed and verified:
-      every other primitive (listen, glance, tilt, nod, perk, attend,
-      settle, breathe, track, speak, stop) renders on this profile
-      through the HAL seam, `minjerk` for the goto-driven primitives,
-      `set_target` for exactly track/breathe/speak/stop; M-R2's rows
-      recorded in `docs/dev/measurements.md` from a real run against
+      render). "Device-scope settings" is a Python dict
+      (`expression/envelope.py`) with a source and date, the same shape
+      as `profile.py`'s axes, since no settings store exists in this
+      repo yet. Landed and verified: every other primitive (listen,
+      glance, tilt, nod, perk, attend, settle, breathe, track, speak,
+      stop) renders on this profile through the HAL seam, `minjerk` for
+      the goto-driven primitives, `set_target` for exactly
+      track/breathe/speak/stop; M-R2's rows recorded in
+      `docs/dev/measurements.md` from a real run against
       `reachy-mini-daemon` 1.11.0.
-- [ ] **RM-03: the app packaging and the install scripts** (S, sim).
+      **2026-09-27 addition: the muted pose.** dev.md's suppression
+      table already suppressed `listen`/`breathe` when muted; the
+      engine now renders this body's own muted pose (antennas fully
+      down, head neutral, `expression/envelope.py`'s new `"muted"` row)
+      in their place instead of leaving the antennas wherever they last
+      were, and `stop` still always renders normally regardless (its
+      suppression reason is always `None`). Tested against the fake;
+      not yet run against a live daemon.
+- [x] **RM-03: the app packaging and the install scripts** (S, sim).
       Objective: `maipai-bot` as a Python package exposing
       `MaiPaiBody(ReachyMiniApp)` under the `reachy_mini_apps`
       entry-point group, scaffolded with `reachy-mini-app-assistant`
@@ -345,10 +351,23 @@ the image release and the profile id in the header.
       handled, the stop event honored); the install script is
       idempotent. Out of scope: the password rotation (RM-08, a hub
       flow). Exit: `bash scripts/check.sh` and the simulator run.
-      **Not fully landed:** `scripts/install-reachy.sh` does not yet
-      remove pre-shipped vendor apps, one clause of this item's own
-      objective, so the box stays unchecked rather than done with a
-      caveat. Everything else below is landed and verified.
+      **2026-09-27 addition: vendor-app removal.** `install-reachy.sh`
+      now removes every installed app except `maipai_bot` between
+      registering the startup app and restarting the daemon, over the
+      daemon's own `/api/apps` job API (`list-available/installed`,
+      `remove/{name}`, polled via `job-status/{job_id}`) - the earlier
+      plan to guess vendor entry-point names was dropped in favor of
+      enumerating whatever the daemon actually reports installed, so
+      nothing needs guessing. Verified against a stand-in HTTP server
+      built from `reachy_mini/daemon/app/routers/apps.py`'s own request
+      and response shapes (read directly from the installed
+      `reachy-mini` 1.11.0 package, not assumed): confirms `maipai_bot`
+      is excluded, every other installed app is removed, and a failed
+      removal job fails the script. Not yet run against a live or
+      simulated daemon (none was reachable this session), so the actual
+      HTTP calls over a real SSH session remain unverified end to end -
+      the next simulator run should exercise this step for real before
+      it goes anywhere near a physical unit.
       Verified at this commit: `bash scripts/check.sh` green; live
       against `reachy-mini-daemon` 1.11.0 (`--sim --headless`) with
       `maipai-body` installed into its own venv, `POST
@@ -362,12 +381,11 @@ the image release and the profile id in the header.
       never by importing the class directly, so `app.py` needs its own
       `if __name__ == "__main__":` block (the first live start finished
       instantly with no error because that block was missing). Not run:
-      `scripts/install-reachy.sh` against a real unit (none reachable;
-      the SSH steps are syntax-checked and its argument validation is
-      tested, not the scp/ssh/systemctl calls themselves), and removing
-      pre-shipped vendor apps (the sim ships with none to remove, and
-      guessing their real entry-point names without a unit would be
-      unverified; carried into RM-08 or the unit's first day, RM-07).
+      `scripts/install-reachy.sh` against a real unit or a live daemon
+      (none reachable; the SSH steps are syntax-checked and its argument
+      validation is tested, not the scp/ssh/systemctl calls themselves -
+      see the 2026-09-27 addition above for the vendor-app-removal
+      step's own verification level).
 - [ ] **RM-04: the `pod`-tier speech path** (M, sim then unit, after
       ROBOT-ROUTES-01). Objective: wake, Silero VAD, endpointing and
       direction of arrival in the body from the daemon's 16 kHz audio,
@@ -649,12 +667,28 @@ written and reviewed before any of the others is coded.
       thermal, mute, stale track) holds for each; a physical run's
       encoder trace per primitive recorded. Out of scope: the engine's
       cues. Exit: `bash scripts/check.sh`.
-      **Not fully landed**, box stays unchecked: no arbitration
-      controller and no blending limiter exist (`dev.md` section 5's
-      priority order and "a full-amplitude track plus an expression is
-      never summed and clipped after" rule are unimplemented; each
-      primitive issues its own commands independently, with nothing
-      stopping two from firing back to back). Built at
+      **Not fully landed**, box stays unchecked: no blending limiter
+      exists (`dev.md` section 5's "a full-amplitude track plus an
+      expression is never summed and clipped after" rule - summing two
+      simultaneous continuous signals rather than clipping after the
+      fact - has no design yet and none was invented here rather than
+      guess at what "compatible" means numerically). The arbitration
+      half of this note is stale: `dev.md` section 5's priority order
+      (inhibit/reflex, service, tracking, expression, idle) is RM-06's
+      `presence/arbitration.py`, landed after this item.
+      **2026-09-27 addition:** the vendor SDK's own `goto_target` blocks
+      the calling thread until the daemon's task completes (verified in
+      the installed `reachy_mini` package's `wait_for_task_completion`
+      call), so two primitives cannot collide on a single calling
+      thread today; `ExpressionEngine` now also holds a lock around
+      every render, closing the "nothing stopping two from firing back
+      to back" case for a second thread (EXPR-04's continuous
+      idle/track/breathe loop, once it exists, calling `handle()`
+      beside the turn-driven discrete cues). Verified against a fake
+      that blocks like the real client, from two real threads. This
+      closes the collision risk, not blending itself - two renders now
+      queue cleanly one after another rather than interleaving, they
+      still don't merge into one smoother motion. Built at
       `body/maipai_body/expression/` against the HAL seam's generic
       `HeadActuator`, not `body/head/controller.py` (BODY-04): BODY-04
       and the MaiPai build's own profile do not exist yet (they need

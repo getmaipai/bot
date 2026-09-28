@@ -61,4 +61,16 @@ REACHY_MINI_EXPRESSION_ENVELOPE: dict[str, PrimitiveEnvelope] = {
     "settle": PrimitiveEnvelope(duration_s=0.8),  # returns toward neutral; see renderer
     "breathe": PrimitiveEnvelope(pitch_fraction=0.03, roll_fraction=0.03, antenna_fraction=0.05),
     "speak": PrimitiveEnvelope(pitch_fraction=0.05, antenna_fraction=0.05),
+    # Design record section 5's table: "muted (a state, not a cue) | neutral
+    # | both fully down and still | none". A code review (2026-09-27) found
+    # the first cut of this value (0.60) contradicted the safety rationale
+    # its own comment cited: 2.4x to 6x every other primitive's antenna
+    # fraction here, the opposite of section 7's "expression fractions stay
+    # conservative ... no full-range excursions" (a rule that exists
+    # specifically because this body has no near-hand sensor to freeze on).
+    # 0.30 stays the most pronounced "down" in the table - clearly past
+    # attend's subtle low (0.08) - without being an outlier against perk's
+    # 0.25, tilt's 0.20, or glance's 0.15; a design default like every
+    # other fraction here, for M-R2 to verify or correct.
+    "muted": PrimitiveEnvelope(antenna_fraction=0.30, duration_s=0.5),
 }
