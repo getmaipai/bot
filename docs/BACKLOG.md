@@ -1314,6 +1314,32 @@ the image release and the profile id in the header.
       2026-09-28, not analyzed, a `home`/`go` item regardless). Exit:
       `bash scripts/check.sh`, plus the CPU measurement recorded in
       `docs/dev/measurements.md`.
+      **Landed 2026-09-28: the offline pipeline (detect, align, embed,
+      match), not yet the run-loop wiring.** `vision/detect.py`
+      (`FiveLandmarkDetector`, all five YuNet points); `vision/
+      align.py` (OpenCV's `alignCrop` translated line for line from
+      its actual C++ source, checked against known synthetic
+      transforms - no real OpenCV install to compare against - plus a
+      hand-rolled pure-numpy bilinear warp, since the design's own
+      "dependencies added: none" ruled out both `opencv` and `scipy`);
+      `vision/embed.py` (the SFace session, preprocessing built to
+      match `blobFromImage`'s exact semantics - BGR/RGB swap, no /255
+      - verified against the real downloaded model by hand and now a
+      dedicated regression suite); `vision/gallery.py` (the three-way
+      verdict above, `tentative`/`unknown`-with-candidates/`unknown`-
+      with-none, never `confirmed` alone; refuses a foreign-model
+      print outright); `vision/recognize.py` ties them together.
+      `model_assets.py` is a new generic extraction of the
+      pinned-URL-and-checksum download mechanism (G2's own wake-word
+      module used to own this outright; now both share it, kept
+      behavior-identical - its existing suite still passes). 26 new
+      tests. **Not yet built:** any call into this pipeline from
+      `run_loop.py` (the capture cadence off `read_presence()`, and
+      populating `speaker_evidence` on the outgoing turn) - deliberately
+      a separate, later change against already-reviewed G9 code, not
+      bundled in; the real print record (still a `commons` item); the
+      CPU measurement (needs the unit, not just this session's own Mac
+      sanity numbers).
 
 ## Voice loop
 
