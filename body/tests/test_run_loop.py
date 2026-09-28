@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Iterator
 
+import numpy as np
 import pytest
 
 from maipai_body.bodies.reachy_mini.fake import FakeReachyMiniClient
@@ -106,11 +107,13 @@ class _ScriptedTurnClient:
     def __init__(self, events: list[TurnEvent]) -> None:
         self._events = events
         self.stream_calls: list[str] = []
+        self.speaker_evidence_calls: list[dict | None] = []
         self.cancel_calls: list[str] = []
         self.cancel_return = True
 
-    def stream(self, text: str) -> Iterator[TurnEvent]:
+    def stream(self, text: str, *, speaker_evidence=None, **_kwargs) -> Iterator[TurnEvent]:
         self.stream_calls.append(text)
+        self.speaker_evidence_calls.append(speaker_evidence)
         return iter(self._events)
 
     def cancel(self, turn_id: str) -> bool:
@@ -126,7 +129,7 @@ class _RaisingTurnClient:
         self._exc = exc
         self.cancel_calls: list[str] = []
 
-    def stream(self, text: str) -> Iterator[TurnEvent]:
+    def stream(self, text: str, *, speaker_evidence=None, **_kwargs) -> Iterator[TurnEvent]:
         def _gen():
             raise self._exc
             yield  # pragma: no cover - unreachable, makes this a generator
@@ -176,8 +179,13 @@ def _make_loop(
     turn_raises: Exception | None = None,
     tts_behavior: str = "quick",
     presence_interval_s: float = 5.0,
+    face_detector=None,
+    face_embedder=None,
+    face_gallery=None,
+    face_recognition_interval_s: float = 3.0,
+    camera_frame=None,
 ):
-    client = FakeReachyMiniClient(REACHY_MINI_PROFILE)
+    client = FakeReachyMiniClient(REACHY_MINI_PROFILE, camera_frame=camera_frame)
     engine = _RecordingExpressionEngine(client, REACHY_MINI_PROFILE)
     capture = _FakeAudioCapture()
     playback = _FakeAudioPlayback()
@@ -199,6 +207,10 @@ def _make_loop(
         turn_client=turn,
         tts_client=tts,
         presence_interval_s=presence_interval_s,
+        face_detector=face_detector,
+        face_embedder=face_embedder,
+        face_gallery=face_gallery,
+        face_recognition_interval_s=face_recognition_interval_s,
     )
     parts = {
         "client": client,
@@ -439,6 +451,403 @@ def test_presence_never_enables_tracking_while_already_speaking():
     finally:
         stop_event.set()
         thread.join(timeout=2.0)
+
+
+class _StubFaceDetector:
+    def __init__(self, faces) -> None:
+        self._faces = faces
+        self.detect_calls = 0
+
+    def detect(self, frame_bgr):
+        self.detect_calls += 1
+        return self._faces
+
+
+class _StubFaceEmbedder:
+    def __init__(self, embedding) -> None:
+        self._embedding = embedding
+
+    def embed(self, aligned_bgr):
+        return self._embedding
+
+
+class _StubFaceGallery:
+    def __init__(self, verdict) -> None:
+        self._verdict = verdict
+
+    def identify(self, embedding):
+        return self._verdict
+
+
+def _a_detected_face():
+    from maipai_body.vision.detect import FiveLandmarks
+
+    return FiveLandmarks(
+        bbox=(0, 0, 50, 50),
+        right_eye=(15, 20),
+        left_eye=(35, 20),
+        nose=(25, 30),
+        right_mouth=(18, 40),
+        left_mouth=(32, 40),
+    )
+
+
+def _join_face_check(loop, timeout: float = 2.0) -> None:
+    """`_maybe_check_face` now runs the real work on its own thread (a
+    review, 2026-09-28: it used to block the presence thread itself) -
+    tests that call it directly need to wait for that thread before
+    asserting on state, or they're racing it."""
+    thread = loop._face_check_thread
+    if thread is not None:
+        thread.join(timeout=timeout)
+
+
+def test_maybe_check_face_is_a_noop_without_all_three_components():
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    loop, _parts = _make_loop(camera_frame=frame)
+
+    loop._maybe_check_face(threading.Event())
+    _join_face_check(loop)
+
+    assert loop.state.face_verdict is None
+
+
+def test_partial_face_component_wiring_is_refused():
+    """All three or none - a review (2026-09-28) caught that a
+    partial set would silently disable recognition with no signal
+    why, indistinguishable from "nobody was ever detected.\""""
+    with pytest.raises(ValueError, match="together or not at all"):
+        _make_loop(face_detector=_StubFaceDetector([]))
+
+
+def test_maybe_check_face_populates_a_fresh_verdict():
+    from maipai_body.vision.gallery import FaceVerdict
+
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    verdict = FaceVerdict(person_id="person-abc123", level="tentative", score=0.9)
+    detector = _StubFaceDetector([_a_detected_face()])
+    loop, _parts = _make_loop(
+        camera_frame=frame,
+        face_detector=detector,
+        face_embedder=_StubFaceEmbedder(np.zeros(128, dtype=np.float32)),
+        face_gallery=_StubFaceGallery(verdict),
+    )
+
+    loop._maybe_check_face(threading.Event())
+    _join_face_check(loop)
+
+    state = loop.state
+    assert state.face_verdict == verdict
+    assert state.face_verdict_at is not None
+    assert detector.detect_calls == 1
+
+
+def test_maybe_check_face_respects_the_capped_rate_and_resumes_after_it():
+    """Proves the gate is genuinely time-based, not "already checked
+    once": a review (2026-09-28) caught the original version of this
+    test used a 999s interval, which a broken "check exactly once"
+    gate (never comparing elapsed time at all) would also pass - a
+    short interval plus a real sleep past it, then a third call
+    expected to fire, is the only way to tell the two apart."""
+    from maipai_body.vision.gallery import FaceVerdict
+
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    detector = _StubFaceDetector([_a_detected_face()])
+    loop, _parts = _make_loop(
+        camera_frame=frame,
+        face_detector=detector,
+        face_embedder=_StubFaceEmbedder(np.zeros(128, dtype=np.float32)),
+        face_gallery=_StubFaceGallery(FaceVerdict(person_id=None, level="unknown", score=0.0)),
+        face_recognition_interval_s=0.05,
+    )
+    stop_event = threading.Event()
+
+    loop._maybe_check_face(stop_event)
+    _join_face_check(loop)
+    loop._maybe_check_face(stop_event)  # immediately again - still capped
+    _join_face_check(loop)
+    assert detector.detect_calls == 1
+
+    time.sleep(0.1)  # past face_recognition_interval_s
+    loop._maybe_check_face(stop_event)
+    _join_face_check(loop)
+    assert detector.detect_calls == 2
+
+
+def test_presence_loop_triggers_a_face_check_only_when_a_face_is_present():
+    """Not `_maybe_check_face` called directly (every other test here
+    does that) - `_presence_loop` itself, proving the real call site
+    actually gates on `observation.face_detected` the way the docstring
+    claims, not just that the helper works in isolation."""
+    from maipai_body.vision.gallery import FaceVerdict
+
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    detector = _StubFaceDetector([_a_detected_face()])
+    loop, parts = _make_loop(
+        camera_frame=frame,
+        presence_interval_s=0.02,
+        face_detector=detector,
+        face_embedder=_StubFaceEmbedder(np.zeros(128, dtype=np.float32)),
+        face_gallery=_StubFaceGallery(
+            FaceVerdict(person_id="person-abc123", level="tentative", score=0.9)
+        ),
+    )
+    client = parts["client"]
+    client.face_target = FaceTrackTarget(detected=False)
+
+    stop_event = threading.Event()
+    thread = threading.Thread(target=loop._presence_loop, args=(stop_event,), daemon=True)
+    thread.start()
+    try:
+        time.sleep(0.1)  # several ticks with no face present
+        assert detector.detect_calls == 0
+        assert loop.state.face_verdict is None
+
+        client.face_target = FaceTrackTarget(detected=True)
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and detector.detect_calls == 0:
+            time.sleep(0.01)
+        assert detector.detect_calls >= 1
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and loop.state.face_verdict is None:
+            time.sleep(0.01)
+        assert loop.state.face_verdict is not None
+    finally:
+        stop_event.set()
+        thread.join(timeout=2.0)
+
+
+def test_no_face_in_frame_clears_a_previous_verdict():
+    """A detector that genuinely finds nobody in a good frame is real
+    evidence, distinct from a camera or pipeline failure (which must
+    NOT clear a still-fresh verdict - see the two tests below)."""
+    from maipai_body.vision.gallery import FaceVerdict
+
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    detector = _StubFaceDetector([])  # nobody in the frame this time
+    loop, _parts = _make_loop(
+        camera_frame=frame,
+        face_detector=detector,
+        face_embedder=_StubFaceEmbedder(np.zeros(128, dtype=np.float32)),
+        face_gallery=_StubFaceGallery(
+            FaceVerdict(person_id="person-abc123", level="tentative", score=0.9)
+        ),
+    )
+    with loop._lock:
+        loop._state.face_verdict = FaceVerdict(
+            person_id="person-abc123", level="tentative", score=0.9
+        )
+        loop._state.face_verdict_at = time.monotonic()
+
+    loop._maybe_check_face(threading.Event())
+    _join_face_check(loop)
+
+    assert loop.state.face_verdict is None
+
+
+def test_a_camera_failure_preserves_the_existing_verdict():
+    """A review (2026-09-28) caught the first version of this treating
+    `get_frame()` returning `None` identically to "checked, no face" -
+    a transient camera glitch must not erase a still-fresh, correct
+    verdict."""
+    from maipai_body.vision.gallery import FaceVerdict
+
+    detector = _StubFaceDetector([_a_detected_face()])
+    loop, _parts = _make_loop(
+        camera_frame=None,  # get_frame() returns None - a capture failure, not "no face"
+        face_detector=detector,
+        face_embedder=_StubFaceEmbedder(np.zeros(128, dtype=np.float32)),
+        face_gallery=_StubFaceGallery(
+            FaceVerdict(person_id="person-abc123", level="tentative", score=0.9)
+        ),
+    )
+    existing = FaceVerdict(person_id="person-abc123", level="tentative", score=0.9)
+    with loop._lock:
+        loop._state.face_verdict = existing
+        loop._state.face_verdict_at = time.monotonic()
+
+    loop._maybe_check_face(threading.Event())
+    _join_face_check(loop)
+
+    assert loop.state.face_verdict == existing
+    assert detector.detect_calls == 0  # never reached - get_frame() already returned None
+
+
+def test_an_exception_during_recognition_preserves_the_existing_verdict():
+    """Same reasoning as the camera-failure case: a pipeline exception
+    (a bad model load, a shape mismatch) is a failure to report, not
+    grounds to erase a still-fresh, correct verdict with a blank one."""
+    from maipai_body.vision.gallery import FaceVerdict
+
+    class _RaisingDetector:
+        def detect(self, frame_bgr):
+            raise RuntimeError("boom")
+
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    loop, _parts = _make_loop(
+        camera_frame=frame,
+        face_detector=_RaisingDetector(),
+        face_embedder=_StubFaceEmbedder(np.zeros(128, dtype=np.float32)),
+        face_gallery=_StubFaceGallery(
+            FaceVerdict(person_id="person-abc123", level="tentative", score=0.9)
+        ),
+    )
+    existing = FaceVerdict(person_id="person-abc123", level="tentative", score=0.9)
+    with loop._lock:
+        loop._state.face_verdict = existing
+        loop._state.face_verdict_at = time.monotonic()
+
+    loop._maybe_check_face(threading.Event())
+    _join_face_check(loop)
+
+    assert loop.state.face_verdict == existing
+
+
+def test_current_face_verdict_is_none_when_stale():
+    from maipai_body.vision.gallery import FaceVerdict
+
+    loop, _parts = _make_loop()
+    with loop._lock:
+        loop._state.face_verdict = FaceVerdict(
+            person_id="person-abc123", level="tentative", score=0.9
+        )
+        loop._state.face_verdict_at = time.monotonic() - 999.0  # well past the stale bound
+
+    assert loop._current_face_verdict() is None
+
+
+def test_a_fresh_face_verdict_becomes_speaker_evidence_on_the_next_turn():
+    from maipai_body.vision.gallery import FaceVerdict
+
+    verdict = FaceVerdict(person_id="person-abc123", level="tentative", score=0.9)
+    loop, parts = _make_loop(
+        wake_events=[WakeEvent(score=0.9)],
+        stt_result=SttStreamResult(kind="final", text="hello"),
+        turn_events=[
+            TurnEvent(
+                cue=Cue(phase=Phase.DONE, cue_seq=1),
+                reply_text="hi",
+                conversation_id="conv-1",
+                turn_id="turn-1",
+            ),
+        ],
+    )
+    with loop._lock:
+        loop._state.face_verdict = verdict
+        loop._state.face_verdict_at = time.monotonic()
+
+    stop_event, thread = _start(loop)
+    try:
+        _wait_for_idle_after_turn(loop)
+        assert parts["turn"].speaker_evidence_calls == [
+            {"person": "person-abc123", "basis": "face", "level": "tentative"}
+        ]
+    finally:
+        _stop(stop_event, thread)
+
+
+def test_a_malformed_person_id_is_dropped_not_sent_to_the_hub():
+    """The hub's own shared spec requires `person-[a-z0-9]{6,}` or
+    null (a review, 2026-09-28, confirmed by reading
+    commons/spec's own conversation_turn_schema.py directly) - a
+    FaceGallery not yet wired to a real print record (nothing is,
+    tonight) could hand back anything, and a malformed id would make
+    the hub refuse the whole turn's schema validation rather than
+    just discard weak evidence."""
+    from maipai_body.vision.gallery import FaceVerdict
+
+    verdict = FaceVerdict(person_id="sage", level="tentative", score=0.9)  # not person-XXXXXX
+    loop, parts = _make_loop(
+        wake_events=[WakeEvent(score=0.9)],
+        stt_result=SttStreamResult(kind="final", text="hello"),
+        turn_events=[
+            TurnEvent(
+                cue=Cue(phase=Phase.DONE, cue_seq=1),
+                reply_text="hi",
+                conversation_id="conv-1",
+                turn_id="turn-1",
+            ),
+        ],
+    )
+    with loop._lock:
+        loop._state.face_verdict = verdict
+        loop._state.face_verdict_at = time.monotonic()
+
+    stop_event, thread = _start(loop)
+    try:
+        _wait_for_idle_after_turn(loop)
+        assert parts["turn"].speaker_evidence_calls == [
+            {"person": None, "basis": "face", "level": "unknown"}
+        ]
+    finally:
+        _stop(stop_event, thread)
+
+
+def test_presence_loop_joins_a_still_running_face_check_before_returning():
+    """A review (2026-09-28): `run()`'s own `presence_thread.join
+    (timeout=2.0)` only waits for the presence thread itself - if a
+    face-check thread it spawned were still running detached, shutdown
+    could return while camera/model work was still happening. This
+    proves `_presence_loop` itself waits for its own face-check thread
+    (bounded, `_FACE_CHECK_JOIN_TIMEOUT_S`) before it returns."""
+    from maipai_body.vision.gallery import FaceVerdict
+
+    release = threading.Event()
+    started = threading.Event()
+
+    class _SlowDetector:
+        def detect(self, frame_bgr):
+            started.set()
+            release.wait(timeout=2.0)
+            return [_a_detected_face()]
+
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    loop, parts = _make_loop(
+        camera_frame=frame,
+        presence_interval_s=0.02,
+        face_detector=_SlowDetector(),
+        face_embedder=_StubFaceEmbedder(np.zeros(128, dtype=np.float32)),
+        face_gallery=_StubFaceGallery(
+            FaceVerdict(person_id="person-abc123", level="tentative", score=0.9)
+        ),
+    )
+    parts["client"].face_target = FaceTrackTarget(detected=True)
+
+    stop_event = threading.Event()
+    thread = threading.Thread(target=loop._presence_loop, args=(stop_event,), daemon=True)
+    thread.start()
+    assert started.wait(timeout=2.0)  # the slow check has started
+
+    stop_event.set()  # ask the presence loop to stop while the check is still in flight
+    release.set()  # let the slow detector finish
+    thread.join(timeout=3.0)
+
+    assert not thread.is_alive()
+    face_check_thread = loop._face_check_thread
+    assert face_check_thread is not None
+    assert not face_check_thread.is_alive()  # _presence_loop's own join already waited for it
+
+
+def test_no_face_verdict_means_no_speaker_evidence_on_the_turn():
+    loop, parts = _make_loop(
+        wake_events=[WakeEvent(score=0.9)],
+        stt_result=SttStreamResult(kind="final", text="hello"),
+        turn_events=[
+            TurnEvent(
+                cue=Cue(phase=Phase.DONE, cue_seq=1),
+                reply_text="hi",
+                conversation_id="conv-1",
+                turn_id="turn-1",
+            ),
+        ],
+    )
+
+    stop_event, thread = _start(loop)
+    try:
+        _wait_for_idle_after_turn(loop)
+        assert parts["turn"].speaker_evidence_calls == [None]
+    finally:
+        _stop(stop_event, thread)
 
 
 def test_set_muted_is_edge_triggered_and_updates_state():

@@ -20,9 +20,10 @@ speaking is the "stop" signal, not a second detector or a new model.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 import requests
@@ -30,7 +31,7 @@ import requests
 from maipai_body.expression.cue import Cue, Phase
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.suppression import SuppressionContext
-from maipai_body.hal.seam import AudioIO, FaceTracker, HeadActuator, Imu
+from maipai_body.hal.seam import AudioIO, Camera, FaceTracker, HeadActuator, Imu
 from maipai_body.presence.arbitration import ArbitrationState, tracking_may_drive
 from maipai_body.presence.observations import read_presence
 from maipai_body.speech.capture import AudioCapture
@@ -39,6 +40,10 @@ from maipai_body.speech.stt_stream import SttStreamClient
 from maipai_body.speech.tts_playback import TtsLinkLost, TtsPlaybackClient
 from maipai_body.speech.turn_client import TurnClient, TurnLinkLost
 from maipai_body.speech.wake import WakeScorer
+from maipai_body.vision.detect import FiveLandmarkDetector
+from maipai_body.vision.embed import SFaceEmbedder
+from maipai_body.vision.gallery import FaceGallery, FaceVerdict
+from maipai_body.vision.recognize import recognize_face
 
 logger = logging.getLogger("maipai_body.run_loop")
 
@@ -57,6 +62,29 @@ SETTLE_GATE_S = 0.5
 # at all - the wake scorer's own docstring already documents that a
 # fresh wake fires cleanly once per phrase.
 _WAKE_POLL_SLEEP_S = 0.01
+
+# FACE-01's own capped rate: "once every few seconds while a face is
+# present, not per frame" (design-face-recognition-models-2026-09-28.md
+# section 6) - a face-embedding pass competing with wake-word detection
+# and the audio stream on the same CPU needs a floor, not a tick.
+_FACE_RECOGNITION_INTERVAL_S = 3.0
+# A verdict older than this is not reported on a fresh turn - identity
+# is per turn, never sticky (dev.md section 6), so a face seen minutes
+# ago (the person may have left) must not still answer "who is this"
+# for an utterance that just started.
+_FACE_VERDICT_STALE_AFTER_S = 10.0
+# The face-check thread does pure CPU work (a local capture plus a
+# local ONNX pipeline, no network call with an unbounded timeout to
+# wait out) - unlike _speak's own deliberately unbounded join, a
+# generous bound here is safe, not a correctness risk.
+_FACE_CHECK_JOIN_TIMEOUT_S = 5.0
+# The hub's own shared spec (commons/spec's conversation_turn_schema.py,
+# checked directly by a review 2026-09-28): `speaker_evidence.person`
+# must match this or be null, or the hub's schema validation refuses
+# the whole turn. No real print record exists yet to guarantee a
+# FaceGallery's own person_id already looks like this - checked here
+# defensively rather than assumed.
+_PERSON_ID_RE = re.compile(r"^person-[a-z0-9]{6,}$")
 
 
 class FunnelState(StrEnum):
@@ -82,6 +110,8 @@ class RunLoopState:
     muted: bool = False
     tracking: bool = False
     trace: list[StateTransition] = field(default_factory=list)
+    face_verdict: FaceVerdict | None = None
+    face_verdict_at: float | None = None
 
 
 class ConversationLoop:
@@ -91,7 +121,7 @@ class ConversationLoop:
     def __init__(
         self,
         *,
-        client: HeadActuator | AudioIO | FaceTracker | Imu,
+        client: HeadActuator | AudioIO | FaceTracker | Imu | Camera,
         expression_engine: ExpressionEngine,
         audio_capture: AudioCapture,
         audio_playback: AudioPlayback,
@@ -100,6 +130,10 @@ class ConversationLoop:
         turn_client: TurnClient,
         tts_client: TtsPlaybackClient,
         presence_interval_s: float = 0.5,
+        face_detector: FiveLandmarkDetector | None = None,
+        face_embedder: SFaceEmbedder | None = None,
+        face_gallery: FaceGallery | None = None,
+        face_recognition_interval_s: float = _FACE_RECOGNITION_INTERVAL_S,
     ) -> None:
         self._client = client
         self._expression = expression_engine
@@ -110,6 +144,41 @@ class ConversationLoop:
         self._turn = turn_client
         self._tts = tts_client
         self._presence_interval_s = presence_interval_s
+        # All three None (the default) disables face recognition
+        # entirely: nothing in this repo constructs real ones yet
+        # (the model needs downloading, and there is no real print
+        # record to match against - FACE-01's own backlog entry names
+        # both as still open), but the presence loop is ready the day
+        # something does. Given together or not at all - a review
+        # (2026-09-28) caught that a partial wiring (one or two of the
+        # three) would silently disable recognition with no signal why,
+        # indistinguishable from "nobody was ever detected."
+        face_components = (face_detector, face_embedder, face_gallery)
+        given = sum(c is not None for c in face_components)
+        if given not in (0, 3):
+            raise ValueError(
+                "face_detector, face_embedder and face_gallery must be given "
+                "together or not at all - a partial set would silently "
+                "disable recognition with no signal why"
+            )
+        self._face_detector = face_detector
+        self._face_embedder = face_embedder
+        self._face_gallery = face_gallery
+        self._face_recognition_interval_s = face_recognition_interval_s
+        # Presence-thread-private pacing: written and read only there,
+        # never under `self._lock` (a single thread's own bookkeeping,
+        # not reportable state - `RunLoopState.face_verdict_at` is the
+        # lock-protected timestamp another thread may actually read).
+        self._last_face_check_monotonic = 0.0
+        # The in-flight (or most recently finished) face-check worker,
+        # if any - `_presence_loop` joins it before returning, and
+        # `_maybe_check_face` never starts a second one over a running
+        # first (a review, 2026-09-28: recognition used to run
+        # synchronously on the presence thread itself, delaying
+        # tracking's own enable/disable decisions by however long a
+        # capture-plus-ONNX pass takes, every few seconds while a face
+        # is present - the one case responsive tracking matters most).
+        self._face_check_thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._state = RunLoopState()
         self._cue_seq = 0
@@ -117,12 +186,14 @@ class ConversationLoop:
     @property
     def state(self) -> RunLoopState:
         with self._lock:
-            return RunLoopState(
-                funnel=self._state.funnel,
-                muted=self._state.muted,
-                tracking=self._state.tracking,
-                trace=list(self._state.trace),
-            )
+            # `replace()`, not a manual field-by-field copy: a review
+            # (2026-09-28) caught that the old form had to be updated
+            # by hand for every new `RunLoopState` field and would
+            # otherwise silently keep returning a field's stale default
+            # forever. `trace` still needs its own fresh list - the
+            # one field a shallow copy would otherwise alias with the
+            # live, still-mutating one.
+            return replace(self._state, trace=list(self._state.trace))
 
     def _enter(self, funnel: FunnelState) -> None:
         with self._lock:
@@ -137,6 +208,20 @@ class ConversationLoop:
     def _is_muted(self) -> bool:
         with self._lock:
             return self._state.muted
+
+    def _current_face_verdict(self) -> FaceVerdict | None:
+        """The most recent face verdict, or `None` if there isn't one
+        or it's gone stale (`_FACE_VERDICT_STALE_AFTER_S`) - never a
+        verdict from a face that may no longer be there answering for
+        an utterance that just started."""
+        with self._lock:
+            verdict = self._state.face_verdict
+            verdict_at = self._state.face_verdict_at
+        if verdict is None or verdict_at is None:
+            return None
+        if time.monotonic() - verdict_at > _FACE_VERDICT_STALE_AFTER_S:
+            return None
+        return verdict
 
     def _next_cue_seq(self) -> int:
         # Called from both the main funnel thread and the speak worker
@@ -222,8 +307,29 @@ class ConversationLoop:
         reply_text: str | None = None
         turn_id: str | None = None
         cancelled = False
+        speaker_evidence = None
+        face_verdict = self._current_face_verdict()
+        if face_verdict is not None:
+            # Only the derived fields (dev.md section 6: "never a
+            # score, an embedding... leaves the robot") - the
+            # verdict's own score and candidates stay local.
+            person, level = face_verdict.person_id, face_verdict.level
+            if person is not None and not _PERSON_ID_RE.match(person):
+                # The hub's own schema refuses the whole turn over a
+                # malformed id - no real print record exists yet to
+                # guarantee this never happens, so it's checked, not
+                # assumed. Downgraded, not raised: a bad id here means
+                # the local gallery is misconfigured, not a reason to
+                # go silent for the person actually speaking.
+                logger.warning(
+                    "face verdict person_id %r doesn't match the hub's id "
+                    "format - dropping it, not sending a turn the hub would refuse",
+                    person,
+                )
+                person, level = None, "unknown"
+            speaker_evidence = {"person": person, "basis": "face", "level": level}
         try:
-            for turn_event in self._turn.stream(stt_result.text):
+            for turn_event in self._turn.stream(stt_result.text, speaker_evidence=speaker_evidence):
                 if turn_event.turn_id:
                     turn_id = turn_event.turn_id
                 if turn_event.cue is not None:
@@ -351,3 +457,68 @@ class ConversationLoop:
                 self._client.disable_tracking()
                 with self._lock:
                     self._state.tracking = False
+
+            if observation.face_detected:
+                self._maybe_check_face(stop_event)
+
+        if self._face_check_thread is not None:
+            self._face_check_thread.join(timeout=_FACE_CHECK_JOIN_TIMEOUT_S)
+
+    def _maybe_check_face(self, stop_event: threading.Event) -> None:
+        """FACE-01's own capped-rate capture: at most once every
+        `_face_recognition_interval_s`, and only when a face is
+        already present (the caller's own job) - never a continuous
+        stream. A no-op unless all three of `face_detector`,
+        `face_embedder` and `face_gallery` were given to the
+        constructor (nothing does yet - FACE-01's own backlog entry
+        names why: no real print record to match against exists yet).
+        The actual work runs on its own thread (`_run_face_check`),
+        never inline here: this method returns immediately either way,
+        so a slow capture-plus-ONNX pass never delays this same tick's
+        tracking enable/disable decision, the presence loop's own
+        first job."""
+        if self._face_detector is None or self._face_embedder is None or self._face_gallery is None:
+            return
+        if time.monotonic() - self._last_face_check_monotonic < self._face_recognition_interval_s:
+            return
+        if self._face_check_thread is not None and self._face_check_thread.is_alive():
+            return  # the previous check hasn't finished - never overlap two
+        self._last_face_check_monotonic = time.monotonic()
+        self._face_check_thread = threading.Thread(
+            target=self._run_face_check, args=(stop_event,), name="face-check", daemon=True
+        )
+        self._face_check_thread.start()
+
+    def _run_face_check(self, stop_event: threading.Event) -> None:
+        """One capture-detect-align-embed-match pass, off the presence
+        thread. Any failure - the camera or the pipeline itself -
+        leaves whatever verdict is already published alone rather than
+        overwriting it with `None`: a transient glitch is not evidence
+        the person left, and a review (2026-09-28) caught the first
+        version of this treating the two identically, so a single bad
+        frame could silently erase a still-fresh, correct verdict. A
+        detector that finds no face in a good frame is different -
+        that genuinely is "checked, nobody there," and does clear it,
+        same as `recognize_face`'s own `None` for that case."""
+        try:
+            frame = self._client.get_frame()
+        except Exception:
+            logger.warning("camera capture failed for face recognition", exc_info=True)
+            return
+        if frame is None:
+            return  # nothing to check this tick - not evidence of anything
+        try:
+            verdict = recognize_face(
+                frame,
+                detector=self._face_detector,
+                embedder=self._face_embedder,
+                gallery=self._face_gallery,
+            )
+        except Exception:
+            logger.warning("face recognition failed", exc_info=True)
+            return
+        if stop_event.is_set():
+            return  # shutting down - don't publish a result nobody will read
+        with self._lock:
+            self._state.face_verdict = verdict
+            self._state.face_verdict_at = time.monotonic()
