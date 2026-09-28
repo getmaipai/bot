@@ -1,8 +1,8 @@
 """G4: the link's own small state machine - unpaired, pairing, paired.
 
-A free-standing, injectable class (the same shape ``app.run_body`` set:
-"a free function/class, not a method, so the deterministic suite drives
-it directly with fakes"), so the settings page's ``/api/state`` route
+A free-standing, injectable class (the same shape ``app.run_paired_body``
+sets: "a free function/class, not a method, so the deterministic suite
+drives it directly with fakes"), so the settings page's ``/api/state`` route
 and the daemon's own real ``__main__`` wiring both just read
 ``LinkLifecycle.state`` rather than duplicating this logic.
 """
@@ -66,6 +66,24 @@ class LinkLifecycle:
         happen inside the same lock the writer uses."""
         with self._lock:
             return copy.copy(self._state)
+
+    @property
+    def pairing_store(self) -> PairingStore:
+        """The persisted pairing this lifecycle reads/writes. A caller
+        that has just observed `state.paired` and needs the connection
+        details (`app.py`'s `run_paired_body`, once it hands off to a
+        real hub client) reads this rather than duplicating its own
+        copy of the same store - one owner, read from two places."""
+        return self._store
+
+    @property
+    def hub_client(self) -> HubLinkClient:
+        """The `HubLinkClient` this lifecycle drives. Its
+        `session_cookie` is live (reads straight off the client's own
+        session, `HubLinkClient.session_cookie`'s own docstring), so a
+        reader here always sees the cookie from the most recent
+        pair/refresh, not a stale copy taken once at construction."""
+        return self._client
 
     def _set_state(self, **changes) -> None:
         with self._lock:

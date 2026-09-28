@@ -1,5 +1,7 @@
 """G9: the run loop - one state machine driving audio, cues, tracking
-and the head. Replaces ``app.py``'s own ``run_body`` idle wait.
+and the head. Constructed and run by ``app.py``'s own
+``run_paired_body`` once G4's hub link reports paired, replacing its
+neutral-hold idle wait for the rest of the process's life.
 
 The funnel (`docs/BACKLOG.md`'s own words): ``idle``, ``listening``,
 ``thinking``, ``speaking``, derived from G6's own turn events and G8's

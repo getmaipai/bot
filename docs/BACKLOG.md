@@ -1349,13 +1349,115 @@ the image release and the profile id in the header.
       passes (8 findings, all fixed, two hand-verified by reverting
       and confirming the new test fails). 5 more tests (23 total in
       `test_run_loop.py`).
-      **Not yet built:** the real print record (still a `commons`
-      item, blocking anything from actually matching); real
-      `FiveLandmarkDetector`/`SFaceEmbedder`/`FaceGallery` construction
-      wherever the daemon actually boots the loop (nothing does yet -
-      the model needs downloading and there's nothing to match
-      against); the CPU measurement (needs the unit, not just this
-      session's own Mac sanity numbers).
+      **Landed 2026-09-28: the print record (`home`, `spec-v0.1.54`)
+      and the daemon's real construction.** The print record: FACE-01's
+      part of the gap closed from the other side, `commons/spec`'s
+      `BiometricPrint` schema plus `home`'s own `biometric_prints`
+      table, consent authorization and `/api/biometric-prints` CRUD
+      (full record in `home`'s own `docs/dev.md` - see that repo's
+      FACE-01 entry for the hub-half design, including a pre-commit
+      review catching and fixing a real authorization bug before it
+      shipped). Real construction: `app.py`'s `run_paired_body`
+      replaces the old `run_body` (deleted, no longer called from
+      anywhere - folded into this function, which keeps its
+      neutral-hold-and-honor-stop_event floor for the unpaired case)
+      with a state machine that holds neutral until G4's hub link
+      reports paired, then builds and runs the real G9
+      `ConversationLoop`: `AudioCapture`/`AudioPlayback` over the
+      HAL seam, `WakeScorer` with the real openWakeWord models (G2's
+      own `ensure_wakeword_models`), `SttStreamClient`/`TurnClient`/
+      `TtsPlaybackClient` pointed at the paired hub's `base_url` and
+      the live `session_cookie` (`LinkLifecycle` gained two small
+      public accessors, `pairing_store` and `hub_client`, for this -
+      neither existed before, both were private), `ExpressionEngine`,
+      and FACE-01's own `FiveLandmarkDetector`/`ensure_embedder`
+      (SFace)/`FaceGallery` (model_id `sface-2021dec`, matching `home`'s
+      identical `KNOWN_MODELS` string on purpose). The gallery starts
+      empty - no print-sync mechanism from hub to robot exists yet,
+      a real follow-up item, not this one - so every face check
+      reports `unknown` until one does; that is the honest state.
+      6 new/rewritten tests in `test_app.py` (never-paired holds and
+      stops within a second, a lost connection, the paired transition
+      with `_build_conversation_loop` mocked so no real network or
+      model download happens in the deterministic suite, and an
+      unreadable-pairing-record edge case), full body suite green
+      (290 passed, 10 skipped - the real-model-gated ones, unchanged).
+      **A known, explicitly filed gap, not solved this pass:**
+      `TurnClient`/`SttStreamClient`/`TtsPlaybackClient` each capture
+      `session_cookie` as a plain string at construction time; G4's own
+      `REFRESH_INTERVAL_S` (24h) re-redeem may rotate that cookie, and
+      nothing currently reconstructs these three clients afterward - a
+      robot paired and running continuously past roughly a day could
+      see hub calls start failing with a stale cookie until the process
+      restarts. Filed as FACE-04 below.
+      A `/code-review medium` pass caught three more real defects in
+      `run_paired_body`, all fixed before landing: a model-download
+      failure (`AssetUnavailable`/`ChecksumMismatch`, or a bare network
+      error) is a plain `RuntimeError` subclass, not `BodyLost`, so it
+      used to propagate uncaught and crash the whole daemon process -
+      on every restart, for a fresh install with a flaky network, until
+      someone noticed - now caught and logged, treated the same as the
+      unreadable-pairing-record case; a paired-but-no-session-cookie
+      state (a hub regression, or a proxy stripping `Set-Cookie`) used
+      to silently fall back to an empty-string cookie and build every
+      hub client anyway, surfacing only as an opaque 401 deep inside
+      the first real turn instead of a clear error at the point it's
+      actually known - now the same clean early return as the sibling
+      unreadable-pairing case. Two new regression tests for both. The
+      fourth finding (`stop_event` not polled during the first-boot
+      model download, so a stop can take as long as the download
+      instead of one second) is a real, narrower-than-it-sounds gap
+      (only the very first paired boot on a fresh install, before
+      models are cached) - documented in the module's own docstring
+      rather than fixed this pass, filed as FACE-05 below.
+      **Still not built:** the CPU measurement (needs the unit, not
+      just Mac sanity numbers); live verification against
+      `reachy-mini-daemon --sim` (G9's own still-open gap, unchanged by
+      this pass - this landing was construction and unit tests, not a
+      live boot).
+- [ ] **FACE-04: reconstruct the hub-facing speech clients on session
+      cookie rotation** (S, filed 2026-09-28 from FACE-01's own
+      construction pass). Objective: `TurnClient`, `SttStreamClient`
+      and `TtsPlaybackClient` each hold a `session_cookie` snapshot
+      taken once at construction (`app.py`'s `_build_conversation_loop`,
+      called once when `run_paired_body` first observes
+      `link.state.paired`); `LinkLifecycle`'s own 24-hour re-redeem
+      (`REFRESH_INTERVAL_S`) may issue a new cookie on the hub's own
+      session, which none of these three clients would ever see. A
+      robot paired and running past that boundary risks every hub call
+      failing with a stale credential until the process restarts.
+      Files: `app.py` (`run_paired_body`, `_build_conversation_loop`),
+      the three speech client classes. One reasonable shape: give
+      `run_paired_body` (or `ConversationLoop` itself) a hook that
+      reconstructs the three clients whenever `link.hub_client
+      .session_cookie` changes from what they were built with, checked
+      on some natural cadence (a presence tick, a turn boundary) rather
+      than a dedicated poller. Acceptance: a scripted test that rotates
+      a fake link's cookie mid-run and confirms a subsequent turn uses
+      the new value, not the stale one. Exit: `bash scripts/check.sh`.
+- [ ] **FACE-05: stop_event isn't polled during the first-boot model
+      download** (S, filed 2026-09-28 from a code review of FACE-01's
+      construction pass). Objective: `app.py`'s `run_paired_body` stops
+      polling `stop_event` the instant it observes `link.state.paired`
+      and doesn't check it again until `_build_conversation_loop`
+      returns - `ensure_wakeword_models`/`ensure_embedder`'s
+      synchronous, blocking downloads on a fresh install, with no
+      cancellation hook. A stop or SIGINT landing in that window can
+      take as long as the download does (seconds to tens of seconds on
+      a slow connection), not the one-second contract the module's own
+      docstring otherwise promises and RM-03's own acceptance names.
+      Every boot after the first finds the models cached
+      (`model_assets.py`'s `is_installed`) and returns immediately, so
+      this is real but narrow: exactly one boot per fresh install, or
+      per cache wipe. One reasonable shape: run
+      `_build_conversation_loop` on its own thread, `join()` it with a
+      short poll loop that also watches `stop_event`, and treat a stop
+      mid-download as "never reached conversational state" (log and
+      return) rather than trying to cancel the in-flight download
+      cleanly. Acceptance: a scripted test with a fake `_build_
+      conversation_loop` that blocks past `stop_event.set()` confirms
+      `run_paired_body` still returns within roughly a second. Exit:
+      `bash scripts/check.sh`.
 
 ## Voice loop
 

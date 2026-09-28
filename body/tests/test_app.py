@@ -1,27 +1,93 @@
-"""The app scaffold: hold neutral, log state changes, stop within a second."""
+"""The app's real boot path: hold neutral until paired, log state
+changes, stop within a second while waiting, then run the real
+conversation loop once G4's hub link reports paired."""
 
 from __future__ import annotations
 
 import signal
 import threading
 import time
+from dataclasses import dataclass
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-from maipai_body.app import _sigint_handler, run_body
+from maipai_body.app import (
+    _sigint_handler,
+    run_paired_body,
+)
 from maipai_body.bodies.reachy_mini.fake import FakeReachyMiniClient
+from maipai_body.link.store import HubPairing
 
 
-def test_run_body_holds_neutral_then_honors_stop_event(caplog):
+@dataclass
+class _FakeLinkState:
+    paired: bool
+
+
+class _FakePairingStore:
+    def __init__(self, pairing: HubPairing | None) -> None:
+        self._pairing = pairing
+
+    def load(self) -> HubPairing | None:
+        return self._pairing
+
+
+class _FakeHubClient:
+    def __init__(self, session_cookie: str | None) -> None:
+        self.session_cookie = session_cookie
+
+
+class _FakeLink:
+    """Duck-types `run_paired_body`'s own `link` surface
+    (`state`, `pairing_store`, `hub_client`) without a real
+    `LinkLifecycle`, `HubLinkClient` or on-disk pairing file - the same
+    scripted-stand-in style `test_run_loop.py` already uses for every
+    network-facing dependency."""
+
+    def __init__(
+        self,
+        *,
+        paired: bool = False,
+        pairing: HubPairing | None = None,
+        session_cookie: str | None = "cookie-value",
+    ) -> None:
+        self._paired = paired
+        self.pairing_store = _FakePairingStore(pairing)
+        self.hub_client = _FakeHubClient(session_cookie)
+
+    @property
+    def state(self) -> _FakeLinkState:
+        return _FakeLinkState(paired=self._paired)
+
+    def set_paired(self, paired: bool) -> None:
+        self._paired = paired
+
+
+def _fake_pairing() -> HubPairing:
+    return HubPairing(
+        base_url="https://hub.example.test",
+        device_token="dev-token",
+        hub_instance_id="hub-1",
+    )
+
+
+def test_run_paired_body_holds_neutral_then_honors_stop_event_while_never_paired(caplog):
     client = FakeReachyMiniClient()
+    link = _FakeLink(paired=False)
     stop_event = threading.Event()
 
     with caplog.at_level("INFO", logger="maipai_body.app"):
-        thread = threading.Thread(target=run_body, args=(client, stop_event))
+        thread = threading.Thread(
+            target=run_paired_body,
+            args=(client, link, stop_event),
+            kwargs={"cache_dir": Path("/tmp/unused")},
+        )
         thread.start()
-        time.sleep(0.3)  # let it reach the neutral hold
+        time.sleep(0.3)  # let it reach the neutral hold and start waiting for pairing
         stop_event.set()
         thread.join(timeout=2.0)
 
-    assert not thread.is_alive(), "run_body did not stop within its join timeout"
+    assert not thread.is_alive(), "run_paired_body did not stop within its join timeout"
 
     kinds = [command.kind for command in client.sent_commands]
     assert kinds[:2] == ["goto", "hold"], "the run loop did not go neutral then hold"
@@ -29,14 +95,21 @@ def test_run_body_holds_neutral_then_honors_stop_event(caplog):
     messages = [record.getMessage() for record in caplog.records]
     assert "state: starting" in messages
     assert "state: holding_neutral" in messages
+    assert "state: waiting_for_pairing" in messages
+    assert "state: conversation_loop" not in messages
     assert "state: stopped" in messages
 
 
-def test_run_body_stops_within_one_second_of_the_stop_event():
+def test_run_paired_body_stops_within_one_second_of_the_stop_event_while_waiting():
     client = FakeReachyMiniClient()
+    link = _FakeLink(paired=False)
     stop_event = threading.Event()
 
-    thread = threading.Thread(target=run_body, args=(client, stop_event))
+    thread = threading.Thread(
+        target=run_paired_body,
+        args=(client, link, stop_event),
+        kwargs={"cache_dir": Path("/tmp/unused")},
+    )
     thread.start()
     time.sleep(0.3)
 
@@ -46,19 +119,119 @@ def test_run_body_stops_within_one_second_of_the_stop_event():
     elapsed = time.monotonic() - started
 
     assert not thread.is_alive()
-    assert elapsed < 1.0, f"run_body took {elapsed:.2f}s to stop after stop_event was set"
+    assert elapsed < 1.0, f"run_paired_body took {elapsed:.2f}s to stop after stop_event was set"
 
 
-def test_run_body_survives_a_lost_connection(caplog):
+def test_run_paired_body_survives_a_lost_connection(caplog):
     client = FakeReachyMiniClient()
     client.simulate_disconnect()
+    link = _FakeLink(paired=False)
     stop_event = threading.Event()
 
     with caplog.at_level("INFO", logger="maipai_body.app"):
-        run_body(client, stop_event)  # a lost connection returns immediately, never blocks
+        run_paired_body(
+            client, link, stop_event, cache_dir=Path("/tmp/unused")
+        )  # a lost connection returns immediately, never blocks
 
     messages = [record.getMessage() for record in caplog.records]
     assert "state: body_lost" in messages
+    assert "state: stopped" in messages
+
+
+def test_run_paired_body_builds_and_runs_the_conversation_loop_once_paired(caplog):
+    client = FakeReachyMiniClient()
+    link = _FakeLink(paired=True, pairing=_fake_pairing(), session_cookie="real-cookie")
+    stop_event = threading.Event()
+
+    fake_loop = MagicMock()
+
+    def fake_run(event: threading.Event) -> None:
+        event.wait(5.0)  # blocks like the real ConversationLoop.run() until told to stop
+
+    fake_loop.run.side_effect = fake_run
+
+    with (
+        patch("maipai_body.app._build_conversation_loop", return_value=fake_loop) as build,
+        caplog.at_level("INFO", logger="maipai_body.app"),
+    ):
+        thread = threading.Thread(
+            target=run_paired_body,
+            args=(client, link, stop_event),
+            kwargs={"cache_dir": Path("/tmp/models")},
+        )
+        thread.start()
+        time.sleep(0.3)
+        stop_event.set()
+        thread.join(timeout=2.0)
+
+    assert not thread.is_alive()
+    build.assert_called_once_with(
+        client, "real-cookie", "https://hub.example.test", Path("/tmp/models")
+    )
+    fake_loop.run.assert_called_once_with(stop_event)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert "state: conversation_loop" in messages
+    assert "state: stopped" in messages
+
+
+def test_run_paired_body_stops_cleanly_if_the_pairing_record_is_unreadable(caplog):
+    client = FakeReachyMiniClient()
+    link = _FakeLink(paired=True, pairing=None)  # paired per in-memory state, but nothing on disk
+    stop_event = threading.Event()
+
+    with (
+        patch("maipai_body.app._build_conversation_loop") as build,
+        caplog.at_level("INFO", logger="maipai_body.app"),
+    ):
+        run_paired_body(client, link, stop_event, cache_dir=Path("/tmp/unused"))
+
+    build.assert_not_called()
+    messages = [record.getMessage() for record in caplog.records]
+    assert "state: conversation_loop" not in messages
+    assert "state: stopped" in messages
+
+
+def test_run_paired_body_stops_cleanly_if_paired_with_no_session_cookie(caplog):
+    """Code review, 2026-09-28: this used to silently fall back to an
+    empty-string cookie and build every hub client anyway, surfacing
+    only as an opaque 401 deep inside the first real turn."""
+    client = FakeReachyMiniClient()
+    link = _FakeLink(paired=True, pairing=_fake_pairing(), session_cookie=None)
+    stop_event = threading.Event()
+
+    with (
+        patch("maipai_body.app._build_conversation_loop") as build,
+        caplog.at_level("INFO", logger="maipai_body.app"),
+    ):
+        run_paired_body(client, link, stop_event, cache_dir=Path("/tmp/unused"))
+
+    build.assert_not_called()
+    messages = [record.getMessage() for record in caplog.records]
+    assert "state: conversation_loop" not in messages
+    assert "state: stopped" in messages
+
+
+def test_run_paired_body_survives_a_conversation_loop_construction_failure(caplog):
+    """Code review, 2026-09-28: a model-download failure
+    (AssetUnavailable/ChecksumMismatch, or a bare network error) is a
+    plain RuntimeError subclass, not BodyLost - it used to propagate
+    uncaught and crash the whole daemon process."""
+    client = FakeReachyMiniClient()
+    link = _FakeLink(paired=True, pairing=_fake_pairing(), session_cookie="real-cookie")
+    stop_event = threading.Event()
+
+    with (
+        patch(
+            "maipai_body.app._build_conversation_loop",
+            side_effect=RuntimeError("checksum mismatch"),
+        ),
+        caplog.at_level("INFO", logger="maipai_body.app"),
+    ):
+        run_paired_body(client, link, stop_event, cache_dir=Path("/tmp/unused"))  # must not raise
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert "state: conversation_loop" not in messages
     assert "state: stopped" in messages
 
 
