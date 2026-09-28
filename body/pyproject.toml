@@ -15,6 +15,11 @@ dependencies = [
     "pydantic>=2.13,<3",
     "websockets>=15.0,<16",
     "requests>=2.34,<3",
+    # G1: the seam's AudioIO protocol and body/maipai_body/speech/ use
+    # numpy arrays directly (float32 audio samples), not just through
+    # reachy-mini's own transitive pin - declared explicitly so a future
+    # reachy-mini version bump can't silently drop or reversion it under us.
+    "numpy>=2.0,<3",
     # AGENTS.md names maipai-spec, pinned at the same tag Home pins
     # (spec-v0.1.48), as this body's dependency once it consumes spec
     # shapes. Not pinned yet: commons/spec/pyproject.toml has no

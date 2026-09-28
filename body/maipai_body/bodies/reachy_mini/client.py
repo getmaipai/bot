@@ -24,6 +24,7 @@ from collections.abc import Iterator
 from typing import Any, NoReturn
 
 import numpy as np
+import numpy.typing as npt
 import requests
 from reachy_mini import ReachyMini
 from reachy_mini.io.protocol import StopMoveCmd
@@ -181,13 +182,37 @@ class ReachyMiniClient:
 
     # -- AudioIO --
 
-    def get_audio_sample(self) -> Any:
+    def start_recording(self) -> None:
+        self._require_connected()
+        self._reachy.media.start_recording()
+
+    def stop_recording(self) -> None:
+        self._require_connected()
+        self._reachy.media.stop_recording()
+
+    def get_audio_sample(self) -> npt.NDArray[np.float32] | None:
         self._require_connected()
         return self._reachy.media.get_audio_sample()
 
-    def push_audio_sample(self, data: Any) -> None:
+    def get_input_audio_samplerate(self) -> int:
+        self._require_connected()
+        return self._reachy.media.get_input_audio_samplerate()
+
+    def start_playing(self) -> None:
+        self._require_connected()
+        self._reachy.media.start_playing()
+
+    def push_audio_sample(self, data: npt.NDArray[np.float32]) -> None:
         self._require_connected()
         self._reachy.media.push_audio_sample(data)
+
+    def stop_playing(self) -> None:
+        self._require_connected()
+        self._reachy.media.stop_playing()
+
+    def get_output_audio_samplerate(self) -> int:
+        self._require_connected()
+        return self._reachy.media.get_output_audio_samplerate()
 
     def get_doa(self) -> DirectionOfArrival | None:
         self._require_connected()

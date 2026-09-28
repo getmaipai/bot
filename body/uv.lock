@@ -537,6 +537,7 @@ name = "maipai-bot"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "numpy" },
     { name = "pydantic" },
     { name = "reachy-mini" },
     { name = "requests" },
@@ -556,6 +557,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "numpy", specifier = ">=2.0,<3" },
     { name = "pydantic", specifier = ">=2.13,<3" },
     { name = "reachy-mini", specifier = "==1.11.0" },
     { name = "reachy-mini", extras = ["mujoco"], marker = "extra == 'sim'", specifier = "==1.11.0" },

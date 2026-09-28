@@ -1485,6 +1485,40 @@ the built wheel in a fresh Linux aarch64 venv (no container runtime in
 this environment) - low risk, since the wheel is pure Python with no
 platform-specific code, but recorded rather than assumed.
 
+**Landed 2026-09-28 (G1, audio capture and playback):** the `AudioIO`
+seam gained recording/playback lifecycle and sample-rate methods
+alongside the existing `get_doa`, typed `npt.NDArray[np.float32]`
+throughout instead of `object`; both the real client (delegating to
+`self._reachy.media.*`) and the fake (a WAV-backed mic that hands back
+fixed-size chunks, plus a pushed-audio ledger) implement the full
+Protocol. A new body-agnostic `maipai_body/speech/` package sits above
+the seam: `AudioCapture` downmixes the daemon's stereo feed to mono by
+taking channel 0 (documented as a judgment call, not a documented fact
+about the array - nothing says which physical element either channel
+is, so averaging risked silently blending in an undocumented second
+source) and re-chunks into fixed 512-sample/32 ms blocks with a 0.3 s
+pre-roll ring for G3's future wake-word lookback; `AudioPlayback` opens
+the output stream once across repeated pushes and keeps a timestamped
+ledger, cleared on `stop()`, for G8's future barge-in accounting. 12 new
+deterministic tests (exact 93-block count from a synthetic 3 s WAV,
+exact 0.3 s pre-roll sizing, idempotent stream-open, ledger duration,
+raises-after-disconnect) pass alongside the full suite (140 passed, 7
+skipped). Live-verified against the real `reachy-mini-daemon --sim`:
+captured 3.46 s of real queued audio to a 16 kHz mono WAV over a 5 s
+window, pushed a 1 kHz tone with no exceptions or underrun warnings.
+Found and fixed along the way, not previously documented: a cached
+Hugging Face token at `~/.cache/huggingface/token` makes
+`ReachyMini.__init__` raise `KeyError: 'Producer reachymini not
+found.'` inside `MediaManager._init_webrtc()`
+(`reachy_mini/media/webrtc_utils.py`'s `find_producer_peer_id_by_name`),
+breaking local audio connection entirely - not just adding the
+already-documented unwanted outbound relay connection - regardless of
+`connection_mode` ("auto" and "localhost_only" fail identically).
+Worked around for this session's testing by moving the token aside and
+restoring it after; recorded in `docs/BACKLOG.md`'s G1 entry as a known
+dev-bench gotcha for whoever hits it next, not scoped as a fix since it
+only affects a machine with a cached token, not a shipped robot.
+
 ## Research notes
 
 - [`dev/research-minicpm5-reachy-mini-2026-09-27.md`](dev/research-minicpm5-reachy-mini-2026-09-27.md):

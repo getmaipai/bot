@@ -578,6 +578,63 @@ the image release and the profile id in the header.
       container runtime in this environment); the wheel is pure-Python
       with no platform-specific code, so this is a low-risk gap, not a
       guess dressed up as done.
+- [x] **G1: audio capture and playback through the daemon's media path**
+      (S-M, filed and landed 2026-09-28,
+      `docs/dev/reachy-mini-gap-audit-2026-09-27.md`). Objective: the
+      seam's `AudioIO` protocol (`hal/seam.py`) and the client's
+      pass-throughs existed typed `object`, with no consumer and no
+      `start_recording`/`start_playing`/`stop_*` calls at all - real,
+      verified vendor facts (`reachy.media.start_recording()` first,
+      `get_audio_sample()` returns float32 `(n, 2)` at 16 kHz or `None`,
+      `push_audio_sample()`/`start_playing()`/`stop_playing()` for
+      output, all read in the installed 1.11.0 package). Landed: the
+      seam typed properly (`npt.NDArray[np.float32]`, the four new
+      start/stop calls, `get_input_audio_samplerate`/
+      `get_output_audio_samplerate`), both implemented on the real
+      client and the fake (a WAV fixture stands in for the microphone,
+      chunked like a real gstreamer appsink rather than handed back
+      whole); `body/maipai_body/speech/` (`AudioCapture` downmixes to
+      mono channel 0 and re-chunks into fixed 32 ms/512-sample blocks
+      with a 0.3 s pre-roll ring; `AudioPlayback` opens the output
+      stream once and keeps a ledger of what was pushed, for G8's own
+      barge-in to read later). Deterministic: 12 tests, including the
+      audit's own numbers (a synthetic 3 s 16 kHz WAV yields exactly 93
+      full 512-sample blocks, the pre-roll ring holds exactly 0.3 s).
+      Live, against `reachy-mini-daemon` 1.11.0 (`--sim --headless`,
+      `MUJOCO_GL=cgl`): a 5 s capture wrote a real 16 kHz mono WAV (3.46
+      s of it had audio actually queued - a real timing fact, not a
+      bug, confirmed by the deterministic suite's exact-count tests
+      passing against synthetic data); a pushed 1 kHz tone reached
+      `push_audio_sample` with no exception and no underrun/xrun
+      warning anywhere in the daemon log.
+      **Finding worth its own record:** this dev Mac's cached Hugging
+      Face token (`~/.cache/huggingface/token`) does not just turn on
+      the central relay (the already-documented privacy finding,
+      `docs/user/reachy-mini-privacy.md`) - it broke the connection
+      outright the first several attempts, `KeyError: 'Producer
+      reachymini not found.'` from
+      `reachy_mini/media/webrtc_utils.py`'s `find_producer_peer_id_by_name`,
+      inside `MediaManager._init_webrtc()`, which the vendor SDK calls
+      during `ReachyMini.__init__` regardless of `connection_mode`
+      (`localhost_only` did not avoid it). Moving the token aside and
+      restarting the daemon ("No HF token found, central signaling
+      relay disabled") fixed it immediately and reproducibly. Recorded
+      for RM-07's first-day capture and for anyone else's dev bench:
+      **a cached Hugging Face token can silently break local audio on
+      this SDK version**, not just add an unwanted outbound connection.
+      `/code-review low` (one pass) caught three real defects before
+      commit, all fixed: `AudioPlayback.stop()` was clearing the ledger
+      G8's barge-in needs to read right after calling `stop()`, now
+      cleared on the next `start()` instead; `poll_blocks()` called
+      `get_audio_sample()` once per call despite its own docstring
+      saying "drains," now loops until the client returns `None` so a
+      slow-polling caller can't fall behind the daemon's queue; the
+      pre-roll ring's `round()` sizing gave 0.288 s at 16 kHz, not the
+      0.3 s this entry claims, now `math.ceil()` so it's never short.
+      Disclosed, not fixed: the fake's fixture, once exhausted, returns
+      `None` indistinguishable from a live mic's idle `None` - fine for
+      a fixture sized to its test's own polling window, a footgun for
+      one that isn't.
 
 ## Voice loop
 

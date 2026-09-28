@@ -14,10 +14,14 @@ unmodified against either.
 from __future__ import annotations
 
 import json
+import wave
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import numpy as np
+import numpy.typing as npt
 
 from maipai_body.hal.errors import BodyLost
 from maipai_body.hal.seam import (
@@ -58,10 +62,46 @@ def load_recorded_samples() -> list[dict[str, Any]]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
+def _load_wav_as_stereo_16k(path: Path) -> npt.NDArray[np.float32]:
+    """Read a 16-bit PCM WAV fixture into float32 stereo samples, ``(n, 2)``.
+
+    Only 16 kHz is accepted: this fake stands in for real hardware that is
+    always 16 kHz (``audio_base.py``'s own ``SAMPLE_RATE`` constant), and
+    resampling a test fixture we authored ourselves would hide a mistake
+    in the fixture rather than catch one. Mono fixtures are duplicated to
+    both channels, matching what a single boom mic would look like
+    through the array's own stereo capture path.
+    """
+    with wave.open(str(path), "rb") as handle:
+        if handle.getframerate() != 16000:
+            raise ValueError(f"{path}: expected 16000 Hz, got {handle.getframerate()}")
+        if handle.getsampwidth() != 2:
+            raise ValueError(f"{path}: expected 16-bit PCM, got {handle.getsampwidth() * 8}-bit")
+        channels = handle.getnchannels()
+        raw = handle.readframes(handle.getnframes())
+    ints = np.frombuffer(raw, dtype=np.int16)
+    floats = (ints.astype(np.float32) / 32768.0).reshape(-1, channels)
+    if channels == 1:
+        floats = np.column_stack((floats[:, 0], floats[:, 0]))
+    elif channels != 2:
+        raise ValueError(f"{path}: expected mono or stereo, got {channels} channels")
+    return floats.astype(np.float32)
+
+
 class FakeReachyMiniClient:
     """Answers the HAL seam from recorded fixtures; never opens a socket."""
 
-    def __init__(self, profile: BodyProfile = REACHY_MINI_PROFILE) -> None:
+    # A real chunk from the gstreamer appsink is whatever one GStreamer
+    # buffer holds, not a fixed size; this is just small enough (64 ms)
+    # that a 3 s fixture needs several calls to drain, exercising a
+    # consumer's own accumulation logic the same way the real client would.
+    _MIC_CHUNK_FRAMES = 1024
+
+    def __init__(
+        self,
+        profile: BodyProfile = REACHY_MINI_PROFILE,
+        microphone_wav: Path | None = None,
+    ) -> None:
         self.profile = profile
         self._lost = False
         self.sent_commands: list[SentCommand] = []
@@ -72,6 +112,12 @@ class FakeReachyMiniClient:
         self.tracking_enabled = False
         self.tracking_weight = 0.0
         self.face_target = FaceTrackTarget(detected=False)
+        self._microphone_wav = microphone_wav
+        self._mic_samples: npt.NDArray[np.float32] | None = None
+        self._mic_cursor = 0
+        self._recording = False
+        self._playing = False
+        self.pushed_audio: list[npt.NDArray[np.float32]] = []
 
     # -- test control, not part of the seam --
 
@@ -161,13 +207,62 @@ class FakeReachyMiniClient:
             self._current_body_yaw = body_yaw
 
     # -- AudioIO --
+    #
+    # G1: plays ``microphone_wav`` (given to __init__) back as though it
+    # were a live microphone stream once ``start_recording()`` is called,
+    # in fixed-size chunks so a consumer genuinely has to accumulate
+    # across several ``get_audio_sample()`` calls rather than getting the
+    # whole fixture in one - the real gstreamer appsink never hands back
+    # more than one buffer's worth either. Real hardware is always 16 kHz
+    # stereo (``audio_base.py``'s own ``SAMPLE_RATE``/``CHANNELS``
+    # constants, read in the installed 1.11.0 package); the fixture is
+    # loaded once, duplicated to stereo if it was recorded mono.
 
-    def get_audio_sample(self) -> Any:
+    def start_recording(self) -> None:
         self._require_connected()
-        return None
+        self._recording = True
+        self._mic_cursor = 0
+        if self._microphone_wav is not None and self._mic_samples is None:
+            self._mic_samples = _load_wav_as_stereo_16k(self._microphone_wav)
 
-    def push_audio_sample(self, data: Any) -> None:
+    def stop_recording(self) -> None:
         self._require_connected()
+        self._recording = False
+
+    def get_audio_sample(self) -> npt.NDArray[np.float32] | None:
+        self._require_connected()
+        if not self._recording or self._mic_samples is None:
+            return None
+        if self._mic_cursor >= len(self._mic_samples):
+            # Exhausted, same return value as a live mic with nothing new
+            # queued - deliberate, not fixed here: a test that polls longer
+            # than its fixture's own duration gets silent starvation, not
+            # an error, so size the fixture to the window under test.
+            return None
+        end = min(self._mic_cursor + self._MIC_CHUNK_FRAMES, len(self._mic_samples))
+        chunk = self._mic_samples[self._mic_cursor : end]
+        self._mic_cursor = end
+        return chunk
+
+    def get_input_audio_samplerate(self) -> int:
+        self._require_connected()
+        return 16000
+
+    def start_playing(self) -> None:
+        self._require_connected()
+        self._playing = True
+
+    def push_audio_sample(self, data: npt.NDArray[np.float32]) -> None:
+        self._require_connected()
+        self.pushed_audio.append(data)
+
+    def stop_playing(self) -> None:
+        self._require_connected()
+        self._playing = False
+
+    def get_output_audio_samplerate(self) -> int:
+        self._require_connected()
+        return 16000
 
     def get_doa(self) -> DirectionOfArrival | None:
         self._require_connected()

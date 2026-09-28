@@ -17,6 +17,8 @@ import time
 from collections.abc import Iterator
 from typing import Literal, Protocol, runtime_checkable
 
+import numpy as np
+import numpy.typing as npt
 from pydantic import BaseModel
 
 SEAM_VERSION = "0.1.0"
@@ -186,14 +188,47 @@ class StateFeed(Protocol):
 
 @runtime_checkable
 class AudioIO(Protocol):
-    """The audio calls a body exposes; RM-04 is their real consumer."""
+    """The audio calls a body exposes; G1/RM-04 is their real consumer.
 
-    def get_audio_sample(self) -> object | None:
-        """Return the next audio sample, or ``None`` if none is available."""
+    Every sample crossing this seam is float32: mono ``(n,)`` or
+    multi-channel ``(n, channels)``, at whatever rate
+    ``get_input_audio_samplerate``/``get_output_audio_samplerate`` name -
+    never assumed to be 16 kHz here, even though every body built so far
+    happens to run at that rate (RM-02's own envelope module makes the
+    same mistake of a body-specific vendor fact leaking into body-
+    agnostic code the seam itself is meant to prevent).
+    """
+
+    def start_recording(self) -> None:
+        """Open the input stream; ``get_audio_sample`` returns nothing before this."""
         ...
 
-    def push_audio_sample(self, data: object) -> None:
+    def stop_recording(self) -> None:
+        """Close the input stream."""
+        ...
+
+    def get_audio_sample(self) -> npt.NDArray[np.float32] | None:
+        """Return the next queued audio chunk, or ``None`` if none is available yet."""
+        ...
+
+    def get_input_audio_samplerate(self) -> int:
+        """The input stream's sample rate in Hz."""
+        ...
+
+    def start_playing(self) -> None:
+        """Open the output stream; call once before the first ``push_audio_sample``."""
+        ...
+
+    def push_audio_sample(self, data: npt.NDArray[np.float32]) -> None:
         """Push audio samples to the output device."""
+        ...
+
+    def stop_playing(self) -> None:
+        """Close the output stream and flush whatever was queued."""
+        ...
+
+    def get_output_audio_samplerate(self) -> int:
+        """The output stream's sample rate in Hz."""
         ...
 
     def get_doa(self) -> DirectionOfArrival | None:
