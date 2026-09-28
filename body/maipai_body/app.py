@@ -11,9 +11,11 @@ one second. Expression, speech and the household link are out of scope
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import threading
 from collections.abc import Callable
+from pathlib import Path
 
 from reachy_mini import ReachyMini, ReachyMiniApp
 
@@ -21,8 +23,22 @@ from maipai_body.bodies.reachy_mini.client import ReachyMiniClient
 from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
 from maipai_body.hal.errors import BodyLost
 from maipai_body.hal.seam import AntennaPositions, HeadActuator, HeadPose
+from maipai_body.link import HubLinkClient, PairingStore, discover_hub
+from maipai_body.link.lifecycle import LinkLifecycle
 
 logger = logging.getLogger("maipai_body.app")
+
+# G4's settings page: the SDK starts a FastAPI server bound to this URL
+# only when custom_app_url is set. Port picked from the design-resolver's
+# own worked example (2026-09-28) of what a parent would type - no
+# stronger convention exists yet across the Reachy Mini app ecosystem.
+SETTINGS_APP_URL = "http://0.0.0.0:8042"
+
+
+def _default_pairing_path() -> Path:
+    data_dir = os.environ.get("MAIPAI_BOT_DATA_DIR") or str(Path.home() / ".local/share/maipai-bot")
+    return Path(data_dir) / "hub-pairing.json"
+
 
 _NEUTRAL_POSE = HeadPose()
 _NEUTRAL_ANTENNAS = AntennaPositions(left=0.0, right=0.0)
@@ -78,17 +94,44 @@ def run_body(client: HeadActuator, stop_event: threading.Event) -> None:
 class MaiPaiBody(ReachyMiniApp):
     """The MaiPai body, run by the daemon as its one app."""
 
-    custom_app_url: str | None = None
+    custom_app_url: str | None = SETTINGS_APP_URL
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        store = PairingStore(_default_pairing_path())
+        self.link = LinkLifecycle(
+            store,
+            HubLinkClient(store),
+            discover=discover_hub,
+        )
+        # The base class only wires static files + index.html; the
+        # settings page's own JS polls this for live pairing state.
+        if self.settings_app is not None:
+
+            @self.settings_app.get("/api/state")
+            async def link_state() -> dict:
+                state = self.link.state
+                return {
+                    "paired": state.paired,
+                    "code": state.code,
+                    "hub_instance_id": state.hub_instance_id,
+                }
 
     def run(self, reachy_mini: ReachyMini, stop_event: threading.Event) -> None:
-        """Run the body: install the SIGINT handler, then run_body until stopped."""
+        """Run the body: install the SIGINT handler, start the hub link
+        on its own thread, then run_body until stopped."""
         previous_handler = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, _sigint_handler(stop_event))
+        link_thread = threading.Thread(
+            target=self.link.run, args=(stop_event,), name="hub-link", daemon=True
+        )
+        link_thread.start()
         try:
             client = ReachyMiniClient(REACHY_MINI_PROFILE, reachy=reachy_mini)
             run_body(client, stop_event)
         finally:
             signal.signal(signal.SIGINT, previous_handler)
+            link_thread.join(timeout=5.0)
 
 
 if __name__ == "__main__":

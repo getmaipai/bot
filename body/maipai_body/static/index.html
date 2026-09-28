@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MaiPai Bot</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #111318;
+    color: #f2f2f2;
+    display: flex;
+    min-height: 100vh;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 24px;
+    box-sizing: border-box;
+  }
+  .card {
+    max-width: 420px;
+    text-align: center;
+  }
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 8px;
+  }
+  p {
+    color: #a3a8b8;
+    line-height: 1.5;
+  }
+  .code {
+    font-size: 48px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    margin: 24px 0;
+    font-family: ui-monospace, "SF Mono", monospace;
+  }
+  .status {
+    font-size: 15px;
+    padding: 8px 16px;
+    border-radius: 999px;
+    display: inline-block;
+  }
+  .status.waiting { background: #2a2f3d; color: #d8dbe5; }
+  .status.paired { background: #143d24; color: #7ee2a4; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>MaiPai Bot</h1>
+    <div id="body">
+      <p>Loading...</p>
+    </div>
+  </div>
+  <script>
+    async function refresh() {
+      try {
+        const res = await fetch("/api/state");
+        const state = await res.json();
+        const body = document.getElementById("body");
+        if (state.paired) {
+          body.innerHTML =
+            '<p>This robot is connected to your MaiPai Home.</p>' +
+            '<span class="status paired">Connected</span>';
+        } else if (state.code) {
+          body.innerHTML =
+            '<p>Open MaiPai Home on your phone, add a device, and enter this code:</p>' +
+            '<div class="code">' + state.code + '</div>' +
+            '<span class="status waiting">Waiting for approval</span>';
+        } else {
+          body.innerHTML = '<p>Starting up...</p>';
+        }
+      } catch (e) {
+        document.getElementById("body").innerHTML = "<p>Can't reach the robot's own app right now.</p>";
+      }
+    }
+    refresh();
+    setInterval(refresh, 3000);
+  </script>
+</body>
+</html>

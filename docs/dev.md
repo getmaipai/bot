@@ -1593,6 +1593,83 @@ production classes, not a fake) fired exactly once at score 0.9346
 (threshold 0.8), with `DoA` correctly `None` since this Mac has no real
 direction-of-arrival array to read from.
 
+**G4 (2026-09-28), landed:** the robot's own hub link - `link/discovery.py`
+(mDNS via `zeroconf`, TXT parsing split pure for testing),
+`link/store.py` (a sealed `0o600` pairing file, atomic, fail-soft),
+`link/client.py` (the real quick-connect code/poll/redeem flow, split
+into `request_code()`/`await_approval()` so a code is visible before
+the blocking wait - the one real bug this session's own design caught
+before shipping: a first-cut single-call `pair()` left the settings
+page with nothing to show until pairing had already finished),
+`link/lifecycle.py` (resume-or-discover-and-pair, then a 24h
+re-redeem heartbeat). `app.py` now serves a real settings page
+(`custom_app_url`, `static/index.html`) instead of `None`. 34
+deterministic tests, including a real local HTTP server standing in
+for the hub (not mocked at the `requests` layer) exercising the
+actual 401/403 refusal paths - 403 is ROBOT-DEVICE-01's own
+unrotated-credential gate, confirmed surfaced as a clear
+`PairingRefused`, not a raw HTTP error. Live-verified: the real
+`MaiPaiBody` class constructed and its actual `settings_app` served
+correctly under a real `uvicorn` server on port 8042 (`GET
+/api/state` and `GET /` both real HTTP round trips). Not run this
+pass: a full live pairing against a real `home` dev server (`home`
+may have other sessions active in it; the deterministic stand-in
+already exercises the identical contract read from `home`'s own
+route source).
+
+A `/code-review medium` pass caught a real, critical gap: fingerprint
+pinning was computed and stored but nothing ever checked it - the
+device token went to whoever answered at the pairing's own address
+with zero identity verification. Fixed: `_redeem()` now calls a new
+`_verify_identity()` first, which refuses only on a *confirmed*
+mismatch (a live TLS certificate that doesn't match for https, or a
+fresh mDNS answer at the same host:port with a different instance id
+for plain http) and treats an inconclusive check (mDNS answering
+nothing) as exactly that, not a mismatch - refusing the robot's own
+credential on an ordinary network hiccup would be worse than the
+narrow risk this honestly-scoped check accepts. Two more real
+findings fixed the same pass: `LinkLifecycle.state` returned the live
+object instead of a copy (a torn read across the settings page's own
+several field accesses was possible mid-write), and `_heartbeat()`
+recursed into `run()` on every failed re-redeem instead of looping
+(unbounded stack growth over a robot's own months-long uptime).
+
+A re-review of that fix (medium) caught three more real gaps: the
+plain-http identity check's own docs overstated what it catches -
+a real attacker who took over the address simply won't run an mDNS
+responder, so the check finds nothing and correctly proceeds anyway
+(its own inconclusive-is-not-a-mismatch rule); it only catches the
+implausible case of a second responder answering at the identical
+address. Both docstrings now say plainly that https is the only path
+with real protection, http's check is honest best-effort. The https
+branch itself - the security-critical half - had zero test coverage;
+`test_link_client_https.py` now drives it against a real self-signed
+certificate (via the system's own `openssl` CLI, no new dependency)
+and a real TLS handshake, trusted through `requests`' own `verify=
+<cert path>`, never `verify=False`.
+
+That same pass also tried to skip a "redundant" ~3s mDNS re-discovery
+in `await_approval()`, reasoning `request_code()` had "just discovered
+this address moments ago." A third, low-effort pass (the last one -
+the org's "a third pass never happens" rule) caught that the premise
+was false: `_poll_until_approved()` sits between them and can block up
+to five minutes, not moments, and the skip had reopened the exact gap
+`_verify_identity()` exists to close, for the first and highest-stakes
+redeem of all. Reverted outright rather than patched further:
+`_redeem()` always verifies, the parameter that let a caller skip it
+is gone entirely. No further review round was dispatched for this
+revert; verified by the full gate staying green (196 tests) and a
+careful hand read of the diff.
+
+`design-resolver` resolved the audit's own flagged ambiguity (does the
+robot speak the pairing code, or does the app page carry it alone):
+pre-rendered clips are the right long-term answer, but building that
+asset pipeline is separable from G4's own pairing mechanics, so this
+pass ships the app-page-only interim the resolver confirmed is
+legitimate, recorded as one line in section 9 of
+`docs/dev/design-reachy-mini-2026-09-27.md` and as its own backlog item
+(G4b, blocking family use) rather than left as a silent gap.
+
 ## Research notes
 
 - [`dev/research-minicpm5-reachy-mini-2026-09-27.md`](dev/research-minicpm5-reachy-mini-2026-09-27.md):

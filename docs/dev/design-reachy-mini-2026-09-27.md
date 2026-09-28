@@ -382,6 +382,16 @@ Devices page shows what each robot can do, the expression package
 renders on the axes each declares, the bench runs the rows each
 supports. Nothing in the hub knows the name of a vendor.
 
+**Amendment (2026-09-28, design-resolver, G4):** speaking the code
+needs pre-rendered clips (a `pod`-tier robot has no hub to synthesize
+with before it's paired), which is not built yet - until it lands, the
+app page above is the only surface for the code, and the offline lines
+this same clip mechanism will also carry (the hub-unreachable line,
+the freefall line, the reconnect line) stay unsayable too. This is a
+named interim state, not a silent gap: see `docs/BACKLOG.md`'s
+offline-speech-clips item, which blocks family use and RM-05's own
+unreachable-line acceptance until it lands.
+
 ## 10. Install, update, and the store listing
 
 Install runs from Home's Devices page: Add a robot, pick the found

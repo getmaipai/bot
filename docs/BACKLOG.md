@@ -783,6 +783,155 @@ the image release and the profile id in the header.
       - bash read the bare form as an array subscript and expanded to
       nothing, caught by `shellcheck`, not the review) was a second-order
       fix the review's own finding required to actually work.
+- [x] **G4: the hub client on the robot - discovery, pairing, the
+      sealed token** (M, `docs/dev/reachy-mini-gap-audit-2026-09-27.md`).
+      Objective: browse `_maipai._tcp`, request a pairing code as kind
+      `robot`, poll until approved, redeem for a session, seal the
+      token, re-redeem on demand. Landed: `body/maipai_body/link/`
+      (`discovery.py`: `_maipai._tcp` mDNS browse via `zeroconf`, with
+      TXT-record parsing split into a pure `parse_service_info()` so it's
+      tested without real mDNS traffic; `store.py`: `PairingStore`, one
+      sealed `0o600` file, atomic replace, fail-soft on a corrupt file -
+      ported in shape from the legacy `HubPairingStore`, deliberately
+      without its own crypto module, which this rebuild doesn't carry
+      ("download, don't vendor" - real encryption-at-rest for this file
+      is a separate future hardening item, not something to half-build
+      by copying legacy's `SecretBox` uncritically); `client.py`:
+      `HubLinkClient` against the real, verified-in-source hub endpoints
+      (`POST /api/auth/quick-connect/code`, `GET .../poll`, `POST
+      /api/auth/devices/redeem`), `request_code()`/`await_approval()`
+      split as two steps (not one blocking `pair()` call) specifically
+      so a caller can show the code before blocking on approval;
+      `lifecycle.py`: `LinkLifecycle`, the small state machine (resume a
+      persisted pairing, else discover-and-pair, then a 24h re-redeem
+      heartbeat) that both the settings page and the real daemon wiring
+      read from. `app.py` now sets `custom_app_url` to a real settings
+      page (`static/index.html`, polling a new `/api/state` route) and
+      runs the link lifecycle on its own thread alongside `run_body`.
+      34 deterministic tests: the store's round-trip/permission/atomicity/
+      corruption handling, the discovery parser's TXT-record cases, the
+      client's full code/poll/redeem flow against a real local HTTP
+      server standing in for the hub (not mocked at the `requests`
+      layer - the same pattern RM-03's own commit used), including the
+      401/403 refusal paths (403 is ROBOT-DEVICE-01's own unrotated-
+      credential gate, confirmed the client surfaces it as
+      `PairingRefused` rather than a raw HTTP error), and the lifecycle
+      state machine against scripted fakes (the code visible before
+      approval completes - the one bug this session's own design caught
+      before it shipped: an initial `pair()`-only version blocked
+      silently with no code ever reaching the settings page, since
+      nothing surfaced it until the whole call returned).
+      **Live-verified, not just gated:** constructed the real `MaiPaiBody`
+      class (not a fake) and ran its actual `settings_app` under a real
+      `uvicorn` server bound to port 8042 - a real HTTP `GET /api/state`
+      and `GET /` both served correctly, confirming the FastAPI wiring
+      this session added to the SDK's base class actually works, not
+      just imports cleanly.
+      **Design ambiguity resolved via `design-resolver`, not guessed**
+      (the audit's own instruction): the gap-audit flagged "does the
+      robot speak the pairing code, or does the app page carry it
+      alone" as unresolvable without research. Verdict: pre-rendered
+      clips are the right answer (the design record already commits to
+      speaking in three places, and "until the robot tier exists" may
+      mean permanently, per M-R1's own adoption gate) - but building
+      that asset-rendering pipeline is separable work, not part of G4's
+      own pairing mechanics, so this pass ships the app-page-only
+      interim state the resolver confirmed is legitimate for now (see
+      the offline-speech-clips item below, and the one-line amendment
+      to `docs/dev/design-reachy-mini-2026-09-27.md`'s section 9).
+      **Not done, deliberately out of this pass's scope:** a full live
+      pairing run against a real `home` dev server (the audit's own
+      "Live: against a dev hub, the Devices page's add flow completes
+      end to end" acceptance) - `home` may have other sessions actively
+      working in it, and the deterministic stand-in server already
+      exercises the identical wire contract read straight from `home`'s
+      own route source, so this residual gap is recorded rather than
+      chased through a cross-repo live session this pass didn't own.
+      `/code-review medium` (one pass) caught three real defects, all
+      fixed: `verify_fingerprint()` existed but nothing ever called it -
+      `refresh()`/`_redeem()` sent the device token to whoever answered
+      at the pairing's own `base_url` with zero identity verification,
+      the exact defense the module's own docstring claimed. Now
+      `_redeem()` calls a new `_verify_identity()` first: an https
+      pairing gets a real, live certificate check with a confirmed
+      mismatch refusing the redeem before the token is sent; a
+      plain-http pairing gets a best-effort fresh-mDNS check that only
+      refuses on a *confirmed* mismatch (a live answer at the same
+      host:port with a different instance id), never on an inconclusive
+      one (no answer at all - mDNS is unreliable by nature, and
+      refusing the robot's own credential on a network hiccup would be
+      worse than the narrow risk this honestly-scoped check accepts).
+      `LinkLifecycle.state` returned the live mutable object, not a
+      copy, so a reader doing several attribute accesses (the settings
+      page's own three fields) could observe a torn combination mid-
+      write; now a `copy.copy()` happens inside the same lock the
+      writer uses. `_heartbeat()` recursed into `run()` on every failed
+      re-redeem, growing the call stack by one frame per re-pair for
+      the life of a process expected to run for months; `run()` is now
+      one outer loop at constant stack depth, `_heartbeat()` returns
+      instead of recursing. 3 new tests cover the identity check's
+      three real outcomes (confirmed mismatch, inconclusive silence, a
+      different service entirely); the state-copy and no-recursion
+      fixes are covered by the existing lifecycle suite continuing to
+      pass, not new dedicated tests.
+      **A re-review of that fix (medium) caught three more real gaps,
+      all fixed:** the plain-http identity check's own doc claims
+      overstated what it catches - a real attacker who took over the
+      address (ARP spoof, DHCP reassignment) simply doesn't run an
+      mDNS responder, so the check finds nothing and, correctly per
+      its own inconclusive-is-not-a-mismatch rule, proceeds anyway;
+      it only catches the narrow, implausible case of a second,
+      differently-identified responder answering at the identical
+      host:port. Both `_verify_identity`'s own docstring and the
+      module docstring now say this plainly: https is the only path
+      with real protection here, http's check is honest best-effort,
+      not a defense. The https certificate-pinning branch - the
+      security-critical half of the whole fix - had zero test
+      coverage; `test_link_client_https.py` (3 new tests) now drives
+      it against a real self-signed certificate (generated by the
+      system's own `openssl` CLI, no new runtime dependency) and a
+      real TLS handshake, trusted via `requests`' own `verify=<cert
+      path>` option, never `verify=False` (the same weakening pattern
+      `_https_fingerprint`'s own docstring is explicit about avoiding
+      everywhere else in this module) - covering a real pin-and-match,
+      a real refresh success, and a real confirmed-mismatch refusal
+      with zero redeem calls sent.
+      **A third pass (low effort - the last one, per the org's own
+      no-third-loop rule) caught a real mistake in that same commit's
+      own third fix:** the "skip the redundant re-discovery in
+      `await_approval()`" change was built on a false premise -
+      "`request_code()` just discovered this address moments ago" -
+      but `_poll_until_approved()` sits between them and can block for
+      up to five minutes waiting for approval, not moments. The skip
+      had reopened the exact gap `_verify_identity()` exists to close,
+      for the first and highest-stakes redeem of all (the one that
+      first sends the device token). Reverted outright: `_redeem()`
+      always verifies again, the now-unused `verify_identity` parameter
+      is gone rather than left as dead API surface, and the ~3s mDNS
+      cost this whole detour tried to avoid is negligible against a
+      pairing flow that can already run for up to five minutes. No new
+      review round was dispatched for this fix (the org's own "a third
+      pass never happens" rule) - verified instead by the full gate
+      staying green (196 tests) and reading the reverted diff
+      carefully by hand.
+- [ ] **G4b: pre-rendered offline speech clips** (S, blocks family use
+      and RM-05's unreachable-line acceptance - `design-resolver`'s own
+      G4 verdict, 2026-09-28). Objective: the phrases the robot must be
+      able to speak with no hub reachable to synthesize them - the 32
+      pairing-code characters plus a short prompt, "I can't reach home
+      right now" (RM-05's own acceptance), the freefall line (design
+      record section 7), the reconnect line (M-R5) - rendered once at
+      release time from a MaiPai voice, shipped as a Bot release asset
+      (never a tracked file, matching G2's own model-asset pattern), not
+      generated at runtime (an unpaired robot has no hub to synthesize
+      with). Acceptance: every clip plays through G7's future playback
+      path; the pairing flow speaks the code via these clips instead of
+      only showing it on the app page; a licence check on the voice
+      model used to render them is recorded in `docs/dev.md` before
+      release, matching `dev.md:365`'s existing rule for the wake-word
+      front-end. Out of scope: any clip beyond the four phrase classes
+      named above - a new hub-unreachable line discovered later gets its
+      own clip added to the same bundle, not a special case.
 
 ## Voice loop
 
