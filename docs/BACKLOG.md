@@ -1069,6 +1069,118 @@ the image release and the profile id in the header.
       test, driven through a real stand-in server, passed regardless of
       whether the fix was present - a false-confidence test caught and
       replaced before landing, not shipped).
+- [x] **G8: barge-in and the honest software mute**
+      (S-M, `docs/dev/reachy-mini-gap-audit-2026-09-27.md`). Objective:
+      a "stop" heard during playback cuts it locally, cancels the turn
+      on the hub, and renders `CANCEL`; a software mute state stops
+      capture reaching the wake scorer while capture itself keeps
+      running, and is labeled "software mute" everywhere, never
+      "physical mute" (this body has none, design record section 8).
+      Landed folded into G9's `ConversationLoop` rather than as a
+      separate module, since the revised streaming design left no
+      local VAD or endpointer to attach a second detector to: a wake
+      firing again while already `speaking` is barge-in (G2's own
+      `WakeScorer`, reused, not a new model), stops `AudioPlayback`
+      locally, posts `POST /api/turn/{id}/cancel`
+      (`TurnClient.cancel()`, new this pass), and renders `CANCEL`
+      exactly once (a review-caught race made sure of that, see G9's
+      own entry). `ConversationLoop.set_muted()` is the mute state
+      itself: edge-triggered, gates `_poll_wake()` so capture drains
+      but is never scored while muted, and renders the muted pose
+      through `ExpressionEngine.set_muted()`'s existing edge-triggered
+      contract (EXPR-01). The acceptance's own grep test (no "physical
+      mute" wording anywhere in `body/`) still passes.
+      **Not yet built:** the actual command that calls `set_muted()` -
+      nothing in this repo does yet, since that trigger is G10's own
+      device-state frame. The mechanism is real and tested
+      (`test_set_muted_is_edge_triggered_and_updates_state`,
+      `test_poll_wake_drains_capture_but_never_scores_while_muted` in
+      `body/tests/test_run_loop.py`); only the caller is missing.
+- [x] **G9: the run loop - one state machine driving audio, cues,
+      tracking and the head** (M, `docs/dev/
+      reachy-mini-gap-audit-2026-09-27.md`). Objective: replace
+      `app.py`'s own `run_body` idle wait with the funnel (`idle`,
+      `listening`, `thinking`, `speaking`) driven by G6's turn events
+      and G8's mute, presence ticking in on its own thread, expression
+      rendered through the existing `ExpressionEngine`. Landed:
+      `body/maipai_body/run_loop.py` (`ConversationLoop` - `run()`
+      drains wake, drives one turn at a time through `_run_turn()`
+      -> `_speak()`; a `_presence_loop()` on its own thread enables the
+      daemon's own face tracker when a face is present and the funnel
+      isn't `speaking`, the one body-specific carve-out the general
+      `arbitration.py` priority table doesn't model on its own, since
+      tracking otherwise outranks expression there). `TurnClient`
+      gained `cancel()` and a `with`-wrapped `stream()` request (the
+      same connection-leak class G7's own review had just caught in
+      `tts_playback.py`, found and fixed here proactively before a
+      review had to catch it twice).
+      A real bug found by the new tests, not by inspection: `_run_turn`
+      was rendering every cue the turn stream emitted, including its
+      own terminal `DONE` event - which means "the reply text is fully
+      known," a different moment from "done speaking it" - firing the
+      settle primitive before speech had even started. Fixed: only
+      `CANCEL` and non-`DONE` cues render from that loop; `_speak()`
+      alone renders the real `SPEAK` (before the first audio push) and
+      `DONE` (once playback actually finishes, or `CANCEL` on a
+      barge-in instead).
+      10 tests in `body/tests/test_run_loop.py` against scripted
+      stand-ins for every network-facing dependency (each already has
+      its own real-server-backed suite) and a real `ExpressionEngine`
+      rendering onto `FakeReachyMiniClient`, covering the happy path's
+      cue order, no-speech and stream-cancelled turns skipping speech,
+      a dropped turn-stream connection, barge-in, presence/tracking
+      (enabled with a face present and not speaking, disabled while
+      speaking or with no face), and `set_muted()`.
+      `/code-review medium` (one pass) caught four real concurrency
+      defects in the barge-in path, all fixed: `_next_cue_seq()`'s
+      plain `+= 1` raced between the main funnel thread and the speak
+      worker thread's `on_first_chunk` callback, now lock-protected;
+      the barge-in polling loop kept scoring wake blocks for as long as
+      the speak worker thread stayed alive rather than stopping the
+      instant barge-in fired, letting a slow-to-exit worker's next
+      block trigger a second `turn.cancel()` and a duplicate `CANCEL`
+      render, now gated on `not barge_in.is_set()` too; `speak_thread
+      .join(timeout=5.0)` let `_speak()` return while the worker might
+      still be alive and pushing to the shared, unlocked
+      `AudioPlayback`, so a fast-following turn's new speak thread
+      could overlap and corrupt playback - now an unbounded `join()`
+      (correctness over latency, bounded in practice by the TTS
+      client's own (10, 120)s connect/read timeout); a dead
+      `speak_cue_rendered` event was set but never read, removed. A
+      low-effort follow-up pass on just the fix hunks found nothing
+      further. The duplicate-`CANCEL` fix has its own regression test,
+      verified (by hand, reverting the fix) to genuinely fail without
+      it and pass with it.
+      **Not yet built:** live verification against the real
+      `reachy-mini-daemon --sim` (RM-05's own acceptance - a three-turn
+      conversation on the simulator with cues rendered before the
+      first audio sample). This needs a combined stand-in hub server
+      (STT WS + turn NDJSON + TTS WAV routes together) or reuse of the
+      existing per-module stand-in servers wired to one address; not
+      attempted this pass. The 0.5 s settle-gate (`SETTLE_GATE_S`,
+      BODY-05's legacy flash test - no funnel state renders shorter
+      than this) is defined but not enforced anywhere; the funnel's
+      real transition times are recorded in `RunLoopState.trace`
+      regardless, so a test can measure the gap, but nothing currently
+      holds a fast state open to close it.
+- [x] **G11 (floor only): presence and tracking wired into the run
+      loop** (bot, `docs/dev/reachy-mini-gap-audit-2026-09-27.md`).
+      Objective (the audit's own floor, not the full item): "nothing
+      beyond G9 - wire presence and tracking into the run loop so the
+      robot turns to a face and toward a speaker." Landed as part of
+      G9's `_presence_loop()` (see above): tracking engages within one
+      presence tick of `get_face_target().detected` going true and the
+      funnel not being `speaking`, disengages otherwise. Covered by
+      `test_presence_enables_tracking_when_face_present_and_not_speaking`
+      and `test_presence_never_enables_tracking_while_already_speaking`.
+      **Not yet built - the rest of G11 is real vision, not the floor**:
+      the still-image call (consent prompt, one-shot capture, the hub
+      route, the Stack's `vision` role) remains its own design item per
+      the audit's own instruction, not started; face identity remains
+      explicitly out of scope (section 4: the CM4 has no room beside
+      speech). Live tracking against the real simulator with a face
+      injected into the scene (the audit's own acceptance for this
+      floor) is deferred with G9's own live-verification gap above.
 
 ## Voice loop
 

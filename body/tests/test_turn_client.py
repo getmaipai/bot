@@ -237,3 +237,85 @@ def test_a_401_raises_turn_auth_failed_not_turn_link_lost(ndjson_server):
 def test_empty_session_cookie_raises_immediately():
     with pytest.raises(ValueError, match="session_cookie"):
         TurnClient("http://127.0.0.1:1", "")
+
+
+class _CancelServer(http.server.BaseHTTPRequestHandler):
+    """Answers `POST /api/turn/{turn_id}/cancel` - records the exact
+    path requested and returns the class-level scripted `cancelled`
+    value."""
+
+    cancelled: bool = True
+    path_requested: str | None = None
+    status: int = 200
+
+    def log_message(self, format, *args):  # noqa: A002 - stdlib signature
+        pass
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib handler name
+        type(self).path_requested = self.path
+        if self.status != 200:
+            body = b'{"error": "refused"}'
+            self.send_response(self.status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        body = json.dumps({"cancelled": self.cancelled}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+@pytest.fixture
+def cancel_server():
+    _CancelServer.cancelled = True
+    _CancelServer.path_requested = None
+    _CancelServer.status = 200
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _CancelServer)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server, _CancelServer
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_cancel_posts_to_the_right_path_and_returns_the_result(cancel_server):
+    server, handler = cancel_server
+    handler.cancelled = True
+    client = TurnClient(_base_url(server), "cookie-abc")
+
+    result = client.cancel("turn-xyz")
+
+    assert result is True
+    assert handler.path_requested == "/api/turn/turn-xyz/cancel"
+
+
+def test_cancel_returns_false_for_a_turn_no_longer_in_flight(cancel_server):
+    server, handler = cancel_server
+    handler.cancelled = False
+    client = TurnClient(_base_url(server), "cookie-abc")
+
+    result = client.cancel("turn-xyz")
+
+    assert result is False
+
+
+def test_cancel_401_raises_turn_auth_failed(cancel_server):
+    server, handler = cancel_server
+    handler.status = 401
+    client = TurnClient(_base_url(server), "a-stale-cookie")
+
+    with pytest.raises(TurnAuthFailed):
+        client.cancel("turn-xyz")
+
+
+def test_cancel_connection_failure_raises_turn_link_lost():
+    client = TurnClient("http://127.0.0.1:1", "cookie-abc")
+
+    with pytest.raises(TurnLinkLost):
+        client.cancel("turn-xyz")

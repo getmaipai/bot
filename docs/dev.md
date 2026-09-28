@@ -1730,6 +1730,66 @@ real HTTP round trip can actually reach the bug. Caught before
 landing and replaced with a hand-crafted-chunk unit test, verified to
 genuinely fail without the fix.
 
+**G8+G9+G11 floor (2026-09-28), landed:** `run_loop.py`'s
+`ConversationLoop` replaces `app.py`'s own `run_body` idle wait with
+the real funnel - `idle`/`listening`/`thinking`/`speaking`, driven by
+G6's turn events and G8's mute, a presence tick on its own thread
+enabling the daemon's own face tracker whenever a face is present and
+the funnel isn't `speaking` (the one carve-out `presence/
+arbitration.py`'s general priority table doesn't model by itself,
+since tracking otherwise outranks expression there - checked
+explicitly, not left to the generic `tracking_may_drive()`/
+`expression_may_drive()` pair). G8's barge-in folds in rather than
+building a second detector: the revised streaming design left no local
+VAD or endpointer to attach one to, so a wake firing again during
+`speaking` is the stop signal, reusing G2's own `WakeScorer`. The
+software mute (`set_muted()`) is real and tested - edge-triggered,
+gates `_poll_wake()`, renders the muted pose - but nothing calls it
+yet; that trigger is G10's own device-state frame, not built this
+pass. `TurnClient` gained `cancel()` for barge-in's own hub call, and a
+`with`-wrapped `stream()` request (the same leak class G7's review had
+just caught in `tts_playback.py`, fixed here proactively before a
+review had to find it twice).
+
+The tests themselves found a real bug, not just inspection: `_run_turn`
+was rendering every cue the turn stream emitted, including its own
+terminal `DONE` - which means "the reply text is fully known," not
+"done speaking it" - firing the settle primitive before speech even
+started. Fixed by only rendering `CANCEL` and non-`DONE` cues from
+that loop; `_speak()` alone owns the real `SPEAK` (before the first
+audio push) and `DONE` (after playback actually finishes, or `CANCEL`
+on barge-in). 10 tests against scripted stand-ins for every
+network-facing dependency and a real `ExpressionEngine` rendering onto
+`FakeReachyMiniClient`.
+
+A medium review then caught four real concurrency defects in the
+barge-in path: `_next_cue_seq()`'s unprotected `+= 1` raced between the
+main thread and the speak worker's `on_first_chunk` callback (now
+lock-protected); the barge-in loop kept polling wake for as long as the
+worker thread stayed alive instead of stopping the instant barge-in
+fired, so a slow-to-exit worker could score a second block and
+double-cancel (now gated on the barge-in flag too); `speak_thread
+.join(timeout=5.0)` let `_speak()` return while the worker might still
+be pushing to the shared, unlocked `AudioPlayback`, risking two speak
+threads overlapping on a fast-following turn (now an unbounded
+`join()` - correctness over latency, bounded in practice by the TTS
+client's own (10, 120)s timeout); a dead, never-read `speak_cue_rendered`
+event was removed. The duplicate-cancel fix has its own regression
+test, hand-verified to fail without the fix and pass with it. A
+low-effort follow-up pass on just the fix hunks found nothing further.
+
+**Not yet done:** live verification against the real
+`reachy-mini-daemon --sim` (RM-05's own acceptance - a three-turn
+conversation with cues rendered before the first audio sample); it
+needs a combined stand-in hub server (STT WS + turn NDJSON + TTS WAV
+together) or the existing per-module stand-ins wired to one address,
+not attempted this pass. `SETTLE_GATE_S` (the 0.5 s flash-guard from
+BODY-05) is defined but not enforced anywhere yet - the funnel's real
+transition times are recorded in `RunLoopState.trace` regardless, so a
+future test can measure the gap. G11 beyond its presence/tracking floor
+(the still-image call, the consent prompt, the hub route, the Stack's
+`vision` role) remains its own undesigned item, not started.
+
 ## Research notes
 
 - [`dev/research-minicpm5-reachy-mini-2026-09-27.md`](dev/research-minicpm5-reachy-mini-2026-09-27.md):

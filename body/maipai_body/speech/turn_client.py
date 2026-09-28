@@ -105,23 +105,57 @@ class TurnClient:
             body["conversation_id"] = conversation_id
         state = _TurnStreamState()
         try:
-            response = self._session.post(
+            # A context manager, not a bare call: G7's own review found
+            # the analogous bare-call pattern in tts_playback.py leaked
+            # the connection on a 401/non-2xx/early-return exit path -
+            # fixed proactively here for the same reason before a
+            # review had to catch it twice. A `with` around a generator
+            # keeps the response open across `yield` points and closes
+            # it whether the stream finishes normally, the caller stops
+            # iterating early, or an exception is raised.
+            with self._session.post(
                 f"{self._base_url}/api/turn/stream",
                 json=body,
                 headers={"Cookie": f"session={self._cookie}"},
                 stream=True,
                 timeout=(10, 120),
-            )
-            if response.status_code in (401, 403):
-                raise TurnAuthFailed(
-                    f"hub rejected the turn request: {response.status_code} {response.text[:200]}"
-                )
-            response.raise_for_status()
-            yield from self._read_lines(response, state)
+            ) as response:
+                if response.status_code in (401, 403):
+                    raise TurnAuthFailed(
+                        f"hub rejected the turn request: {response.status_code} "
+                        f"{response.text[:200]}"
+                    )
+                response.raise_for_status()
+                yield from self._read_lines(response, state)
         except (TurnLinkLost, TurnAuthFailed):
             raise
         except requests.RequestException as exc:
             raise TurnLinkLost(f"turn stream connection failed: {exc}") from exc
+
+    def cancel(self, turn_id: str) -> bool:
+        """`POST /api/turn/{turn_id}/cancel` (G8's own barge-in call).
+        Returns whether the turn was actually in flight and got
+        cancelled - `False` for a turn that already finished on its
+        own is not an error, just a race the caller lost. Raises
+        :class:`TurnAuthFailed`/:class:`TurnLinkLost` the same way
+        :meth:`stream` does."""
+        try:
+            with self._session.post(
+                f"{self._base_url}/api/turn/{turn_id}/cancel",
+                headers={"Cookie": f"session={self._cookie}"},
+                timeout=10,
+            ) as response:
+                if response.status_code in (401, 403):
+                    raise TurnAuthFailed(
+                        f"hub rejected the cancel request: {response.status_code} "
+                        f"{response.text[:200]}"
+                    )
+                response.raise_for_status()
+                return bool(response.json().get("cancelled", False))
+        except (TurnLinkLost, TurnAuthFailed):
+            raise
+        except requests.RequestException as exc:
+            raise TurnLinkLost(f"turn cancel connection failed: {exc}") from exc
 
     def _read_lines(
         self, response: requests.Response, state: _TurnStreamState
