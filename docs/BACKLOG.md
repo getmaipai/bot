@@ -663,7 +663,7 @@ the image release and the profile id in the header.
       idempotency guard with sizing never completed, now `_recording` flips
       only after sizing succeeds. Both new tests, one proving the raise, one
       (already added) proving idempotency doesn't discard the pre-roll ring.
-- [ ] **G2: wake word on the robot** (M, `docs/dev/reachy-mini-gap-audit-2026-09-27.md`,
+- [x] **G2: wake word on the robot** (M, `docs/dev/reachy-mini-gap-audit-2026-09-27.md`,
       `docs/dev/wakeword-community-research-2026-09-28.md`). Objective:
       score G1's capture blocks against MaiPai's own trained "hey maipai"
       detector, fire once per phrase, capture DoA at the wake instant.
@@ -721,16 +721,44 @@ the image release and the profile id in the header.
       verification - filed as
       [home#185](https://github.com/getmaipai/home/issues/185), fixed
       with freshly recomputed values in this repo's own `models.py`.
-      **Not done, and cannot be from this repo alone:** the audit's own
-      (a), "shipped the org's way" - `trained_hey_maipai_v2.onnx` has no
-      real release URL yet. Cutting a Bot release to host it is Jesse's
-      own call (CLAUDE.md's Releases section), not something a session
-      does unilaterally; `models.py`'s `WAKE_PHRASE` asset has an empty
-      `url` and raises a named `WakewordModelUnavailable` rather than
-      failing silently until one exists. This is why G2 stays unchecked
-      despite everything else landing: the scorer, the fetcher, and the
-      real-model tests are all proven correct, but the one artifact that
-      makes it real in production isn't fetchable yet.
+      **Shipped the org's way (2026-09-28, Jesse's word):** `v0.1.0`
+      cut, `trained_hey_maipai_v2.onnx` attached as a release asset,
+      round-tripped (uploaded, downloaded back, checksum matched
+      exactly). Its download URL 404s for an anonymous request against
+      a private repo - a real robot has no GitHub credentials and
+      shouldn't need any - so `bot` was made public (Jesse's call, after
+      a full-history `gitleaks` and PII-wordlist scan came back clean on
+      all 42 commits); the asset then fetches with a normal 302, exactly
+      like openWakeWord's own public releases. `models.py`'s `WAKE_PHRASE`
+      now carries the real URL and the same checksum computed
+      before the release existed - a genuine chain of custody, not a
+      re-trust of whatever got uploaded.
+      **A critical bug found only by live-testing, not by any test in
+      this repo:** the very "drain until `None`" loop a prior review
+      added to `AudioCapture.poll_blocks()` (G1's own follow-up commit)
+      hangs forever against a REAL continuously-recording microphone.
+      The real appsink's own pull
+      (`reachy_mini/media/gstreamer_utils.py`'s `get_sample()`) blocks up
+      to a real 20 ms waiting for the next buffer; a live mic almost
+      always has one within that window, so `None` essentially never
+      happens while recording - the loop never exits, one 20 ms wait
+      after another, and G2's live wake test hung indefinitely the
+      moment `poll_blocks()` was called against the real simulator
+      daemon instead of the finite fake. The fake's own fixture runs dry
+      and legitimately returns `None` for a completely different reason
+      (exhaustion, not backpressure), which is exactly why this passed
+      every deterministic test and the gate, every time, and only broke
+      the moment real hardware was in the loop. Fixed: `poll_blocks()`
+      pulls exactly one buffer per call again (the original, actually-
+      live-verified design), with the real appsink behavior recorded in
+      its own docstring so a future review doesn't "fix" this the same
+      wrong way twice. **This is why G2's own acceptance needed a real
+      microphone, not just a gate:** after the fix, a genuine acoustic
+      test (this dev Mac's own speaker playing a synthetic "hey maipai"
+      clip, its own built-in mic capturing it through the real daemon's
+      real pipeline, G1's real `AudioCapture` and G2's real `WakeScorer`
+      end to end) fired exactly once at score 0.9346, DoA correctly
+      `None` (this Mac has no real direction-of-arrival array to read).
       `/code-review medium` (one pass) caught three real defects, all
       fixed: the onnxruntime fix above was verified only against `uv
       sync` (the dev bench) - `scripts/install-reachy.sh` installs onto

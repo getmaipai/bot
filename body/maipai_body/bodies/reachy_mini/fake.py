@@ -250,6 +250,14 @@ class FakeReachyMiniClient:
         self._mic_cursor = end
         return chunk
 
+    def is_mic_fixture_exhausted(self) -> bool:
+        """Public test-control surface, like :meth:`simulate_disconnect`:
+        a test that drains the fixture in a loop checks this instead of
+        reaching into ``_mic_cursor``/``_mic_samples`` directly, so a
+        future change to how the fixture is stored doesn't break every
+        test that polls to exhaustion."""
+        return self._mic_samples is not None and self._mic_cursor >= len(self._mic_samples)
+
     def get_input_audio_samplerate(self) -> int:
         self._require_connected()
         return 16000

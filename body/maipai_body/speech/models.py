@@ -44,16 +44,16 @@ EMBEDDING = WakewordAsset(
 )
 
 # MaiPai's own trained "hey maipai" classifier (v2, threshold 0.8; see
-# WAKE_THRESHOLD in wake.py). Not yet a real URL: this is MaiPai's own
-# artifact, which per CLAUDE.md's Releases section ships as a release
-# asset, never a tracked file - and cutting that release is Jesse's own
-# call, not something a session does unilaterally. Until a Bot release
-# carries it, WAKE_PHRASE.url is a placeholder and fetching it raises a
-# clear error naming exactly what's missing, not a broken download.
-WAKE_PHRASE_PENDING_RELEASE = True
+# WAKE_THRESHOLD in wake.py). Ships as a Bot release asset, never a
+# tracked file (CLAUDE.md's Releases section), attached to v0.1.0.
+# Fetching it needs the repo to be anonymously fetchable: a private
+# repo's release asset URL 404s on a plain unauthenticated request (a
+# real robot has no GitHub credentials, and shouldn't need any) - `bot`
+# was made public for exactly this reason (2026-09-28, Jesse's call,
+# after a full-history gitleaks and PII-wordlist scan came back clean).
 WAKE_PHRASE = WakewordAsset(
     file="trained_hey_maipai_v2.onnx",
-    url="",
+    url="https://github.com/getmaipai/bot/releases/download/v0.1.0/trained_hey_maipai_v2.onnx",
     sha256="6fbff74699801dabf931166badcc51fd655570469fb6d10da1ee5f64b4cba190",
 )
 

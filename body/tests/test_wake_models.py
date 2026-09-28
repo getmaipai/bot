@@ -123,17 +123,11 @@ def test_a_network_failure_raises_a_clear_error_not_a_raw_requests_exception(tmp
     assert not (tmp_path / "model.onnx.part").exists()
 
 
-def test_ensure_wakeword_models_fetches_the_shared_front_end(
-    local_asset_server, tmp_path, monkeypatch
-):
-    served_dir, base_url = local_asset_server
+def _patch_front_end(monkeypatch, models_module, served_dir, base_url):
     mel_content = b"melspectrogram bytes"
     emb_content = b"embedding bytes"
     mel_digest = _write_and_hash(served_dir / "melspectrogram.onnx", mel_content)
     emb_digest = _write_and_hash(served_dir / "embedding_model.onnx", emb_content)
-
-    import maipai_body.speech.models as models_module
-
     monkeypatch.setattr(
         models_module,
         "MELSPECTROGRAM",
@@ -148,13 +142,54 @@ def test_ensure_wakeword_models_fetches_the_shared_front_end(
         "EMBEDDING",
         replace(models_module.EMBEDDING, url=f"{base_url}/embedding_model.onnx", sha256=emb_digest),
     )
+    return mel_content, emb_content
+
+
+def test_ensure_wakeword_models_fetches_the_shared_front_end_and_the_wake_phrase(
+    local_asset_server, tmp_path, monkeypatch
+):
+    """When every asset has a pinned URL (the real case since v0.1.0
+    shipped the trained model as a release asset), all three are
+    fetched - the wake phrase is no longer a special case."""
+    served_dir, base_url = local_asset_server
+    import maipai_body.speech.models as models_module
+
+    mel_content, emb_content = _patch_front_end(monkeypatch, models_module, served_dir, base_url)
+    wake_content = b"trained wake phrase bytes"
+    wake_digest = _write_and_hash(served_dir / "trained_hey_maipai_v2.onnx", wake_content)
+    monkeypatch.setattr(
+        models_module,
+        "WAKE_PHRASE",
+        replace(
+            models_module.WAKE_PHRASE,
+            url=f"{base_url}/trained_hey_maipai_v2.onnx",
+            sha256=wake_digest,
+        ),
+    )
 
     cache_dir = tmp_path / "cache"
     paths = ensure_wakeword_models(cache_dir)
 
     assert paths["melspectrogram.onnx"].read_bytes() == mel_content
     assert paths["embedding_model.onnx"].read_bytes() == emb_content
-    # The wake phrase itself has no pinned URL yet (no Bot release exists) -
-    # ensure_wakeword_models omits it rather than raising for a caller that
-    # only needs the shared front-end.
+    assert paths["trained_hey_maipai_v2.onnx"].read_bytes() == wake_content
+
+
+def test_ensure_wakeword_models_omits_a_wake_phrase_with_no_pinned_url(
+    local_asset_server, tmp_path, monkeypatch
+):
+    """A caller that only needs the shared front-end (or a future
+    detector genuinely without a release yet) isn't forced to fail for
+    a wake phrase it didn't ask about."""
+    served_dir, base_url = local_asset_server
+    import maipai_body.speech.models as models_module
+
+    mel_content, emb_content = _patch_front_end(monkeypatch, models_module, served_dir, base_url)
+    monkeypatch.setattr(models_module, "WAKE_PHRASE", replace(models_module.WAKE_PHRASE, url=""))
+
+    cache_dir = tmp_path / "cache"
+    paths = ensure_wakeword_models(cache_dir)
+
+    assert paths["melspectrogram.onnx"].read_bytes() == mel_content
+    assert paths["embedding_model.onnx"].read_bytes() == emb_content
     assert "trained_hey_maipai_v2.onnx" not in paths

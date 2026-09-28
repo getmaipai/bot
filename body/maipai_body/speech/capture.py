@@ -29,10 +29,12 @@ class AudioCapture:
     """Downmixes and re-chunks ``client``'s raw audio into fixed blocks.
 
     Call :meth:`start` once, then :meth:`poll_blocks` as often as the
-    caller likes (a tight loop, a timer tick); each call drains whatever
-    is currently queued and returns zero or more *complete* 32 ms mono
-    blocks, holding any leftover samples for the next call rather than
-    padding or dropping them.
+    caller likes (a tight loop, a timer tick); each call pulls one
+    buffer and returns zero or more *complete* 32 ms mono blocks,
+    holding any leftover samples for the next call rather than padding
+    or dropping them. See :meth:`poll_blocks`'s own docstring for why
+    this deliberately does not try to drain more than one buffer per
+    call against a live stream.
     """
 
     def __init__(self, client: AudioIO) -> None:
@@ -87,12 +89,35 @@ class AudioCapture:
         self._recording = False
 
     def poll_blocks(self) -> list[npt.NDArray[np.float32]]:
-        """Drain whatever is queued right now into complete 32 ms mono blocks.
+        """Pull one buffer and re-chunk whatever that completes.
 
-        ``get_audio_sample()`` hands back one buffer per call - a real
-        GStreamer appsink's queue can hold more than one, so this calls
-        it in a loop until it returns ``None`` rather than once, or a
-        slow-polling caller would fall behind the daemon's own queue.
+        Calls ``get_audio_sample()`` exactly once, not in a loop until
+        ``None`` - live-verified (2026-09-28, against the real
+        `reachy-mini-daemon --sim`) that this must NOT loop: the real
+        appsink's own pull (`reachy_mini/media/gstreamer_utils.py`'s
+        `get_sample()`) blocks for up to a real 20 ms waiting for the
+        next buffer, and a continuously-recording microphone almost
+        always has one within that window - `None` essentially never
+        happens while the mic is live, so a "drain until None" loop
+        blocks forever the moment it catches up to real time, one 20 ms
+        wait after another, never returning to the caller. (An earlier
+        version of this method did loop that way, added by a review that
+        reasoned correctly about a real backlog existing but never
+        verified the fix against a live continuous stream, only the
+        fake's own finite fixture, which legitimately exhausts and hits
+        `None` for a different reason.) The seam's own docstring already
+        says `poll_blocks()` should be called "as often as the caller
+        likes (a tight loop, a timer tick)" - one pull per call is
+        exactly that contract; the appsink's own `max-buffers=200,
+        drop=True` config (`reachy_mini/media/audio_gstreamer.py`) is
+        the real backpressure mechanism for a caller that polls too
+        slowly, not this method looping to compensate. That mechanism
+        is lossy, not backoff: a caller whose own per-tick work (wake
+        scoring, endpointing) runs consistently slower than the real
+        audio arrives silently drops the oldest queued audio once the
+        200-buffer cap fills, with nothing here surfacing that loss -
+        worth naming as a real constraint on G9's future run loop, not
+        assuming "it'll catch up eventually."
 
         Downmixes multi-channel input to mono by taking channel 0 - the
         gap-audit's own G1 section named this as the simpler of its two
@@ -108,18 +133,12 @@ class AudioCapture:
         tuned second channel for no benefit. Returns ``[]``, never
         ``None``, when nothing new is queued.
         """
-        # Collected into a list and concatenated once at the end, not
-        # re-concatenated on every loop iteration: a real queue backlog of
-        # many small buffers would otherwise copy the whole growing buffer
-        # each time, turning a catch-up poll into O(n^2) work.
-        chunks = [self._leftover]
-        while True:
-            sample = self._client.get_audio_sample()
-            if sample is None:
-                break
+        sample = self._client.get_audio_sample()
+        if sample is None:
+            buffer = self._leftover
+        else:
             mono = sample[:, 0] if sample.ndim == 2 else sample
-            chunks.append(mono.astype(np.float32))
-        buffer = np.concatenate(chunks)
+            buffer = np.concatenate([self._leftover, mono.astype(np.float32)])
         n_blocks = len(buffer) // self._block_samples
         blocks: list[npt.NDArray[np.float32]] = []
         for i in range(n_blocks):

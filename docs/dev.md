@@ -1542,7 +1542,7 @@ restoring it after; recorded in `docs/BACKLOG.md`'s G1 entry as a known
 dev-bench gotcha for whoever hits it next, not scoped as a fix since it
 only affects a machine with a cached token, not a shipped robot.
 
-**G2 (2026-09-28), mostly landed, one piece genuinely blocked:** the
+**G2 (2026-09-28), fully landed and live-verified:** the
 wake scorer (`speech/wake.py`) and the pinned-asset fetcher
 (`speech/models.py`) are built, tested (19 deterministic tests against
 a scripted fake engine and a real local HTTP server, no model files
@@ -1562,12 +1562,36 @@ under both versions. `docs/BACKLOG.md`'s G2 entry has the full
 breakdown, including a separate bug found and filed upstream in `home`
 (`wakewordAssets.ts`'s checksums are each one hex character short,
 home#185) rather than fixed there since this session was working in
-`bot`. **What's genuinely not done:** the trained model itself has no
-real release URL - shipping it "the org's way" needs a Bot release,
-which is Jesse's call to cut, not a session's; `models.py`'s fetcher
-raises a named, clear error for that one asset rather than failing
-silently, and G2 stays unchecked in the backlog until a release makes
-it fetchable.
+`bot`. **Shipped the org's way (Jesse's word):** `v0.1.0` cut, the
+trained model attached as a release asset and round-tripped (uploaded,
+downloaded back, checksum matched). Its URL 404s anonymously against a
+private repo - a real robot has no GitHub credentials - so `bot` was
+made public after a full-history `gitleaks`/PII scan came back clean;
+`models.py`'s `WAKE_PHRASE` now carries the real URL.
+
+**A critical bug that only live testing found:** `AudioCapture.
+poll_blocks()`'s "drain until `None`" loop (added by the second review
+pass on G1's own commit) hangs forever against a real continuously-
+recording microphone - the real appsink's pull blocks up to 20 ms per
+call, and a live mic almost always has a buffer ready within that
+window, so `None` essentially never happens while recording. Every
+deterministic test passed, every gate ran green, because the fake's
+own finite fixture legitimately returns `None` on exhaustion, a
+completely different reason than the real appsink's backpressure
+behavior - the two never diverged until a real daemon connection was in
+the loop, which is exactly why G2's own acceptance needed a live
+microphone test, not just green tests. Fixed: `poll_blocks()` pulls one
+buffer per call, matching the original, actually-live-verified G1
+design, with the real appsink's timeout behavior recorded in its own
+docstring so this doesn't get "fixed" the same wrong way again.
+
+**The live acceptance itself, run after the fix:** this dev Mac's own
+speaker played a synthetic "hey maipai" clip, its built-in mic captured
+it through the real `reachy-mini-daemon --sim`'s real audio pipeline,
+and G1's real `AudioCapture` plus G2's real `WakeScorer` (the actual
+production classes, not a fake) fired exactly once at score 0.9346
+(threshold 0.8), with `DoA` correctly `None` since this Mac has no real
+direction-of-arrival array to read from.
 
 ## Research notes
 
