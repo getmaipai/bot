@@ -57,7 +57,13 @@ sim = ["reachy-mini[mujoco]==1.11.0"]
 # robot's own install (scripts/install-reachy.sh) adds it explicitly.
 # onnxruntime's own version is forced correct via [tool.uv]
 # override-dependencies below, not pinned here - see that comment for why.
-voice = ["openwakeword>=0.6.0,<0.7"]
+# G7: scipy.signal.resample_poly resamples the hub's own TTS voice rate
+# to the daemon's 16kHz output (the gap-audit's own instruction: "a
+# maintained resampler... never a hand-rolled one"). scipy already
+# arrives transitively through openwakeword above; declared explicitly
+# here too so a future openwakeword version dropping it as its own
+# dependency can't silently break G7 underneath this group.
+voice = ["openwakeword>=0.6.0,<0.7", "scipy>=1.14,<2"]
 
 [dependency-groups]
 dev = [

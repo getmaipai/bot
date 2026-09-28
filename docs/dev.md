@@ -1701,6 +1701,35 @@ session cookie, instead of silently sending `Cookie: session=None`
 when a caller reads `HubLinkClient.session_cookie` before pairing has
 ever succeeded.
 
+**G7 (2026-09-28), landed and live-verified:** `speech/tts_playback.py`'s
+`TtsPlaybackClient` streams the hub's own `POST /api/tts` WAV into G1's
+`AudioPlayback`, mirroring the browser's own reference player
+(`streamingWavPlayer.ts`): parse only the 44-byte header, never trust
+its declared data-chunk size, resample with `scipy.signal.resample_poly`
+(now an explicit `voice` dependency, not left to openwakeword's own
+transitive pin). The design record's section 5 already settled the
+vendor-wobbler-vs-our-own-primitive question before this session
+started - nothing to re-decide, the wobbler stays off. 8 tests against
+a real local server streaming a real WAV; live-verified against the
+real `reachy-mini-daemon --sim` - a real 24kHz stream resampled to
+16kHz and pushed through the real daemon, 36 chunks, zero errors,
+pushed duration within 1 ms of the source.
+
+A review caught four more real defects: three separate exit paths (a
+401, a general non-2xx, an unsupported `bits_per_sample`) each left
+the HTTP response unclosed - `speak()` now wraps the request in a
+`with` block so every exit path closes it. The downmix assumed a
+chunk boundary always lands on a whole multi-channel frame; a
+stereo-or-wider stream could raise on `reshape()` at a genuinely
+misaligned trailing partial frame - fixed with the same leftover-byte
+carry pattern G1's own capture.py uses. Worth naming: the first
+regression test for this, driven through a real stand-in server,
+passed whether or not the fix was present - `requests`' own
+`iter_content()` always re-buffers to a clean multiple of 4, so no
+real HTTP round trip can actually reach the bug. Caught before
+landing and replaced with a hand-crafted-chunk unit test, verified to
+genuinely fail without the fix.
+
 ## Research notes
 
 - [`dev/research-minicpm5-reachy-mini-2026-09-27.md`](dev/research-minicpm5-reachy-mini-2026-09-27.md):

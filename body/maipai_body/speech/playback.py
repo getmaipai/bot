@@ -62,8 +62,14 @@ class AudioPlayback:
 
     def pushed_duration_s(self) -> float:
         """Total seconds of audio actually pushed since the last :meth:`stop`."""
-        sample_rate = self._client.get_output_audio_samplerate()
+        sample_rate = self.output_samplerate()
         if not sample_rate:
             return 0.0
         total_samples = sum(len(c.samples) for c in self.ledger)
         return total_samples / sample_rate
+
+    def output_samplerate(self) -> int:
+        """The daemon's own output rate - what G7's own resampler
+        targets, so a caller doesn't need to reach into this class's
+        private ``_client`` to ask the seam directly."""
+        return self._client.get_output_audio_samplerate()

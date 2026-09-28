@@ -999,6 +999,76 @@ the image release and the profile id in the header.
       including one that reverts the `_give_up` fix and confirms it
       genuinely fails without it, matching the session's own standing
       rigor for a review-caught fix.
+- [x] **G7: the reply on the robot's speaker - streamed TTS playback**
+      (S-M, `docs/dev/reachy-mini-gap-audit-2026-09-27.md`). Objective:
+      stream the hub's own `POST /api/tts` WAV reply into G1's
+      `AudioPlayback` as it arrives, resampled to the daemon's real
+      output rate, emitting `SPEAK` before the first push and `DONE`
+      when the stream ends. Landed: `body/maipai_body/speech/
+      tts_playback.py` (`TtsPlaybackClient` - mirrors the browser's own
+      reference player, `streamingWavPlayer.ts`: parses only the
+      44-byte header for `sampleRate`/`numChannels`/`bitsPerSample`,
+      never trusts the declared data-chunk size since Pocket TTS writes
+      a placeholder there, ends when the stream ends; resamples with
+      `scipy.signal.resample_poly` - a maintained resampler, never
+      hand-rolled, per the audit's own instruction - now an explicit
+      `voice` extra dependency, not left as openwakeword's own
+      transitive pin). `AudioPlayback` (G1) gained a small
+      `output_samplerate()` method so this module doesn't reach into
+      its private `_client`. The design record's own open question
+      (section 5: the vendor's `HeadWobbler` vs our own `speak`
+      primitive) was already answered before this session started -
+      "the `speak` cue's rendering on this body is a low-amplitude
+      pitch and antenna motion modulated by the outgoing audio's
+      energy... no model" - so nothing new to resolve; the vendor's
+      wobbler is never enabled. The `speak` primitive's own static
+      rendering already exists from EXPR-01; making it genuinely
+      energy-modulated from the ledger (section 5's full description)
+      is a separable refinement, not blocking this item's own floor.
+      Mid-stream cancellation (a `stop_event`) was added beyond the
+      audit's own text once its acceptance criterion ("the ledger holds
+      the pushed prefix when the stream is stopped at 40 percent") made
+      clear G7 itself needs a stop hook, not just G8 later.
+      8 deterministic tests against a real local HTTP server streaming
+      a real generated WAV in 1 KB chunks (the audit's own acceptance
+      shape), covering a full stream's duration matching within one
+      block, the `on_first_chunk` callback firing before the stream
+      ends, a mid-stream stop keeping a real non-empty prefix, a 401
+      raising a distinct `TtsAuthFailed` (not conflated with a dropped
+      connection, matching G6's own fix), and the 16kHz-source identity
+      path needing no resampling at all.
+      **Live-verified against the real `reachy-mini-daemon --sim`:** a
+      real local stand-in server streamed a real 24kHz WAV; the real
+      `TtsPlaybackClient` resampled it to 16kHz and pushed it through
+      the real `AudioPlayback` wrapping a real `ReachyMiniClient` - 36
+      real chunks reached the real daemon with zero errors, and the
+      pushed duration matched the source to within 1 ms (3.001s against
+      a 3.0s fixture).
+      `/code-review low` (one pass) caught four real defects, all
+      fixed: three separate paths (a 401, any other non-2xx via
+      `raise_for_status()`, an unsupported `bits_per_sample`) each left
+      the HTTP response unclosed, leaking the connection back to the
+      pool - `speak()` now wraps the whole request in a `with` block, so
+      every exit path (success, exception, or an early `return` deep
+      inside `_stream_into_playback`) closes it, not just the
+      `stop_event` branch that already called `close()` explicitly.
+      `_pcm16_to_float32`'s downmix assumed every streamed chunk
+      boundary lands on a whole multi-channel frame (4 bytes for
+      16-bit stereo); truncating to just an even byte count let a
+      stereo-or-wider stream's `reshape()` raise on a genuinely
+      misaligned trailing partial frame - fixed by truncating to whole
+      frames and carrying the remainder to the next chunk, the same
+      leftover-byte pattern G1's own `capture.py` already uses. Proven
+      with a hand-crafted chunk sequence, not a real server: `requests`'
+      own `iter_content(chunk_size=4096)` always re-buffers to a clean
+      multiple of 4 regardless of how the server writes, so no real
+      HTTP round trip can actually reach this code misaligned - only a
+      fake response object splitting bytes at a deliberately
+      frame-odd offset reproduces it, and the new test was verified to
+      genuinely fail without the fix (an earlier attempt at this same
+      test, driven through a real stand-in server, passed regardless of
+      whether the fix was present - a false-confidence test caught and
+      replaced before landing, not shipped).
 
 ## Voice loop
 

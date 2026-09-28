@@ -574,6 +574,7 @@ sim = [
 ]
 voice = [
     { name = "openwakeword" },
+    { name = "scipy" },
 ]
 
 [package.dev-dependencies]
@@ -590,6 +591,7 @@ requires-dist = [
     { name = "reachy-mini", specifier = "==1.11.0" },
     { name = "reachy-mini", extras = ["mujoco"], marker = "extra == 'sim'", specifier = "==1.11.0" },
     { name = "requests", specifier = ">=2.34,<3" },
+    { name = "scipy", marker = "extra == 'voice'", specifier = ">=1.14,<2" },
     { name = "websockets", specifier = ">=15.0,<16" },
 ]
 provides-extras = ["sim", "voice"]
