@@ -1,10 +1,17 @@
 [project]
-name = "maipai-body"
+# Named to match the entry point (`maipai_bot`, registered below), not
+# the importable module (`maipai_body/`, unaffected by this rename): a
+# code review (2026-09-27, docs/dev/reachy-mini-gap-audit-2026-09-27.md
+# 1.3/G12) found the two names disagreeing meant the daemon's own
+# uninstall/update (`pip`/`uv uninstall <entry point>`) silently no-ops
+# against our own app the same way it can against a vendor app whose
+# entry point and distribution names don't match.
+name = "maipai-bot"
 version = "0.1.0"
 description = "MaiPai Bot: the Python body that owns hardware behind the HAL seam, one profile per supported body."
 requires-python = ">=3.12"
 dependencies = [
-    "reachy-mini[mujoco]==1.11.0",
+    "reachy-mini==1.11.0",
     "pydantic>=2.13,<3",
     "websockets>=15.0,<16",
     "requests>=2.34,<3",
@@ -27,6 +34,17 @@ dependencies = [
 
 [project.entry-points."reachy_mini_apps"]
 maipai_bot = "maipai_body.app:MaiPaiBody"
+
+# G12 (docs/dev/reachy-mini-gap-audit-2026-09-27.md): the bare
+# `reachy-mini` dependency above never pulls the simulator (mujoco is a
+# multi-hundred-MB extra with its own native deps, useless on the robot
+# itself and previously installed onto it for no reason,
+# install-reachy.sh's own comment already flagged this). The dev bench
+# needs it: `uv run --extra sim reachy-mini-daemon --sim ...` (or `uv
+# sync --extra sim` once, then plain `uv run ...`), not the bare `uv
+# run reachy-mini-daemon` this repo's docstrings used to show.
+[project.optional-dependencies]
+sim = ["reachy-mini[mujoco]==1.11.0"]
 
 [dependency-groups]
 dev = [

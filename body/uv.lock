@@ -533,14 +533,19 @@ wheels = [
 ]
 
 [[package]]
-name = "maipai-body"
+name = "maipai-bot"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },
-    { name = "reachy-mini", extra = ["mujoco"] },
+    { name = "reachy-mini" },
     { name = "requests" },
     { name = "websockets" },
+]
+
+[package.optional-dependencies]
+sim = [
+    { name = "reachy-mini", extra = ["mujoco"] },
 ]
 
 [package.dev-dependencies]
@@ -552,10 +557,12 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pydantic", specifier = ">=2.13,<3" },
-    { name = "reachy-mini", extras = ["mujoco"], specifier = "==1.11.0" },
+    { name = "reachy-mini", specifier = "==1.11.0" },
+    { name = "reachy-mini", extras = ["mujoco"], marker = "extra == 'sim'", specifier = "==1.11.0" },
     { name = "requests", specifier = ">=2.34,<3" },
     { name = "websockets", specifier = ">=15.0,<16" },
 ]
+provides-extras = ["sim"]
 
 [package.metadata.requires-dev]
 dev = [

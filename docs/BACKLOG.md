@@ -374,9 +374,9 @@ the image release and the profile id in the header.
       proves nothing: `pip` and `uv` both exit 0 with a "not installed"
       warning when the entry-point name doesn't match the actual
       distribution name, which is exactly the mismatch our own app has
-      (`maipai_bot` the entry point, `maipai-body` the distribution -
-      recorded as its own gap in `dev/reachy-mini-gap-audit-2026-09-27.md`'s
-      G12, not fixed here). The script now re-lists installed apps after
+      (`maipai_bot` the entry point, `maipai-body` the distribution at
+      the time - fixed separately as G12 below, which renamed the
+      distribution to `maipai-bot`). The script now re-lists installed apps after
       the loop and fails if anything but `maipai_bot` remains, instead
       of trusting the job status. Verified against a stand-in HTTP
       server built from `reachy_mini/daemon/app/routers/apps.py`'s own
@@ -554,6 +554,30 @@ the image release and the profile id in the header.
       paired-unreachable mode for this body as its own design
       amendment; a fail is recorded and the product table's wording
       stands.
+- [x] **G12: packaging for the unit** (S, filed and landed 2026-09-27
+      by a Fable-model audit, `docs/dev/reachy-mini-gap-audit-2026-09-27.md`).
+      Objective: `body/pyproject.toml` pinned `reachy-mini[mujoco]`,
+      pulling the multi-hundred-MB simulator onto the robot for no
+      reason (already flagged as a known gap in `install-reachy.sh`'s
+      own header); the entry point (`maipai_bot`) and the distribution
+      name (`maipai-body`) disagreed, which the same audit's 1.3 found
+      makes the daemon's own remove/update silently no-op against our
+      own app the way it can against a mismatched vendor app. Landed:
+      `mujoco` moved to an opt-in `sim` extra (`uv sync --extra sim` for
+      the bench; a bare `uv sync` or the robot's own `pip install` of
+      the wheel pulls neither mujoco nor its native deps - verified,
+      `uv sync` uninstalls six packages going from the old pin to the
+      base); the distribution renamed to `maipai-bot` (the design
+      record's own section 3 already named it this), verified by a real
+      `uv build --wheel` producing `maipai_bot-0.1.0-py3-none-any.whl`
+      still exporting the unchanged `maipai_body` import path inside it.
+      Acceptance: `uv build --wheel` from a clean state, `import
+      maipai_body.app` from the built wheel, no mujoco in the base
+      dependency set - all verified on the dev Mac. Not verified here:
+      `pip install` of that wheel in a fresh Linux aarch64 venv (no
+      container runtime in this environment); the wheel is pure-Python
+      with no platform-specific code, so this is a low-risk gap, not a
+      guess dressed up as done.
 
 ## Voice loop
 

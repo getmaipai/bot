@@ -1469,12 +1469,21 @@ removed, so the prior version could report success while an app
 survived); the muted pose was added to `test_expression_renderer.py`'s
 clamp-check parametrization, which excludes it from `PRIMITIVE_NAMES`
 on purpose and so was silently never checking it. Not fixed here,
-recorded for RM-07 or RM-08: the entry-point/distribution name mismatch
-(`maipai_bot` vs `maipai-body`) that would make the daemon's own remove
-and update paths silently no-op on our own app too (G12 in
-`dev/reachy-mini-gap-audit-2026-09-27.md`), and the antenna sign
-convention (down is negative), which only a physical unit's own state
-feed can confirm.
+recorded for RM-07: the antenna sign convention (down is negative),
+which only a physical unit's own state feed can confirm.
+
+**Landed 2026-09-28 (G12, packaging for the unit):** the
+entry-point/distribution name mismatch this section's own earlier note
+flagged (`maipai_bot` vs `maipai-body`) is fixed - the distribution is
+now `maipai-bot`, matching both the entry point and the design record's
+own section 3 naming, verified by a real `uv build --wheel`. `mujoco`
+moved to an opt-in `sim` extra so the robot's own `pip install` of the
+wheel (and a bare `uv sync`) pulls neither it nor its native
+dependencies; the dev bench needs `uv sync --extra sim` or `uv run
+--extra sim reachy-mini-daemon --sim ...` now. Not verified: installing
+the built wheel in a fresh Linux aarch64 venv (no container runtime in
+this environment) - low risk, since the wheel is pure Python with no
+platform-specific code, but recorded rather than assumed.
 
 ## Research notes
 

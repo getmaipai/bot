@@ -5,7 +5,7 @@
 #
 # Usage: scripts/install-reachy.sh <host> <wheel-path>
 #   host        the robot's hostname or IP (example: 192.0.2.10)
-#   wheel-path  a built maipai-body wheel, e.g. from `uv build --wheel`
+#   wheel-path  a built maipai-bot wheel, e.g. from `uv build --wheel`
 #               in body/, or scripts/build-space.sh's dist/space/
 #
 # Auth is whatever the caller's own `ssh` already has configured (a key,
@@ -15,11 +15,10 @@
 #
 # Idempotent: safe to re-run against the same host and wheel.
 #
-# Known gap: body/pyproject.toml currently pins reachy-mini[mujoco],
-# which pulls the simulator onto the robot for no reason; splitting a
-# real-hardware extra out is a follow-up before this script is used
-# against a physical unit (docs/dev/design-reachy-mini-2026-09-27.md
-# section 12, "the unit arrives").
+# The wheel built from body/'s own pyproject.toml carries no simulator:
+# `mujoco` moved to an opt-in `sim` extra (G12,
+# docs/dev/reachy-mini-gap-audit-2026-09-27.md), so `pip install` of the
+# bare wheel on the robot pulls only its runtime dependencies.
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
