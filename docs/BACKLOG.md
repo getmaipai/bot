@@ -1164,13 +1164,37 @@ the image release and the profile id in the header.
       further. The duplicate-`CANCEL` fix has its own regression test,
       verified (by hand, reverting the fix) to genuinely fail without
       it and pass with it.
-      **Not yet built:** live verification against the real
-      `reachy-mini-daemon --sim` (RM-05's own acceptance - a three-turn
-      conversation on the simulator with cues rendered before the
-      first audio sample). This needs a combined stand-in hub server
-      (STT WS + turn NDJSON + TTS WAV routes together) or reuse of the
-      existing per-module stand-in servers wired to one address; not
-      attempted this pass. The 0.5 s settle-gate (`SETTLE_GATE_S`,
+      **Landed 2026-09-28: live verification against the real
+      `reachy-mini-daemon --sim`** (RM-05's own acceptance).
+      `tests/test_run_loop_live.py`: the "combined stand-in hub server"
+      this note asked for turned out to be unnecessary -
+      `ConversationLoop`'s three hub-facing clients are constructed
+      independently, so nothing requires them to share a `base_url`;
+      each got its own real local server instead (the same wire shapes
+      `test_turn_client.py`/`test_tts_playback.py`/`test_stt_stream.py`
+      already proved correct), while the head/expression/presence side
+      talks to a real daemon (`--sim --headless --no-media`, confirmed
+      startable in this environment without touching any real host
+      hardware). Audio is the one seam still faked (`_LiveAudioIO`,
+      delegating every other HAL call straight to the real
+      daemon-backed client): the daemon's own documented fallback would
+      otherwise use the host machine's real microphone with no consent
+      prompt (the 2026-09-27 privacy finding, `docs/dev.md`), and
+      `--no-media` makes `AudioCapture.start()` raise on the daemon's
+      own `-1` sample rate anyway. Skipped unless `MAIPAI_BODY_LIVE=1`
+      and a daemon answers on the live port - the same gate
+      `conftest.py`'s own `body_client` fixture uses, unchanged by this
+      pass. Verified as a real, meaningful test, not a vacuous pass: a
+      negative control (pointing `turn_client` at an unreachable port)
+      correctly failed with `TurnLinkLost`, then the correct wiring was
+      restored and re-verified green. A three-turn conversation
+      completes with cues rendered `HEARD` -> `SIGNAL` -> `SPEAK` ->
+      `DONE` in order and `SPEAK` before `DONE` on every turn, checked
+      after each one, not just once. Full body suite green both ways
+      (292 passed/11 skipped without `MAIPAI_BODY_LIVE`; 300 passed/3
+      skipped with it and the daemon running - the 3 remaining skips
+      are the real-wake-word-model-gated tests, unrelated).
+      **Still not built:** the 0.5 s settle-gate (`SETTLE_GATE_S`,
       BODY-05's legacy flash test - no funnel state renders shorter
       than this) is defined but not enforced anywhere; the funnel's
       real transition times are recorded in `RunLoopState.trace`
@@ -1411,10 +1435,9 @@ the image release and the profile id in the header.
       models are cached) - documented in the module's own docstring
       rather than fixed this pass, filed as FACE-05 below.
       **Still not built:** the CPU measurement (needs the unit, not
-      just Mac sanity numbers); live verification against
-      `reachy-mini-daemon --sim` (G9's own still-open gap, unchanged by
-      this pass - this landing was construction and unit tests, not a
-      live boot).
+      just Mac sanity numbers). Live verification against
+      `reachy-mini-daemon --sim` landed separately the same day - see
+      G9's own entry above.
 - [ ] **FACE-04: reconstruct the hub-facing speech clients on session
       cookie rotation** (S, filed 2026-09-28 from FACE-01's own
       construction pass). Objective: `TurnClient`, `SttStreamClient`
