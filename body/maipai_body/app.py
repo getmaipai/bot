@@ -36,6 +36,7 @@ from maipai_body.hal.errors import BodyLost
 from maipai_body.hal.seam import AntennaPositions, HeadActuator, HeadPose
 from maipai_body.link import HubLinkClient, PairingStore, discover_hub
 from maipai_body.link.lifecycle import LinkLifecycle
+from maipai_body.link.prints import PrintSync
 from maipai_body.run_loop import ConversationLoop
 from maipai_body.speech.capture import AudioCapture
 from maipai_body.speech.models import EMBEDDING, MELSPECTROGRAM, WAKE_PHRASE, ensure_wakeword_models
@@ -123,6 +124,7 @@ def _build_conversation_loop(
     base_url: str,
     cache_dir: Path,
     link: LinkLifecycle,
+    stop_event: threading.Event,
 ) -> ConversationLoop:
     """Real construction, once paired: everything G9's `ConversationLoop`
     needs, pointed at the paired hub and the local model cache.
@@ -130,10 +132,9 @@ def _build_conversation_loop(
     FACE-01's own gap (`docs/BACKLOG.md`): "real `FiveLandmarkDetector`/
     `SFaceEmbedder`/`FaceGallery` construction wherever the daemon
     actually boots the loop (nothing does yet)" - this is that
-    wherever. The face gallery starts empty: no print-sync mechanism
-    exists yet (that's `home`'s own BACKLOG item), so every check
-    reports "unknown" until one does - the honest state, not a gap to
-    paper over here. Model downloads (the wake-word front end, the
+    wherever. Print sync starts here because this function creates the
+    gallery it updates and already owns the live credentials reader.
+    Model downloads (the wake-word front end, the
     wake phrase, SFace) happen here, synchronously, the first time a
     fresh install ever reaches a paired state.
     """
@@ -145,7 +146,9 @@ def _build_conversation_loop(
         embedding_model=wakeword_paths[EMBEDDING.file],
     )
     audio_playback = AudioPlayback(client)
-    return ConversationLoop(
+    gallery = FaceGallery(model_id=_FACE_MODEL_ID, model_sha256=SFACE.sha256)
+    print_sync = PrintSync(gallery, hub_credentials, stop_event)
+    loop = ConversationLoop(
         client=client,
         expression_engine=ExpressionEngine(client, REACHY_MINI_PROFILE),
         audio_capture=AudioCapture(client),
@@ -157,8 +160,10 @@ def _build_conversation_loop(
         hub_credentials=hub_credentials,
         face_detector=FiveLandmarkDetector(),
         face_embedder=ensure_embedder(cache_dir),
-        face_gallery=FaceGallery(model_id=_FACE_MODEL_ID, model_sha256=SFACE.sha256),
+        face_gallery=gallery,
     )
+    threading.Thread(target=print_sync.run, name="face-print-sync", daemon=True).start()
+    return loop
 
 
 def _hub_credentials_reader(link: LinkLifecycle, base_url: str) -> Callable[[], tuple[str, str]]:
@@ -233,7 +238,7 @@ def run_paired_body(
             try:
                 build_result.append(
                     _build_conversation_loop(
-                        client, session_cookie, pairing.base_url, cache_dir, link
+                        client, session_cookie, pairing.base_url, cache_dir, link, stop_event
                     )
                 )
             except Exception as exc:

@@ -1439,8 +1439,8 @@ the image release and the profile id in the header.
       `reachy-mini-daemon --sim` landed separately the same day - see
       G9's own entry above.
 
-- [ ] **FACE-03 (bot half): pull hub-synced face prints into the
-      gallery** (M, unstarted). Objective: close the gap FACE-01 left
+- [x] **FACE-03 (bot half): pull hub-synced face prints into the
+      gallery** (M, landed 2026-09-28). Objective: close the gap FACE-01 left
       explicit ("the gallery starts empty - no print-sync mechanism
       from hub to robot exists yet") so a paired robot recognizes the
       household's actual enrolled faces, not just `unknown` forever.
@@ -1448,9 +1448,7 @@ the image release and the profile id in the header.
       hub-synced face prints on the robot" - read that record first,
       this entry is the bot-side half of the same decision). The hub
       side (`GET /api/biometric-prints/sync`, device-gated) is `home`'s
-      own FACE-03 item, unstarted as of this writing - do not start
-      the bot half until that route exists and its device-session auth
-      is real, since there is nothing to pull from otherwise. Shape:
+      own FACE-03 item. Shape:
       - `body/maipai_body/link/prints.py` (`PrintSync`): pulls the
         sync route using the same live cookie/URL reader the speech
         clients already use (`app.py`'s `_hub_credentials_reader`,
@@ -1487,6 +1485,14 @@ the image release and the profile id in the header.
       real hardware, a hub-enrolled face gets `tentative` at the right
       person with CPU/latency recorded in `docs/dev/measurements.md`
       (needs the unit, same standing gap as FACE-01's own measurement).
+      **Landed 2026-09-28: hub snapshots now populate the bot's face
+      gallery on startup and every 60 seconds.** `PrintSync` reuses the
+      live cookie/URL reader, replaces snapshots wholesale, clears on
+      401/403, and keeps the last good gallery through transient
+      failures. `FaceGallery` skips foreign-model prints per record and
+      protects `add`, `remove`, `identify`, and `replace_all` with a
+      lock. The offline tests cover replacement, revocation, auth
+      clearing, mixed-model snapshots, transport failures, and stopping.
       Out of scope: the oplog replica (`spec/link/`, LINK-03, this
       item's snapshot-pull is explicitly a stopgap ahead of it per the
       design record); robot-side standalone enrollment (a later item on
