@@ -1462,7 +1462,7 @@ the image release and the profile id in the header.
       the live session cookie and pairing URL at each turn boundary and
       reconstructs its three hub clients only when that pair changes.
       Exit: `bash scripts/check.sh`.
-- [ ] **FACE-05: stop_event isn't polled during the first-boot model
+- [x] **FACE-05: stop_event isn't polled during the first-boot model
       download** (S, filed 2026-09-28 from a code review of FACE-01's
       construction pass). Objective: `app.py`'s `run_paired_body` stops
       polling `stop_event` the instant it observes `link.state.paired`
@@ -1484,7 +1484,10 @@ the image release and the profile id in the header.
       cleanly. Acceptance: a scripted test with a fake `_build_
       conversation_loop` that blocks past `stop_event.set()` confirms
       `run_paired_body` still returns within roughly a second. Exit:
-      `bash scripts/check.sh`.
+      `bash scripts/check.sh`. **Landed 2026-09-28: the conversation
+      loop builds on a daemon thread while `run_paired_body` polls
+      `stop_event`, honoring a stop during downloads within one poll
+      interval.**
 
 ## Voice loop
 

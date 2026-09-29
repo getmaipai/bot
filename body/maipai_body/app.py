@@ -11,14 +11,11 @@ rest of the process's life. ``run_paired_body`` is that whole path,
 RM-03's own scaffold's real destination.
 
 One caveat to the sub-second-stop contract, found by a code review
-(2026-09-28) and not yet fixed (see ``docs/BACKLOG.md``'s FACE-05):
-once paired, ``_build_conversation_loop`` blocks on synchronous model
-downloads (the wake-word front end, the trained wake phrase, SFace) the
-very first time an install ever reaches that state; ``stop_event`` is
-not polled again until that call returns, so a stop or SIGINT landing
-mid-download can take as long as the download does, not one second.
-Every later boot finds the models already cached (``model_assets.py``'s
-own ``is_installed`` check) and this caveat does not apply.
+fixed by FACE-05: once paired, ``_build_conversation_loop`` runs on its
+own daemon thread while this function polls ``stop_event``. A stop or
+SIGINT mid-download is honored within one poll interval, abandoning the
+in-progress build; that download continues or not on its own daemon
+thread, which is moot since the process is exiting.
 """
 
 from __future__ import annotations
@@ -229,10 +226,34 @@ def run_paired_body(
             # real turn instead of a clear error right here.
             logger.error("link reports paired but has no session cookie")
             return
+
+        build_result: list[ConversationLoop | Exception] = []
+
+        def build_loop() -> None:
+            try:
+                build_result.append(
+                    _build_conversation_loop(
+                        client, session_cookie, pairing.base_url, cache_dir, link
+                    )
+                )
+            except Exception as exc:
+                build_result.append(exc)
+
         try:
-            loop = _build_conversation_loop(
-                client, session_cookie, pairing.base_url, cache_dir, link
+            build_thread = threading.Thread(
+                target=build_loop, name="conversation-loop-build", daemon=True
             )
+            build_thread.start()
+            while build_thread.is_alive():
+                if stop_event.wait(_STOP_POLL_INTERVAL_S):
+                    logger.info(
+                        "stop requested during model download; abandoning conversation loop build"
+                    )
+                    return
+            build_thread.join()
+            if isinstance(build_result[0], Exception):
+                raise build_result[0]
+            loop = build_result[0]
         except Exception:
             # A code review (2026-09-28) caught this uncaught: a
             # model-download failure (no network, GitHub briefly
