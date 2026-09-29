@@ -13,3 +13,8 @@ __pycache__/
 
 # Build output (scripts/build-space.sh)
 dist/
+
+# Scratch and private notes (org CLAUDE.md, "Documentation"): lane
+# locks, item claims, throwaway coordinator working files. Never
+# committed, matching home's own data-*/ convention.
+data-*/
