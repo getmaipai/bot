@@ -27,6 +27,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+import reachy_mini
 from reachy_mini import ReachyMini, ReachyMiniApp
 
 from maipai_body.bodies.reachy_mini.client import ReachyMiniClient
@@ -37,6 +38,7 @@ from maipai_body.hal.seam import AntennaPositions, HeadActuator, HeadPose
 from maipai_body.link import HubLinkClient, PairingStore, discover_hub
 from maipai_body.link.lifecycle import LinkLifecycle
 from maipai_body.link.prints import PrintSync
+from maipai_body.link.state import StateReporter
 from maipai_body.run_loop import ConversationLoop
 from maipai_body.speech.capture import AudioCapture
 from maipai_body.speech.models import EMBEDDING, MELSPECTROGRAM, WAKE_PHRASE, ensure_wakeword_models
@@ -232,15 +234,48 @@ def run_paired_body(
             logger.error("link reports paired but has no session cookie")
             return
 
+        hub_credentials = _hub_credentials_reader(link, pairing.base_url)
+        loop_ready = threading.Event()
+        loop_result: list[ConversationLoop] = []
+
+        def state_snapshot() -> dict[str, object]:
+            if not loop_ready.is_set() or not loop_result:
+                return {
+                    "activity": "starting",
+                    "muted": False,
+                    "tracking": False,
+                    "on_battery": None,
+                    "battery_level": None,
+                    "daemon_version": getattr(reachy_mini, "__version__", None),
+                }
+            return {
+                **loop_result[0].snapshot(),
+                "on_battery": None,
+                "battery_level": None,
+                "daemon_version": getattr(reachy_mini, "__version__", None),
+            }
+
+        state_change_event = threading.Event()
+        state_change_event.set()
+        reporter = StateReporter(
+            hub_credentials,
+            stop_event,
+            state_snapshot,
+            state_change_event,
+        )
+        threading.Thread(target=reporter.run, name="robot-state-reporter", daemon=True).start()
+
         build_result: list[ConversationLoop | Exception] = []
 
         def build_loop() -> None:
             try:
-                build_result.append(
-                    _build_conversation_loop(
-                        client, session_cookie, pairing.base_url, cache_dir, link, stop_event
-                    )
+                loop = _build_conversation_loop(
+                    client, session_cookie, pairing.base_url, cache_dir, link, stop_event
                 )
+                loop_result.append(loop)
+                loop_ready.set()
+                state_change_event.set()
+                build_result.append(loop)
             except Exception as exc:
                 build_result.append(exc)
 

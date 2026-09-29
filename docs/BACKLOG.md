@@ -502,7 +502,7 @@ the image release and the profile id in the header.
       daemon version appears on the card and in the update row. Out of
       scope: the Space listing (owner's call). Exit: the flow exercised
       on the unit and its captures.
-- [ ] **G10-BODY: push the robot.state frame to the hub** (S, design
+- [x] **G10-BODY: push the robot.state frame to the hub** (S, design
       resolved 2026-09-29 by design-resolver, unblocking `home`'s
       ROBOT-CARD-01). Objective: `body/maipai_body/link/state.py`'s
       `StateReporter`, modelled directly on `link/prints.py`'s
@@ -535,7 +535,9 @@ the image release and the profile id in the header.
       SDK/daemon exposes nothing (send `null`, file a follow-up). Depends
       on `home`'s own hub-half route landing first (or a fake for local
       testing) and `commons/spec`'s `robot-state.schema.json`. Exit:
-      `bash scripts/check.sh`.
+      `bash scripts/check.sh`. Landed 2026-09-29: the body pushes state
+      on changes and a 15s heartbeat; Reachy Mini reports SDK version
+      `1.11.0` from `reachy_mini.__version__`.
 - [ ] **RM-09: the user guide** (S, with RM-08). Objective: the
       user-tier page from the box to the first conversation (the
       vendor's Wi-Fi setup, Add a robot in Home, the spoken code, what
