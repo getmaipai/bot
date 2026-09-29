@@ -198,6 +198,43 @@ def test_run_paired_body_builds_and_runs_the_conversation_loop_once_paired(caplo
     assert "state: stopped" in messages
 
 
+def test_run_paired_body_stops_within_one_second_during_conversation_loop_build(caplog):
+    client = FakeReachyMiniClient()
+    link = _FakeLink(paired=True, pairing=_fake_pairing(), session_cookie="real-cookie")
+    stop_event = threading.Event()
+    build_started = threading.Event()
+    release_build = threading.Event()
+
+    def blocked_build(*args):
+        build_started.set()
+        release_build.wait(5.0)
+        return MagicMock()
+
+    with (
+        patch("maipai_body.app._build_conversation_loop", side_effect=blocked_build),
+        caplog.at_level("INFO", logger="maipai_body.app"),
+    ):
+        thread = threading.Thread(
+            target=run_paired_body,
+            args=(client, link, stop_event),
+            kwargs={"cache_dir": Path("/tmp/models")},
+        )
+        thread.start()
+        assert build_started.wait(1.0), "conversation loop build did not start"
+        started = time.monotonic()
+        stop_event.set()
+        thread.join(timeout=2.0)
+        elapsed = time.monotonic() - started
+        release_build.set()
+
+    assert not thread.is_alive()
+    assert elapsed < 1.0, f"run_paired_body took {elapsed:.2f}s to stop after stop_event was set"
+    messages = [record.getMessage() for record in caplog.records]
+    assert "stop requested during model download; abandoning conversation loop build" in messages
+    assert "state: conversation_loop" not in messages
+    assert "state: stopped" in messages
+
+
 def test_run_paired_body_stops_cleanly_if_the_pairing_record_is_unreadable(caplog):
     client = FakeReachyMiniClient()
     link = _FakeLink(paired=True, pairing=None)  # paired per in-memory state, but nothing on disk
