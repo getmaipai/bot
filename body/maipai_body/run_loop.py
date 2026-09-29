@@ -133,6 +133,7 @@ class ConversationLoop:
         turn_client: TurnClient,
         tts_client: TtsPlaybackClient,
         hub_credentials: Callable[[], tuple[str, str]] | None = None,
+        on_change: Callable[[], None] | None = None,
         presence_interval_s: float = 0.5,
         face_detector: FiveLandmarkDetector | None = None,
         face_embedder: SFaceEmbedder | None = None,
@@ -148,6 +149,7 @@ class ConversationLoop:
         self._turn = turn_client
         self._tts = tts_client
         self._hub_credentials = hub_credentials
+        self._on_change = on_change
         self._current_hub_credentials: tuple[str, str] | None = None
         self._presence_interval_s = presence_interval_s
         # All three None (the default) disables face recognition
@@ -206,6 +208,17 @@ class ConversationLoop:
             self._state.funnel = funnel
             self._state.trace.append(StateTransition(state=funnel, at_monotonic=time.monotonic()))
         logger.info("funnel: %s", funnel)
+        if self._on_change is not None:
+            self._on_change()
+
+    def snapshot(self) -> dict[str, object]:
+        """Return the reportable funnel state without exposing live state."""
+        with self._lock:
+            return {
+                "activity": self._state.funnel.value,
+                "muted": self._state.muted,
+                "tracking": self._state.tracking,
+            }
 
     def _current_funnel(self) -> FunnelState:
         with self._lock:
@@ -259,6 +272,8 @@ class ConversationLoop:
         self._expression.set_muted(muted, arbitration)
         with self._lock:
             self._state.muted = muted
+        if self._on_change is not None:
+            self._on_change()
 
     def run(self, stop_event: threading.Event) -> None:
         """Blocks until `stop_event` is set. Runs the presence tick on
@@ -474,10 +489,14 @@ class ConversationLoop:
                 self._client.enable_tracking()
                 with self._lock:
                     self._state.tracking = True
+                if self._on_change is not None:
+                    self._on_change()
             elif not should_track and already_tracking:
                 self._client.disable_tracking()
                 with self._lock:
                     self._state.tracking = False
+                if self._on_change is not None:
+                    self._on_change()
 
             if observation.face_detected:
                 self._maybe_check_face(stop_event)

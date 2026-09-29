@@ -167,6 +167,7 @@ def test_run_paired_body_builds_and_runs_the_conversation_loop_once_paired(caplo
     stop_event = threading.Event()
 
     fake_loop = MagicMock()
+    fake_loop.snapshot.return_value = {"activity": "idle", "muted": False, "tracking": False}
 
     def fake_run(event: threading.Event) -> None:
         event.wait(5.0)  # blocks like the real ConversationLoop.run() until told to stop
@@ -201,6 +202,53 @@ def test_run_paired_body_builds_and_runs_the_conversation_loop_once_paired(caplo
     messages = [record.getMessage() for record in caplog.records]
     assert "state: conversation_loop" in messages
     assert "state: stopped" in messages
+
+
+def test_state_reporter_sends_starting_while_conversation_loop_builds():
+    client = FakeReachyMiniClient()
+    link = _FakeLink(paired=True, pairing=_fake_pairing(), session_cookie="real-cookie")
+    stop_event = threading.Event()
+    build_started = threading.Event()
+    release_build = threading.Event()
+    reporter_started = threading.Event()
+    snapshots = []
+
+    class _FakeReporter:
+        def __init__(self, _credentials, _stop, snapshot, _change):
+            self.snapshot = snapshot
+
+        def run(self):
+            reporter_started.set()
+            snapshots.append(self.snapshot())
+
+    def blocked_build(*_args):
+        build_started.set()
+        release_build.wait(2.0)
+        return MagicMock(
+            snapshot=MagicMock(return_value={"activity": "idle", "muted": False, "tracking": False})
+        )
+
+    with (
+        patch("maipai_body.app.StateReporter", _FakeReporter),
+        patch("maipai_body.app._build_conversation_loop", side_effect=blocked_build),
+    ):
+        thread = threading.Thread(
+            target=run_paired_body,
+            args=(client, link, stop_event),
+            kwargs={"cache_dir": Path("/tmp/models")},
+        )
+        thread.start()
+        assert reporter_started.wait(1.0)
+        assert build_started.wait(1.0)
+        stop_event.set()
+        thread.join(timeout=1.0)
+        release_build.set()
+
+    assert not thread.is_alive()
+    assert snapshots[0]["activity"] == "starting"
+    assert snapshots[0]["on_battery"] is None
+    assert snapshots[0]["battery_level"] is None
+    assert snapshots[0]["daemon_version"]
 
 
 def test_run_paired_body_stops_within_one_second_during_conversation_loop_build(caplog):

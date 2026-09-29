@@ -508,6 +508,8 @@ def test_presence_enables_tracking_when_face_present_and_not_speaking():
     client.face_target = FaceTrackTarget(detected=True)
 
     stop_event = threading.Event()
+    changes = []
+    loop._on_change = lambda: changes.append(loop.snapshot())
     thread = threading.Thread(target=loop._presence_loop, args=(stop_event,), daemon=True)
     thread.start()
     try:
@@ -515,6 +517,7 @@ def test_presence_enables_tracking_when_face_present_and_not_speaking():
 
         client.face_target = FaceTrackTarget(detected=False)
         _wait_for(lambda: client.tracking_enabled is False)
+        assert [state["tracking"] for state in changes] == [True, False]
     finally:
         stop_event.set()
         thread.join(timeout=2.0)
@@ -937,6 +940,8 @@ def test_no_face_verdict_means_no_speaker_evidence_on_the_turn():
 def test_set_muted_is_edge_triggered_and_updates_state():
     loop, parts = _make_loop()
     engine = parts["engine"]
+    changes = []
+    loop._on_change = lambda: changes.append(loop.snapshot())
 
     loop.set_muted(True)
     assert loop.state.muted is True
@@ -948,6 +953,17 @@ def test_set_muted_is_edge_triggered_and_updates_state():
     loop.set_muted(False)
     assert loop.state.muted is False
     assert engine.muted_calls == [True, False]
+    assert [state["muted"] for state in changes] == [True, False]
+
+
+def test_funnel_state_changes_notify_with_current_activity():
+    loop, _parts = _make_loop()
+    changes = []
+    loop._on_change = lambda: changes.append(loop.snapshot()["activity"])
+
+    loop._enter(FunnelState.LISTENING)
+
+    assert changes == ["listening"]
 
 
 def test_poll_wake_drains_capture_but_never_scores_while_muted():
