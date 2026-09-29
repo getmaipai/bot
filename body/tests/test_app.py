@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from maipai_body.app import (
+    _hub_credentials_reader,
     _sigint_handler,
     run_paired_body,
 )
@@ -69,6 +70,28 @@ def _fake_pairing() -> HubPairing:
         device_token="dev-token",
         hub_instance_id="hub-1",
     )
+
+
+def test_hub_credentials_reader_retains_latest_successful_pairing_url():
+    class RotatingStore:
+        calls = 0
+
+        def load(self):
+            self.calls += 1
+            if self.calls == 1:
+                return HubPairing(
+                    base_url="https://new-hub.example.test",
+                    device_token="dev-token",
+                    hub_instance_id="hub-1",
+                )
+            raise OSError("transient read failure")
+
+    link = _FakeLink(pairing=_fake_pairing(), session_cookie="rotated-cookie")
+    link.pairing_store = RotatingStore()
+    read_credentials = _hub_credentials_reader(link, "https://original-hub.example.test")
+
+    assert read_credentials() == ("rotated-cookie", "https://new-hub.example.test")
+    assert read_credentials() == ("rotated-cookie", "https://new-hub.example.test")
 
 
 def test_run_paired_body_holds_neutral_then_honors_stop_event_while_never_paired(caplog):
@@ -166,7 +189,7 @@ def test_run_paired_body_builds_and_runs_the_conversation_loop_once_paired(caplo
 
     assert not thread.is_alive()
     build.assert_called_once_with(
-        client, "real-cookie", "https://hub.example.test", Path("/tmp/models")
+        client, "real-cookie", "https://hub.example.test", Path("/tmp/models"), link
     )
     fake_loop.run.assert_called_once_with(stop_event)
 

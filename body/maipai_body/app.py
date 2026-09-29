@@ -125,6 +125,7 @@ def _build_conversation_loop(
     session_cookie: str,
     base_url: str,
     cache_dir: Path,
+    link: LinkLifecycle,
 ) -> ConversationLoop:
     """Real construction, once paired: everything G9's `ConversationLoop`
     needs, pointed at the paired hub and the local model cache.
@@ -139,6 +140,7 @@ def _build_conversation_loop(
     wake phrase, SFace) happen here, synchronously, the first time a
     fresh install ever reaches a paired state.
     """
+    hub_credentials = _hub_credentials_reader(link, base_url)
     wakeword_paths = ensure_wakeword_models(cache_dir)
     wake_engine = OpenWakeWordEngine(
         wake_phrase_model=wakeword_paths[WAKE_PHRASE.file],
@@ -155,10 +157,28 @@ def _build_conversation_loop(
         stt_client=SttStreamClient(base_url, session_cookie),
         turn_client=TurnClient(base_url, session_cookie),
         tts_client=TtsPlaybackClient(base_url, session_cookie, audio_playback),
+        hub_credentials=hub_credentials,
         face_detector=FiveLandmarkDetector(),
         face_embedder=ensure_embedder(cache_dir),
         face_gallery=FaceGallery(model_id=_FACE_MODEL_ID, model_sha256=SFACE.sha256),
     )
+
+
+def _hub_credentials_reader(link: LinkLifecycle, base_url: str) -> Callable[[], tuple[str, str]]:
+    """Build a live credentials reader that retains the last good URL."""
+    last_known_good_url = [base_url]
+
+    def read() -> tuple[str, str]:
+        try:
+            pairing = link.pairing_store.load()
+        except Exception:
+            logger.warning("failed to read hub pairing during credential refresh", exc_info=True)
+        else:
+            if pairing is not None:
+                last_known_good_url[0] = pairing.base_url
+        return link.hub_client.session_cookie or "", last_known_good_url[0]
+
+    return read
 
 
 def run_paired_body(
@@ -174,17 +194,10 @@ def run_paired_body(
     second if pairing never happens - RM-03's own original scaffold
     contract, unchanged.
 
-    A known gap, not solved here: `TurnClient`/`SttStreamClient`/
-    `TtsPlaybackClient` each capture `session_cookie` as a plain string
-    at construction time, with no way to pick up a later value. G4's
-    own `LinkLifecycle.run()` re-redeems every `REFRESH_INTERVAL_S`
-    (24h) and the hub session it authenticates may rotate its cookie on
-    that redeem - a robot that stays paired and running past that
-    boundary could see its hub calls start failing with a stale cookie
-    until the process restarts. Filed as a follow-up
-    (`docs/BACKLOG.md`, FACE-01's own successor item), not blocking
-    this landing: a fresh install's first conversation, and most
-    realistic session lengths short of a full day, are unaffected.
+    Hub-facing speech clients are refreshed at turn boundaries from
+    the link's live session cookie and pairing URL, so an in-flight
+    turn keeps its original clients while the next turn picks up a
+    rotated session.
     """
     _log_state(_STATE_STARTING)
     try:
@@ -217,7 +230,9 @@ def run_paired_body(
             logger.error("link reports paired but has no session cookie")
             return
         try:
-            loop = _build_conversation_loop(client, session_cookie, pairing.base_url, cache_dir)
+            loop = _build_conversation_loop(
+                client, session_cookie, pairing.base_url, cache_dir, link
+            )
         except Exception:
             # A code review (2026-09-28) caught this uncaught: a
             # model-download failure (no network, GitHub briefly

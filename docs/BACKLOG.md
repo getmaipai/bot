@@ -1438,7 +1438,7 @@ the image release and the profile id in the header.
       just Mac sanity numbers). Live verification against
       `reachy-mini-daemon --sim` landed separately the same day - see
       G9's own entry above.
-- [ ] **FACE-04: reconstruct the hub-facing speech clients on session
+- [x] **FACE-04: reconstruct the hub-facing speech clients on session
       cookie rotation** (S, filed 2026-09-28 from FACE-01's own
       construction pass). Objective: `TurnClient`, `SttStreamClient`
       and `TtsPlaybackClient` each hold a `session_cookie` snapshot
@@ -1457,7 +1457,11 @@ the image release and the profile id in the header.
       on some natural cadence (a presence tick, a turn boundary) rather
       than a dedicated poller. Acceptance: a scripted test that rotates
       a fake link's cookie mid-run and confirms a subsequent turn uses
-      the new value, not the stale one. Exit: `bash scripts/check.sh`.
+      the new value, not the stale one.
+      **Landed 2026-09-28: per-turn credential refresh.** The loop checks
+      the live session cookie and pairing URL at each turn boundary and
+      reconstructs its three hub clients only when that pair changes.
+      Exit: `bash scripts/check.sh`.
 - [ ] **FACE-05: stop_event isn't polled during the first-boot model
       download** (S, filed 2026-09-28 from a code review of FACE-01's
       construction pass). Objective: `app.py`'s `run_paired_body` stops
