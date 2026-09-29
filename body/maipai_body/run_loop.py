@@ -25,6 +25,7 @@ import logging
 import re
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
@@ -131,6 +132,7 @@ class ConversationLoop:
         stt_client: SttStreamClient,
         turn_client: TurnClient,
         tts_client: TtsPlaybackClient,
+        hub_credentials: Callable[[], tuple[str, str]] | None = None,
         presence_interval_s: float = 0.5,
         face_detector: FiveLandmarkDetector | None = None,
         face_embedder: SFaceEmbedder | None = None,
@@ -145,6 +147,8 @@ class ConversationLoop:
         self._stt = stt_client
         self._turn = turn_client
         self._tts = tts_client
+        self._hub_credentials = hub_credentials
+        self._current_hub_credentials: tuple[str, str] | None = None
         self._presence_interval_s = presence_interval_s
         # All three None (the default) disables face recognition
         # entirely: nothing in this repo constructs real ones yet
@@ -291,6 +295,21 @@ class ConversationLoop:
         return None
 
     def _run_turn(self, stop_event: threading.Event) -> None:
+        if self._hub_credentials is not None:
+            try:
+                session_cookie, base_url = self._hub_credentials()
+            except Exception:
+                logger.warning(
+                    "failed to refresh hub credentials; keeping current clients", exc_info=True
+                )
+            else:
+                credentials = (session_cookie, base_url)
+                if credentials != self._current_hub_credentials:
+                    logger.info("hub session cookie rotated, reconstructing hub clients")
+                    self._stt = SttStreamClient(base_url, session_cookie)
+                    self._turn = TurnClient(base_url, session_cookie)
+                    self._tts = TtsPlaybackClient(base_url, session_cookie, self._playback)
+                    self._current_hub_credentials = credentials
         self._enter(FunnelState.LISTENING)
         self._render(Cue(phase=Phase.HEARD, cue_seq=self._next_cue_seq()))
 

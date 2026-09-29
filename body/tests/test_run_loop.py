@@ -184,6 +184,7 @@ def _make_loop(
     face_gallery=None,
     face_recognition_interval_s: float = 3.0,
     camera_frame=None,
+    hub_credentials=None,
 ):
     client = FakeReachyMiniClient(REACHY_MINI_PROFILE, camera_frame=camera_frame)
     engine = _RecordingExpressionEngine(client, REACHY_MINI_PROFILE)
@@ -206,6 +207,7 @@ def _make_loop(
         stt_client=stt,
         turn_client=turn,
         tts_client=tts,
+        hub_credentials=hub_credentials,
         presence_interval_s=presence_interval_s,
         face_detector=face_detector,
         face_embedder=face_embedder,
@@ -223,6 +225,88 @@ def _make_loop(
         "tts": tts,
     }
     return loop, parts
+
+
+def test_hub_credentials_unchanged_do_not_reconstruct_clients(monkeypatch):
+    import maipai_body.run_loop as run_loop_module
+
+    built = {"stt": [], "turn": [], "tts": []}
+
+    class Stt:
+        def __init__(self, base_url, cookie):
+            self.args = (base_url, cookie)
+            self.call_count = 0
+            built["stt"].append(self)
+
+        def run(self, capture):
+            self.call_count += 1
+            return SttStreamResult(kind="no_speech")
+
+    class Turn:
+        def __init__(self, base_url, cookie):
+            self.args = (base_url, cookie)
+            built["turn"].append(self)
+
+    class Tts:
+        def __init__(self, base_url, cookie, playback):
+            self.args = (base_url, cookie)
+            built["tts"].append(self)
+
+    monkeypatch.setattr(run_loop_module, "SttStreamClient", Stt)
+    monkeypatch.setattr(run_loop_module, "TurnClient", Turn)
+    monkeypatch.setattr(run_loop_module, "TtsPlaybackClient", Tts)
+    loop, _ = _make_loop(hub_credentials=lambda: ("cookie", "https://hub"))
+    loop._run_turn(threading.Event())
+    first = (loop._stt, loop._turn, loop._tts)
+    loop._run_turn(threading.Event())
+    assert (loop._stt, loop._turn, loop._tts) == first
+    assert [len(built[name]) for name in built] == [1, 1, 1]
+
+
+def test_hub_credentials_rotation_reconstructs_clients_at_next_turn(monkeypatch):
+    import maipai_body.run_loop as run_loop_module
+
+    built = {"stt": [], "turn": [], "tts": []}
+
+    class Stt:
+        def __init__(self, base_url, cookie):
+            self.args = (base_url, cookie)
+            self.call_count = 0
+            built["stt"].append(self)
+
+        def run(self, capture):
+            self.call_count += 1
+            return SttStreamResult(kind="no_speech")
+
+    class Turn:
+        def __init__(self, base_url, cookie):
+            self.args = (base_url, cookie)
+            built["turn"].append(self)
+
+    class Tts:
+        def __init__(self, base_url, cookie, playback):
+            self.args = (base_url, cookie)
+            built["tts"].append(self)
+
+    monkeypatch.setattr(run_loop_module, "SttStreamClient", Stt)
+    monkeypatch.setattr(run_loop_module, "TurnClient", Turn)
+    monkeypatch.setattr(run_loop_module, "TtsPlaybackClient", Tts)
+    credentials = iter([("old", "https://hub"), ("new", "https://hub")])
+    loop, _ = _make_loop(hub_credentials=lambda: next(credentials))
+    loop._run_turn(threading.Event())
+    first = (loop._stt, loop._turn, loop._tts)
+    loop._run_turn(threading.Event())
+    current = (loop._stt, loop._turn, loop._tts)
+    assert all(new is not old for new, old in zip(current, first))
+    assert [built[name][-1].args for name in built] == [("https://hub", "new")] * 3
+
+
+def test_no_hub_credentials_keeps_injected_clients_unchanged():
+    loop, parts = _make_loop()
+    first = (loop._stt, loop._turn, loop._tts)
+    loop._run_turn(threading.Event())
+    assert (loop._stt, loop._turn, loop._tts) == first
+    assert parts["stt"].call_count == 1
 
 
 def _start(loop: ConversationLoop) -> tuple[threading.Event, threading.Thread]:
