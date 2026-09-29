@@ -502,6 +502,40 @@ the image release and the profile id in the header.
       daemon version appears on the card and in the update row. Out of
       scope: the Space listing (owner's call). Exit: the flow exercised
       on the unit and its captures.
+- [ ] **G10-BODY: push the robot.state frame to the hub** (S, design
+      resolved 2026-09-29 by design-resolver, unblocking `home`'s
+      ROBOT-CARD-01). Objective: `body/maipai_body/link/state.py`'s
+      `StateReporter`, modelled directly on `link/prints.py`'s
+      `PrintSync` (same `hub_credentials`/`stop_event`/`requests.Session`
+      constructor shape) - pushes `PUT /api/devices/me/state`
+      (`commons/spec/schemas/robot-state.schema.json`: `activity`
+      including a `starting` value for the pre-conversation-loop window,
+      `muted`, `tracking`, `on_battery`/`battery_level` nullable-unknown
+      for this body per design §7, `daemon_version`) on every change and
+      a 15s heartbeat otherwise. `ConversationLoop` gains an `on_change`
+      callback fired from `_enter()`, `set_muted()`, and the tracking
+      edge in `_presence_loop()`, setting a `threading.Event` the
+      reporter thread wakes on. Started in `run_paired_body` as soon as
+      pairing is confirmed, before the conversation-loop build, so
+      `starting` is reportable during the (potentially minutes-long)
+      first-boot model download - not after, or the card would wrongly
+      read "unreachable" the whole time. On a send failure: log and wait
+      for the next wake, never retry-loop; a rotated cookie is picked up
+      naturally on the next send via the existing `hub_credentials`
+      reader. Full reasoning: `home`'s `docs/dev.md`, "Robot device
+      state" (2026-09-29). Mirror: `link/prints.py` and its tests
+      exactly. Acceptance: a stand-in HTTP server receives a frame on
+      each funnel transition of a scripted turn; a heartbeat fires after
+      15s idle (an injected interval in the test, not a real 15s wait);
+      `starting` is sent before the loop exists; a rotated cookie is
+      picked up on the next send; no crash or busy-loop on a connection
+      refused or a 401. Out of scope: the mute command arriving FROM the
+      hub (filed separately, `home`'s ROBOT-MUTE-01 - this item is
+      report-only, robot to hub); `daemon_version` resolution if the
+      SDK/daemon exposes nothing (send `null`, file a follow-up). Depends
+      on `home`'s own hub-half route landing first (or a fake for local
+      testing) and `commons/spec`'s `robot-state.schema.json`. Exit:
+      `bash scripts/check.sh`.
 - [ ] **RM-09: the user guide** (S, with RM-08). Objective: the
       user-tier page from the box to the first conversation (the
       vendor's Wi-Fi setup, Add a robot in Home, the spoken code, what
@@ -1104,8 +1138,13 @@ the image release and the profile id in the header.
       contract (EXPR-01). The acceptance's own grep test (no "physical
       mute" wording anywhere in `body/`) still passes.
       **Not yet built:** the actual command that calls `set_muted()` -
-      nothing in this repo does yet, since that trigger is G10's own
-      device-state frame. The mechanism is real and tested
+      nothing in this repo does yet. **Correction (2026-09-29,
+      design-resolver, resolving G10's own state-frame transport):**
+      this is NOT G10's own device-state frame (that frame is
+      read-only telemetry, robot to hub - see G10-BODY below); it needs
+      its own item, filed as ROBOT-MUTE-01 in `home`'s `docs/BACKLOG.md`
+      (a settings key or a device-command channel, undecided - a real
+      product call, not resolved here). The mechanism is real and tested
       (`test_set_muted_is_edge_triggered_and_updates_state`,
       `test_poll_wake_drains_capture_but_never_scores_while_muted` in
       `body/tests/test_run_loop.py`); only the caller is missing.

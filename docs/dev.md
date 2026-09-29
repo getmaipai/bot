@@ -1934,3 +1934,25 @@ hold, so it isn't repeated here.
   balance interval refused when the clock is untrusted, a 20 percent
   return request, a 5 C charge inhibit that also applies to an unknown
   pack temperature, a 25 percent UPS reserve, a 5 s goodbye grace.
+
+## Robot device state (2026-09-29, design-resolver, G10/ROBOT-CARD-01)
+
+Full record and rationale: `home`'s own `docs/dev.md`, "Robot device
+state" (2026-09-29) - this is the bot-side pointer, not a duplicate.
+
+The robot pushes a `robot.state` frame (`commons/spec/schemas/
+robot-state.schema.json`: activity including `starting`, muted,
+tracking, on_battery/battery_level as nullable-unknown for this body,
+daemon_version) to `PUT /api/devices/me/state` on every change and a
+15s heartbeat otherwise, from `link/state.py`'s `StateReporter`
+(modelled on `link/prints.py`'s `PrintSync`), started in
+`run_paired_body` at pairing, before the conversation-loop build. The
+hub never polls; only the robot holds a hub credential. See G10-BODY
+in `docs/BACKLOG.md` for the work order.
+
+The mute command (hub to robot) is explicitly NOT this frame - it's
+read-only telemetry, robot to hub. Filed separately as `home`'s
+ROBOT-MUTE-01, undecided (a settings key vs. a device-command channel,
+and whether Home offers a mute button at all - the design-resolver's
+own report flags the last as possibly Jesse's call, not an engineering
+one).
