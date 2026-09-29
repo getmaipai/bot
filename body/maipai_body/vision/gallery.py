@@ -29,11 +29,16 @@ the first place.
 
 from __future__ import annotations
 
+import logging
+import threading
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
+
+logger = logging.getLogger("maipai_body.vision.gallery")
 
 
 class ForeignModelPrint(RuntimeError):
@@ -50,6 +55,7 @@ class FacePrint:
     and score a match, not the full record (consent metadata,
     provenance, the HLC) the real spec print will also carry."""
 
+    id: str
     person_id: str
     model_id: str
     model_sha256: str
@@ -92,6 +98,7 @@ class FaceGallery:
         self._threshold = threshold
         self._margin = margin
         self._prints: list[FacePrint] = []
+        self._lock = threading.Lock()
 
     def add(self, print_: FacePrint) -> None:
         if print_.model_id != self._model_id or print_.model_sha256 != self._model_sha256:
@@ -101,10 +108,27 @@ class FaceGallery:
                 f"{self._model_id} ({self._model_sha256[:12]}...) - re-enroll "
                 "for the current model before it can match."
             )
-        self._prints.append(print_)
+        with self._lock:
+            self._prints.append(print_)
 
     def remove(self, person_id: str) -> None:
-        self._prints = [p for p in self._prints if p.person_id != person_id]
+        with self._lock:
+            self._prints = [p for p in self._prints if p.person_id != person_id]
+
+    def replace_all(self, prints: Iterable[FacePrint]) -> None:
+        """Replace the synced snapshot, skipping prints for other models."""
+        matching: list[FacePrint] = []
+        for print_ in prints:
+            if print_.model_id != self._model_id or print_.model_sha256 != self._model_sha256:
+                logger.warning(
+                    "skipping %s's print: enrolled for a different model, "
+                    "re-enroll for the current model",
+                    print_.person_id,
+                )
+                continue
+            matching.append(print_)
+        with self._lock:
+            self._prints = matching
 
     def identify(self, embedding: npt.NDArray[np.float32]) -> FaceVerdict:
         """Best cosine score per person (multiple prints per person
@@ -114,8 +138,10 @@ class FaceGallery:
         is `tentative` at that person; two leaders too close together
         is `unknown` with both carried as candidates; nobody clearing
         the threshold at all is `unknown` with none."""
+        with self._lock:
+            prints = tuple(self._prints)
         best_per_person: dict[str, float] = {}
-        for print_ in self._prints:
+        for print_ in prints:
             score = _cosine(embedding, print_.embedding)
             if score > best_per_person.get(print_.person_id, -1.0):
                 best_per_person[print_.person_id] = score

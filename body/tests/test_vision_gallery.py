@@ -24,7 +24,11 @@ def _gallery(**kwargs) -> FaceGallery:
 
 def _print(person_id: str, embedding: np.ndarray) -> FacePrint:
     return FacePrint(
-        person_id=person_id, model_id=MODEL_ID, model_sha256=MODEL_SHA, embedding=embedding
+        id=f"print-{person_id}",
+        person_id=person_id,
+        model_id=MODEL_ID,
+        model_sha256=MODEL_SHA,
+        embedding=embedding,
     )
 
 
@@ -100,6 +104,7 @@ def test_adding_a_print_from_a_different_model_is_refused():
     gallery = _gallery()
 
     foreign = FacePrint(
+        id="print-foreign",
         person_id="sage",
         model_id="some-other-model",
         model_sha256="f" * 64,

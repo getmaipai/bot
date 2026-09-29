@@ -189,7 +189,12 @@ def test_run_paired_body_builds_and_runs_the_conversation_loop_once_paired(caplo
 
     assert not thread.is_alive()
     build.assert_called_once_with(
-        client, "real-cookie", "https://hub.example.test", Path("/tmp/models"), link
+        client,
+        "real-cookie",
+        "https://hub.example.test",
+        Path("/tmp/models"),
+        link,
+        stop_event,
     )
     fake_loop.run.assert_called_once_with(stop_event)
 
