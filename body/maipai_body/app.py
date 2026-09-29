@@ -148,8 +148,7 @@ def _build_conversation_loop(
     audio_playback = AudioPlayback(client)
     gallery = FaceGallery(model_id=_FACE_MODEL_ID, model_sha256=SFACE.sha256)
     print_sync = PrintSync(gallery, hub_credentials, stop_event)
-    threading.Thread(target=print_sync.run, name="face-print-sync", daemon=True).start()
-    return ConversationLoop(
+    loop = ConversationLoop(
         client=client,
         expression_engine=ExpressionEngine(client, REACHY_MINI_PROFILE),
         audio_capture=AudioCapture(client),
@@ -163,6 +162,8 @@ def _build_conversation_loop(
         face_embedder=ensure_embedder(cache_dir),
         face_gallery=gallery,
     )
+    threading.Thread(target=print_sync.run, name="face-print-sync", daemon=True).start()
+    return loop
 
 
 def _hub_credentials_reader(link: LinkLifecycle, base_url: str) -> Callable[[], tuple[str, str]]:

@@ -46,12 +46,8 @@ class PrintSync:
                 )
             else:
                 try:
-                    response = self._session.get(
-                        f"{base_url}/api/biometric-prints/sync",
-                        headers={"Cookie": f"session={cookie}"},
-                        timeout=5,
-                    )
-                except requests.RequestException:
+                    response = self._request_snapshot(cookie, base_url)
+                except PrintSyncError:
                     logger.warning(
                         "face print sync connection failed; keeping current prints", exc_info=True
                     )
@@ -89,3 +85,13 @@ class PrintSync:
                             self._gallery.replace_all(prints)
             if self._stop_event.wait(self._interval_s):
                 return
+
+    def _request_snapshot(self, cookie: str, base_url: str) -> requests.Response:
+        try:
+            return self._session.get(
+                f"{base_url}/api/biometric-prints/sync",
+                headers={"Cookie": f"session={cookie}"},
+                timeout=5,
+            )
+        except requests.RequestException as exc:
+            raise PrintSyncError(f"face print sync connection failed: {exc}") from exc
