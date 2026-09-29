@@ -1438,6 +1438,60 @@ the image release and the profile id in the header.
       just Mac sanity numbers). Live verification against
       `reachy-mini-daemon --sim` landed separately the same day - see
       G9's own entry above.
+
+- [ ] **FACE-03 (bot half): pull hub-synced face prints into the
+      gallery** (M, unstarted). Objective: close the gap FACE-01 left
+      explicit ("the gallery starts empty - no print-sync mechanism
+      from hub to robot exists yet") so a paired robot recognizes the
+      household's actual enrolled faces, not just `unknown` forever.
+      Design resolved 2026-09-28 (`home`'s `docs/dev.md`, "FACE-03:
+      hub-synced face prints on the robot" - read that record first,
+      this entry is the bot-side half of the same decision). The hub
+      side (`GET /api/biometric-prints/sync`, device-gated) is `home`'s
+      own FACE-03 item, unstarted as of this writing - do not start
+      the bot half until that route exists and its device-session auth
+      is real, since there is nothing to pull from otherwise. Shape:
+      - `body/maipai_body/link/prints.py` (`PrintSync`): pulls the
+        sync route using the same live cookie/URL reader the speech
+        clients already use (`app.py`'s `_hub_credentials_reader`,
+        FACE-04); once as soon as `link.state.paired`, then every 60s
+        (a starting interval, measured like every other one in this
+        module); replaces the gallery wholesale on each pull (no
+        delta/tombstone logic needed - a revoked print is simply
+        absent from the next snapshot); clears the gallery on a 401/403
+        or when unpaired.
+      - `vision/gallery.py`: `FacePrint` gains an `id` field;
+        `FaceGallery` gains `replace_all(prints)` swapping the whole
+        list under a lock (the run loop reads the gallery from another
+        thread - the same reason `_build_conversation_loop` already
+        runs on its own thread, FACE-05).
+      - A print whose `model_id`/`model_sha256` doesn't match this
+        body's own SFace pin is skipped with a logged Repair
+        ("re-enroll `<person>` for the current model"), one bad print
+        never aborting the rest of the load (`FaceGallery.add` today
+        raises on the first mismatch - the loader must catch per-print).
+      - Runs on its own thread, mirroring FACE-05's build-thread-plus-
+        poll pattern in `run_paired_body`, so a slow/stalled pull can
+        never delay `stop_event` handling.
+      - Storage: memory only, never written to disk (this body has no
+        sealed-at-rest store; `link/store.py` relies on file-mode 0600
+        alone, and a plaintext embedding cache would be a new gap this
+        item should not introduce).
+      Acceptance: the fake-hub deterministic suite recognizes a fixture
+      face against a synced print; a revoked print is gone from the
+      gallery within one pull cycle (a test drives two pulls, second
+      snapshot omits a person, assert `identify` now returns
+      `unknown`); a foreign-model print is skipped and the rest still
+      load; losing the hub session (401/403) empties the gallery rather
+      than serving stale matches. Exit: `bash scripts/check.sh`; on
+      real hardware, a hub-enrolled face gets `tentative` at the right
+      person with CPU/latency recorded in `docs/dev/measurements.md`
+      (needs the unit, same standing gap as FACE-01's own measurement).
+      Out of scope: the oplog replica (`spec/link/`, LINK-03, this
+      item's snapshot-pull is explicitly a stopgap ahead of it per the
+      design record); robot-side standalone enrollment (a later item on
+      top of the same print record, per the models design's own §5).
+
 - [x] **FACE-04: reconstruct the hub-facing speech clients on session
       cookie rotation** (S, filed 2026-09-28 from FACE-01's own
       construction pass). Objective: `TurnClient`, `SttStreamClient`
