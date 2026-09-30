@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+### Added
+
+- The robot's state frame now carries `app_version`, the installed
+  `maipai-bot` version, in every frame (`daemon_version` is still the
+  vendor SDK's), so the hub can compare a robot to a Bot release.
+
 ## [0.1.0] - 2026-09-28
 
 The first release since the platform rebuild's fresh start

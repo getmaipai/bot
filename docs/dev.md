@@ -1943,7 +1943,9 @@ state" (2026-09-29) - this is the bot-side pointer, not a duplicate.
 The robot pushes a `robot.state` frame (`commons/spec/schemas/
 robot-state.schema.json`: activity including `starting`, muted,
 tracking, on_battery/battery_level as nullable-unknown for this body,
-daemon_version) to `PUT /api/devices/me/state` on every change and a
+daemon_version, and app_version: the `maipai-bot` release the robot
+runs, since daemon_version is the vendor SDK's) to
+`PUT /api/devices/me/state` on every change and a
 15s heartbeat otherwise, from `link/state.py`'s `StateReporter`
 (modelled on `link/prints.py`'s `PrintSync`), started in
 `run_paired_body` at pairing, before the conversation-loop build. The

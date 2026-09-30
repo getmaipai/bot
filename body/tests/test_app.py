@@ -4,6 +4,9 @@ conversation loop once G4's hub link reports paired."""
 
 from __future__ import annotations
 
+import importlib.metadata
+import json
+import os
 import signal
 import threading
 import time
@@ -11,7 +14,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from maipai_body.app import (
+    _app_version,
     _hub_credentials_reader,
     _sigint_handler,
     run_paired_body,
@@ -218,8 +224,8 @@ def test_state_reporter_sends_starting_while_conversation_loop_builds():
             self.snapshot = snapshot
 
         def run(self):
-            reporter_started.set()
             snapshots.append(self.snapshot())
+            reporter_started.set()
 
     def blocked_build(*_args):
         build_started.set()
@@ -249,6 +255,73 @@ def test_state_reporter_sends_starting_while_conversation_loop_builds():
     assert snapshots[0]["on_battery"] is None
     assert snapshots[0]["battery_level"] is None
     assert snapshots[0]["daemon_version"]
+    assert snapshots[0]["app_version"] == importlib.metadata.version("maipai-bot")
+
+
+def _run_with_snapshots_from_a_running_loop() -> list[dict]:
+    """Drives `run_paired_body` to the point the conversation loop runs and
+    returns the frames the reporter's snapshot callable produced while
+    the loop runs (one frame, taken from inside `loop.run`)."""
+    client = FakeReachyMiniClient()
+    link = _FakeLink(paired=True, pairing=_fake_pairing(), session_cookie="real-cookie")
+    stop_event = threading.Event()
+    reporters = []
+    snapshots = []
+
+    class _FakeReporter:
+        def __init__(self, _credentials, _stop, snapshot, _change):
+            self.snapshot = snapshot
+            reporters.append(self)
+
+        def run(self):
+            pass
+
+    fake_loop = MagicMock(
+        snapshot=MagicMock(return_value={"activity": "idle", "muted": False, "tracking": False})
+    )
+    fake_loop.run.side_effect = lambda _stop: snapshots.append(reporters[0].snapshot())
+
+    with (
+        patch("maipai_body.app.StateReporter", _FakeReporter),
+        patch("maipai_body.app._build_conversation_loop", return_value=fake_loop),
+    ):
+        run_paired_body(client, link, stop_event, cache_dir=Path("/tmp/models"))
+    return snapshots
+
+
+def test_state_reporter_sends_app_version_once_the_conversation_loop_is_running():
+    (frame,) = _run_with_snapshots_from_a_running_loop()
+
+    assert frame["activity"] == "idle"
+    assert frame["app_version"] == importlib.metadata.version("maipai-bot")
+    # daemon_version stays the vendor SDK's version, a separate field.
+    assert frame["daemon_version"]
+
+
+def test_app_version_is_none_when_the_package_is_not_installed():
+    with patch(
+        "maipai_body.app.importlib.metadata.version",
+        side_effect=importlib.metadata.PackageNotFoundError("maipai-bot"),
+    ):
+        assert _app_version() is None
+
+
+_SCHEMA_ENV = "MAIPAI_ROBOT_STATE_SCHEMA"
+
+
+@pytest.mark.skipif(
+    not os.environ.get(_SCHEMA_ENV),
+    reason=f"set {_SCHEMA_ENV} to commons' spec/schemas/robot-state.schema.json "
+    "(spec-v0.1.57 or later); bot does not pin maipai-spec yet",
+)
+def test_state_frames_fit_the_published_robot_state_schema():
+    schema = json.loads(Path(os.environ[_SCHEMA_ENV]).read_text())
+
+    (frame,) = _run_with_snapshots_from_a_running_loop()
+
+    assert set(frame) <= set(schema["properties"])
+    assert set(schema["required"]) <= set(frame)
+    assert isinstance(frame["app_version"], str)
 
 
 def test_run_paired_body_stops_within_one_second_during_conversation_loop_build(caplog):

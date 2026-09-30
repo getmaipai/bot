@@ -538,6 +538,17 @@ the image release and the profile id in the header.
       `bash scripts/check.sh`. Landed 2026-09-29: the body pushes state
       on changes and a 15s heartbeat; Reachy Mini reports SDK version
       `1.11.0` from `reachy_mini.__version__`.
+- [x] **G10-VERSION: the robot sends `app_version`** (S, after
+      `commons` spec-v0.1.57). `state_snapshot()` in
+      `body/maipai_body/app.py` sends the installed `maipai-bot`
+      version (`importlib.metadata`, `null` when not installed) as
+      `app_version` in both the first `starting` frame and every later
+      frame, beside `daemon_version`, which stays the vendor SDK's
+      version. The hub compares `app_version` to a `getmaipai/bot`
+      release. Bot does not pin `maipai-spec` (see `AGENTS.md`), so
+      there is no pin to bump; the schema-fit test runs when
+      `MAIPAI_ROBOT_STATE_SCHEMA` points at commons'
+      `spec/schemas/robot-state.schema.json`. Landed 2026-09-29.
 - [ ] **RM-09: the user guide** (S, with RM-08). Objective: the
       user-tier page from the box to the first conversation (the
       vendor's Wi-Fi setup, Add a robot in Home, the spoken code, what

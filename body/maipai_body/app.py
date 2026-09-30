@@ -20,6 +20,7 @@ thread, which is moot since the process is exiting.
 
 from __future__ import annotations
 
+import importlib.metadata
 import logging
 import os
 import signal
@@ -65,6 +66,16 @@ _FACE_MODEL_ID = "sface-2021dec"
 # own worked example (2026-09-28) of what a parent would type - no
 # stronger convention exists yet across the Reachy Mini app ecosystem.
 SETTINGS_APP_URL = "http://0.0.0.0:8042"
+
+
+def _app_version() -> str | None:
+    """The installed `maipai-bot` version, or None when the package is not
+    installed (a bare source checkout), which the spec's nullable
+    `app_version` says the hub reads as "no version known"."""
+    try:
+        return importlib.metadata.version("maipai-bot")
+    except importlib.metadata.PackageNotFoundError:
+        return None
 
 
 def _data_dir() -> Path:
@@ -239,6 +250,13 @@ def run_paired_body(
         loop_result: list[ConversationLoop] = []
 
         def state_snapshot() -> dict[str, object]:
+            # `daemon_version` is the vendor SDK's version; `app_version`
+            # is this app's own (`maipai-bot`), the one the hub compares
+            # to a getmaipai/bot release (ROBOT-STATE-SPEC-02, G10-VERSION).
+            versions = {
+                "daemon_version": getattr(reachy_mini, "__version__", None),
+                "app_version": _app_version(),
+            }
             if not loop_ready.is_set() or not loop_result:
                 return {
                     "activity": "starting",
@@ -246,13 +264,13 @@ def run_paired_body(
                     "tracking": False,
                     "on_battery": None,
                     "battery_level": None,
-                    "daemon_version": getattr(reachy_mini, "__version__", None),
+                    **versions,
                 }
             return {
                 **loop_result[0].snapshot(),
                 "on_battery": None,
                 "battery_level": None,
-                "daemon_version": getattr(reachy_mini, "__version__", None),
+                **versions,
             }
 
         state_change_event = threading.Event()
