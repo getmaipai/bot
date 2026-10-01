@@ -1601,6 +1601,8 @@ the image release and the profile id in the header.
       `stop_event`, honoring a stop during downloads within one poll
       interval.**
 
+- [ ] **BODY-DAEMON-UPDATE-01: the body software version moves only with a Bot release (amends the Reachy design section 10 and RM-08)** (S, docs, filed 2026-10-01 from home's ROBOT-UPDATES-01 decision; needs Jesse's agreement before the design text changes). Objective: replace the independent "daemon PyPI update as a row, applied only on a click" in `docs/dev/design-reachy-mini-2026-09-27.md` section 10 and in RM-08 above with: the body daemon's version is pinned by Bot's release and moves with it, shown on the card and Updates row as detail ("Body software"), never as its own update. Why: `body/pyproject.toml` hard-pins `reachy-mini==1.11.0` and `scripts/install-reachy.sh` overrides `onnxruntime` because the vendor's own pin silently breaks the wake word, so a daemon upgraded alone from PyPI would break the Bot wheel (UPDATES.md: a sidecar never updates alone). Pointers: those two places, home's ROBOT-UPDATES-01 (landed, home `docs/dev.md`). Acceptance: both texts say it; RM-08's acceptance line about "the daemon version appears ... in the update row" becomes "the MaiPai version and the body software version appear on the card and the Updates row". Out of scope: any code. Exit: `bash scripts/check.sh --docs` in bot.
+
 ## Voice loop
 
 - [ ] **VOICE-01: the speech process** (M). Objective: `body/speech/`
