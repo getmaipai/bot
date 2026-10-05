@@ -2251,6 +2251,30 @@ All after `spec/link/` and hub v0.3.
       on the final parts, each recorded with the header. Acceptance: the
       stage page's closing check filled with the recorded number.
 
+- [x] **S-FAKES-01: the fakes cover every Reachy sensor and hub route**
+      (M, Reachy Mini only, 2026-10-05, cloud session). `fake.py` answers
+      `get_doa` from a scripted `[(t, angle, speaking)]` list, `read`
+      from scripted IMU readings (`rest_reading`, `tipped_reading`,
+      `freefall_reading`), `get_frame` from synthetic frames in
+      `fixtures/faces/` (README states provenance: drawn by
+      `generate.py`, no household photos), `get_face_target` from a
+      scripted detect and lose, and a `LoopbackRecorder` stamps every
+      `push_audio_sample`. Scripts read an injectable clock
+      (`ManualClock` in tests); with none given the fake behaves as
+      before. `measure/stand_in_hub.py` is now one stand-in: pairing,
+      the turn stream with a scripted `plan` and `cancel`, the `stt`
+      websocket, `tts`, `PUT /api/devices/me/state`, `GET
+      /api/biometric-prints/sync`, `GET /api/devices/me/hub-endpoints`
+      and a mute command channel behind `mute_channel=True`. Tests:
+      `tests/test_fakes_sensors.py` (seam-shape checks take
+      `body_client`, so they run against the simulator when
+      `MAIPAI_BODY_LIVE=1`) and `tests/test_fakes_stand_in_hub.py`, one
+      per route. Not verified against the hub (sibling repo, not
+      reachable): the `plan` event body, the `hub-endpoints` response
+      shape and the command channel, which is a placeholder until
+      ROBOT-MUTE-01 decides the transport. Live lines: not run, sandbox
+      cannot run the daemon.
+
 ## Docs and status
 
 - [ ] **DOCS-01: the build guide, stage by stage** (M, with BODY-01).
