@@ -141,10 +141,17 @@ class Rung0Cues:
     def _stir(self) -> None:
         self.stir_body()
         speaker = self._speaker
-        if speaker is None or not speaker.can_say([RECONNECT_CLIP]):
+        if speaker is None:
             return
         try:
-            spoke = speaker.say([RECONNECT_CLIP])
+            if hasattr(speaker, "say_phrase"):
+                spoke = speaker.say_phrase(
+                    RECONNECT_CLIP, fallback_text="I'm back in touch with home."
+                )
+            elif speaker.can_say([RECONNECT_CLIP]):
+                spoke = speaker.say([RECONNECT_CLIP])
+            else:
+                return
         except Exception:
             logger.warning("the reconnect clip could not be spoken", exc_info=True)
             return

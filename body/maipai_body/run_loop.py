@@ -428,7 +428,16 @@ class ConversationLoop:
         if offline.recognizer is None or offline.router is None:
             # No keyword spotter wired (its CPU cost is UNVERIFIED).
             status = offline.status()
-            reply = Reply(status.text, status.clip_ids)
+            speaker = offline.speaker
+            selected = (
+                speaker.selected_variant(status.clip_ids[0])
+                if speaker is not None and status.clip_ids and hasattr(speaker, "selected_variant")
+                else None
+            )
+            reply = Reply(
+                selected[1] if selected else status.text,
+                (selected[0],) if selected else status.clip_ids,
+            )
             offline.last_reply = reply
             self._speak_reply(reply, None, stop_event)
             return
@@ -558,7 +567,7 @@ class ConversationLoop:
             return
 
         announce = self._lost_turn_unannounced
-        if announce and self._say_clip(RECONNECT_CLIP):
+        if announce and self._say_clip(RECONNECT_CLIP, "I'm back in touch with home."):
             # The clip is the line; it queues ahead of the reply's own audio.
             self._lost_turn_unannounced = False
             announce = False
@@ -569,13 +578,18 @@ class ConversationLoop:
         if react_move and self._react_hook is not None and not stop_event.is_set():
             self._play_react(react_move, react_allowed)
 
-    def _say_clip(self, clip_id: str) -> bool:
+    def _say_clip(self, clip_id: str, fallback_text: str | None = None) -> bool:
         """Speaks one offline clip when the bundle can; False when it cannot
         (no ladder, no speaker, unrendered clip, playback failure)."""
         speaker = self._offline.speaker if self._offline is not None else None
-        if speaker is None or not speaker.can_say([clip_id]):
+        if speaker is None:
             return False
         try:
+            if hasattr(speaker, "say_phrase"):
+                spoke = bool(speaker.say_phrase(clip_id, fallback_text=fallback_text))
+                return spoke
+            if not speaker.can_say([clip_id]):
+                return False
             return bool(speaker.say([clip_id]))
         except Exception:
             logger.warning("offline clip %r failed", clip_id, exc_info=True)
@@ -728,7 +742,7 @@ class ConversationLoop:
         has been steady. Motors-off and the state report are a separate item."""
         was_falling, self._freefall_active = self._freefall_active, falling
         if falling and not was_falling:
-            self._say_clip(FREEFALL_CLIP)
+            self._say_clip(FREEFALL_CLIP, "Whoa, I tipped over.")
 
     def _maybe_check_face(self, stop_event: threading.Event) -> None:
         """FACE-01's own capped-rate capture: at most once every

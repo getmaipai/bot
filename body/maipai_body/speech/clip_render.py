@@ -47,8 +47,14 @@ def render_all(manifest: Manifest, out_dir: Path, synthesize: Callable[[str], by
     stamped = []
     for clip in manifest.clips:
         path = out_dir / clip.file
-        path.write_bytes(normalise_wav(synthesize(clip.text)))
-        stamped.append(replace(clip, sha256=_sha256_of(path)))
+        data = normalise_wav(synthesize(clip.text))
+        path.write_bytes(data)
+        import io
+        import wave
+
+        with wave.open(io.BytesIO(data), "rb") as wav:
+            duration_s = wav.getnframes() / wav.getframerate()
+        stamped.append(replace(clip, sha256=_sha256_of(path), duration_s=duration_s))
     return replace(manifest, clips=tuple(stamped))
 
 

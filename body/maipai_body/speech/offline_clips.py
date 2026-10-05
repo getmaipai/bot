@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import threading
 import wave
 import zipfile
@@ -68,9 +69,9 @@ class ClipsUnavailable(RuntimeError):
 class Voice:
     engine: str
     name: str
-    # Flipped by hand only after the licence check docs/BACKLOG.md's G4b
-    # acceptance requires is recorded in docs/dev.md.
     licence_checked: bool
+    licence: str = "CC-BY-4.0"
+    credit: str = "Voice generated with pocket-tts-english, licensed under CC-BY-4.0."
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,7 @@ class Clip:
     text: str
     file: str
     sha256: str  # empty until rendered
+    duration_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -119,11 +121,19 @@ def manifest_to_json(manifest: Manifest) -> str:
                 "voice": {
                     "engine": manifest.voice.engine,
                     "name": manifest.voice.name,
+                    "licence": manifest.voice.licence,
+                    "credit": manifest.voice.credit,
                     "licence_checked": manifest.voice.licence_checked,
                 },
                 "sample_rate": manifest.sample_rate,
                 "clips": [
-                    {"id": c.id, "text": c.text, "file": c.file, "sha256": c.sha256}
+                    {
+                        "id": c.id,
+                        "text": c.text,
+                        "file": c.file,
+                        "sha256": c.sha256,
+                        "duration_s": c.duration_s,
+                    }
                     for c in manifest.clips
                 ],
             },
@@ -176,6 +186,11 @@ class ClipBundle:
     def load(self, clip_id: str) -> tuple[npt.NDArray[np.float32], int]:
         """The clip's mono float32 samples and its own sample rate,
         checksum-verified at read time."""
+        if clip_id in PHRASES:
+            selected = ClipPicker(self.manifest).pick(clip_id, self.has)
+            if selected is None:
+                raise ClipsUnavailable(f"{clip_id}: no rendered variants")
+            clip_id = selected
         clip = self.manifest.clip(clip_id)
         path = self.directory / clip.file
         if not clip.sha256:
@@ -189,6 +204,47 @@ class ClipBundle:
             raw = w.readframes(w.getnframes())
         return _pcm16_to_float32(raw, channels), rate
 
+    def has(self, clip_id: str) -> bool:
+        """Whether a stamped clip file is present (checksum checked on load)."""
+        try:
+            clip = self.manifest.clip(clip_id)
+        except KeyError:
+            return False
+        return bool(clip.sha256 and (self.directory / clip.file).is_file())
+
+
+class ClipPicker:
+    """Selects line variants without repeating the last choice per line."""
+
+    def __init__(self, manifest: Manifest, random_source: Callable[[], float] | None = None):
+        self._manifest = manifest
+        self._random = random_source or random.random
+        self._last: dict[str, str] = {}
+
+    def variants(self, line_id: str) -> tuple[str, ...]:
+        return tuple(
+            c.id
+            for c in self._manifest.clips
+            if c.id.startswith(f"{line_id}.") and c.id[len(line_id) + 1 :].isdigit()
+        )
+
+    def is_line(self, line_id: str) -> bool:
+        return bool(self.variants(line_id))
+
+    def text(self, line_id: str) -> str:
+        variants = [c.text for c in self._manifest.clips if c.id.startswith(f"{line_id}.")]
+        return variants[0] if variants else ""
+
+    def pick(self, line_id: str, available: Callable[[str], bool] | None = None) -> str | None:
+        variants = [v for v in self.variants(line_id) if available is None or available(v)]
+        if not variants:
+            return None
+        previous = self._last.get(line_id)
+        choices = [v for v in variants if v != previous] or variants
+        selected = choices[min(int(self._random() * len(choices)), len(choices) - 1)]
+        self._last[line_id] = selected
+        return selected
+
 
 class OfflineSpeaker:
     """Speaks bundle clips through ``playback``: each resampled to the
@@ -201,25 +257,45 @@ class OfflineSpeaker:
         self._gap_s = gap_s
         self._said: set[str] = set()
         self._lock = threading.Lock()
+        self._picker = ClipPicker(bundle.manifest)
 
     def can_say(self, clip_ids: list[str]) -> bool:
         """True when every id is in the manifest, rendered (stamped) and its
         file is on disk. A cheap check (no checksum read): ``say`` still
         verifies each clip when it loads it."""
-        try:
-            clips = [self.bundle.manifest.clip(c) for c in clip_ids]
-        except KeyError:
-            return False
-        return all(c.sha256 and (self.bundle.directory / c.file).exists() for c in clips)
+        return all(
+            self.bundle.has(c)
+            or (c in PHRASES and any(self.bundle.has(v) for v in self._picker.variants(c)))
+            for c in clip_ids
+        )
+
+    def _resolve(self, clip_id: str) -> str | None:
+        if (
+            clip_id.startswith("line.")
+            and clip_id not in PHRASES
+            and not self._picker.is_line(clip_id)
+        ):
+            raise KeyError(clip_id)
+        if clip_id in PHRASES and not self._picker.is_line(clip_id):
+            raise KeyError(clip_id)
+        if self.bundle.has(clip_id):
+            return clip_id
+        if clip_id in PHRASES:
+            return self._picker.pick(clip_id, self.bundle.has)
+        return None
 
     def say(self, clip_ids: list[str], *, stop_event: threading.Event | None = None) -> bool:
         """True if every clip was pushed; False if ``stop_event`` cut it
         short. An unknown id raises ``KeyError`` before anything plays."""
-        for clip_id in clip_ids:
-            self.bundle.manifest.clip(clip_id)
+        resolved = [
+            clip_id if self.bundle.has(clip_id) else self._resolve(clip_id) for clip_id in clip_ids
+        ]
+        if any(clip_id is None for clip_id in resolved):
+            raise KeyError(next(c for c, r in zip(clip_ids, resolved, strict=True) if r is None))
         out_rate = self._playback.output_samplerate()
         gap = np.zeros(int(self._gap_s * out_rate), dtype=np.float32)
-        for i, clip_id in enumerate(clip_ids):
+        for i, clip_id in enumerate(resolved):
+            assert clip_id is not None
             if stop_event is not None and stop_event.is_set():
                 return False
             samples, rate = self.bundle.load(clip_id)
@@ -228,8 +304,29 @@ class OfflineSpeaker:
                 self._playback.push(gap)
         return True
 
-    def say_phrase(self, clip_id: str, *, stop_event: threading.Event | None = None) -> bool:
-        return self.say([clip_id], stop_event=stop_event)
+    def say_phrase(
+        self,
+        clip_id: str,
+        *,
+        stop_event: threading.Event | None = None,
+        fallback_text: str | None = None,
+    ) -> bool:
+        selected = self._resolve(clip_id)
+        if selected is None:
+            if fallback_text is not None:
+                logger.info("offline clip %r unavailable; caller retains text fallback", clip_id)
+            return False
+        return self.say([selected], stop_event=stop_event)
+
+    def selected_text(self, clip_id: str) -> str | None:
+        selected = self._resolve(clip_id)
+        return self.bundle.manifest.clip(selected).text if selected is not None else None
+
+    def selected_variant(self, clip_id: str) -> tuple[str, str] | None:
+        selected = self._resolve(clip_id)
+        if selected is None:
+            return None
+        return selected, self.bundle.manifest.clip(selected).text
 
     def say_pairing_code(self, code: str, *, stop_event: threading.Event | None = None) -> bool:
         return self.say(compose_pairing_code(code), stop_event=stop_event)
@@ -237,11 +334,14 @@ class OfflineSpeaker:
     def say_phrase_once(self, clip_id: str, *, stop_event: threading.Event | None = None) -> bool:
         """Speaks the line unless already said since the last
         :meth:`rearm` ("one line once", never repeated apologies)."""
+        selected = self._resolve(clip_id)
+        if selected is None:
+            return False
         with self._lock:
             if clip_id in self._said:
                 return False
             self._said.add(clip_id)
-        return self.say_phrase(clip_id, stop_event=stop_event)
+        return self.say([selected], stop_event=stop_event)
 
     def rearm(self, clip_id: str) -> None:
         with self._lock:

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import requests
@@ -45,6 +46,21 @@ def _synthesizer(hub: str, cookie: str):
     return synthesize
 
 
+def _default_voice(hub: str, cookie: str) -> str:
+    response = requests.get(
+        f"{hub}/stack/v1/voices",
+        headers={"Cookie": f"session={cookie}"},
+        timeout=(10, 30),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    voices = payload.get("voices", payload) if isinstance(payload, dict) else payload
+    for voice in voices:
+        if voice.get("default") is True:
+            return str(voice.get("id") or voice.get("name"))
+    raise ValueError("/stack/v1/voices did not return a default voice")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("command", choices=["render", "verify"])
@@ -56,8 +72,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "render":
         if not args.hub or not args.session_cookie:
             parser.error("render needs --hub and --session-cookie")
+        voice_id = _default_voice(args.hub, args.session_cookie)
+        manifest = offline_clips.load_manifest()
+        manifest = replace(
+            manifest,
+            voice=offline_clips.Voice(
+                engine="pocket-tts-english",
+                name=voice_id,
+                licence="CC-BY-4.0",
+                credit=(
+                    f"Voice {voice_id} generated with pocket-tts-english, licensed under CC-BY-4.0."
+                ),
+                licence_checked=False,
+            ),
+        )
         stamped = clip_render.render_all(
-            offline_clips.load_manifest(), args.out, _synthesizer(args.hub, args.session_cookie)
+            manifest, args.out, _synthesizer(args.hub, args.session_cookie)
         )
         clip_render.write_manifest(stamped, args.out / "manifest.json")
         zip_path = clip_render.pack_bundle(stamped, args.out, args.out / "offline-clips-v1.zip")

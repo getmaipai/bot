@@ -1105,6 +1105,15 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       `docs/dev.md`, attach the zip as a Bot release asset and pin
       `BUNDLE_ASSET`. Not run: sandbox cannot run the daemon, so nothing
       here played through a real or simulated speaker.
+      G4c (owner decision 2026-10-05): each spoken offline line has
+      4-6 first-person, calm plain-language wordings and a random
+      rotation that never repeats its previous wording; pairing-code
+      characters remain fixed. The existing manifest/bundle carries
+      each variant. Render metadata includes text, sha256, duration and
+      the configured hub voice id plus CC-BY-4.0 credit. Local render
+      step (owner-side): run `scripts/render_offline_clips.py render`
+      against the hub, listen to every variant, verify, then attach the
+      generated zip as the release asset. Rendering is not part of G4c.
 - [x] **G3+G6: the streaming turn round trip** (M, revised design -
       `docs/dev/robot-streaming-turn-2026-09-28.md`, superseding the
       original gap-audit's own batch-WAV G3/G6). Objective: after G2's

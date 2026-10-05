@@ -63,6 +63,7 @@ def test_render_all_writes_every_clip_and_stamps_the_manifest(tmp_path):
     for clip in stamped.clips:
         data = (tmp_path / clip.file).read_bytes()
         assert clip.sha256 == hashlib.sha256(data).hexdigest()
+        assert clip.duration_s == pytest.approx(480 / 24_000)
     oc.ClipBundle(tmp_path, stamped).verify()
 
 
@@ -84,6 +85,13 @@ def test_write_manifest_round_trips_through_load_manifest(tmp_path):
     assert oc.load_manifest(path) == stamped
 
 
+def test_manifest_check_passes_with_synthetic_variant_wavs(tmp_path):
+    stamped = clip_render.render_all(oc.load_manifest(), tmp_path, lambda _t: _streaming_wav())
+    path = tmp_path / "manifest.json"
+    clip_render.write_manifest(stamped, path)
+    oc.ClipBundle(tmp_path, oc.load_manifest(path)).verify()
+
+
 def test_render_script_renders_then_verifies(tmp_path, monkeypatch, capsys):
     import importlib.util
     from pathlib import Path
@@ -95,6 +103,8 @@ def test_render_script_renders_then_verifies(tmp_path, monkeypatch, capsys):
     script = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(script)
     monkeypatch.setattr(script, "_synthesizer", lambda hub, cookie: lambda text: _streaming_wav())
+    monkeypatch.setattr(script, "_default_voice", lambda hub, cookie: "anna")
+    monkeypatch.setattr(script, "_default_voice", lambda hub, cookie: "anna")
 
     out = tmp_path / "clips"
     assert (

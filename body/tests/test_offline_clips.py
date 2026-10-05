@@ -48,8 +48,10 @@ def test_manifest_covers_the_four_phrase_classes():
     manifest = oc.load_manifest()
     ids = {c.id for c in manifest.clips}
     assert {oc.char_clip_id(ch) for ch in ALPHABET} <= ids
-    assert {oc.CODE_PROMPT, oc.UNREACHABLE, oc.FREEFALL, oc.RECONNECT} <= ids
-    assert len(ids) == len(manifest.clips) == 36  # no clip beyond the four classes
+    assert oc.CODE_PROMPT in ids
+    for line in oc.PHRASES:
+        assert len([i for i in ids if i.startswith(f"{line}.")]) in range(4, 7)
+    assert len(ids) == len(manifest.clips)
 
 
 def test_pairing_alphabet_is_the_32_characters_the_hub_issues():
@@ -136,7 +138,7 @@ def test_bundle_refuses_an_unstamped_manifest(tmp_path):
 
 def test_bundle_load_returns_float32_samples_and_the_rate(tmp_path):
     directory, stamped = _install(tmp_path, oc.load_manifest())
-    samples, rate = oc.ClipBundle(directory, stamped).load(oc.UNREACHABLE)
+    samples, rate = oc.ClipBundle(directory, stamped).load(f"{oc.UNREACHABLE}.1")
     assert rate == 24_000
     assert samples.dtype == np.float32 and len(samples) == 800
     assert samples[0] == pytest.approx(1000 / 32768)
@@ -145,9 +147,9 @@ def test_bundle_load_returns_float32_samples_and_the_rate(tmp_path):
 def test_bundle_load_rechecks_the_checksum_at_read_time(tmp_path):
     directory, stamped = _install(tmp_path, oc.load_manifest())
     bundle = oc.ClipBundle(directory, stamped)
-    (directory / "line_unreachable.wav").write_bytes(_wav_bytes(value=5))
+    (directory / "line_unreachable_1.wav").write_bytes(_wav_bytes(value=5))
     with pytest.raises(oc.ClipsUnavailable, match="checksum"):
-        bundle.load(oc.UNREACHABLE)
+        bundle.load(f"{oc.UNREACHABLE}.1")
 
 
 def test_speaker_pushes_a_phrase_resampled_to_the_output_rate(tmp_path):
@@ -211,6 +213,32 @@ def test_speaker_rejects_a_clip_id_that_is_not_in_the_manifest(tmp_path):
     )
     with pytest.raises(KeyError):
         speaker.say_phrase("line.made_up")
+
+
+def test_picker_never_repeats_back_to_back_over_many_draws():
+    picker = oc.ClipPicker(oc.load_manifest(), lambda: 0.0)
+    draws = [picker.pick(oc.UNREACHABLE) for _ in range(500)]
+    assert all(a != b for a, b in zip(draws, draws[1:]))
+
+
+def test_picker_supports_one_variant_and_skips_missing_variants():
+    manifest = oc.Manifest(
+        voice=oc.load_manifest().voice,
+        sample_rate=24000,
+        clips=(oc.Clip("line.test.1", "one", "one.wav", ""),),
+    )
+    picker = oc.ClipPicker(manifest, lambda: 0.0)
+    assert picker.pick("line.test") == "line.test.1"
+    assert picker.pick("line.test") == "line.test.1"
+    assert picker.pick("line.test", lambda _clip: False) is None
+
+
+def test_pairing_characters_stay_fixed_and_do_not_go_through_line_picker(tmp_path):
+    directory, stamped = _install(tmp_path, oc.load_manifest())
+    client = FakeReachyMiniClient()
+    speaker = oc.OfflineSpeaker(oc.ClipBundle(directory, stamped), AudioPlayback(client))
+    assert speaker.say_pairing_code("K7") is True
+    assert len(client.pushed_audio) == 5
 
 
 def test_ensure_bundle_without_a_pinned_release_asset_says_how_to_get_it(tmp_path):

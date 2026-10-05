@@ -1,7 +1,9 @@
 {
   "voice": {
-    "engine": "pocket-tts",
+    "engine": "pocket-tts-english",
     "name": "",
+    "licence": "CC-BY-4.0",
+    "credit": "Voice generated with pocket-tts-english, licensed under CC-BY-4.0.",
     "licence_checked": false
   },
   "sample_rate": 24000,
@@ -13,22 +15,107 @@
       "sha256": ""
     },
     {
-      "id": "line.unreachable",
-      "text": "I can't reach home right now.",
-      "file": "line_unreachable.wav",
+      "id": "line.unreachable.1",
+      "text": "Sorry, I can't connect to the home hub right now.",
+      "file": "line_unreachable_1.wav",
       "sha256": ""
     },
     {
-      "id": "line.freefall",
-      "text": "I've been dropped, so I've stopped moving.",
-      "file": "line_freefall.wav",
+      "id": "line.unreachable.2",
+      "text": "I can't reach home right now.",
+      "file": "line_unreachable_2.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.unreachable.3",
+      "text": "I'm having trouble connecting to home.",
+      "file": "line_unreachable_3.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.unreachable.4",
+      "text": "I can't get through to home just now.",
+      "file": "line_unreachable_4.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.unreachable.5",
+      "text": "I'm not able to connect to home right now.",
+      "file": "line_unreachable_5.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.freefall.1",
+      "text": "Whoa, I tipped over.",
+      "file": "line_freefall_1.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.freefall.2",
+      "text": "I tipped over, but I'm okay.",
+      "file": "line_freefall_2.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.freefall.3",
+      "text": "I fell onto my side.",
+      "file": "line_freefall_3.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.freefall.4",
+      "text": "I landed on my side.",
+      "file": "line_freefall_4.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.freefall.5",
+      "text": "I tipped over and stopped moving.",
+      "file": "line_freefall_5.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.reconnect.1",
+      "text": "I'm back in touch with home.",
+      "file": "line_reconnect_1.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.reconnect.2",
+      "text": "I can reach home again.",
+      "file": "line_reconnect_2.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.reconnect.3",
+      "text": "I'm connected to home again.",
+      "file": "line_reconnect_3.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.reconnect.4",
+      "text": "Home and I are talking again.",
+      "file": "line_reconnect_4.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.reconnect.5",
+      "text": "I found my way back to home.",
+      "file": "line_reconnect_5.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.reconnect.6",
+      "text": "I'm back with the home hub.",
+      "file": "line_reconnect_6.wav",
       "sha256": ""
     },
     {
       "id": "line.reconnect",
       "text": "I'm back in touch with home.",
       "file": "line_reconnect.wav",
-      "sha256": ""
+      "sha256": "",
+      "duration_s": null
     },
     {
       "id": "char.A",
