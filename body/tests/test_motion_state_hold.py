@@ -145,17 +145,61 @@ def test_tipped_and_freefall_outrank_the_hold_states_and_keep_it_latched():
     assert [c for c in bench.client.sent_commands if c.kind in MOTION_KINDS and c.pose] == []
 
 
+def test_motion_state_is_updated_before_freefall_callback(monkeypatch):
+    bench = Bench()
+    seen = []
+    original = bench.loop._on_freefall
+
+    def observe(falling):
+        seen.append((falling, bench.loop.motion_state, bench.loop._motion.holding))
+        original(falling)
+
+    monkeypatch.setattr(bench.loop, "_on_freefall", observe)
+    bench.tick(4.0, shake=True)
+    bench.tick(1.0, freefall_reading())
+    falling, state, held = seen[-1]
+    assert falling
+    assert state is MotionState.FREEFALL
+    assert held
+
+
+def test_failed_head_hold_does_not_skip_the_held_look(caplog):
+    bench = Bench()
+    original = bench.loop._expression.render_primitive
+
+    def fail_stop(primitive, context):
+        if primitive == "stop":
+            raise RuntimeError("stop failed")
+        return original(primitive, context)
+
+    bench.loop._expression.render_primitive = fail_stop
+    bench.tick(1.0, shake=True)
+    assert bench.loop.motion_state is MotionState.LIFTED
+    assert any(
+        command.kind == "goto" and command.pose is None for command in bench.client.sent_commands
+    )
+    assert "carry head hold failed" in caplog.text
+
+
 def test_the_freefall_line_is_still_said_once_per_fall(monkeypatch):
     bench = Bench()
     said: list[str] = []
-    monkeypatch.setattr(bench.loop, "_say_clip", lambda clip: said.append(clip) or True)
+    monkeypatch.setattr(
+        bench.loop,
+        "_say_clip",
+        lambda clip, fallback_text=None: said.append(clip) or True,
+    )
     bench.tick(4.0, shake=True)
     bench.tick(1.0, freefall_reading())
     assert len(said) == 1
 
 
-def test_gravity_compensation_stays_off_by_default_through_a_full_lift():
+def test_default_profile_never_enables_gravity_compensation():
+    from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
+
+    assert REACHY_MINI_PROFILE.carry_gravity_compensation is False
     bench = Bench()
+    bench.loop._carry_gravity_compensation = REACHY_MINI_PROFILE.carry_gravity_compensation
     bench.tick(4.0, shake=True)
     bench.tick(motion_state.PUT_DOWN_STILL_S + 1.0)
     assert not {"gravity_on", "gravity_off", "disable"} & set(bench.kinds())

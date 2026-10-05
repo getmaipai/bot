@@ -1948,11 +1948,12 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       until the local bundle build), and `link/hello.py` declaring
       `robot.motion.carry_reaction` (select off, look, look_and_line;
       default look; device scope; label and lives_in) for the `hello`.
-      `tests/test_motion_state_carry.py`. Open: the bot has no `hello`
-      transport and no age-band presence feed, so nothing sends the
-      declaration and `presence_entries` is unwired (no information gives
-      the silent look); the registry wire shape and the presence source are
-      SPLIT to commons and Home. The eyes row waits on EYES-02. Clip
+      `tests/test_motion_state_carry.py`. Open: setting declared, hello
+      transmission pending. The bot has no age-band presence feed;
+      `presence_entries` is unwired, and missing or empty presence is
+      unknown and gives the silent look. The registry wire shape and the
+      presence source are SPLIT to commons and Home. The eyes row waits on
+      EYES-02. Clip
       rendering stays local.
 
 - [x] **EYES-03: clean-room serial client and protocol note** (M, Reachy

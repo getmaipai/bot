@@ -754,10 +754,12 @@ class ConversationLoop:
         except Exception:
             logger.warning("presence read failed", exc_info=True)
             return
-        self._on_freefall(observation.freefall_detected)
+        # Update the carry state first, so the tip/freefall override and the
+        # latched held state describe the same IMU sample before any reaction.
         was_held = self._motion.holding
         self._motion_state = self._motion.update(observation.imu, self._motion_clock())
         held = self._motion.holding
+        self._on_freefall(observation.freefall_detected)
         arbitration = ArbitrationState(tracking_active=observation.face_detected)
         not_speaking = self._current_funnel() != FunnelState.SPEAKING
         should_track = (
@@ -793,12 +795,24 @@ class ConversationLoop:
             self._maybe_check_face(stop_event)
 
     def _on_lifted(self) -> None:
-        """The head holds where it is, once, and nothing moves it until put down."""
-        self._expression.render_primitive("stop", self._suppression_context())
+        """Attempt each lift action independently; one failure must not skip the look."""
+
+        def stop_head():
+            return self._expression.render_primitive("stop", self._suppression_context())
+
+        actions = [("head hold", stop_head)]
         if self._carry_gravity_compensation and not self._teach_active():
-            self._client.enable_gravity_compensation()
-            self._gravity_on_by_us = True
-        self._carry_look_and_line()
+            actions.append(("gravity compensation", self._enable_carry_gravity_compensation))
+        actions.append(("held look and line", self._carry_look_and_line))
+        for name, action in actions:
+            try:
+                action()
+            except Exception:
+                logger.warning("carry %s failed", name, exc_info=True)
+
+    def _enable_carry_gravity_compensation(self) -> None:
+        self._client.enable_gravity_compensation()
+        self._gravity_on_by_us = True
 
     def _carry_look_and_line(self) -> None:
         """The optional reaction to a lift, once. The holds above never depend on it."""

@@ -155,6 +155,14 @@ def test_the_line_stays_silent_unless_every_entry_is_a_known_adult(entries):
     assert len(bench.antenna_gotos()) == 2  # the silent look, then the settle
 
 
+@pytest.mark.parametrize("entries", [None, ()])
+def test_missing_or_empty_live_presence_is_unknown_and_never_speaks(entries):
+    bench = CarryBench(reaction=CarryReaction.LOOK_AND_LINE, entries=entries)
+    bench.tick(5.0, shake=True)
+    assert spoken(bench) == []
+    assert len(bench.antenna_gotos()) == 1
+
+
 def test_no_presence_source_at_all_is_the_silent_look():
     bench = CarryBench(reaction=CarryReaction.LOOK_AND_LINE)
     bench.loop._presence_entries = None
