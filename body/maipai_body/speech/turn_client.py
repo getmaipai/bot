@@ -51,6 +51,7 @@ class _TurnStreamState:
     conversation_id: str | None = None
     turn_id: str | None = None
     reply_parts: list[str] = field(default_factory=list)
+    terminal_seen: bool = False
 
     def next_cue_seq(self) -> int:
         self.cue_seq += 1
@@ -170,6 +171,12 @@ class TurnClient:
             event = self._handle_line(message, state)
             if event is not None:
                 yield event
+        if not state.terminal_seen:
+            # The hub's stream always ends in `done` or `error`; one that
+            # just stops (a proxy closing, a hub restart, a link that
+            # dropped cleanly) is a turn that never finished, the same as
+            # a reset connection.
+            raise TurnLinkLost("turn stream ended without a done or error event")
 
     def _handle_line(self, message: dict, state: _TurnStreamState) -> TurnEvent | None:
         kind = message.get("type")
@@ -193,6 +200,7 @@ class TurnClient:
             )
             return TurnEvent(cue=cue, conversation_id=state.conversation_id, turn_id=state.turn_id)
         if kind == "done":
+            state.terminal_seen = True
             cue = Cue(phase=Phase.DONE, cue_seq=state.next_cue_seq())
             return TurnEvent(
                 cue=cue,
@@ -201,6 +209,7 @@ class TurnClient:
                 turn_id=state.turn_id,
             )
         if kind == "error":
+            state.terminal_seen = True
             # Every error kind maps to CANCEL at the floor (a cancelled
             # turn, a safety refusal, a generic engine failure): the
             # audit names turn_cancelled specifically, but nothing calls

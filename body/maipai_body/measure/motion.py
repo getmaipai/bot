@@ -153,6 +153,26 @@ def analyze_motion(
     return result
 
 
+def time_to_still(
+    trace: list[Sample],
+    after_ns: int,
+    *,
+    consecutive: int = SETTLE_CONSECUTIVE_FRAMES,
+    threshold: float = SETTLE_THRESHOLD_RAD,
+) -> float | None:
+    """Milliseconds from ``after_ns`` to the start of the first run of still frames.
+
+    "The pose settled" after a cancel: zero when the head was already
+    still at that instant, ``None`` if it never settled in the trace.
+    """
+    frames = [sample for sample in trace if sample.t_received_ns >= after_ns]
+    steps = [pose_distance(b, a) for a, b in zip(frames, frames[1:], strict=False)]
+    for i in range(len(steps) - consecutive + 1):
+        if all(step < threshold for step in steps[i : i + consecutive]):
+            return (frames[i].t_received_ns - after_ns) / 1e6
+    return None
+
+
 def commanded_peak_rad(steps) -> float:
     """The largest absolute axis value any step of a primitive commands."""
     peak = 0.0

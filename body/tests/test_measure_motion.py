@@ -111,3 +111,35 @@ def test_stall_verdict_is_reached_when_most_of_the_commanded_motion_happened():
 
 def test_stall_verdict_has_nothing_to_judge_for_a_primitive_that_commands_no_motion():
     assert stall_verdict(commanded_rad=0.0, achieved_rad=0.0) == "no_motion_commanded"
+
+
+def test_time_to_still_is_zero_when_the_head_is_already_still_at_the_cue():
+    from maipai_body.measure.motion import time_to_still
+
+    trace = [_s(100 + i * 33) for i in range(10)]
+    assert time_to_still(trace, after_ns=100 * MS) == pytest.approx(0.0)
+
+
+def test_time_to_still_counts_from_the_cue_to_the_first_run_of_still_frames():
+    from maipai_body.measure.motion import time_to_still
+
+    moving = [_s(100 + i * 33, yaw=0.05 * (i + 1)) for i in range(5)]
+    still = [_s(300 + i * 33, yaw=0.30) for i in range(8)]
+    # the last step (0.25 to 0.30) is motion; the run of five still steps starts at t=300 ms
+    result = time_to_still(moving + still, after_ns=100 * MS)
+    assert result == pytest.approx(300 - 100)
+
+
+def test_time_to_still_ignores_frames_before_the_cue():
+    from maipai_body.measure.motion import time_to_still
+
+    before = [_s(i * 33, yaw=0.1 * i) for i in range(5)]  # moving, but before the cue
+    after = [_s(500 + i * 33, yaw=0.5) for i in range(8)]
+    assert time_to_still(before + after, after_ns=500 * MS) == pytest.approx(0.0)
+
+
+def test_time_to_still_is_none_if_the_head_never_settles():
+    from maipai_body.measure.motion import time_to_still
+
+    trace = [_s(100 + i * 33, yaw=0.05 * i) for i in range(20)]
+    assert time_to_still(trace, after_ns=100 * MS) is None

@@ -18,70 +18,24 @@ import argparse
 import json
 import threading
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
-
-import requests
 
 from maipai_body.bodies.reachy_mini.client import ReachyMiniClient
 from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
 from maipai_body.expression.primitives import PRIMITIVE_NAMES
 from maipai_body.expression.reachy_mini_renderer import render
 from maipai_body.hal.seam import AntennaPositions, HeadPose
+from maipai_body.measure.motion import (
+    ONSET_THRESHOLD_RAD,
+    SETTLE_CONSECUTIVE_FRAMES,
+    SETTLE_THRESHOLD_RAD,
+    FeedRecorder,
+    analyze_motion,
+)
+from maipai_body.measure.report import daemon_version_from
+from maipai_body.measure.run_header import upsert_markdown_section
 
-ONSET_THRESHOLD_RAD = 0.01
-SETTLE_THRESHOLD_RAD = 0.003
-SETTLE_CONSECUTIVE_FRAMES = 5
 POST_COMMAND_WINDOW_S = 1.5
-
-
-@dataclass
-class Sample:
-    t_received_ns: int
-    pitch: float
-    roll: float
-    yaw: float
-    left: float
-    right: float
-
-
-@dataclass
-class FeedRecorder:
-    samples: list[Sample] = field(default_factory=list)
-    _stop: threading.Event = field(default_factory=threading.Event)
-
-    def run(self, client: ReachyMiniClient) -> None:
-        feed = client.state_feed(frequency=30.0)
-        try:
-            for frame in feed:
-                if frame.head_pose is not None and frame.antennas is not None:
-                    self.samples.append(
-                        Sample(
-                            t_received_ns=frame.t_received_ns,
-                            pitch=frame.head_pose.pitch,
-                            roll=frame.head_pose.roll,
-                            yaw=frame.head_pose.yaw,
-                            left=frame.antennas.left,
-                            right=frame.antennas.right,
-                        )
-                    )
-                if self._stop.is_set():
-                    break
-        except Exception:
-            pass
-
-    def stop(self) -> None:
-        self._stop.set()
-
-
-def _pose_distance(a: Sample, b: Sample) -> float:
-    return max(
-        abs(a.pitch - b.pitch),
-        abs(a.roll - b.roll),
-        abs(a.yaw - b.yaw),
-        abs(a.left - b.left),
-        abs(a.right - b.right),
-    )
 
 
 def _reset_to_neutral(client: ReachyMiniClient) -> None:
@@ -115,46 +69,19 @@ def _measure_one(client: ReachyMiniClient, primitive: str) -> dict:
     thread.join(timeout=2.0)
 
     trace = recorder.samples[baseline_index:]
-    result: dict = {"primitive": primitive, "frames": len(trace)}
-    if not trace or baseline is None:
-        result["error"] = "no frames captured"
-        return result
-
-    onset_ns = None
-    amplitude = 0.0
-    peak_velocity = 0.0
-    settle_ns = None
-    consecutive_still = 0
-    prev = baseline
-    prev_t = baseline.t_received_ns
-
-    for sample in trace:
-        delta = _pose_distance(sample, baseline)
-        amplitude = max(amplitude, delta)
-        dt_s = max((sample.t_received_ns - prev_t) / 1e9, 1e-6)
-        velocity = _pose_distance(sample, prev) / dt_s
-        peak_velocity = max(peak_velocity, velocity)
-
-        if onset_ns is None and delta > ONSET_THRESHOLD_RAD:
-            onset_ns = sample.t_received_ns
-
-        step_delta = _pose_distance(sample, prev)
-        if onset_ns is not None:
-            if step_delta < SETTLE_THRESHOLD_RAD:
-                consecutive_still += 1
-                if consecutive_still >= SETTLE_CONSECUTIVE_FRAMES and settle_ns is None:
-                    settle_ns = sample.t_received_ns
-            else:
-                consecutive_still = 0
-
-        prev = sample
-        prev_t = sample.t_received_ns
-
-    result["cue_to_onset_ms"] = (onset_ns - t_cue_ns) / 1e6 if onset_ns is not None else None
-    result["amplitude_rad"] = amplitude
-    result["peak_velocity_rad_s"] = peak_velocity
-    result["cue_to_settled_ms"] = (settle_ns - t_cue_ns) / 1e6 if settle_ns is not None else None
-    return result
+    if baseline is None:
+        return {"primitive": primitive, "frames": 0, "error": "no frames captured"}
+    motion = analyze_motion(trace, baseline, t_cue_ns=t_cue_ns, t_command_ns=None)
+    if motion.error is not None:
+        return {"primitive": primitive, "frames": motion.frames, "error": motion.error}
+    return {
+        "primitive": primitive,
+        "frames": motion.frames,
+        "cue_to_onset_ms": motion.cue_to_onset_ms,
+        "amplitude_rad": motion.amplitude_rad,
+        "peak_velocity_rad_s": motion.peak_velocity_rad_s,
+        "cue_to_settled_ms": motion.cue_to_settled_ms,
+    }
 
 
 def main() -> None:
@@ -163,8 +90,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
 
-    status = requests.get(f"http://{args.host}:{args.port}/api/daemon/status", timeout=5).json()
-    daemon_version = status["version"]
+    daemon_version = daemon_version_from(args.host, args.port)
 
     client = ReachyMiniClient(REACHY_MINI_PROFILE, host=args.host, port=args.port)
 
@@ -188,11 +114,6 @@ def main() -> None:
 def _write_markdown(path: Path, daemon_version: str, results: list[dict]) -> None:
     date = time.strftime("%Y-%m-%d", time.gmtime())
     lines = [
-        "# Bench measurements",
-        "",
-        "Recorded per `dev.md` section 11's header: mode, daemon version, profile id, date.",
-        "Never a hostname, never a household recording.",
-        "",
         f"## M-R2: cue to motion (sim), {date}",
         "",
         "- mode: `sim` (Pollen's MuJoCo daemon, `--sim`, headless or GUI viewer, no unit yet)",
@@ -218,7 +139,7 @@ def _write_markdown(path: Path, daemon_version: str, results: list[dict]) -> Non
             f"{row['peak_velocity_rad_s']:.4f} | {settled} | {row['frames']} |"
         )
     lines.append("")
-    path.write_text("\n".join(lines))
+    upsert_markdown_section(path, "## M-R2: cue to motion (sim)", "\n".join(lines))
 
 
 if __name__ == "__main__":
