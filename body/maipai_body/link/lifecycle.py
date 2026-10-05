@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import logging
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from maipai_body.link.client import HubLinkClient, PairingRefused, PairingTimedOut
@@ -47,11 +48,13 @@ class LinkLifecycle:
         *,
         discover: DiscoverHub,
         label: str = "Reachy Mini",
+        on_code: Callable[[str], None] | None = None,
     ) -> None:
         self._store = store
         self._client = client
         self._discover = discover
         self._label = label
+        self._on_code = on_code
         self._lock = threading.Lock()
         self._state = LinkState(paired=False)
 
@@ -120,6 +123,17 @@ class LinkLifecycle:
         logger.warning("persisted pairing could not be refreshed; will re-pair")
         return False
 
+    def _announce_code(self, code: str) -> None:
+        """G4b: hands the fresh code to the caller's hook (the robot speaks
+        it from its offline clips). A failing hook never breaks pairing:
+        the code is still on the app page."""
+        if self._on_code is None:
+            return
+        try:
+            self._on_code(code)
+        except Exception:
+            logger.warning("on_code hook failed", exc_info=True)
+
     def _discover_and_pair(self) -> bool:
         address = self._discover(timeout_s=5.0)
         if address is None:
@@ -130,6 +144,7 @@ class LinkLifecycle:
             # Surfaced before the blocking wait, not after - this is the
             # whole reason request_code()/await_approval() are split.
             self._set_state(paired=False, code=pending.code, last_error=None)
+            self._announce_code(pending.code)
             result = self._client.await_approval(pending)
         except (PairingRefused, PairingTimedOut) as exc:
             self._set_state(code=None, last_error=str(exc))

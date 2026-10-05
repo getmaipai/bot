@@ -992,6 +992,10 @@ the image release and the profile id in the header.
       front-end. Out of scope: any clip beyond the four phrase classes
       named above - a new hub-unreachable line discovered later gets its
       own clip added to the same bundle, not a special case.
+      Status 2026-10-05: manifest, bundle, composition, playback,
+      render script and the lifecycle `on_code` hook are built and
+      tested with fakes; clips unrendered, licence check and run-loop
+      wiring open.
 - [x] **G3+G6: the streaming turn round trip** (M, revised design -
       `docs/dev/robot-streaming-turn-2026-09-28.md`, superseding the
       original gap-audit's own batch-WAV G3/G6). Objective: after G2's

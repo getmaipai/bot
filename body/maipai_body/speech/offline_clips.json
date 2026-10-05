@@ -1,0 +1,226 @@
+{
+  "voice": {
+    "engine": "pocket-tts",
+    "name": "",
+    "licence_checked": false
+  },
+  "sample_rate": 24000,
+  "clips": [
+    {
+      "id": "code.prompt",
+      "text": "My pairing code is",
+      "file": "code_prompt.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.unreachable",
+      "text": "I can't reach home right now.",
+      "file": "line_unreachable.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.freefall",
+      "text": "I've been dropped, so I've stopped moving.",
+      "file": "line_freefall.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.reconnect",
+      "text": "I'm back in touch with home.",
+      "file": "line_reconnect.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.A",
+      "text": "A",
+      "file": "char_A.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.B",
+      "text": "B",
+      "file": "char_B.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.C",
+      "text": "C",
+      "file": "char_C.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.D",
+      "text": "D",
+      "file": "char_D.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.E",
+      "text": "E",
+      "file": "char_E.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.F",
+      "text": "F",
+      "file": "char_F.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.G",
+      "text": "G",
+      "file": "char_G.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.H",
+      "text": "H",
+      "file": "char_H.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.J",
+      "text": "J",
+      "file": "char_J.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.K",
+      "text": "K",
+      "file": "char_K.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.L",
+      "text": "L",
+      "file": "char_L.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.M",
+      "text": "M",
+      "file": "char_M.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.N",
+      "text": "N",
+      "file": "char_N.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.P",
+      "text": "P",
+      "file": "char_P.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.Q",
+      "text": "Q",
+      "file": "char_Q.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.R",
+      "text": "R",
+      "file": "char_R.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.S",
+      "text": "S",
+      "file": "char_S.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.T",
+      "text": "T",
+      "file": "char_T.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.U",
+      "text": "U",
+      "file": "char_U.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.V",
+      "text": "V",
+      "file": "char_V.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.W",
+      "text": "W",
+      "file": "char_W.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.X",
+      "text": "X",
+      "file": "char_X.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.Y",
+      "text": "Y",
+      "file": "char_Y.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.Z",
+      "text": "Z",
+      "file": "char_Z.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.2",
+      "text": "two",
+      "file": "char_2.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.3",
+      "text": "three",
+      "file": "char_3.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.4",
+      "text": "four",
+      "file": "char_4.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.5",
+      "text": "five",
+      "file": "char_5.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.6",
+      "text": "six",
+      "file": "char_6.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.7",
+      "text": "seven",
+      "file": "char_7.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.8",
+      "text": "eight",
+      "file": "char_8.wav",
+      "sha256": ""
+    },
+    {
+      "id": "char.9",
+      "text": "nine",
+      "file": "char_9.wav",
+      "sha256": ""
+    }
+  ]
+}

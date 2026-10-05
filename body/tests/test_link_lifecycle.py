@@ -199,3 +199,49 @@ def test_pairing_timeout_is_recorded(tmp_path):
 
     assert lifecycle.state.paired is False
     assert "300s" in lifecycle.state.last_error
+
+
+def test_on_code_is_called_once_with_the_code_before_approval_completes(tmp_path):
+    """G4b: the pairing flow speaks the code (via the offline clips), so
+    the lifecycle hands the fresh code to a caller-supplied hook the
+    moment it exists, not after approval."""
+    store = PairingStore(tmp_path / "pairing.json")
+    client = _FakeClient()
+    heard: list[str] = []
+    approval_may_proceed = threading.Event()
+    in_await = threading.Event()
+
+    def blocking_await(pending):
+        in_await.set()
+        approval_may_proceed.wait(timeout=2.0)
+        return _result()
+
+    client.await_approval = blocking_await
+    lifecycle = LinkLifecycle(
+        store, client, discover=lambda timeout_s: _address(), on_code=heard.append
+    )
+
+    stop_event = threading.Event()
+    thread = threading.Thread(target=lifecycle.run, args=(stop_event,), daemon=True)
+    thread.start()
+    try:
+        assert in_await.wait(timeout=2.0)
+        assert heard == ["AB12CD"]
+    finally:
+        approval_may_proceed.set()
+        stop_event.set()
+        thread.join(timeout=2.0)
+
+
+def test_a_failing_on_code_hook_never_breaks_pairing(tmp_path):
+    store = PairingStore(tmp_path / "pairing.json")
+
+    def boom(code):
+        raise RuntimeError("speaker unplugged")
+
+    lifecycle = LinkLifecycle(
+        store, _FakeClient(), discover=lambda timeout_s: _address(), on_code=boom
+    )
+    stop_event = _run_until(lifecycle, lambda: lifecycle.state.paired)
+    stop_event.set()
+    assert lifecycle.state.paired is True
