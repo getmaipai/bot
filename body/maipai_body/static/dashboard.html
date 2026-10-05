@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Body Dashboard</title>
+<link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+<header>
+  <h1>Body dashboard <span id="body-id"></span></h1>
+  <span id="link" class="pill">connecting</span>
+</header>
+<main>
+  <section class="views" aria-label="Schematic">
+    <figure>
+      <svg id="top" viewBox="-100 -100 200 200" role="img" aria-label="Top view: body yaw, head yaw, direction of arrival"></svg>
+      <figcaption>Top: body yaw, head yaw, direction of arrival</figcaption>
+    </figure>
+    <figure>
+      <svg id="front" viewBox="-100 -100 200 200" role="img" aria-label="Front view: head roll and antennas"></svg>
+      <figcaption>Front: head roll, antennas</figcaption>
+    </figure>
+    <figure>
+      <svg id="side" viewBox="-100 -100 200 200" role="img" aria-label="Side view: head pitch"></svg>
+      <figcaption>Side: head pitch</figcaption>
+    </figure>
+  </section>
+  <section class="side">
+    <h2>Telemetry</h2>
+    <table id="telemetry"><tbody></tbody></table>
+    <h2>Funnel</h2>
+    <table id="funnel"><tbody></tbody></table>
+  </section>
+  <section class="controls">
+    <h2>Primitives</h2>
+    <label>Direction <input id="direction" type="range" min="-90" max="90" value="0">
+      <output id="direction-out">auto</output></label>
+    <div id="buttons"></div>
+    <button id="mute" type="button" aria-pressed="false">Mute</button>
+    <p id="outcome" role="status">No command sent.</p>
+  </section>
+</main>
+<script src="/static/dashboard.js"></script>
+</body>
+</html>

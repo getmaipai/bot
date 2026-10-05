@@ -2080,6 +2080,30 @@ value; RT-02 and RT-03 carry it.
       against the Reachy Mini simulator, screenshotted and opened.
       Out of scope: a 3D view; anything MaiPai-build-specific. Exit:
       `bash scripts/check.sh` and the live check.
+      Status (2026-10-05): built, live check outstanding. The page is
+      `body/maipai_body/dashboard/` (a stdlib `ThreadingHTTPServer`, a
+      server-sent-event feed, `static/dashboard.{html,css,js}`;
+      `python -m maipai_body.dashboard [--fake]`, bound to loopback by
+      default) with three 2D views (top: body yaw, head yaw and
+      direction of arrival; front: roll and antennas; side: pitch), a
+      telemetry table, presence and arbitration state, a button per
+      primitive and a mute toggle. State comes from `state_feed` and
+      `read_presence`; every button goes through `ExpressionEngine`,
+      except `breathe` and `track`, which no cue maps to and the engine
+      has no public entry for, so the page calls the registered
+      renderer column directly behind the same suppression check (a
+      public engine entry for them is a one-method follow-up in
+      `engine.py`, not done here). POSTs refuse a foreign Origin or
+      Host and non-JSON bodies, since a browser tab can reach loopback.
+      Tested with HTTP and event-stream assertions against the fake
+      (`tests/test_dashboard.py`, no browser). Headless-browser
+      screenshot against the fake opened and judged; the simulator
+      screenshot is not run: sandbox cannot run the daemon (no
+      `mujoco`, no GStreamer bindings). The fake's feed replays a
+      fixture whose frames carry no direction of arrival, and it does
+      not follow commands, so command-to-pose motion on the page is
+      only seen live. Antenna angle sign (inward or outward) is drawn
+      symmetrically and not verified against hardware.
 
 ## Speaker evidence and presence
 
