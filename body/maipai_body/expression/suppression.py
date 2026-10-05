@@ -27,6 +27,7 @@ class SuppressionContext(BaseModel):
     is_safety_line: bool = False
     tool_failure: bool = False
     no_fresh_target: bool = False
+    held: bool = False
 
 
 def suppression_reason(primitive: str, context: SuppressionContext) -> str | None:
@@ -38,6 +39,10 @@ def suppression_reason(primitive: str, context: SuppressionContext) -> str | Non
     """
     if primitive == "stop":
         return None
+
+    # MOVE-CARRY-01: lifted or carried, the body commands no motion at all.
+    if context.held:
+        return "held"
 
     if primitive == "listen":
         if context.muted:

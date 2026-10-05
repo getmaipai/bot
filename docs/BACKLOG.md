@@ -1933,7 +1933,15 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       Reuse check: reachy-mini 1.11.0 gives raw IMU only (`ReachyMini.imu`: accelerometer, gyroscope, fused quaternion) and no lift or carry event; the daemon's motor modes are enabled, disabled and gravity_compensation; the quaternion is already fused, so no orientation library; activity-recognition libraries are learned and stay out of a safety path. Deterministic thresholds beside presence/safety.py, reusing is_tipped and is_freefall, the S-FAKES-01 IMU fakes, the arbitration and suppression table, the `stop` and `settle` primitives and G4b's clip bundle.
       Objective: a deterministic MotionState (resting, bumped, lifted, carried, put_down, tipped, freefall) from the IMU; while held the body commands no motion and the head holds still; on put down it settles and resumes; an optional held look and one short line.
       Acceptance: fail-first tests on scripted IMU fakes (a bump is never carried; a carry is never freefall; put_down only after lifted or carried; a drop while held is freefall; a tilt past 45 degrees while held is tipped); a test that tracking, breathe, cues and moves are suppressed while held and resume after put down; a test that the line plays at most once per lift, never over a turn, and never when any presence entry is a child, teen or unknown; the setting `robot.motion.carry_reaction` (off, look, look_and_line; default look) sent on `hello` with label and lives_in, and a test that `off` leaves the holds in place. Thresholds are design defaults marked UNMEASURED with a unit row in the measure runbook. Gravity compensation while held stays off behind a profile flag until a unit row passes with the base tilted (UNVERIFIED today). Exit: `bash scripts/check.sh`.
-      MOVE-CARRY-01a built (2026-10-05, cloud session, branch `cloud/move-carry-01`): `presence/motion_state.py` and `tests/test_motion_state.py`; thresholds UNMEASURED, unit rows in `docs/dev/measure-runbook.md`; section 6 amended. Nothing consumes the state yet (01b).
+      MOVE-CARRY-01a built (2026-10-05, cloud session, branch `cloud/move-carry-01`): `presence/motion_state.py` and `tests/test_motion_state.py`; thresholds UNMEASURED, unit rows in `docs/dev/measure-runbook.md`; section 6 amended. MOVE-CARRY-01b built (same
+      branch): `held` suppression reason (every primitive but `stop`),
+      `ConversationLoop._presence_tick` feeds the machine, holds the head
+      once through `stop` on the lift, keeps tracking, breathe, cues and the
+      react move off while held, and settles once on put down; section 7
+      amended; profile flag `carry_gravity_compensation` (default off,
+      UNVERIFIED, never toggled while a teach session holds it).
+      `tests/test_motion_state_hold.py`. These holds are not governed by the
+      setting (01c).
 
 - [x] **EYES-03: clean-room serial client and protocol note** (M, Reachy
       Mini only). `bodies/reachy_mini/eyes_client.py` (`EyesClient`, an

@@ -60,6 +60,10 @@ class BodyProfile(BaseModel):
     sensors: list[str]
     physical_cuts: list[str]
     speech_placement: Literal["pod", "robot"]
+    # MOVE-CARRY-01: gravity compensation while the body is held. Off until a
+    # unit row passes with the base tilted (docs/dev/measure-runbook.md);
+    # UNVERIFIED today.
+    carry_gravity_compensation: bool = False
 
     def axis(self, name: str) -> AxisLimit:
         """Return the named axis's limit, or raise if this profile declares none."""

@@ -369,6 +369,18 @@ cannot provide is recorded, not waived:
   apply and are not claimed.
 - **Tip and freefall.** From the IMU: motors disabled, one line
   spoken, the body reports the event.
+- **Lifted and carried.** From the IMU (`presence/motion_state.py`): while
+  the body is lifted or carried it commands no motion. Tracking, `breathe`,
+  expression cues, recorded moves and body yaw are suppressed, the head
+  holds where it is through `stop`, and the antennas stay still. After the
+  stillness window the body `settle`s once at the existing envelope
+  fractions and tracking resumes, with no new calibration step. The floor
+  is unchanged: tip and freefall outrank every held state, and a drop or a
+  tilt past 45 degrees while held reads `freefall` or `tipped` with the
+  hold still latched. Limp (`disable_motors`) is never a carry mode, and
+  gravity compensation while held stays off behind the profile flag
+  `carry_gravity_compensation` until a unit row passes with the base
+  tilted (UNVERIFIED).
 - **The link and the daemon.** Loss of the hub mid-turn is `cancel`
   with reason `link_lost`; loss of the daemon's socket is `cancel`
   with reason `body_lost` and nothing further is commanded (the daemon
