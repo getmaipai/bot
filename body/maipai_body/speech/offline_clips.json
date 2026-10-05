@@ -118,6 +118,24 @@
       "duration_s": null
     },
     {
+      "id": "line.carry.1",
+      "text": "Oh, hello up there.",
+      "file": "line_carry_1.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.carry.2",
+      "text": "I like the view from here.",
+      "file": "line_carry_2.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.carry.3",
+      "text": "Carry me gently, please.",
+      "file": "line_carry_3.wav",
+      "sha256": ""
+    },
+    {
       "id": "char.A",
       "text": "A",
       "file": "char_A.wav",

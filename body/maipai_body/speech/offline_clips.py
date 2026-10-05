@@ -50,7 +50,11 @@ CODE_PROMPT = "code.prompt"
 UNREACHABLE = "line.unreachable"
 FREEFALL = "line.freefall"
 RECONNECT = "line.reconnect"
-PHRASES = (UNREACHABLE, FREEFALL, RECONNECT)
+# MOVE-CARRY-01c: the closed, rotating set of lines said once when the body is
+# lifted. Never generated and never hub-TTS-only; written for the youngest
+# listener.
+CARRY_LINES = ("line.carry.1", "line.carry.2", "line.carry.3")
+PHRASES = (UNREACHABLE, FREEFALL, RECONNECT, *CARRY_LINES)
 
 
 def char_clip_id(char: str) -> str:

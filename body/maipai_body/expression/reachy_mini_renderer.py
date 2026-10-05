@@ -191,6 +191,17 @@ def build_steps(primitive: str, profile: BodyProfile, *, doa_angle_rad: float = 
             )
         ]
 
+    if primitive == "held":
+        # Antennas only: the head holds through `stop` and the yaw is left alone.
+        low = _amplitude_rad(profile, "antenna_left", spec.antenna_fraction)
+        return [
+            Step(
+                method="goto",
+                antennas=AntennaPositions(left=-low, right=-low),
+                duration_s=spec.duration_s,
+            )
+        ]
+
     if primitive == "speak":
         left_amplitude = _amplitude_rad(profile, "antenna_left", spec.antenna_fraction)
         right_amplitude = _amplitude_rad(profile, "antenna_right", spec.antenna_fraction)

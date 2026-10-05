@@ -46,6 +46,11 @@ class Bench:
             self.loop._presence_tick(self.stop)
             self.now += 0.1
 
+    def head_gotos(self):
+        """Gotos that move the head: the settle after put down. The antenna-only
+        held look of 01c carries no pose."""
+        return [c for c in self.client.sent_commands if c.kind == "goto" and c.pose is not None]
+
     def kinds(self) -> list[str]:
         return [command.kind for command in self.client.sent_commands]
 
@@ -107,10 +112,10 @@ def test_put_down_settles_once_then_everything_resumes():
     bench.tick(4.0, shake=True)
     assert bench.loop.motion_state is MotionState.CARRIED
     bench.tick(motion_state.PUT_DOWN_STILL_S - 0.5)
-    assert bench.kinds().count("goto") == 0  # still inside the stillness window
+    assert bench.head_gotos() == []  # still inside the stillness window
     assert not bench.client.tracking_enabled
     bench.tick(1.0)
-    settles = [c for c in bench.client.sent_commands if c.kind == "goto"]
+    settles = bench.head_gotos()
     assert len(settles) == 1
     assert settles[0].pose.pitch == 0.0 and settles[0].pose.yaw == 0.0
     assert bench.loop.motion_state is MotionState.RESTING
@@ -136,7 +141,8 @@ def test_tipped_and_freefall_outrank_the_hold_states_and_keep_it_latched():
     bench.tick(1.0, tipped_reading(1.2))
     assert bench.loop.motion_state is MotionState.TIPPED
     assert bench.loop._render_ambient("breathe") is False  # still held
-    assert not [c for c in bench.client.sent_commands if c.kind in MOTION_KINDS]
+    # Only the once-per-lift antenna look (01c) was commanded, never the head.
+    assert [c for c in bench.client.sent_commands if c.kind in MOTION_KINDS and c.pose] == []
 
 
 def test_the_freefall_line_is_still_said_once_per_fall(monkeypatch):

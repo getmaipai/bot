@@ -26,7 +26,7 @@ import re
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
@@ -41,6 +41,13 @@ from maipai_body.link.offline import OfflineRungs
 from maipai_body.link.replay import ReplayItem
 from maipai_body.link.state_machine import LinkPhase
 from maipai_body.presence.arbitration import ArbitrationState, tracking_may_drive
+from maipai_body.presence.carry_reaction import (
+    CARRY_LINES,
+    DEFAULT_CARRY_REACTION,
+    CarryReaction,
+    PresenceEntry,
+    line_allowed,
+)
 from maipai_body.presence.motion_state import MotionState, MotionStateMachine
 from maipai_body.presence.observations import read_presence
 from maipai_body.speech.capture import AudioCapture
@@ -166,6 +173,8 @@ class ConversationLoop:
         motion_clock: Callable[[], float] = time.monotonic,
         carry_gravity_compensation: bool = False,
         teach_active: Callable[[], bool] | None = None,
+        carry_reaction: Callable[[], CarryReaction] | None = None,
+        presence_entries: Callable[[], Sequence[PresenceEntry] | None] | None = None,
     ) -> None:
         self._client = client
         self._expression = expression_engine
@@ -240,6 +249,13 @@ class ConversationLoop:
         self._carry_gravity_compensation = carry_gravity_compensation
         self._teach_active = teach_active or (lambda: False)
         self._gravity_on_by_us = False
+        # MOVE-CARRY-01c: `robot.motion.carry_reaction` (look unless set) governs only
+        # the look and the line. The age bands of everyone present come from
+        # `presence_entries`; None, or an answer of None, means no presence
+        # information and gives the silent look.
+        self._carry_reaction = carry_reaction or (lambda: DEFAULT_CARRY_REACTION)
+        self._presence_entries = presence_entries
+        self._carry_line_index = 0
         if offline is not None:
             offline.machine.subscribe(lambda _old, _new: self._notify_change())
             if offline.rung0 is not None:
@@ -782,6 +798,23 @@ class ConversationLoop:
         if self._carry_gravity_compensation and not self._teach_active():
             self._client.enable_gravity_compensation()
             self._gravity_on_by_us = True
+        self._carry_look_and_line()
+
+    def _carry_look_and_line(self) -> None:
+        """The optional reaction to a lift, once. The holds above never depend on it."""
+        reaction = self._carry_reaction()
+        if reaction is CarryReaction.OFF or self._is_muted():
+            return  # a muted body keeps its own antenna pose
+        self._expression.render_held_look()
+        if reaction is not CarryReaction.LOOK_AND_LINE:
+            return
+        if self._current_funnel() is not FunnelState.IDLE:
+            return  # never over a turn
+        entries = self._presence_entries() if self._presence_entries is not None else None
+        if not line_allowed(entries):
+            return  # a child, teen, unknown or nobody known: the silent look
+        if self._say_clip(CARRY_LINES[self._carry_line_index % len(CARRY_LINES)]):
+            self._carry_line_index += 1
 
     def _on_put_down(self) -> None:
         """After the stillness window (the machine's own): release what the lift
