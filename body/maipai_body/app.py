@@ -55,6 +55,7 @@ from maipai_body.speech.models import EMBEDDING, MELSPECTROGRAM, WAKE_PHRASE, en
 from maipai_body.speech.offline_clips import (
     AssetUnavailable,
     ClipsUnavailable,
+    CodeAnnouncer,
     ManifestError,
     OfflineSpeaker,
     ensure_clip_bundle,
@@ -162,6 +163,7 @@ class LinkStack:
     link: LinkLifecycle
     offline: OfflineRungs
     supervisor: LinkSupervisor
+    announcer: CodeAnnouncer
 
 
 def _build_link_stack(
@@ -179,7 +181,18 @@ def _build_link_stack(
     gets the acknowledgement animation and the status line until that row is
     recorded and a recognizer is passed in."""
     machine = LinkStateMachine(clock=clock, wall_clock=wall_clock, sleep_after_s=sleep_after_s)
-    link = LinkLifecycle(store, client, discover=discover, observer=machine, address_walk=True)
+    # G4b: the pairing code is spoken from the offline clips; the speaker is
+    # attached once the body is up (`run_paired_body`).
+    announcer = CodeAnnouncer()
+    link = LinkLifecycle(
+        store,
+        client,
+        discover=discover,
+        observer=machine,
+        address_walk=True,
+        on_code=announcer,
+    )
+    announcer.current_code = lambda: link.state.code
     rung0 = Rung0Cues(machine=machine, clock=clock)
     offline = OfflineRungs(machine=machine, rung0=rung0, retry_link=link.reconnect_once)
     supervisor = LinkSupervisor(
@@ -188,7 +201,13 @@ def _build_link_stack(
         clock=clock,
         rung0=rung0,
     )
-    return LinkStack(machine=machine, link=link, offline=offline, supervisor=supervisor)
+    return LinkStack(
+        machine=machine,
+        link=link,
+        offline=offline,
+        supervisor=supervisor,
+        announcer=announcer,
+    )
 
 
 def _link_state_payload(link: LinkLifecycle, offline: OfflineRungs) -> dict:
@@ -324,6 +343,7 @@ def run_paired_body(
     cache_dir: Path,
     offline: OfflineRungs | None = None,
     supervisor: LinkSupervisor | None = None,
+    announcer: CodeAnnouncer | None = None,
 ) -> None:
     """The real boot path: hold neutral until G4's link reports paired,
     then hand off to `ConversationLoop` for the rest of the process's
@@ -341,6 +361,14 @@ def run_paired_body(
         _hold_neutral(client)
         _log_state(_STATE_HOLDING_NEUTRAL)
         _log_state(_STATE_WAITING_FOR_PAIRING)
+        if announcer is not None:
+            # An unpaired robot has no hub to synthesize the code with: it
+            # says it from the clips, so the speaker exists before pairing.
+            threading.Thread(
+                target=lambda: announcer.attach(_clip_speaker(cache_dir, AudioPlayback(client))),
+                name="pairing-code-speaker",
+                daemon=True,
+            ).start()
         # A body that was paired before does not wait for the hub: the ladder
         # and the wake behavior run from boot, whether or not the first
         # redeem has succeeded (LINK-STATE-01). A body never paired still
@@ -518,6 +546,7 @@ class MaiPaiBody(ReachyMiniApp):
                 cache_dir=_default_models_cache_dir(),
                 offline=self._stack.offline,
                 supervisor=self._stack.supervisor,
+                announcer=self._stack.announcer,
             )
         finally:
             signal.signal(signal.SIGINT, previous_handler)

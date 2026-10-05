@@ -22,8 +22,10 @@ import logging
 import threading
 import wave
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Protocol
 
 import numpy as np
 import numpy.typing as npt
@@ -244,6 +246,72 @@ class OfflineSpeaker:
     def rearm(self, clip_id: str) -> None:
         with self._lock:
             self._said.discard(clip_id)
+
+
+class CodeAnnouncer:
+    """The pairing flow's ``on_code`` hook: speaks each fresh code from the
+    clips, off the pairing thread (a code is a dozen clips long).
+
+    The speaker is attached late, since an unpaired robot builds it only
+    once its body is up: a code that arrived first is spoken on attach, if
+    ``current_code`` (set by the app to read the lifecycle's own state)
+    still reports it. A code the bundle cannot say (unrendered, or a
+    character the hub never issues) is dropped with a log line, never an
+    error: the app page still shows it.
+    """
+
+    def __init__(self, *, on_spoken: Callable[[], None] | None = None) -> None:
+        self.current_code: Callable[[], str | None] = lambda: None
+        self._on_spoken = on_spoken
+        self._speaker: OfflineSpeakerLike | None = None
+        self._pending: str | None = None
+        self._lock = threading.Lock()
+        self._threads: list[threading.Thread] = []
+
+    def attach(self, speaker: OfflineSpeakerLike | None) -> None:
+        with self._lock:
+            self._speaker = speaker
+            pending, self._pending = self._pending, None
+        if speaker is not None and pending is not None and self.current_code() == pending:
+            self._speak(speaker, pending)
+
+    def __call__(self, code: str) -> None:
+        with self._lock:
+            speaker = self._speaker
+            if speaker is None:
+                self._pending = code
+                return
+        self._speak(speaker, code)
+
+    def join(self, timeout: float | None = None) -> None:
+        for thread in list(self._threads):
+            thread.join(timeout)
+
+    def _speak(self, speaker: OfflineSpeakerLike, code: str) -> None:
+        thread = threading.Thread(
+            target=self._run, args=(speaker, code), name="pairing-code-speech", daemon=True
+        )
+        self._threads.append(thread)
+        thread.start()
+
+    def _run(self, speaker: OfflineSpeakerLike, code: str) -> None:
+        try:
+            ids = compose_pairing_code(code)
+            if not speaker.can_say(ids):
+                logger.info("the pairing code cannot be spoken: clips not rendered")
+                return
+            speaker.say(ids)
+        except Exception:
+            logger.warning("speaking the pairing code failed", exc_info=True)
+            return
+        if self._on_spoken is not None:
+            self._on_spoken()
+
+
+class OfflineSpeakerLike(Protocol):
+    def can_say(self, clip_ids: list[str]) -> bool: ...
+
+    def say(self, clip_ids: list[str], *, stop_event: threading.Event | None = None) -> bool: ...
 
 
 BUNDLE_ASSET = PinnedAsset(

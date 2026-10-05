@@ -15,6 +15,11 @@ checklist (`docs/dev.md`).
   design's allowed list and fails on an unlisted endpoint. The Reachy Mini
   privacy page's "what leaves the robot" rows are now generated from that
   list. The capture on the unit is still to do.
+
+- G4b clips wired (Reachy Mini): the pairing code is spoken from the offline
+  clips before pairing, the reconnect clip replaces the text prefix when the
+  bundle can say it, and the freefall line is said once per fall. Silent
+  until the clips are rendered and released.
 - MOVES-01's `react` entry point: `ConversationLoop` can call a hook after the
   reply with the move a plan named, behind the `MAIPAI_BOT_REACT_MOVES` flag
   (off by default; dormant until the hub's turn stream carries a move name).

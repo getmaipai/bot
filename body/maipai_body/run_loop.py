@@ -43,6 +43,8 @@ from maipai_body.link.state_machine import LinkPhase
 from maipai_body.presence.arbitration import ArbitrationState, tracking_may_drive
 from maipai_body.presence.observations import read_presence
 from maipai_body.speech.capture import AudioCapture
+from maipai_body.speech.offline_clips import FREEFALL as FREEFALL_CLIP
+from maipai_body.speech.offline_clips import RECONNECT as RECONNECT_CLIP
 from maipai_body.speech.playback import AudioPlayback
 from maipai_body.speech.stt_stream import SttStreamClient
 from maipai_body.speech.tts_playback import TtsLinkLost, TtsPlaybackClient
@@ -102,7 +104,8 @@ _PERSON_ID_RE = re.compile(r"^person-[a-z0-9]{6,}$")
 # turn. Spoken as the head of the next reply that reaches the hub: until
 # G4b's pre-rendered offline clips exist the hub's own `tts` route is the
 # only voice this body has, so the first moment it can speak at all is the
-# first moment the hub answers. G4b's reconnect clip replaces this text.
+# first moment the hub answers. G4b's reconnect clip replaces this text
+# whenever the bundle can say it; this stays the fallback without one.
 # The wording is a first cut for the owner's call (the design record names
 # the unreachable line, "I can't reach home right now", not this one).
 LINK_RESTORED_LINE = "Sorry, I lost my connection to home for a moment."
@@ -215,6 +218,8 @@ class ConversationLoop:
         # outage are announced once. Only the funnel thread reads or
         # writes it (the speak worker reports through an Event).
         self._lost_turn_unannounced = False
+        # The presence thread's edge detector for the freefall line.
+        self._freefall_active = False
         # LINK-STATE-01: the offline ladder. None keeps the loop exactly as
         # it was; with one, a lost link feeds the machine, an outage answers
         # wakes with rung 1 only, and the machine's edges are state changes.
@@ -553,12 +558,28 @@ class ConversationLoop:
             return
 
         announce = self._lost_turn_unannounced
+        if announce and self._say_clip(RECONNECT_CLIP):
+            # The clip is the line; it queues ahead of the reply's own audio.
+            self._lost_turn_unannounced = False
+            announce = False
         text = f"{LINK_RESTORED_LINE} {reply_text}" if announce else reply_text
         if not self._speak(text, turn_id, stop_event) and announce:
             self._lost_turn_unannounced = False
         self._enter(FunnelState.IDLE)
         if react_move and self._react_hook is not None and not stop_event.is_set():
             self._play_react(react_move, react_allowed)
+
+    def _say_clip(self, clip_id: str) -> bool:
+        """Speaks one offline clip when the bundle can; False when it cannot
+        (no ladder, no speaker, unrendered clip, playback failure)."""
+        speaker = self._offline.speaker if self._offline is not None else None
+        if speaker is None or not speaker.can_say([clip_id]):
+            return False
+        try:
+            return bool(speaker.say([clip_id]))
+        except Exception:
+            logger.warning("offline clip %r failed", clip_id, exc_info=True)
+            return False
 
     def _play_react(self, move: str, react_allowed: bool) -> None:
         """After the reply; move failure is logged and never loses the turn."""
@@ -674,6 +695,7 @@ class ConversationLoop:
             except Exception:
                 logger.warning("presence read failed", exc_info=True)
                 continue
+            self._on_freefall(observation.freefall_detected)
             arbitration = ArbitrationState(tracking_active=observation.face_detected)
             not_speaking = self._current_funnel() != FunnelState.SPEAKING
             should_track = (
@@ -699,6 +721,14 @@ class ConversationLoop:
 
         if self._face_check_thread is not None:
             self._face_check_thread.join(timeout=_FACE_CHECK_JOIN_TIMEOUT_S)
+
+    def _on_freefall(self, falling: bool) -> None:
+        """One line per fall (design record section 7): said on the rising
+        edge, never repeated while the body stays in the air, again after it
+        has been steady. Motors-off and the state report are a separate item."""
+        was_falling, self._freefall_active = self._freefall_active, falling
+        if falling and not was_falling:
+            self._say_clip(FREEFALL_CLIP)
 
     def _maybe_check_face(self, stop_event: threading.Event) -> None:
         """FACE-01's own capped-rate capture: at most once every

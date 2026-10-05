@@ -1092,8 +1092,19 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       own clip added to the same bundle, not a special case.
       Status 2026-10-05: manifest, bundle, composition, playback,
       render script and the lifecycle `on_code` hook are built and
-      tested with fakes; clips unrendered, licence check and run-loop
-      wiring open.
+      tested with fakes. Wired (S-G4B-FINISH): `app.py` hands the
+      lifecycle a `CodeAnnouncer` as `on_code` and attaches a clip
+      speaker before pairing, so an unpaired robot says its code; the
+      run loop says `line.reconnect` instead of prefixing
+      `LINK_RESTORED_LINE` when the bundle can say it (the text stays the
+      fallback); the presence loop says `line.freefall` once per fall.
+      The unreachable line was already spoken by rung 2 on a wake during
+      an outage. Tested end to end with synthetic WAV clips
+      (`tests/test_offline_clips_wiring.py`). Open, local (owner): render
+      from the chosen MaiPai voice, the voice-model licence check in
+      `docs/dev.md`, attach the zip as a Bot release asset and pin
+      `BUNDLE_ASSET`. Not run: sandbox cannot run the daemon, so nothing
+      here played through a real or simulated speaker.
 - [x] **G3+G6: the streaming turn round trip** (M, revised design -
       `docs/dev/robot-streaming-turn-2026-09-28.md`, superseding the
       original gap-audit's own batch-WAV G3/G6). Objective: after G2's
