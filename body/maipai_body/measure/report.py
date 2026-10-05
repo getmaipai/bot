@@ -181,3 +181,114 @@ def budget_section(
         lines.append(f"- decision: robot tier {verdict} ({decision['reason']})")
     lines.append("")
     return "\n".join(lines)
+
+
+def wake_doa_section(header: dict[str, Any], parts: dict[str, Any]) -> str:
+    lines = [
+        f"## M-R3: wake and direction of arrival ({header['mode']}), {header['date']}",
+        "",
+        *section_header_lines(header),
+        "- gates: `docs/dev.md` section 11 (M-08's)",
+    ]
+    if "false_accepts" in parts:
+        fa = parts["false_accepts"]
+        lines.append(
+            f"- false accepts: {fa['events']} in {fa['listened_hours']:.2f} h ({fa['label']})"
+        )
+    if "barge_in" in parts:
+        b = parts["barge_in"]
+        lines.append(
+            f"- barge-in: {b['hits']}/{b['attempts']} woke through playback; "
+            f"{b['self_triggers']} self-triggers in {b['control_s']:g} s of playback alone"
+        )
+    if parts.get("recall"):
+        lines += ["", "| condition | woke |", "|---|---|"]
+        for r in parts["recall"]:
+            lines.append(f"| {r['condition']} | {r['hits']}/{r['attempts']} |")
+    if parts.get("doa"):
+        lines += [
+            "",
+            "Array angle: 0 rad is the robot's left, pi/2 front or back, pi right; error is "
+            "taken in array-angle space.",
+            "",
+            "| bearing (deg) | expected (rad) | median measured (rad) | speech readings | "
+            "error p50 (deg) | error p95 (deg) |",
+            "|---|---|---|---|---|---|",
+        ]
+        for d in parts["doa"]:
+            median = (
+                "n/a" if d["median_measured_rad"] is None else f"{d['median_measured_rad']:.3f}"
+            )
+            p50, p95 = d["error_deg"]["p50"], d["error_deg"]["p95"]
+            lines.append(
+                f"| {d['bearing_deg']:g} | {d['expected_array_rad']:.3f} | {median} | "
+                f"{d['speech_readings']}/{d['readings']} | "
+                f"{'n/a' if p50 is None else f'{p50:.1f}'} | "
+                f"{'n/a' if p95 is None else f'{p95:.1f}'} |"
+            )
+    if parts.get("gates"):
+        lines += ["", "| gate | result | value | rule |", "|---|---|---|---|"]
+        for name, gate in parts["gates"].items():
+            result = {True: "pass", False: "FAIL", None: "undecided"}[gate["pass"]]
+            lines.append(f"| {name} | {result} | {gate['value']} | {gate['gate']} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _hms(seconds: float) -> str:
+    whole = int(round(seconds))
+    return f"{whole // 3600}:{whole % 3600 // 60:02d}:{whole % 60:02d}"
+
+
+def battery_section(
+    header: dict[str, Any], probe: dict[str, Any] | None, runs: list[dict[str, Any]]
+) -> str:
+    lines = [
+        f"## M-R4: battery ({header['mode']}), {header['date']}",
+        "",
+        *section_header_lines(header),
+    ]
+    if probe is not None:
+        kinds = [
+            k
+            for k, found in (
+                ("level", probe["level_readable"]),
+                ("charger", probe["charger_readable"]),
+            )
+            if found
+        ]
+        lines.append(
+            f"- readable battery or charger fact: {', '.join(kinds) if kinds else 'none found'}"
+        )
+        flags = probe["indirect"]["under_voltage_flags"]
+        if flags is None:
+            lines.append("- under-voltage flags: unreadable")
+        else:
+            lines.append(
+                f"- under-voltage now: {'yes' if flags['under_voltage_now'] else 'no'}; "
+                f"under-voltage occurred: {'yes' if flags['under_voltage_occurred'] else 'no'}"
+            )
+        for supply in probe["power_supply"]:
+            values = ", ".join(f"{k}={v}" for k, v in supply["values"].items())
+            lines.append(f"- power supply {supply['name']} ({supply['type']}): {values}")
+        for fact in probe["daemon_facts"]:
+            lines.append(f"- daemon {fact['source']}: {fact['path']} = {fact['value']}")
+        for path in probe["daemon_paths"]:
+            lines.append(f"- daemon route named for power: {path}")
+    if runs:
+        lines += [
+            "",
+            "| workload | charging | runtime (h:mm:ss) | good to (s) | heartbeats | gap |",
+            "|---|---|---|---|---|---|",
+        ]
+        for run in runs:
+            lines.append(
+                f"| {run['workload']} | {run['charging'] or 'not noted'} | "
+                f"{_hms(run['runtime_s'])} | {run['uncertainty_s']:g} | {run['heartbeats']} | "
+                f"{'GAP' if run['gap_warning'] else 'no'} |"
+            )
+        for run in runs:
+            for key, seen in run["facts_seen"].items():
+                lines.append(f"- {run['workload']} run, {key} {seen['first']} to {seen['last']}")
+    lines.append("")
+    return "\n".join(lines)

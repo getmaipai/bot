@@ -175,3 +175,11 @@ def test_a_scripted_turn_runs_end_to_end_through_the_real_clients_against_the_st
     assert row["transcript_chars"] == len("hello maipai")
     assert row["tts_first_audio_ms"] > 0.0
     assert playback.pushed_duration_s() > 0.0
+
+
+def test_no_usable_pairing_is_a_clear_error_not_a_crash(tmp_path):
+    from maipai_body.measure.turn_driver import NoUsablePairing, open_hub_session
+
+    with pytest.raises(NoUsablePairing) as raised:
+        open_hub_session(tmp_path / "hub-pairing.json")
+    assert "pair the robot first" in str(raised.value)

@@ -54,7 +54,6 @@ from pathlib import Path
 
 from maipai_body.bodies.reachy_mini.client import ReachyMiniClient
 from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
-from maipai_body.link import HubLinkClient, PairingStore
 from maipai_body.measure.budget import (
     BudgetSampler,
     psutil_lister,
@@ -66,7 +65,13 @@ from maipai_body.measure.loop_bench import NullAudioIO
 from maipai_body.measure.report import budget_section, daemon_version_from
 from maipai_body.measure.run_header import new_run_header, upsert_markdown_section, write_run
 from maipai_body.measure.stand_in_hub import StandInHub
-from maipai_body.measure.turn_driver import WavCapture, load_utterance, run_scripted_turn
+from maipai_body.measure.turn_driver import (
+    NoUsablePairing,
+    WavCapture,
+    load_utterance,
+    open_hub_session,
+    run_scripted_turn,
+)
 from maipai_body.speech.playback import AudioPlayback
 from maipai_body.speech.stt_stream import SttStreamClient
 from maipai_body.speech.tts_playback import TtsPlaybackClient
@@ -76,13 +81,11 @@ MEASUREMENTS_MD = Path(__file__).parent.parent.parent / "docs" / "dev" / "measur
 DEFAULT_PAIRING = Path.home() / ".local/share/maipai-bot/hub-pairing.json"
 
 
-def _hub_session(pairing_path: Path) -> tuple[str, str]:
-    store = PairingStore(pairing_path)
-    link = HubLinkClient(store)
-    pairing = store.load()
-    if pairing is None or not link.refresh() or not link.session_cookie:
-        raise SystemExit(f"no usable hub pairing at {pairing_path}: pair the robot first")
-    return link.session_cookie, pairing.base_url
+def _session(pairing_path: Path) -> tuple[str, str]:
+    try:
+        return open_hub_session(pairing_path)
+    except NoUsablePairing as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def main() -> None:
@@ -154,7 +157,7 @@ def main() -> None:
             args.stt_base_url = args.stt_base_url or stand_in.stt_url
             playback = AudioPlayback(NullAudioIO(client))
         else:
-            cookie, hub_url = _hub_session(args.pairing)
+            cookie, hub_url = _session(args.pairing)
             playback = AudioPlayback(client)
         stt = SttStreamClient(args.stt_base_url or hub_url, cookie)
         turn = TurnClient(hub_url, cookie)
