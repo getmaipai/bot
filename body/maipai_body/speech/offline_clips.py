@@ -266,14 +266,14 @@ class CodeAnnouncer:
         self._speaker: OfflineSpeakerLike | None = None
         self._pending: str | None = None
         self._lock = threading.Lock()
-        self._threads: list[threading.Thread] = []
+        self._worker: threading.Thread | None = None
 
     def attach(self, speaker: OfflineSpeakerLike | None) -> None:
         with self._lock:
             self._speaker = speaker
             pending, self._pending = self._pending, None
         if speaker is not None and pending is not None and self.current_code() == pending:
-            self._speak(speaker, pending)
+            self._queue(speaker, pending)
 
     def __call__(self, code: str) -> None:
         with self._lock:
@@ -281,31 +281,51 @@ class CodeAnnouncer:
             if speaker is None:
                 self._pending = code
                 return
-        self._speak(speaker, code)
+        self._queue(speaker, code)
 
     def join(self, timeout: float | None = None) -> None:
-        for thread in list(self._threads):
-            thread.join(timeout)
+        worker = self._worker
+        if worker is not None:
+            worker.join(timeout)
 
-    def _speak(self, speaker: OfflineSpeakerLike, code: str) -> None:
-        thread = threading.Thread(
-            target=self._run, args=(speaker, code), name="pairing-code-speech", daemon=True
-        )
-        self._threads.append(thread)
-        thread.start()
-
-    def _run(self, speaker: OfflineSpeakerLike, code: str) -> None:
-        try:
-            ids = compose_pairing_code(code)
-            if not speaker.can_say(ids):
-                logger.info("the pairing code cannot be spoken: clips not rendered")
+    def _queue(self, speaker: OfflineSpeakerLike, code: str) -> None:
+        with self._lock:
+            self._speaker = speaker
+            self._pending = code
+            if self._worker is not None and self._worker.is_alive():
                 return
-            speaker.say(ids)
-        except Exception:
-            logger.warning("speaking the pairing code failed", exc_info=True)
-            return
-        if self._on_spoken is not None:
-            self._on_spoken()
+            self._worker = threading.Thread(
+                target=self._run_pending, name="pairing-code-speech", daemon=True
+            )
+            self._worker.start()
+
+    def _run_pending(self) -> None:
+        while True:
+            with self._lock:
+                speaker, code = self._speaker, self._pending
+                self._pending = None
+            if speaker is None or code is None:
+                with self._lock:
+                    if self._pending is None:
+                        self._worker = None
+                        return
+                    continue
+            if self.current_code() != code:
+                continue
+            try:
+                ids = compose_pairing_code(code)
+                if not speaker.can_say(ids):
+                    logger.info("the pairing code cannot be spoken: clips not rendered")
+                    continue
+                # The code may have been replaced while validating its bundle.
+                if self.current_code() != code:
+                    continue
+                speaker.say(ids)
+            except Exception:
+                logger.warning("speaking the pairing code failed", exc_info=True)
+                continue
+            if self._on_spoken is not None:
+                self._on_spoken()
 
 
 class OfflineSpeakerLike(Protocol):

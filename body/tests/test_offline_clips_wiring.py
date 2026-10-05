@@ -50,6 +50,7 @@ def test_the_announcer_speaks_the_code_through_the_clips(tmp_path):
     speaker = _real_speaker(tmp_path, client)
     done = threading.Event()
     announcer = oc.CodeAnnouncer(on_spoken=done.set)
+    announcer.current_code = lambda: "ABC-234"
     announcer.attach(speaker)
 
     announcer("ABC-234")
@@ -83,6 +84,55 @@ def test_a_code_already_gone_is_not_spoken_on_attach():
     announcer.attach(speaker)
     announcer.join(3.0)
     assert speaker.said == []
+
+
+def test_successive_codes_play_serially_and_skip_superseded_pending_code():
+    first_started = threading.Event()
+    release_first = threading.Event()
+
+    class BlockingSpeaker(FakeSpeaker):
+        def __init__(self):
+            super().__init__()
+            self.active = 0
+            self.max_active = 0
+            self._active_lock = threading.Lock()
+
+        def say(self, clip_ids, *, stop_event=None):
+            with self._active_lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+                self.said.append(clip_ids)
+            try:
+                if clip_ids == oc.compose_pairing_code("K7M2"):
+                    first_started.set()
+                    assert release_first.wait(3.0)
+                return True
+            finally:
+                with self._active_lock:
+                    self.active -= 1
+
+    current = [None]
+    speaker = BlockingSpeaker()
+    announcer = oc.CodeAnnouncer()
+    announcer.current_code = lambda: current[0]
+    announcer.attach(speaker)
+
+    current[0] = "K7M2"
+    announcer("K7M2")
+    assert first_started.wait(3.0)
+
+    current[0] = "P4Q5"
+    announcer("P4Q5")
+    current[0] = "R6S7"
+    announcer("R6S7")
+    release_first.set()
+    announcer.join(3.0)
+
+    assert speaker.said == [
+        oc.compose_pairing_code("K7M2"),
+        oc.compose_pairing_code("R6S7"),
+    ]
+    assert speaker.max_active == 1
 
 
 def test_an_unspeakable_code_or_missing_clips_never_raise():
