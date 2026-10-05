@@ -123,3 +123,38 @@ def test_m_r5_a_lost_hub_mid_turn_cancels_once_and_the_real_head_settles(unit):
             bench.stop()
     assert row["cancels"] == 1
     assert row["pose_still_after_cancel_ms"] is not None
+
+
+def test_link_state_rung_0_cues_move_the_real_head_and_fold_the_antennas_away(unit):
+    """LINK-STATE-01 rung 0 on the real body: link lost settles and breathes,
+    the away pose folds both antennas back, a redeem stirs. Injected clock, so
+    it takes seconds, not minutes. Needs the unit; skipped everywhere else."""
+    from maipai_body.expression.engine import ExpressionEngine
+    from maipai_body.expression.suppression import SuppressionContext
+    from maipai_body.link.rung0 import Rung0Cues, Rung0Settings
+    from maipai_body.link.state_machine import LinkStateMachine
+    from tests.ladder_fakes import FakeClock
+
+    clock = FakeClock()
+    machine = LinkStateMachine(clock=clock, wall_clock=clock.wall_clock, sleep_after_s=600.0)
+    engine = ExpressionEngine(unit, REACHY_MINI_PROFILE)
+    cues = Rung0Cues(
+        machine=machine,
+        clock=clock,
+        render=lambda p: engine.render_ambient(p, SuppressionContext()).rendered,
+        settings=Rung0Settings(away_after_s=10.0, tracking_off_after_s=20.0),
+    )
+    machine.link_lost("unit check")
+    cues.tick()  # settle, breathe
+    clock.advance(10.0)
+    cues.tick()  # the away pose
+    feed = unit.state_feed(frequency=10.0)
+    try:
+        frame = next(iter(feed))
+    finally:
+        feed.close()
+    assert frame.antennas is not None
+    assert frame.antennas.left < -0.05 and frame.antennas.right < -0.05, frame.antennas
+    machine.redeemed("lan", None)
+    cues.tick()  # the stir, then the settle
+    assert machine.phase.value == "connected"

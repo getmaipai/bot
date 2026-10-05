@@ -23,9 +23,9 @@ def _rig(*, may_drive=lambda: True, speaker=None, muted=False):
     )
     spoken: list[bool] = []
     cues = Rung0Cues(
-        render=lambda primitive: engine.render_ambient(
-            primitive, SuppressionContext(muted=muted)
-        ).rendered,
+        render=lambda primitive: (
+            engine.render_ambient(primitive, SuppressionContext(muted=muted)).rendered
+        ),
         machine=machine,
         clock=clock,
         settings=SETTINGS,

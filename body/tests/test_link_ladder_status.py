@@ -54,7 +54,10 @@ def test_connected_text_names_no_outage_and_no_queue_line():
 def test_values_that_are_absent_are_left_out_never_invented():
     text = build_status(
         _snap(
-            attempts=0, current_address=None, answered_path=None, last_connected_wall=None,
+            attempts=0,
+            current_address=None,
+            answered_path=None,
+            last_connected_wall=None,
             last_error=None,
         ),
         tz=UTC,

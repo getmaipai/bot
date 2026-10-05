@@ -9,7 +9,7 @@ from maipai_body.link.address_walk import HubEndpoint, PathKind
 from maipai_body.link.discovery import HubAddress
 from maipai_body.link.lifecycle import LinkLifecycle
 from maipai_body.link.store import PairingStore
-from tests.test_link_lifecycle import _address, _FakeClient, _result, _run_until
+from tests.test_link_lifecycle import _FakeClient, _result, _run_until
 
 
 class _Observer:

@@ -1789,7 +1789,17 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       above. Reuse check: `LinkLifecycle`, `StateReporter`, the RM-02
       primitives and `WakeScorer` are reused; the machine adds no new
       transport, no new store and no new body axis. Exit: `bash
-      scripts/check.sh`.
+      scripts/check.sh`. **Built 2026-10-05 on the branch
+      `cloud/reachy-link-state`, not landed: everything that needs no
+      unit (state machine, walk, rungs 0 to 2 behind a recognizer
+      interface, the queue and replay rules, the published activity
+      values). Open: the tailnet seam waits on ROBOT-TAILSCALE-01; no
+      keyword spotter exists, so rung 1 is wired off and its CPU and
+      false-accept row is UNVERIFIED; the clips rung 1 needs are not in
+      the G4b bundle; the default intervals are unmeasured; a robot that
+      boots while the hub is away still waits for pairing before the loop
+      (and so the ladder) starts. See
+      `docs/dev/offline-ladder-unit-checks.md`.**
 
 ## Voice loop
 

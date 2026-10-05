@@ -9,6 +9,14 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- LINK-STATE-01, the offline ladder's first rungs (Reachy Mini): a
+  `connected`, `reconnecting`, `sleeping` state machine in `link/` driven by
+  `LinkLifecycle` and the funnel, an address walk (LAN, then a marked
+  tailnet seam for ROBOT-TAILSCALE-01), rung 0 body cues, a closed list of
+  rung 1 local commands behind a recognizer interface (no real recognizer
+  yet), a rung 2 status text on the app page, and `reconnecting` and
+  `sleeping` published as `robot.state.activity`. What needs the unit is in
+  `docs/dev/offline-ladder-unit-checks.md`.
 - The robot's state frame now carries `app_version`, the installed
   `maipai-bot` version, in every frame (`daemon_version` is still the
   vendor SDK's), so the hub can compare a robot to a Bot release.
@@ -21,6 +29,9 @@ checklist (`docs/dev.md`).
 
 ### Changed
 
+- The spec pin text moves to `spec-v0.1.73` (`reconnecting` and `sleeping`
+  in `robot.state.activity`). `LinkLifecycle` now retries a stored pairing
+  while the hub is away instead of asking for a new code.
 - A link lost mid-sentence or while listening (the stt stream) now raises
   one `cancel` and settles the head, where mid-sentence loss used to render
   a finished reply's `settle` and a lost stt stream left the head in its
