@@ -13,10 +13,12 @@ unmodified against either.
 
 from __future__ import annotations
 
+import bisect
 import json
+import time
 import wave
-from collections.abc import Iterator
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +42,135 @@ from .profile import REACHY_MINI_PROFILE
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 STATE_FRAMES_PATH = FIXTURES_DIR / "state_frames.jsonl"
+FACES_DIR = FIXTURES_DIR / "faces"
+
+_GRAVITY_M_S2 = 9.81
+
+
+class ManualClock:
+    """A clock a test advances by hand, so a script's times are exact."""
+
+    def __init__(self, start_s: float = 0.0) -> None:
+        self._now = start_s
+
+    def __call__(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
+
+class _Timeline[T]:
+    """``[(t, value)]`` read by "the latest entry at or before now".
+
+    ``t`` is seconds from the fake's own construction, so a script reads
+    the same whichever clock drives it. Before the first entry there is
+    no value (``None``), the way a sensor with nothing yet reports.
+    """
+
+    def __init__(self, name: str, entries: Sequence[tuple[float, T]]) -> None:
+        times = [t for t, _ in entries]
+        if times != sorted(times):
+            raise ValueError(f"{name} script must be in time order, got {times}")
+        self._times = times
+        self._values = [value for _, value in entries]
+
+    def at(self, now_s: float) -> T | None:
+        index = bisect.bisect_right(self._times, now_s) - 1
+        return self._values[index] if index >= 0 else None
+
+
+def rest_reading() -> ImuReading:
+    """Upright and still: 1 g on z, identity orientation."""
+    return ImuReading(
+        accelerometer=(0.0, 0.0, _GRAVITY_M_S2),
+        gyroscope=(0.0, 0.0, 0.0),
+        quaternion=(1.0, 0.0, 0.0, 0.0),
+        temperature_c=30.0,
+    )
+
+
+def tipped_reading(angle_rad: float = 1.2) -> ImuReading:
+    """Rolled over ``angle_rad`` about x (past 45 degrees by default), gravity following."""
+    half = angle_rad / 2.0
+    return ImuReading(
+        accelerometer=(
+            0.0,
+            _GRAVITY_M_S2 * float(np.sin(angle_rad)),
+            _GRAVITY_M_S2 * float(np.cos(angle_rad)),
+        ),
+        gyroscope=(0.0, 0.0, 0.0),
+        quaternion=(float(np.cos(half)), float(np.sin(half)), 0.0, 0.0),
+        temperature_c=30.0,
+    )
+
+
+def freefall_reading() -> ImuReading:
+    """Near-zero proper acceleration, orientation unchanged."""
+    return ImuReading(
+        accelerometer=(0.0, 0.0, 0.05),
+        gyroscope=(0.1, 0.0, 0.0),
+        quaternion=(1.0, 0.0, 0.0, 0.0),
+        temperature_c=30.0,
+    )
+
+
+def load_face_fixture(name: str) -> npt.NDArray[np.uint8]:
+    """Read a synthetic frame from ``fixtures/faces/<name>.npy``: ``(h, w, 3)`` BGR uint8."""
+    path = FACES_DIR / f"{name}.npy"
+    if not path.exists():
+        raise FileNotFoundError(f"no face fixture {name!r} under {FACES_DIR}")
+    return np.load(path)
+
+
+@dataclass(frozen=True)
+class PushedChunk:
+    """One ``push_audio_sample`` call as the loopback saw it."""
+
+    t_s: float
+    frames: int
+    samples: npt.NDArray[np.float32] = field(repr=False, compare=False)
+
+
+class LoopbackRecorder:
+    """Captures what ``push_audio_sample`` received, with stamps.
+
+    ``t_s`` is seconds on the recorder's clock (``time.monotonic`` unless
+    a test supplies one), taken at the call, never from the audio.
+    ``events`` is the start/push/stop order, so a test can prove a
+    reply's first push followed ``start_playing``.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self.chunks: list[PushedChunk] = []
+        self.events: list[str] = []
+
+    def on_start(self) -> None:
+        self.events.append("start")
+
+    def on_push(self, data: npt.NDArray[np.float32]) -> None:
+        self.events.append("push")
+        self.chunks.append(PushedChunk(t_s=self._clock(), frames=len(data), samples=data))
+
+    def on_stop(self) -> None:
+        self.events.append("stop")
+
+    @property
+    def total_frames(self) -> int:
+        return sum(chunk.frames for chunk in self.chunks)
+
+    @property
+    def first_push_t_s(self) -> float | None:
+        return self.chunks[0].t_s if self.chunks else None
+
+    def duration_s(self, sample_rate: int) -> float:
+        return self.total_frames / sample_rate
+
+    def samples(self) -> npt.NDArray[np.float32]:
+        if not self.chunks:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate([chunk.samples for chunk in self.chunks])
 
 
 @dataclass
@@ -105,8 +236,37 @@ class FakeReachyMiniClient:
         microphone_wav: Path | None = None,
         camera_frame: npt.NDArray[np.uint8] | None = None,
         camera_frame_jpeg: bytes | None = None,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        doa_script: Sequence[tuple[float, float, bool]] | None = None,
+        imu_script: Sequence[tuple[float, ImuReading]] | None = None,
+        frame_script: Sequence[tuple[float, str]] | None = None,
+        face_script: Sequence[tuple[float, FaceTrackTarget]] | None = None,
+        require_tracking: bool = False,
+        recorder: LoopbackRecorder | None = None,
     ) -> None:
         self.profile = profile
+        self._clock = clock
+        self._t0 = clock()
+        # Scripts are opt-in: with none given, every sensor answers as it
+        # did before (recorded DoA sample, no IMU, the explicit frame, the
+        # assignable `face_target`), so existing tests are unchanged.
+        self._doa_script = (
+            _Timeline(
+                "DoA",
+                [
+                    (t, DirectionOfArrival(angle_rad=a, speech_detected=sp))
+                    for t, a, sp in doa_script
+                ],
+            )
+            if doa_script is not None
+            else None
+        )
+        self._imu_script = _Timeline("IMU", imu_script) if imu_script is not None else None
+        self._frame_script = _Timeline("frame", frame_script) if frame_script is not None else None
+        self._face_script = _Timeline("face", face_script) if face_script is not None else None
+        self._require_tracking = require_tracking
+        self.recorder = recorder
         self._lost = False
         self.sent_commands: list[SentCommand] = []
         self.motors_enabled = True
@@ -291,21 +451,32 @@ class FakeReachyMiniClient:
     def start_playing(self) -> None:
         self._require_connected()
         self._playing = True
+        if self.recorder is not None:
+            self.recorder.on_start()
 
     def push_audio_sample(self, data: npt.NDArray[np.float32]) -> None:
         self._require_connected()
         self.pushed_audio.append(data)
+        if self.recorder is not None:
+            self.recorder.on_push(data)
 
     def stop_playing(self) -> None:
         self._require_connected()
         self._playing = False
+        if self.recorder is not None:
+            self.recorder.on_stop()
 
     def get_output_audio_samplerate(self) -> int:
         self._require_connected()
         return 16000
 
+    def _script_time(self) -> float:
+        return self._clock() - self._t0
+
     def get_doa(self) -> DirectionOfArrival | None:
         self._require_connected()
+        if self._doa_script is not None:
+            return self._doa_script.at(self._script_time())
         for sample in load_recorded_samples():
             if sample.get("doa") is not None:
                 return DirectionOfArrival(**sample["doa"])
@@ -315,6 +486,10 @@ class FakeReachyMiniClient:
 
     def get_frame(self) -> Any:
         self._require_connected()
+        if self._frame_script is not None:
+            name = self._frame_script.at(self._script_time())
+            if name is not None:
+                return load_face_fixture(name)
         return self._camera_frame
 
     def get_frame_jpeg(self) -> bytes | None:
@@ -325,6 +500,8 @@ class FakeReachyMiniClient:
 
     def read(self) -> ImuReading | None:
         self._require_connected()
+        if self._imu_script is not None:
+            return self._imu_script.at(self._script_time())
         return None
 
     # -- FaceTracker --
@@ -341,6 +518,11 @@ class FakeReachyMiniClient:
 
     def get_face_target(self) -> FaceTrackTarget:
         self._require_connected()
+        if self._face_script is not None:
+            if self._require_tracking and not self.tracking_enabled:
+                return FaceTrackTarget(detected=False)
+            scripted = self._face_script.at(self._script_time())
+            return scripted if scripted is not None else FaceTrackTarget(detected=False)
         return self.face_target
 
     # -- StateFeed --
