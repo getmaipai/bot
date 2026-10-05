@@ -569,6 +569,7 @@ the image release and the profile id in the header.
       plays the move on the simulator; the reply path's cues are
       untouched (a test asserts no move plays from a cue). Exit: the
       catalog's CI and `bash scripts/check.sh`.
+      Status 2026-10-05: body side built in `body/maipai_body/moves/` (format, pinned fetch, player, ask and react entry points, tests); box stays unchecked until `scripts/pin_moves_library.py` has pinned the emotions library with network, the simulator run is done, and the catalog manifest exists.
 - [ ] **MOVES-02: teach it a move** (S, after MOVES-01). Objective: a
       catalog app: gravity compensation on, a person moves the head
       and antennas by hand, the body records the trajectory in the
