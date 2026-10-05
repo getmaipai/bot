@@ -31,20 +31,21 @@ Never a hostname, never a household recording.
 - image release: n/a
 - profile: `reachy_mini`
 - onset threshold and settle rule: `maipai_body/measure/motion.py`
+- settle is measured from the pose a tilt leaves (from neutral it has nothing to settle)
 
 | primitive | runs | onset p50 (ms) | onset p95 (ms) | cue→command p50 (ms) | command→onset p50 (ms) | settled p50 (ms) | amplitude p50 (rad) | peak velocity p95 (rad/s) | commanded peak (rad) | no onset | errors | over limit |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| listen | 20 | 120.2 | 122.7 | 0.1 | 120.1 | 990.9 | 0.4488 | 2.8019 | 0.4712 | 0 | 0 | 0 |
-| glance | 20 | 85.0 | 86.9 | 0.1 | 84.9 | 1158.1 | 0.5616 | 5.2921 | 0.7854 | 0 | 0 | 0 |
-| tilt | 20 | 119.3 | 122.1 | 0.1 | 119.2 | 882.3 | 0.6284 | 2.9765 | 0.6283 | 0 | 0 | 0 |
-| nod | 20 | 224.6 | 227.2 | 0.1 | 224.6 | 501.5 | 0.0657 | 0.5975 | 0.1396 | 0 | 0 | 0 |
-| perk | 20 | 85.3 | 87.5 | 0.1 | 85.2 | 609.9 | 0.7852 | 6.4245 | 0.7854 | 0 | 0 | 0 |
-| attend | 20 | 188.9 | 191.8 | 0.1 | 188.8 | 1126.5 | 0.2513 | 0.8370 | 0.2513 | 0 | 0 | 0 |
-| settle | 20 | 1018.1 | 1018.1 | 0.0 | 1018.0 | 1157.2 | 0.0002 | 0.0015 | 0.0000 | 19 | 0 | 0 |
-| breathe | 20 | 17.9 | 53.3 | 0.1 | 17.8 | 295.3 | 0.1571 | 3.2130 | 0.1571 | 0 | 0 | 0 |
-| track | 20 | 51.0 | 53.8 | 0.0 | 51.0 | 813.0 | 0.3772 | 4.3408 | 0.4000 | 0 | 0 | 0 |
-| speak | 20 | 17.9 | 52.8 | 0.1 | 17.9 | 295.8 | 0.1571 | 3.0636 | 0.1571 | 0 | 0 | 0 |
-| stop | 20 | n/a | n/a | 0.0 | n/a | n/a | 0.0002 | 0.0029 | 0.0000 | 20 | 0 | 0 |
+| listen | 20 | 119.4 | 122.3 | 0.1 | 119.3 | 1017.8 | 0.4481 | 2.7699 | 0.4712 | 0 | 0 | 0 |
+| glance | 20 | 85.4 | 87.9 | 0.1 | 85.3 | 1160.0 | 0.5616 | 5.1976 | 0.7854 | 0 | 0 | 0 |
+| tilt | 20 | 120.0 | 122.9 | 0.1 | 119.9 | 883.3 | 0.6284 | 3.0950 | 0.6283 | 0 | 0 | 0 |
+| nod | 20 | 224.2 | 228.7 | 0.1 | 224.1 | 504.7 | 0.0652 | 0.5976 | 0.1396 | 0 | 0 | 0 |
+| perk | 20 | 85.3 | 88.5 | 0.1 | 85.3 | 640.9 | 0.7851 | 7.3555 | 0.7854 | 0 | 0 | 0 |
+| attend | 20 | 188.6 | 190.8 | 0.1 | 188.6 | 1123.2 | 0.2513 | 0.8240 | 0.2513 | 0 | 0 | 0 |
+| settle | 20 | 188.6 | 192.1 | 0.0 | 188.6 | 1154.5 | 0.6284 | 1.6416 | 0.6284 | 0 | 0 | 0 |
+| breathe | 20 | 49.9 | 51.9 | 0.1 | 49.8 | 293.4 | 0.1571 | 3.2029 | 0.1571 | 0 | 0 | 0 |
+| track | 20 | 51.0 | 53.1 | 0.0 | 51.0 | 811.3 | 0.3767 | 4.3100 | 0.4000 | 0 | 0 | 0 |
+| speak | 20 | 17.5 | 50.9 | 0.1 | 17.5 | 294.1 | 0.1571 | 3.0783 | 0.1571 | 0 | 0 | 0 |
+| stop | 20 | n/a | n/a | 0.0 | n/a | n/a | 0.0002 | 0.0033 | 0.0000 | 20 | 0 | 0 |
 
 ## M-R2: stall probe (sim), 2026-10-05
 
@@ -56,18 +57,18 @@ Never a hostname, never a household recording.
 
 | axis | fraction | held | commanded (rad) | achieved (rad) | verdict | residual after release (rad) |
 |---|---|---|---|---|---|---|
-| head_pitch | 0.05 | no | 0.0349 | 0.0325 | reached | 0.0103 |
-| head_pitch | 0.10 | no | 0.0698 | 0.0633 | reached | 0.0183 |
-| head_pitch | 0.20 | no | 0.1396 | 0.1293 | reached | 0.0299 |
-| head_pitch | 0.30 | no | 0.2094 | 0.1953 | reached | 0.0305 |
-| head_roll | 0.05 | no | 0.0349 | 0.0306 | reached | 0.0089 |
-| head_roll | 0.10 | no | 0.0698 | 0.0641 | reached | 0.0160 |
-| head_roll | 0.20 | no | 0.1396 | 0.1295 | reached | 0.0290 |
-| head_roll | 0.30 | no | 0.2094 | 0.1955 | reached | 0.0306 |
-| head_yaw | 0.05 | no | 0.1571 | 0.1502 | reached | 0.0211 |
-| head_yaw | 0.10 | no | 0.3142 | 0.3078 | reached | 0.0295 |
-| head_yaw | 0.20 | no | 0.6283 | 0.6156 | reached | 0.0302 |
-| head_yaw | 0.30 | no | 0.9425 | 0.9030 | reached | 0.0326 |
+| head_pitch | 0.05 | no | 0.0349 | 0.0325 | reached | 0.0099 |
+| head_pitch | 0.10 | no | 0.0698 | 0.0632 | reached | 0.0187 |
+| head_pitch | 0.20 | no | 0.1396 | 0.1291 | reached | 0.0294 |
+| head_pitch | 0.30 | no | 0.2094 | 0.1951 | reached | 0.0318 |
+| head_roll | 0.05 | no | 0.0349 | 0.0302 | reached | 0.0094 |
+| head_roll | 0.10 | no | 0.0698 | 0.0640 | reached | 0.0165 |
+| head_roll | 0.20 | no | 0.1396 | 0.1290 | reached | 0.0305 |
+| head_roll | 0.30 | no | 0.2094 | 0.1945 | reached | 0.0325 |
+| head_yaw | 0.05 | no | 0.1571 | 0.1498 | reached | 0.0201 |
+| head_yaw | 0.10 | no | 0.3142 | 0.3078 | reached | 0.0277 |
+| head_yaw | 0.20 | no | 0.6283 | 0.6149 | reached | 0.0308 |
+| head_yaw | 0.30 | no | 0.9425 | 0.9015 | reached | 0.0329 |
 
 ## M-R5: the link (sim), 2026-10-05
 
@@ -77,14 +78,15 @@ Never a hostname, never a household recording.
 - profile: `reachy_mini`
 - cancel: from the link going down to the CANCEL cue reaching the expression engine
 - still: from the cancel to the first run of still frames in the state feed
-- reconnect: from the link returning to the next successful state report
+- reconnect: from the link returning to the next successful state report; reset trials use outages spread evenly across the report interval
 - line: the lost turn announced once on the next turn, and not on the one after
 
 | scenario | fault | trials | cancel p50 (ms) | cancel p95 (ms) | still p50 (ms) | still p95 (ms) | reconnect p50 (ms) | reconnect p95 (ms) | max cancels per turn | line next | line after | errors |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| listening | reset | 8 | 2.1 | 2.7 | 179.0 | 292.0 | 13997.1 | 14009.0 | 1 | 8/8 | 0/8 | 0 |
-| mid_turn | reset | 8 | 185.9 | 188.6 | 388.0 | 457.4 | 13999.9 | 14006.8 | 1 | 8/8 | 0/8 | 0 |
-| mid_sentence | reset | 8 | 8.2 | 10.0 | 75.9 | 117.3 | 13994.2 | 14005.1 | 1 | 8/8 | 0/8 | 0 |
-| listening | blackhole | 1 | 10002.8 | 10002.8 | 5.8 | 5.8 | 15003.8 | 15003.8 | 1 | 1/1 | 0/1 | 0 |
-| mid_turn | blackhole | 1 | 120276.9 | 120276.9 | 33.3 | 33.3 | 15005.7 | 15005.7 | 1 | 1/1 | 0/1 | 0 |
-| mid_sentence | blackhole | 1 | 119994.6 | 119994.6 | 25.9 | 25.9 | 15006.3 | 15006.3 | 1 | 1/1 | 0/1 | 0 |
+| listening | reset | 8 | 2.3 | 2.8 | 47.0 | 222.3 | 6580.2 | 14000.9 | 1 | 8/8 | 0/8 | 0 |
+| mid_turn | reset | 8 | 186.9 | 188.5 | 333.8 | 460.9 | 6765.7 | 14001.6 | 1 | 8/8 | 0/8 | 0 |
+| mid_sentence | reset | 8 | 8.0 | 9.4 | 72.5 | 114.6 | 6586.4 | 13965.9 | 1 | 8/8 | 0/8 | 0 |
+| listening | blackhole | 1 | 10002.9 | 10002.9 | 16.4 | 16.4 | 15004.0 | 15004.0 | 1 | 1/1 | 0/1 | 0 |
+| mid_turn | blackhole | 1 | 120283.5 | 120283.5 | 22.7 | 22.7 | 15005.4 | 15005.4 | 1 | 1/1 | 0/1 | 0 |
+| mid_sentence | blackhole | 1 | 120023.2 | 120023.2 | 32.9 | 32.9 | 15004.5 | 15004.5 | 1 | 1/1 | 0/1 | 0 |
+
