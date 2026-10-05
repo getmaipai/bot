@@ -45,8 +45,10 @@ def test_every_script_imports_and_prints_its_usage(script):
     [s for s in ALL if s != "measure_expr01.py"],
 )
 def test_every_new_script_documents_the_exact_command_to_run_on_the_unit(script):
+    """The unit runs the installed wheel in the daemon's apps venv (scripts/install-reachy.sh);
+    `uv run` cannot resolve there, because the lockfile is scoped to the dev Mac."""
     text = (SCRIPTS / script).read_text()
-    assert "uv run python scripts/" + script in text
+    assert "/venvs/apps_venv/bin/python scripts/" + script in text
 
 
 def test_mr2_refuses_a_held_head_run_on_the_simulator():

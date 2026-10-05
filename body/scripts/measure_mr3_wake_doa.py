@@ -9,33 +9,46 @@ The real wake model is needed: point ``--models-dir`` (or
 ``embedding_model.onnx`` and ``trained_hey_maipai_v2.onnx``. The daemon must
 be running on the unit with its media on, and the body app stopped (two
 readers of the microphone would fight). Each part writes its own file; run
-``report`` last to gather them. From ``body/``, on the unit::
+``report`` last to gather them.
+
+On the unit, the scripts run from a copy of ``body/scripts`` with the apps venv
+that ``scripts/install-reachy.sh`` installed the wheel into (``uv run`` cannot
+resolve there; the lockfile is scoped to the dev Mac)::
+
+    scp -r body/scripts pollen@<robot address>:maipai-scripts
+    ssh pollen@<robot address>
+    cd maipai-scripts/..    # any directory; --out-dir defaults to ./measurements
+
+Then, on the unit::
 
     # 1. False accepts: leave the unit listening to ordinary room audio
     #    (a television at room level is the dev.md gate), at least 2 hours.
-    uv run python scripts/measure_mr3_wake_doa.py false-accepts --hours 2.5 \\
+    /venvs/apps_venv/bin/python scripts/measure_mr3_wake_doa.py false-accepts --hours 2.5 \\
         --label "television news at room level"
 
     # 2. Recall, each condition with ten attempts or more. Say the wake phrase
     #    when prompted; for near_miss say the confusable phrases instead.
-    uv run python scripts/measure_mr3_wake_doa.py recall --condition quiet_1m --attempts 10
-    uv run python scripts/measure_mr3_wake_doa.py recall --condition tv_3m --attempts 10
-    uv run python scripts/measure_mr3_wake_doa.py recall --condition near_miss --attempts 10
+    /venvs/apps_venv/bin/python scripts/measure_mr3_wake_doa.py \
+        recall --condition quiet_1m --attempts 10
+    /venvs/apps_venv/bin/python scripts/measure_mr3_wake_doa.py \
+        recall --condition tv_3m --attempts 10
+    /venvs/apps_venv/bin/python scripts/measure_mr3_wake_doa.py \
+        recall --condition near_miss --attempts 10
 
     # 3. Direction of arrival: a person (or a speaker playing speech) at each of
     #    eight bearings, 1 m from the unit. 0 is straight ahead, bearings
     #    increase counter-clockwise seen from above (90 is the robot's left).
-    uv run python scripts/measure_mr3_wake_doa.py doa --dwell-s 3
+    /venvs/apps_venv/bin/python scripts/measure_mr3_wake_doa.py doa --dwell-s 3
 
     # 4. Barge-in: speech plays through the unit's speaker at the level you will
     #    use in conversation (set it with the daemon's volume, note it in
     #    --note); first a control with nobody speaking, then wake attempts.
-    uv run python scripts/measure_mr3_wake_doa.py barge-in --playback-wav <speech.wav> \\
-        --attempts 10 --note "volume <level>"
+    /venvs/apps_venv/bin/python scripts/measure_mr3_wake_doa.py barge-in \\
+        --playback-wav <speech.wav> --attempts 10 --note "volume <level>"
 
     # 5. Gather the parts and print the gates; --record adds the section to
     #    docs/dev/measurements.md.
-    uv run python scripts/measure_mr3_wake_doa.py report --record
+    /venvs/apps_venv/bin/python scripts/measure_mr3_wake_doa.py report --record
 
 Output: ``<out-dir>/M-R3-unit-<part>-<date>.json`` (default ``measurements/``).
 No audio is stored, only counts, scores and angles.
@@ -54,7 +67,7 @@ from pathlib import Path
 from maipai_body.bodies.reachy_mini.client import ReachyMiniClient
 from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
 from maipai_body.measure.report import daemon_version_from, wake_doa_section
-from maipai_body.measure.run_header import new_run_header, upsert_markdown_section, write_run
+from maipai_body.measure.run_header import new_run_header, record_section, write_run
 from maipai_body.measure.turn_driver import load_utterance
 from maipai_body.measure.wake_doa import (
     assemble_parts,
@@ -120,12 +133,13 @@ def _report(args) -> None:
     for name, gate in parts["gates"].items():
         print(f"{name}: {gate['pass']} ({gate['value']}; {gate['gate']})")
     if args.record:
-        upsert_markdown_section(
+        written = record_section(
             MEASUREMENTS_MD,
             "## M-R3: wake and direction of arrival (unit)",
             wake_doa_section(_header(args), parts),
+            fallback_dir=args.out_dir,
         )
-        print(f"updated {MEASUREMENTS_MD}")
+        print(f"recorded in {written}")
 
 
 def main() -> None:

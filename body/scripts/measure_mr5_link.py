@@ -24,17 +24,18 @@ On the unit, run it on the robot (the daemon is local; the stand-in hub is
 on the robot's own loopback, so this gives the real motors' settling and the
 real run loop on the Compute Module, not the radio)::
 
-    uv run python scripts/measure_mr5_link.py --mode unit --image-release <release> \\
-        --trials 10 --record
+    /venvs/apps_venv/bin/python scripts/measure_mr5_link.py --mode unit \\
+        --image-release <release> --trials 10 --record
 
 The radio itself is a separate measurement on the same script. Give it the
 real hub's address and the two commands that switch the radio, and run it
 detached from your SSH session (the connection will drop; use ``tmux`` or
 ``systemd-run --scope``)::
 
-    uv run python scripts/measure_mr5_link.py --mode unit --trials 0 --blackhole-trials 0 \\
-        --hub-url http://<hub address>:<port> --wifi-off "nmcli radio wifi off" \\
-        --wifi-on "nmcli radio wifi on" --wifi-outage-s 20 --wifi-trials 5 --record
+    /venvs/apps_venv/bin/python scripts/measure_mr5_link.py --mode unit --trials 0 \\
+        --blackhole-trials 0 --hub-url http://<hub address>:<port> \\
+        --wifi-off "nmcli radio wifi off" --wifi-on "nmcli radio wifi on" \\
+        --wifi-outage-s 20 --wifi-trials 5 --record
 
 Output: ``<out-dir>/M-R5-<mode>-<date>.json`` (default ``measurements/``)
 and, with ``--record``, the section ``M-R5: the link (<mode>)`` in
@@ -52,7 +53,7 @@ from maipai_body.bodies.reachy_mini.client import ReachyMiniClient
 from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
 from maipai_body.measure.link_loss import SCENARIOS, LinkLossBench, run_trial, summarize_trials
 from maipai_body.measure.report import daemon_version_from, link_loss_section
-from maipai_body.measure.run_header import new_run_header, upsert_markdown_section, write_run
+from maipai_body.measure.run_header import new_run_header, record_section, write_run
 from maipai_body.measure.stand_in_hub import StandInHub
 from maipai_body.measure.wifi_cycle import run_wifi_cycle_trial
 
@@ -156,12 +157,13 @@ def main() -> None:
     )
     print(f"wrote {path}")
     if args.record:
-        upsert_markdown_section(
+        written = record_section(
             MEASUREMENTS_MD,
             f"## M-R5: the link ({args.mode})",
             link_loss_section(header, summaries, wifi_rows=wifi_rows),
+            fallback_dir=args.out_dir,
         )
-        print(f"updated {MEASUREMENTS_MD}")
+        print(f"recorded in {written}")
 
 
 if __name__ == "__main__":

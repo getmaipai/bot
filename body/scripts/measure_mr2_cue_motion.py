@@ -11,18 +11,18 @@ Simulator (sim rows; needs ``uv run --extra sim reachy-mini-daemon --sim
 
     uv run python scripts/measure_mr2_cue_motion.py --mode sim --repeats 20 --record
 
-On the unit (the daemon runs on the robot; run this on the robot or any
-machine that reaches its port 8000; ``--host`` is the robot's address and
-is never written to the output)::
+On the unit (the daemon runs on the robot; run this on the robot with the
+apps venv, or from any machine that reaches its port 8000, where ``--host``
+is the robot's address and is never written to the output)::
 
-    uv run python scripts/measure_mr2_cue_motion.py --mode unit --host <robot address> \\
+    /venvs/apps_venv/bin/python scripts/measure_mr2_cue_motion.py --mode unit \\
         --image-release <OS image release> --repeats 30 --record
 
 Then the held-head rows. The operator holds the head still when asked,
 starting from the smallest fraction, and lets go on any discomfort; the head
 is always sent back to neutral afterwards::
 
-    uv run python scripts/measure_mr2_cue_motion.py --mode unit --host <robot address> \\
+    /venvs/apps_venv/bin/python scripts/measure_mr2_cue_motion.py --mode unit \\
         --hold hand --skip-latency --record
 
 Output: ``<out-dir>/M-R2-<mode>-<date>.json`` (default ``measurements/``) and,
@@ -42,7 +42,7 @@ from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
 from maipai_body.expression.primitives import PRIMITIVE_NAMES
 from maipai_body.measure.cue_motion import run_mr2
 from maipai_body.measure.report import cue_motion_section, daemon_version_from, stall_section
-from maipai_body.measure.run_header import new_run_header, upsert_markdown_section, write_run
+from maipai_body.measure.run_header import new_run_header, record_section, write_run
 
 MEASUREMENTS_MD = Path(__file__).parent.parent.parent / "docs" / "dev" / "measurements.md"
 
@@ -107,18 +107,20 @@ def main() -> None:
     print(f"wrote {path}")
     if args.record:
         if result["cue_motion"]:
-            upsert_markdown_section(
+            record_section(
                 MEASUREMENTS_MD,
                 f"## M-R2: cue to motion, repeated ({args.mode})",
                 cue_motion_section(header, result["cue_motion"]),
+                fallback_dir=args.out_dir,
             )
         if result["stall"]:
-            upsert_markdown_section(
+            record_section(
                 MEASUREMENTS_MD,
                 f"## M-R2: stall probe ({args.mode})",
                 stall_section(header, result["stall"]),
+                fallback_dir=args.out_dir,
             )
-        print(f"updated {MEASUREMENTS_MD}")
+        print("recorded (docs/dev/measurements.md, or section-M-R2.md beside the run on a unit)")
 
 
 if __name__ == "__main__":

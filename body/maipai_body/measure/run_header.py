@@ -7,6 +7,7 @@ date on every run; never a hostname, never a household recording.
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -78,3 +79,24 @@ def upsert_markdown_section(path: Path, heading_prefix: str, section: str) -> No
         return
     end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
     path.write_text("".join(lines[:start]) + section + "\n" + "".join(lines[end:]))
+
+
+def record_section(
+    markdown_path: Path, heading_prefix: str, section: str, *, fallback_dir: Path
+) -> Path:
+    """Put a run's section into ``measurements.md``, or beside the run when that file is absent.
+
+    The unit has no ``docs/`` tree (the wheel ships the package, not the
+    repo), so there the section lands in ``<fallback_dir>/section-<row>.md``
+    to be carried back and committed; on a dev machine it updates the
+    repo's own file in place.
+    """
+    if markdown_path.parent.is_dir():
+        upsert_markdown_section(markdown_path, heading_prefix, section)
+        return markdown_path
+    match = re.search(r"M-R\d", heading_prefix)
+    name = f"section-{match.group(0) if match else 'run'}.md"
+    fallback_dir.mkdir(parents=True, exist_ok=True)
+    path = fallback_dir / name
+    path.write_text(section)
+    return path

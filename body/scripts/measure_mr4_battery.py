@@ -9,29 +9,38 @@ The script owns the hardware for the run (stop the body app first): it
 holds the microphone capture open like the body does, holds the head at
 neutral, and does the workload. The wake model's own compute is not part of
 it. Each heartbeat is on disk before the next is written, so when the power
-dies the last line is the runtime. From ``body/``, on the unit, over the
-daemon on localhost; start every run from a full charge::
+dies the last line is the runtime. Start every run from a full charge.
+
+On the unit, the scripts run from a copy of ``body/scripts`` with the apps venv
+that ``scripts/install-reachy.sh`` installed the wheel into (``uv run`` cannot
+resolve there; the lockfile is scoped to the dev Mac)::
+
+    scp -r body/scripts pollen@<robot address>:maipai-scripts
+    ssh pollen@<robot address>
+    cd maipai-scripts/..    # any directory; --out-dir defaults to ./measurements
+
+Then, on the unit, against the daemon on localhost::
 
     # 1. What can the unit say about its charge? (run once, charger in and out)
-    uv run python scripts/measure_mr4_battery.py probe --image-release <release>
+    /venvs/apps_venv/bin/python scripts/measure_mr4_battery.py probe --image-release <release>
 
     # 2. Runtime. Unplug the charger, then start; leave it until the LED is red
     #    and the unit goes quiet. Note the time you saw the red LED against a
     #    stopwatch started with the script. One run per workload, full to red.
-    uv run python scripts/measure_mr4_battery.py run --workload idle --charging no
-    uv run python scripts/measure_mr4_battery.py run --workload conversation \\
+    /venvs/apps_venv/bin/python scripts/measure_mr4_battery.py run --workload idle --charging no
+    /venvs/apps_venv/bin/python scripts/measure_mr4_battery.py run --workload conversation \\
         --utterance-wav <file.wav> --charging no
-    uv run python scripts/measure_mr4_battery.py run --workload tracking --charging no
+    /venvs/apps_venv/bin/python scripts/measure_mr4_battery.py run --workload tracking --charging no
     #    (tracking: keep a face, or a photograph of one, in the camera's view)
 
     # 3. Does it run while charging? Same command with the charger in, for as
     #    long as you like; the run's own clock shows it kept going.
-    uv run python scripts/measure_mr4_battery.py run --workload idle --charging yes \\
+    /venvs/apps_venv/bin/python scripts/measure_mr4_battery.py run --workload idle --charging yes \\
         --duration-s 1800
 
     # 4. After the unit is charged and booted again: the report. --record adds
     #    the section to docs/dev/measurements.md.
-    uv run python scripts/measure_mr4_battery.py report --record
+    /venvs/apps_venv/bin/python scripts/measure_mr4_battery.py report --record
 
 ``run --rehearse`` exercises the whole run against the simulator's daemon with a null
 audio sink and a separate log (``M-R4-rehearsal-heartbeat.jsonl``), which
@@ -65,7 +74,7 @@ from maipai_body.measure.battery import (
 from maipai_body.measure.budget import BudgetSampler, psutil_lister
 from maipai_body.measure.loop_bench import NullAudioIO
 from maipai_body.measure.report import battery_section, daemon_version_from
-from maipai_body.measure.run_header import new_run_header, upsert_markdown_section, write_run
+from maipai_body.measure.run_header import new_run_header, record_section, write_run
 from maipai_body.measure.turn_driver import (
     NoUsablePairing,
     WavCapture,
@@ -198,10 +207,13 @@ def _report(args) -> None:
             f"+/- {run['uncertainty_s']:g}, {run['heartbeats']} heartbeats"
         )
     if args.record:
-        upsert_markdown_section(
-            MEASUREMENTS_MD, "## M-R4: battery (unit)", battery_section(_header(args), probe, runs)
+        written = record_section(
+            MEASUREMENTS_MD,
+            "## M-R4: battery (unit)",
+            battery_section(_header(args), probe, runs),
+            fallback_dir=args.out_dir,
         )
-        print(f"updated {MEASUREMENTS_MD}")
+        print(f"recorded in {written}")
 
 
 def main() -> None:

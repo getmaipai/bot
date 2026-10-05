@@ -94,3 +94,28 @@ def test_write_run_takes_a_tag_so_three_configs_on_one_day_do_not_overwrite_each
     assert daemon_run.name == "M-R1-unit-daemon-2026-10-05.json"
     assert pod_run.name == "M-R1-unit-pod-2026-10-05.json"
     assert daemon_run != pod_run
+
+
+def test_record_section_updates_the_docs_file_when_it_is_there(tmp_path):
+    from maipai_body.measure.run_header import record_section
+
+    docs = tmp_path / "docs" / "dev"
+    docs.mkdir(parents=True)
+    md = docs / "measurements.md"
+    md.write_text("# Bench\n")
+    written = record_section(md, "## M-R1:", "## M-R1: x\n\nrows\n", fallback_dir=tmp_path / "out")
+    assert written == md
+    assert "rows" in md.read_text()
+
+
+def test_record_section_falls_back_to_a_file_beside_the_run_when_the_unit_has_no_docs_tree(
+    tmp_path,
+):
+    from maipai_body.measure.run_header import record_section
+
+    md = tmp_path / "no-such-dir" / "measurements.md"
+    out = tmp_path / "out"
+    written = record_section(md, "## M-R1:", "## M-R1: x\n\nrows\n", fallback_dir=out)
+    assert written == out / "section-M-R1.md"
+    assert written.read_text() == "## M-R1: x\n\nrows\n"
+    assert not md.exists()
