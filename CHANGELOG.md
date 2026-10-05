@@ -9,6 +9,12 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- EYES-01, the indicator seam (Reachy Mini): `Indicator`, `Look`,
+  `IndicatorSpec` and `NullIndicator` in the HAL seam, and a recording
+  `FakeEyes`. The palette has no red, `blink` and `ack` are the only
+  pulses, and an absent device returns at once without raising. Nothing
+  drives real eyes yet.
+
 - RM-07 egress tooling (`maipai_body/measure/netcapture.py`,
   `body/scripts/measure_rm07_egress.py`): reads a packet capture, groups the
   robot's own connections by destination and port, labels each against the

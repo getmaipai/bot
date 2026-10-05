@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterator
+from enum import StrEnum
 from typing import Literal, Protocol, runtime_checkable
 
 import numpy as np
 import numpy.typing as npt
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 SEAM_VERSION = "0.1.0"
 
@@ -309,3 +310,97 @@ class FaceTracker(Protocol):
     def get_face_target(self) -> FaceTrackTarget:
         """Return the latest tracked face, or a target with ``detected=False``."""
         ...
+
+
+class Palette(StrEnum):
+    """The only colours the eyes may show.
+
+    There is no red, by design: a red light on a face that watches a child
+    reads as alarm. The set is closed, so a red cannot be named, parsed
+    from a string or carried as a raw RGB value across this seam.
+    """
+
+    WHITE = "white"
+    GREEN = "green"
+    BLUE = "blue"
+    AMBER = "amber"
+    CYAN = "cyan"
+    MAGENTA = "magenta"
+    OFF = "off"
+
+
+PulseName = Literal["blink", "ack"]
+"""The two pulses the seam allows. There is no startle, for any audience."""
+
+PULSE_NAMES: tuple[str, ...] = ("blink", "ack")
+
+
+class Look(BaseModel):
+    """A steady look for the eyes: one palette colour at one brightness."""
+
+    colour: Palette
+    brightness: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
+class IndicatorSpec(BaseModel):
+    """What an indicator declares about itself.
+
+    ``connected`` is ``False`` for an absent device. The bot-internal name
+    is ``indicator``; the spec capability id is the existing ``eyes``.
+    """
+
+    connected: bool
+    palette: list[Palette]
+    pulses: list[str]
+
+
+def check_pulse(name: str) -> None:
+    """Raise ``ValueError`` unless ``name`` is a pulse the seam allows.
+
+    A refused name is a caller bug, not a device loss, so it never depends
+    on whether a device is plugged in.
+    """
+    if name not in PULSE_NAMES:
+        raise ValueError(f"unknown pulse {name!r}; the seam allows {', '.join(PULSE_NAMES)}")
+
+
+@runtime_checkable
+class Indicator(Protocol):
+    """A body's programmable eyes, or nothing at all.
+
+    Never raises ``BodyLost``: an absent or unplugged device returns at once
+    and reports ``connected=False`` in its spec. The only error is a
+    ``ValueError`` for a pulse name outside ``blink`` and ``ack``.
+    """
+
+    def spec(self) -> IndicatorSpec:
+        """Declare the palette, the pulses and whether a device answers."""
+        ...
+
+    def set_look(self, look: Look) -> None:
+        """Show a steady look until the next call."""
+        ...
+
+    def pulse(self, name: PulseName) -> None:
+        """Play a short pulse, ``blink`` or ``ack``, then return to the look."""
+        ...
+
+    def off(self) -> None:
+        """Turn the eyes off."""
+        ...
+
+
+class NullIndicator:
+    """The indicator of a body with no eyes: accepts every call, shows nothing."""
+
+    def spec(self) -> IndicatorSpec:
+        return IndicatorSpec(connected=False, palette=list(Palette), pulses=list(PULSE_NAMES))
+
+    def set_look(self, look: Look) -> None:
+        return None
+
+    def pulse(self, name: PulseName) -> None:
+        check_pulse(name)
+
+    def off(self) -> None:
+        return None

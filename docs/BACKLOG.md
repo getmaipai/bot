@@ -1886,6 +1886,23 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       ("stopping by the shop"), which the window and the closed list bound
       but do not remove.
 
+- [x] **EYES-01: the indicator seam** (M, Reachy Mini only, no spec
+      change, no vocab id). `Indicator`, `Look`, `IndicatorSpec`,
+      `NullIndicator` and `Palette` in `hal/seam.py`; `FakeEyes` with a
+      recorder in `bodies/reachy_mini/fake.py`. `indicator` is the
+      bot-internal name only; the spec capability id stays `eyes`. The
+      palette is exactly white, green, blue, amber, cyan, magenta and off:
+      no red member, and a red name, string or hex value is refused at the
+      seam. `pulse` accepts only `blink` and `ack` (anything else is a
+      `ValueError`); there is no `startle`, for any audience. Never raises
+      `BodyLost`: an absent or unplugged device returns at once and its
+      spec reports `connected=False`. Tests: `tests/test_indicator_seam.py`
+      (no red is representable, only blink and ack pulse, absent device
+      never raises). Written from this order alone: no vendor source read
+      or imported. Not built here: the USB serial driver and any wiring
+      into the app, which are later rows. Live lines: not run, sandbox
+      cannot run the daemon.
+
 ## Voice loop
 
 - [ ] **VOICE-01: the speech process** (M). Objective: `body/speech/`

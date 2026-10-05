@@ -27,14 +27,20 @@ import numpy.typing as npt
 
 from maipai_body.hal.errors import BodyLost
 from maipai_body.hal.seam import (
+    PULSE_NAMES,
     AntennaPositions,
     BodyProfile,
     DirectionOfArrival,
     FaceTrackTarget,
     HeadPose,
     ImuReading,
+    IndicatorSpec,
     InterpolationMethod,
+    Look,
+    Palette,
+    PulseName,
     StateFrame,
+    check_pulse,
 )
 
 from .envelope import clamp_target
@@ -185,6 +191,57 @@ class SentCommand:
     body_yaw: float | None = None
     duration_s: float | None = None
     method: InterpolationMethod | None = None
+
+
+@dataclass(frozen=True)
+class EyesCommand:
+    """One call the fake eyes accepted, stamped on the recorder's clock."""
+
+    kind: str  # "set_look" | "pulse" | "off"
+    t_s: float
+    look: Look | None = None
+    pulse: str | None = None
+
+
+class FakeEyes:
+    """A recording stand-in for the eyes; satisfies ``Indicator``.
+
+    With ``connected=False`` (or after ``unplug``) every call returns at once
+    and records nothing, as the real device must; it never raises
+    ``BodyLost``. A refused pulse name still raises ``ValueError``.
+    """
+
+    def __init__(self, connected: bool = True, clock: Callable[[], float] = time.monotonic) -> None:
+        self._connected = connected
+        self._clock = clock
+        self.commands: list[EyesCommand] = []
+        self.current_look: Look | None = None
+
+    def unplug(self) -> None:
+        self._connected = False
+
+    def spec(self) -> IndicatorSpec:
+        return IndicatorSpec(
+            connected=self._connected, palette=list(Palette), pulses=list(PULSE_NAMES)
+        )
+
+    def set_look(self, look: Look) -> None:
+        if not self._connected:
+            return
+        self.current_look = look
+        self.commands.append(EyesCommand("set_look", self._clock(), look=look))
+
+    def pulse(self, name: PulseName) -> None:
+        check_pulse(name)
+        if not self._connected:
+            return
+        self.commands.append(EyesCommand("pulse", self._clock(), pulse=name))
+
+    def off(self) -> None:
+        if not self._connected:
+            return
+        self.current_look = None
+        self.commands.append(EyesCommand("off", self._clock()))
 
 
 def load_recorded_samples() -> list[dict[str, Any]]:
