@@ -26,6 +26,7 @@ from maipai_body.model_assets import AssetUnavailable, PinnedAsset, ensure_asset
 PINS_PATH = Path(__file__).with_name("pins.json")
 EXCLUDED_LIBRARIES = {"dances": "licence unverified; excluded until Pollen states one"}
 _REVISION = re.compile(r"[0-9a-f]{40}")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 class LibraryPin(BaseModel, frozen=True):
@@ -61,6 +62,9 @@ def ensure_move(pin: LibraryPin, name: str, cache_dir: Path) -> Path:
     """The verified local file for ``name``, fetched once and cached under the pin's revision."""
     if name not in pin.files:
         raise AssetUnavailable(f"{name} is not in the pinned {pin.library} library")
+    if not _SHA256.fullmatch(pin.files[name]):
+        # Refuse before any request: an unpinned file is never fetched.
+        raise AssetUnavailable(f"{name} in the {pin.library} library has no valid sha256 pin")
     asset = PinnedAsset(
         file=f"{pin.library}-{pin.revision[:12]}-{name}.json",
         url=move_url(pin, name),

@@ -566,10 +566,14 @@ the image release and the profile id in the header.
       the body at the plan's `react` slot or on a person's ask, never
       on sentiment. Mirror: the org's "download, don't vendor" rule;
       a Tier 0 package's manifest. Acceptance: "do the happy dance"
-      plays the move on the simulator; the reply path's cues are
-      untouched (a test asserts no move plays from a cue). Exit: the
+      plays the move through the body (proven on the fake body and the
+      MuJoCo simulator only; not verified on a physical unit); the
+      reply path's cues are untouched (a test asserts no move plays
+      from a cue). Exit: the
       catalog's CI and `bash scripts/check.sh`.
       Status 2026-10-05: body side built in `body/maipai_body/moves/` (format, pinned fetch, player, ask and react entry points, tests); box stays unchecked until `scripts/pin_moves_library.py` has pinned the emotions library with network, the simulator run is done, and the catalog manifest exists.
+      Needs the unit: run `cd body && MAIPAI_BODY_LIVE=1 uv run pytest tests/test_moves_live.py -v` with the robot's daemon answering on port 8000 (the simulator, `reachy-mini-daemon --sim`, is what has been run so far); the move's physical motion is judged by eye on the unit.
+      Outbound connection (org rules: Download, don't vendor; Privacy: no connection added without review). What: the emotions library's move files (JSON). From where: huggingface.co, a public dataset, no account or token. When: only when an admin runs `body/scripts/pin_moves_library.py` or installs the package; never at runtime without that. What is sent: an ordinary file request (URL and standard HTTP headers), no household data. Every file is pinned by full commit revision and sha256 checksum before use: `ensure_move` refuses an unpinned or checksum-mismatched file (tests in `body/tests/test_moves.py`).
 - [ ] **MOVES-02: teach it a move** (S, after MOVES-01). Objective: a
       catalog app: gravity compensation on, a person moves the head
       and antennas by hand, the body records the trajectory in the

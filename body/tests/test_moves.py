@@ -208,6 +208,29 @@ def test_a_checksum_mismatch_is_refused_and_leaves_nothing_behind(tmp_path, monk
     assert list(tmp_path.rglob("*.json")) == []
 
 
+@pytest.mark.parametrize("bad_sum", ["", "abc123", "Z" * 64, "A" * 64])
+def test_ensure_move_refuses_an_unpinned_checksum_before_any_request(
+    tmp_path, monkeypatch, bad_sum
+):
+    pin = LibraryPin(
+        library="emotions",
+        repo="o/r",
+        revision="a" * 40,
+        license="Apache-2.0",
+        files={"happy1": bad_sum},
+    )
+    calls: list[str] = []
+
+    def fake_get(url, **kwargs):
+        calls.append(url)
+        raise AssertionError("no request may be made for an unpinned file")
+
+    monkeypatch.setattr("maipai_body.model_assets.requests.get", fake_get)
+    with pytest.raises(AssetUnavailable):
+        ensure_move(pin, "happy1", tmp_path)
+    assert calls == []
+
+
 def test_a_move_the_pin_does_not_list_is_unavailable(tmp_path):
     pin = _pin(tmp_path, b"x")
     with pytest.raises(AssetUnavailable):

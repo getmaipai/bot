@@ -1,7 +1,9 @@
-"""MOVES-01 acceptance on the simulator: a move plays through the real daemon.
+"""MOVES-01 acceptance on the fake body and the simulator (not a physical unit).
 
 Runs against the fake always and against ``reachy-mini-daemon --sim``
-when ``MAIPAI_BODY_LIVE=1`` (the ``body_client`` fixture). The move is
+when ``MAIPAI_BODY_LIVE=1`` (the ``body_client`` fixture). Nothing here has
+run on a physical unit; that check is separate (see docs/BACKLOG.md MOVES-01).
+The move is
 synthetic; the acceptance phrase is exercised end to end through
 ``MovesService.ask``.
 """

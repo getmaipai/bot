@@ -1797,6 +1797,12 @@ future test can measure the gap. G11 beyond its presence/tracking floor
 (the still-image call, the consent prompt, the hub route, the Stack's
 `vision` role) remains its own undesigned item, not started.
 
+## Outbound connections
+
+The org's privacy rule is in [PRIVACY.md](https://github.com/getmaipai/.github/blob/main/PRIVACY.md) (not reachable from this session; confirm the wording at review). Each connection this repo adds is listed here.
+
+- **Recorded moves library (MOVES-01).** What: the emotions library's move files (JSON). From where: huggingface.co, a public dataset, no account or token. When: only when an admin runs `body/scripts/pin_moves_library.py` or installs the package; never at runtime without that. What is sent: an ordinary file request (URL and standard HTTP headers), no household data. Every file is pinned by full commit revision and sha256 checksum before use: `ensure_move` refuses an unpinned or checksum-mismatched file.
+
 ## Research notes
 
 - [`dev/research-minicpm5-reachy-mini-2026-09-27.md`](dev/research-minicpm5-reachy-mini-2026-09-27.md):
