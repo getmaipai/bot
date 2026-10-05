@@ -89,6 +89,15 @@ _FACE_CHECK_JOIN_TIMEOUT_S = 5.0
 # defensively rather than assumed.
 _PERSON_ID_RE = re.compile(r"^person-[a-z0-9]{6,}$")
 
+# M-R5 / design record section 4: when a turn was lost to the link, the
+# robot says one line once the hub answers again, never one per failed
+# turn. Spoken as the head of the next reply that reaches the hub: the
+# hub's own `tts` route is the only voice this body has, so the first
+# moment it can speak at all is the first moment the hub answers. The
+# wording is a first cut for the owner's call (the design record names
+# the unreachable line, "I can't reach home right now", not this one).
+LINK_RESTORED_LINE = "Sorry, I lost my connection to home for a moment."
+
 
 class FunnelState(StrEnum):
     IDLE = "idle"
@@ -190,6 +199,11 @@ class ConversationLoop:
         self._lock = threading.Lock()
         self._state = RunLoopState()
         self._cue_seq = 0
+        # A turn was lost to the link and the line about it is still
+        # owed. A plain bool, not a count: several lost turns in one
+        # outage are announced once. Only the funnel thread reads or
+        # writes it (the speak worker reports through an Event).
+        self._lost_turn_unannounced = False
 
     @property
     def state(self) -> RunLoopState:
@@ -256,6 +270,13 @@ class ConversationLoop:
     def _render(self, cue: Cue) -> None:
         context = SuppressionContext(muted=self._is_muted())
         self._expression.handle(cue, context)
+
+    def _link_lost(self) -> None:
+        """Section 7: loss of the hub mid-turn is `cancel`, `link_lost`.
+        Renders it once (the stop primitive holds the pose, so the head
+        settles where it is) and owes the one line on reconnect."""
+        self._render(Cue(phase=Phase.CANCEL, cue_seq=self._next_cue_seq()))
+        self._lost_turn_unannounced = True
 
     def set_muted(self, muted: bool) -> None:
         """The software-mute toggle's own entry point (G8's own state,
@@ -332,6 +353,9 @@ class ConversationLoop:
             stt_result = self._stt.run(self._capture)
         except Exception:
             logger.warning("stt stream failed; back to idle", exc_info=True)
+            # The listen cue already moved the head; a lost stream is a
+            # lost turn, so it settles and is announced like any other.
+            self._link_lost()
             self._enter(FunnelState.IDLE)
             return
 
@@ -385,7 +409,7 @@ class ConversationLoop:
                     reply_text = turn_event.reply_text
         except (TurnLinkLost, requests.RequestException):
             logger.warning("turn stream link lost", exc_info=True)
-            self._render(Cue(phase=Phase.CANCEL, cue_seq=self._next_cue_seq()))
+            self._link_lost()
             self._enter(FunnelState.IDLE)
             return
 
@@ -393,20 +417,27 @@ class ConversationLoop:
             self._enter(FunnelState.IDLE)
             return
 
-        self._speak(reply_text, turn_id, stop_event)
+        announce = self._lost_turn_unannounced
+        text = f"{LINK_RESTORED_LINE} {reply_text}" if announce else reply_text
+        if not self._speak(text, turn_id, stop_event) and announce:
+            self._lost_turn_unannounced = False
         self._enter(FunnelState.IDLE)
 
     def _speak(
         self, reply_text: str, turn_id: str | None, outer_stop_event: threading.Event
-    ) -> None:
+    ) -> bool:
+        """Speak the reply; returns True when the link dropped under it."""
         self._enter(FunnelState.SPEAKING)
         barge_in = threading.Event()
+        link_lost = threading.Event()
 
         def _on_first_chunk() -> None:
             self._render(Cue(phase=Phase.SPEAK, cue_seq=self._next_cue_seq()))
 
         speak_thread = threading.Thread(
-            target=self._speak_worker, args=(reply_text, barge_in, _on_first_chunk), daemon=True
+            target=self._speak_worker,
+            args=(reply_text, barge_in, _on_first_chunk, link_lost),
+            daemon=True,
         )
         speak_thread.start()
 
@@ -440,14 +471,28 @@ class ConversationLoop:
         # connect/read timeout, which barge-in's stop_event usually
         # beats by checking between every streamed chunk.
         speak_thread.join()
-        if not barge_in.is_set():
-            self._render(Cue(phase=Phase.DONE, cue_seq=self._next_cue_seq()))
+        if barge_in.is_set():
+            return False
+        if link_lost.is_set():
+            # Mid-sentence loss: the reply was not finished, so this is a
+            # cancel, never the settle a finished reply earns.
+            self._link_lost()
+            return True
+        self._render(Cue(phase=Phase.DONE, cue_seq=self._next_cue_seq()))
+        return False
 
-    def _speak_worker(self, reply_text, stop_event: threading.Event, on_first_chunk) -> None:
+    def _speak_worker(
+        self,
+        reply_text,
+        stop_event: threading.Event,
+        on_first_chunk,
+        link_lost: threading.Event,
+    ) -> None:
         try:
             self._tts.speak(reply_text, on_first_chunk=on_first_chunk, stop_event=stop_event)
         except (TtsLinkLost, requests.RequestException):
             logger.warning("tts playback failed", exc_info=True)
+            link_lost.set()
         finally:
             self._playback.stop()
 
