@@ -20,6 +20,10 @@ dependencies = [
     # reachy-mini's own transitive pin - declared explicitly so a future
     # reachy-mini version bump can't silently drop or reversion it under us.
     "numpy>=2.0,<3",
+    # EYES-06: the Reachy Eyes LED board is driven over USB serial by our
+    # own code, so pyserial is declared directly rather than leaning on
+    # reachy-mini's transitive pin (3.5 today, BSD-3, see NOTICE).
+    "pyserial>=3.5,<4",
     # AGENTS.md names maipai-spec, pinned at the same tag Home pins
     # (spec-v0.1.73), as this body's dependency once it consumes spec
     # shapes. Not pinned yet: commons/spec/pyproject.toml has no

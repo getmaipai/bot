@@ -1,6 +1,9 @@
 MaiPai Bot
 Third-Party Licenses and Attributions
 
-This is a fresh repo (the platform rebuild, see docs/dev.md). No
-third-party components are bundled yet. When one lands, its attribution
-goes here, per docs/PACKAGES.md in getmaipai/.github.
+This is a fresh repo (the platform rebuild, see docs/dev.md). Components
+declared as direct dependencies are attributed here, per docs/PACKAGES.md in
+getmaipai/.github.
+
+pyserial 3.5 (Chris Liechti), BSD-3-Clause. Declared in body/pyproject.toml;
+used for the Reachy Eyes USB serial link. https://github.com/pyserial/pyserial

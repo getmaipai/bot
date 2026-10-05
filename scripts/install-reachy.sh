@@ -38,6 +38,9 @@ SSH_USER="${MAIPAI_REACHY_SSH_USER:-pollen}"
 APPS_VENV="/venvs/apps_venv"
 APP_NAME="maipai_bot"
 DAEMON_PORT="${MAIPAI_REACHY_DAEMON_PORT:-8000}"
+# Reachy Eyes serial access (EYES-06): the fixed, checked USB identity
+# lives in reachy-eyes-setup.sh so the installer accepts no arbitrary IDs.
+EYES_SETUP="$(dirname "$0")/udev/reachy-eyes-setup.sh"
 
 WHEEL_FILE="$(basename "$WHEEL_PATH")"
 REMOTE_WHEEL="/tmp/$WHEEL_FILE"
@@ -50,6 +53,7 @@ if [ "$DRY_RUN" = 1 ]; then
   printf 'ssh %q %q <<'\''REMOVE_VENDOR_APPS'\''\n' "$SSH_USER@$HOST" "python3 - $DAEMON_PORT $APP_NAME"
   sed 's/^/  /' < <(sed -n '/^import json$/,/^REMOVE_VENDOR_APPS$/p' "$0" | sed '$d')
   printf 'REMOVE_VENDOR_APPS\n'
+  printf 'ssh %q %q < %q\n' "$SSH_USER@$HOST" "sudo bash -s" "$EYES_SETUP"
   printf 'ssh %s "sudo systemctl restart reachy-mini-daemon"\n' "$SSH_USER@$HOST"
   printf 'ssh %q %q\n' "$SSH_USER@$HOST" "rm -f '$REMOTE_WHEEL'"
   exit 0
@@ -142,6 +146,9 @@ if remaining:
     print(f"still installed after removal: {', '.join(remaining)}", file=sys.stderr)
     sys.exit(1)
 REMOVE_VENDOR_APPS
+
+echo "== eyes serial access (udev rule, dialout for the daemon's service user)"
+ssh "$SSH_USER@$HOST" "sudo bash -s" < "$EYES_SETUP"
 
 echo "== restarting reachy-mini-daemon"
 ssh "$SSH_USER@$HOST" "sudo systemctl restart reachy-mini-daemon"

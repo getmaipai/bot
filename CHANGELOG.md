@@ -15,6 +15,11 @@ checklist (`docs/dev.md`).
   pulses, and an absent device returns at once without raising. Nothing
   drives real eyes yet.
 
+- EYES-06 (Reachy Mini): `pyserial` is a direct dependency, and the install
+  step can write the udev rule (mode 0660, group dialout) and add the daemon
+  unit's service user to dialout for the Eyes serial port, idempotently. The
+  rule is limited to the design's USB ids, 2e8a:10fc.
+
 - RM-07 egress tooling (`maipai_body/measure/netcapture.py`,
   `body/scripts/measure_rm07_egress.py`): reads a packet capture, groups the
   robot's own connections by destination and port, labels each against the
