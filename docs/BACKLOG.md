@@ -615,6 +615,10 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       Whether gravity compensation holds the head up without drift, how
       faithfully the replay follows the hand, and the state feed rate
       actually reached at 50 Hz are all unmeasured and judged on the unit.
+      UNVERIFIED until that unit run: the client calls SDK methods
+      `enable_gravity_compensation` and `disable_gravity_compensation`,
+      which the pinned OpenAPI fixture does not confirm; the fake and
+      simulator only record the requested state.
       Outbound connection: none. Taught moves are written and read on this
       device only; the modules import no network library (a test asserts it).
 - [ ] **GUEST-01: a store app as a guest** (M, after v0.1; the design's

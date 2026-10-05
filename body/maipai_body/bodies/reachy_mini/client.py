@@ -182,6 +182,8 @@ class ReachyMiniClient:
 
     # -- Teachable --
 
+    # UNVERIFIED until the MOVES-02 unit run: the SDK's gravity-compensation
+    # method names are not confirmed by the pinned API fixture.
     def enable_gravity_compensation(self) -> None:
         self._require_connected()
         try:

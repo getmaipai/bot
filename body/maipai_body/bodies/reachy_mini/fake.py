@@ -210,6 +210,8 @@ class FakeReachyMiniClient:
         self.motors_enabled = False
         self.sent_commands.append(SentCommand(kind="disable"))
 
+    # UNVERIFIED simulator path: this records requested gravity-compensation
+    # state only; it does not confirm the Reachy SDK supports either method.
     def enable_gravity_compensation(self) -> None:
         self._require_connected()
         self.gravity_compensation = True
