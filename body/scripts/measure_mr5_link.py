@@ -51,7 +51,13 @@ import requests
 
 from maipai_body.bodies.reachy_mini.client import ReachyMiniClient
 from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
-from maipai_body.measure.link_loss import SCENARIOS, LinkLossBench, run_trial, summarize_trials
+from maipai_body.measure.link_loss import (
+    SCENARIOS,
+    LinkLossBench,
+    run_trial,
+    stratified_outages,
+    summarize_trials,
+)
 from maipai_body.measure.report import daemon_version_from, link_loss_section
 from maipai_body.measure.run_header import new_run_header, record_section, write_run
 from maipai_body.measure.stand_in_hub import StandInHub
@@ -120,6 +126,14 @@ def main() -> None:
                         bench.start()
                         try:
                             rows = []
+                            # reset trials spread their outages across the report interval so
+                            # the reconnect p50 and p95 describe all of it; a blackhole is
+                            # already down for the client's whole timeout.
+                            outages = (
+                                stratified_outages(count, interval_s=args.report_interval)
+                                if fault == "reset"
+                                else [0.0] * count
+                            )
                             for i in range(count):
                                 print(f"{scenario} / {fault}: trial {i + 1} of {count}", flush=True)
                                 rows.append(
@@ -129,6 +143,7 @@ def main() -> None:
                                         fault,
                                         cancel_timeout_s=cancel_timeout_s,
                                         recover_timeout_s=max(30.0, args.report_interval * 3),
+                                        outage_s=outages[i],
                                     )
                                 )
                         finally:

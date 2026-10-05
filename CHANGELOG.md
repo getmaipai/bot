@@ -12,6 +12,21 @@ checklist (`docs/dev.md`).
 - The robot's state frame now carries `app_version`, the installed
   `maipai-bot` version, in every frame (`daemon_version` is still the
   vendor SDK's), so the hub can compare a robot to a Bot release.
+- Measurement tooling for the design's section 12 rows (`maipai_body/measure/`,
+  `body/scripts/measure_mr*.py`, `docs/dev/measure-runbook.md`): M-R2 cue to
+  motion with p50 and p95 and a stall probe, M-R5 link loss on a stand-in
+  hub, and hardware-only scripts for M-R1 (the Compute Module budget), M-R3
+  (wake and direction of arrival) and M-R4 (battery), with unit-only checks
+  gated on `MAIPAI_UNIT=1`.
+
+### Changed
+
+- A link lost mid-sentence or while listening (the stt stream) now raises
+  one `cancel` and settles the head, where mid-sentence loss used to render
+  a finished reply's `settle` and a lost stt stream left the head in its
+  listen pose; a turn stream that ends without `done` or `error` is a lost
+  turn, not an empty one; and a lost turn is announced once, on the next
+  reply that reaches the hub.
 
 ## [0.1.0] - 2026-09-28
 

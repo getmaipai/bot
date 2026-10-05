@@ -21,6 +21,7 @@ from maipai_body.expression.renderers import renderer_for
 from maipai_body.hal.seam import AntennaPositions, BodyProfile, HeadActuator, HeadPose
 from maipai_body.measure.motion import (
     FeedRecorder,
+    Sample,
     analyze_motion,
     axis_peaks_exceeding_limits,
     commanded_peak_rad,
@@ -38,6 +39,10 @@ _LATENCY_FIELDS = (
     "peak_velocity_rad_s",
 )
 _HEAD_AXES = {"head_pitch": "pitch", "head_roll": "roll", "head_yaw": "yaw"}
+# A primitive that only means something from a displaced pose is measured after
+# the one that displaces it: from neutral, `settle` has nothing to settle.
+PRECONDITIONS = {"settle": "tilt"}
+_NEUTRAL = Sample(t_received_ns=0, pitch=0.0, roll=0.0, yaw=0.0, left=0.0, right=0.0)
 
 
 class StampingClient:
@@ -110,6 +115,10 @@ def measure_primitive(
     """One cue, one row: latency split, amplitude, peak velocity, settling, limits."""
     _go_neutral(client, neutral_duration_s)
     sleep(pause_s)  # from a common resting pose, not wherever the last run ended
+    precondition = PRECONDITIONS.get(primitive)
+    if precondition is not None:
+        renderer_for(profile.id)(precondition, client, profile, doa_angle_rad=doa_angle_rad)
+        sleep(pause_s)
 
     stamped = StampingClient(client, clock)
     recorder, thread = _record(client, frequency)
@@ -125,7 +134,14 @@ def measure_primitive(
 
     trace = recorder.samples[baseline_index:]
     commanded = commanded_peak_rad(build_steps(primitive, profile, doa_angle_rad=doa_angle_rad))
-    row: dict[str, Any] = {"primitive": primitive, "commanded_peak_rad": commanded}
+    if precondition is not None and baseline is not None:
+        # the motion asked of it is the way back from where the precondition left the head
+        commanded = max(commanded, pose_distance(baseline, _NEUTRAL))
+    row: dict[str, Any] = {
+        "primitive": primitive,
+        "precondition": precondition,
+        "commanded_peak_rad": commanded,
+    }
     if baseline is None:
         row.update(frames=0, error="no frames captured")
         return row

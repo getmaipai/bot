@@ -31,7 +31,7 @@ from tests.kinematic_double import KinematicFakeClient
 FAST = {"neutral_duration_s": 0.0, "pause_s": 0.05, "window_s": 0.45}
 LIVE = {"neutral_duration_s": 0.8, "pause_s": 0.3, "window_s": 1.5}
 
-MOVING = [p for p in PRIMITIVE_NAMES if p not in ("settle", "stop")]
+MOVING = [p for p in PRIMITIVE_NAMES if p != "stop"]  # settle is measured after a tilt
 
 
 @pytest.fixture(params=["kinematic", "live"])
@@ -225,3 +225,22 @@ def test_the_stall_probe_residual_is_read_after_the_head_has_been_sent_back():
     )
     assert rows[0]["achieved_rad"] > 0.1  # it did move out
     assert rows[0]["residual_rad"] < 0.02  # and the residual is measured after it came back
+
+
+def test_settle_is_measured_from_the_pose_a_tilt_leaves_because_from_neutral_it_has_nothing_to_do(
+    bench,
+):
+    client, pacing = bench
+    row = measure_primitive(client, REACHY_MINI_PROFILE, "settle", **pacing)
+    assert row["precondition"] == "tilt"
+    # it moved, and the motion it was asked for is the displacement it started from
+    assert row["cue_to_onset_ms"] is not None
+    assert row["commanded_peak_rad"] > 0.3
+    assert row["stall"] == "reached"
+    assert row["amplitude_rad"] == pytest.approx(row["commanded_peak_rad"], abs=0.1)
+
+
+def test_other_primitives_have_no_precondition(bench):
+    client, pacing = bench
+    row = measure_primitive(client, REACHY_MINI_PROFILE, "perk", **pacing)
+    assert row["precondition"] is None

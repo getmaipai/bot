@@ -39,6 +39,7 @@ def cue_motion_section(header: dict[str, Any], summaries: list[dict[str, Any]]) 
         "",
         *section_header_lines(header),
         "- onset threshold and settle rule: `maipai_body/measure/motion.py`",
+        "- settle is measured from the pose a tilt leaves (from neutral it has nothing to settle)",
         "",
         "| primitive | runs | onset p50 (ms) | onset p95 (ms) | cue→command p50 (ms) | "
         "command→onset p50 (ms) | settled p50 (ms) | amplitude p50 (rad) | "
@@ -91,7 +92,8 @@ def link_loss_section(
         *section_header_lines(header),
         "- cancel: from the link going down to the CANCEL cue reaching the expression engine",
         "- still: from the cancel to the first run of still frames in the state feed",
-        "- reconnect: from the link returning to the next successful state report",
+        "- reconnect: from the link returning to the next successful state report; reset "
+        "trials use outages spread evenly across the report interval",
         "- line: the lost turn announced once on the next turn, and not on the one after",
         "",
         "| scenario | fault | trials | cancel p50 (ms) | cancel p95 (ms) | still p50 (ms) | "
