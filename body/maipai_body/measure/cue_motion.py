@@ -13,7 +13,10 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import asdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import numpy.typing as npt
 
 from maipai_body.bodies.reachy_mini.envelope import axis_bounds_rad
 from maipai_body.expression.reachy_mini_renderer import build_steps  # registers the renderer
@@ -28,7 +31,11 @@ from maipai_body.measure.motion import (
     pose_distance,
     stall_verdict,
 )
+from maipai_body.measure.stamps import CueId, StampSink
 from maipai_body.measure.stats import summarize
+
+if TYPE_CHECKING:
+    from maipai_body.bodies.reachy_mini.fake import LoopbackRecorder
 
 _LATENCY_FIELDS = (
     "cue_to_command_ms",
@@ -111,8 +118,16 @@ def measure_primitive(
     frequency: float = 30.0,
     clock: Callable[[], int] = time.monotonic_ns,
     sleep: Callable[[float], None] = time.sleep,
+    sink: StampSink | None = None,
+    cue_id: CueId | None = None,
 ) -> dict[str, Any]:
-    """One cue, one row: latency split, amplitude, peak velocity, settling, limits."""
+    """One cue, one row: latency split, amplitude, peak velocity, settling, limits.
+
+    With a ``sink`` and a ``cue_id`` the row's ``t_cue_received``,
+    ``t_motion_command`` and ``t_encoder_onset`` also go to the sink, on
+    the same clock. The harness has no socket, so it never stamps
+    ``t_cue_emitted``: a bench that runs one stamps it before the cue.
+    """
     _go_neutral(client, neutral_duration_s)
     sleep(pause_s)  # from a common resting pose, not wherever the last run ended
     precondition = PRECONDITIONS.get(primitive)
@@ -149,12 +164,54 @@ def measure_primitive(
         trace, baseline, t_cue_ns=t_cue_ns, t_command_ns=stamped.t_first_command_ns
     )
     row.update(asdict(result))
+    if sink is not None and cue_id is not None:
+        sink.stamp(cue_id, "t_cue_received", t_cue_ns)
+        if stamped.t_first_command_ns is not None:
+            sink.stamp(cue_id, "t_motion_command", stamped.t_first_command_ns)
+        if result.t_onset_ns is not None:
+            sink.stamp(cue_id, "t_encoder_onset", result.t_onset_ns)
     row["limits_exceeded"] = [
         [name, extreme, bound]
         for name, extreme, bound in axis_peaks_exceeding_limits(profile, trace)
     ]
     row["stall"] = stall_verdict(commanded_rad=commanded, achieved_rad=result.amplitude_rad)
     return row
+
+
+def stamp_reply_audio(
+    client: Any,
+    sink: StampSink,
+    cue_id: CueId,
+    samples: npt.NDArray[np.float32],
+    *,
+    clock: Callable[[], int] = time.monotonic_ns,
+) -> None:
+    """Hand one chunk to the playback device and stamp ``t_first_audio_out``.
+
+    The stamp is taken the instant before the first sample is handed over,
+    which is the design record's definition; the sound leaving the speaker
+    is a separate stamp (:func:`loopback_acoustic_onset_ns`).
+    """
+    client.start_playing()
+    sink.stamp(cue_id, "t_first_audio_out", clock())
+    client.push_audio_sample(samples)
+
+
+def loopback_acoustic_onset_ns(
+    recorder: LoopbackRecorder, *, output_latency_ns: int = 0, floor: float = 1e-3
+) -> int | None:
+    """``t_acoustic_onset`` from the fake's loopback: the first chunk with sound in it.
+
+    The fake's loopback has no device of its own, so ``output_latency_ns``
+    is the latency a test or the bench header declares for the device
+    (a deep buffer is a large one); the sim cannot measure it, and the
+    unit's number comes from the array's own capture instead. A silent
+    loopback has no onset.
+    """
+    for chunk in recorder.chunks:
+        if chunk.samples.size and float(np.max(np.abs(chunk.samples))) > floor:
+            return int(round(chunk.t_s * 1e9)) + output_latency_ns
+    return None
 
 
 def measure_repeated(

@@ -2105,6 +2105,21 @@ value; RT-02 and RT-03 carry it.
       cue, a deep playback buffer, a socket loss, a disagreeing hub
       stamp) each behave as section 5 says. Exit: `bash
       scripts/check.sh`.
+      S-EXPR-02 (bot half, Reachy Mini only): `measure/stamps.py` holds the
+      `StampSink` Protocol (the run loop gets one injected sink; the run-loop
+      lane, S-RUNLOOP-LANE, wires it), `NullSink` and `StampRecorder`, which
+      keeps first-wins stamps per cue on `time.monotonic_ns` and derives the
+      socket leg, cue to command, cue to encoder onset, cue to acoustic
+      onset, the device output latency and the ordering result against the
+      acoustic onset. `measure/cue_motion.py` stamps received, command and
+      encoder onset from `measure_primitive` and reads `t_acoustic_onset`
+      from the fake's loopback recorder. Landed and verified: the
+      deterministic negative rows (dropped, duplicated, late cue, deep
+      buffer, socket loss, disagreeing hub stamp), the suppression rule, and
+      the p95-under-50-ms verdict. Not run: the sim rows (the sandbox cannot
+      run the daemon, see `docs/dev/measurements.md`) and the unit row,
+      which stays on the checklist; the output latency of the real device is
+      the unit's own capture, never the fake's.
 - [ ] **EXPR-03: the engine's cues** (M, after WIRE-01 for connected mode
       and RT-01 for local; the plan half after ACT-03). Objective: the
       runtime emits `ExpressionCue` at the phases of `dev.md` section 5

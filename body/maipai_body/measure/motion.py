@@ -49,6 +49,7 @@ class MotionResult:
     frames: int
     cue_to_command_ms: float | None = None
     cue_to_onset_ms: float | None = None
+    t_onset_ns: int | None = None
     command_to_onset_ms: float | None = None
     amplitude_rad: float = 0.0
     peak_velocity_rad_s: float = 0.0
@@ -157,6 +158,7 @@ def analyze_motion(
         prev = sample
 
     if onset_ns is not None:
+        result.t_onset_ns = onset_ns
         result.cue_to_onset_ms = (onset_ns - t_cue_ns) / 1e6
         if t_command_ns is not None:
             result.command_to_onset_ms = (onset_ns - t_command_ns) / 1e6
