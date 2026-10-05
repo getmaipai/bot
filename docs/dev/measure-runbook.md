@@ -83,6 +83,20 @@ the connection will drop (use `tmux` or `systemd-run --scope`):
     --wifi-outage-s 20 --wifi-trials 5 --record
 ```
 
+## MOVE-CARRY-01: the carry thresholds (unit)
+
+Every threshold in `body/maipai_body/presence/motion_state.py` is an
+UNMEASURED design default. Nothing below has been run.
+
+| Row | Run | Reads as |
+|---|---|---|
+| Lift and bump | Rest the body on a table. Nudge it with a finger ten times, then lift it by the base ten times and set it down | Per trial: the reported state sequence. Pass: no nudge reaches `lifted`; every lift reaches `lifted`. Record the peak deviation from 1 g and the peak gyro of each, to set `MOVING_ACCELERATION_DEVIATION_M_S2`, `MOVING_GYRO_RAD_S` and `LIFT_MIN_S` |
+| Carry | Walk across the room holding the body, three times, at a slow and a normal pace | Whether `carried` is reached and never `freefall` or `tipped`. Sets `CARRY_MOVING_S` |
+| Put down | Set the body down gently, then hand it back and hold it as still as a person can, thirty seconds each | Time from touchdown to `put_down`; whether a still hand ever reads as put down before thirty seconds. Sets `PUT_DOWN_STILL_S` |
+| Drop while held | Over a cushion only, from 5 cm | `freefall` reported while the hold stays latched, then `put_down` after landing |
+| Tilt while held | Tilt the held body past 45 degrees | `tipped` reported, hold stays latched |
+| Gravity compensation while held (UNVERIFIED) | With `carry_gravity_compensation` on in a local profile, lift the body with the base tilted, hold it, set it down | Whether the head holds still under gravity compensation, and whether it is released on put down. The flag stays off until this row passes |
+
 ## What the simulator already showed, and what it cannot
 
 - The harnesses run end to end against `reachy-mini-daemon` 1.11.0 `--sim`:

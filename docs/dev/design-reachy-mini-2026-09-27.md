@@ -342,8 +342,9 @@ identity is inferred from *this* signal - tracking stays anonymous
 presence, never a lookup (section 4's amendment adds identity as a
 separate, explicitly-enrolled inference elsewhere in the pipeline, not
 by teaching this observation to recognize anyone). The IMU is read for
-the tip and freefall
-observations the safety section uses. Frames never leave the body
+the tip, freefall and held observations the safety section uses (a lift,
+a carry and a put down come from one deterministic state machine over the
+same readings, `presence/motion_state.py`, no learned component). Frames never leave the body
 process; a still image for the hub is the v0.2 host call the design
 already names, consented and explicit.
 
