@@ -121,16 +121,17 @@ does not.
       recorded score. Acceptance: the decision rule applied (latency
       under the rule and every hard row green) and the model named; the
       honesty score handed to the owner (question 13). Waits on RT-01.
-      Background turns: the assistant features (heartbeat, errands,
-      scheduled tasks) are gated by a per-model `background_turns` flag,
-      a new field in the commons model record (owner decision
-      2026-10-05): off for models below the capability floor. This item
-      records the named model's value.
+      Background turns: see the one note under "Household runtime on
+      the robot"; this item records the named model's value.
+      Pi + Hailo build: NO PRIORITY by owner decision 2026-10-05.
+      Nothing for it is dispatched or started until the owner says so.
 - [ ] **M-03: the Hailo provider option** (M, only if M-02's rule promotes
       it or v0.2 asks). Objective: the rendered prompt's token count
       against the 2,048-token ceiling, first reply with retained context
       on the current HailoRT, the swap cost against vision. Acceptance:
       "fits and faster" or "closed", with numbers.
+      Pi + Hailo build: NO PRIORITY by owner decision 2026-10-05.
+      Nothing for it is dispatched or started until the owner says so.
 - [ ] **M-04: embed latency** (S). nomic-embed-text-v1.5 through
       llama-server on the Pi; acceptance under 60 ms warm per utterance.
 - [ ] **M-05: the judge drain and its preemption** (S). First the
@@ -272,10 +273,10 @@ Mini and the Pi 5 + Hailo-10H build are two profiles over one body
 layer, never two code lines. The Reachy Mini (Wireless, CM4 4 GB) is the
 connected body: the hub runs its turns, it must work away from home
 over Tailscale, and it keeps working in a limited way when the hub is
-gone. The Pi + Hailo build is the standalone-capable body. Offline
-behaviour is one shared ladder (LINK-STATE-01 below) with different top
-rungs: rungs 0 to 2 are the same on both, and the Pi + Hailo build adds
-rung 3, where the local runtime takes the turn.
+gone. The Pi + Hailo build is the standalone-capable body.
+Pi + Hailo build: NO PRIORITY by owner decision 2026-10-05. Nothing for
+it is dispatched or started until the owner says so.
+The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
 
 - [ ] **RM-00: the body-capability vocabulary** (S, spec first, filed
       in `commons` as BODY-VOCAB-01). Objective:
@@ -1683,7 +1684,7 @@ rung 3, where the local runtime takes the turn.
       the tag carry both values, `home`'s card renders them, and `bot`
       pins the tag. Exit: the `commons` gate and the tag.
 - [ ] **LINK-STATE-01: the offline ladder's first rungs as one state
-      machine** (S, both profiles, after LINK-STATE-00; the spoken
+      machine** (S, Reachy Mini only, after LINK-STATE-00; the spoken
       parts also wait on G4b's clips or a local TTS). Objective: one
       machine in `body/maipai_body/link/`, driven by `LinkLifecycle` and
       the funnel in `run_loop.py`: `connected` goes to `reconnecting`
@@ -1711,11 +1712,13 @@ rung 3, where the local runtime takes the turn.
       to 2 queue nothing, and the status line says so ("nothing is
       saved for later"). Any later text queue replays only after the
       person confirms, and a write or physical tool never runs from a
-      replay without that confirmation (the approval design). Shared
-      machine: the Pi + Hailo build runs the same ladder; its rung 3
-      hands the turn to the local runtime (RT-01 and RT-03, the
-      paired-unreachable mode) in place of the fixed list, and on the
-      Reachy Mini there is no rung 3 unless M-R6 passes. Acceptance, as
+      replay without that confirmation (the approval design). On the
+      Reachy Mini there is no rung 3 unless M-R6 passes. The Pi + Hailo
+      build may adopt the same state machine later, decided when the
+      owner prioritises that build.
+      Pi + Hailo build: NO PRIORITY by owner decision 2026-10-05.
+      Nothing for it is dispatched or started until the owner says so.
+      Acceptance, as
       tests on the funnel and `run_loop.py` with the fake body and an
       injected clock: `link_lost` moves `connected` to `reconnecting`
       and a failed re-redeem does the same; the address walk tries LAN
@@ -1773,6 +1776,15 @@ rung 3, where the local runtime takes the turn.
 Every item waits on RUNTIME-01 and spec-v0.1.0, and RT-00 and IPC-01 are
 written and reviewed before any of the others is coded.
 
+Pi + Hailo build: NO PRIORITY by owner decision 2026-10-05. Nothing for
+it is dispatched or started until the owner says so.
+
+Background turns (owner decision 2026-10-05): the assistant features
+(heartbeat, errands, scheduled tasks) are gated by a per-model
+`background_turns` flag, a new field in the commons model record, off
+for models below the capability floor. M-02 records the named model's
+value; RT-02 and RT-03 carry it.
+
 - [ ] **RT-00: the runtime API contract, consumed** (S, before code).
       Objective: a written record in `docs/dev/runtime-api.md` of the
       ports the robot injects (the store, the supervisors and the launch
@@ -1805,6 +1817,8 @@ written and reviewed before any of the others is coded.
       snapshot); a boot with a missing artifact shows the Repair and
       still answers wake and stop. Out of scope: pairing. Exit: `bash
       scripts/check.sh`.
+      Pi + Hailo build: NO PRIORITY by owner decision 2026-10-05.
+      Nothing for it is dispatched or started until the owner says so.
 - [ ] **RT-02: the robot's records from first boot** (S, after the spec
       fields land). Objective: people, settings, entities, lists, jobs,
       commands, turns, memories written in spec shape with `standalone`
@@ -1812,10 +1826,10 @@ written and reviewed before any of the others is coded.
       never-sync grep test on the robot; a record written on the robot
       round-trips byte-identical through the hub's validator. Exit:
       `bash scripts/check.sh`.
-      Background turns: the assistant features (heartbeat, errands,
-      scheduled tasks) are gated by a per-model `background_turns` flag,
-      a new field in the commons model record (owner decision
-      2026-10-05): off for models below the capability floor.
+      Background turns: see the one note under "Household runtime on
+      the robot".
+      Pi + Hailo build: NO PRIORITY by owner decision 2026-10-05.
+      Nothing for it is dispatched or started until the owner says so.
 - [ ] **RT-03: the local engines** (M). Objective: llama-server for chat
       (the model M-02 names), embed (nomic) and the judge (the 4B, its
       own process at a lower CPU weight, its in-flight request aborted
@@ -1825,10 +1839,10 @@ written and reviewed before any of the others is coded.
       `enable_thinking: false`). Acceptance: M-02, M-04, M-05 recorded;
       the abort-at-arrival test in the deterministic suite with the stub
       engine. Exit: `bash scripts/check.sh`.
-      Background turns: the assistant features (heartbeat, errands,
-      scheduled tasks) are gated by a per-model `background_turns` flag,
-      a new field in the commons model record (owner decision
-      2026-10-05): off for models below the capability floor.
+      Background turns: see the one note under "Household runtime on
+      the robot".
+      Pi + Hailo build: NO PRIORITY by owner decision 2026-10-05.
+      Nothing for it is dispatched or started until the owner says so.
 - [ ] **RT-04: the Tier 0 set in the interpreter** (S). Objective: the
       bundled Tier 0 packages marked for the bot platform installed from
       the same signed bundle and run by the shared TypeScript recipe
