@@ -121,8 +121,6 @@ def test_boot_with_the_hub_away_runs_the_ladder_before_the_loop_is_built(tmp_pat
     )
     speaker = FakeSpeaker()
     stack.offline.speaker = speaker
-    stack.link.reconnect_once()  # what the hub-link thread does first at power-on
-    assert stack.machine.phase is LinkPhase.RECONNECTING
 
     supervisor_started = threading.Event()
     release_build = threading.Event()
@@ -156,6 +154,7 @@ def test_boot_with_the_hub_away_runs_the_ladder_before_the_loop_is_built(tmp_pat
         thread.start()
         _wait_for(supervisor_started.is_set)  # started with the loop still unbuilt
         assert not loop_box
+        assert stack.machine.phase is LinkPhase.RECONNECTING  # from boot, no redeem called
 
         clock.advance(N)
         stack.supervisor.step()
@@ -230,3 +229,83 @@ def test_the_credentials_reader_prefers_the_address_that_answered(tmp_path):
     client.session_cookie = "c"
     link = LinkLifecycle(store, client, discover=lambda timeout_s: None)
     assert app_module._hub_credentials_reader(link, LAN)() == ("c", TAILNET.base_url)
+
+
+# ---- 4. the real boot ordering: the machine starts connected, the first redeem is in flight ---
+
+
+def test_an_unreachable_hub_at_real_boot_is_reconnecting_and_a_wake_takes_the_offline_path(
+    tmp_path,
+):
+    """run_paired_body on a fresh machine (phase connected, no contact yet)
+    while the hub-link thread's first redeem is still in flight and then
+    fails. Nothing calls reconnect_once by hand: the hub-link thread, the
+    supervisor's step and the wake's own retry are the real ones."""
+    clock = FakeClock()
+    store = PairingStore(tmp_path / "pairing.json")
+    store.save(_result().pairing)
+    first_redeem_started = threading.Event()
+    release_first_redeem = threading.Event()
+
+    class _SlowDownClient(_AddressClient):
+        def refresh(self, base_url=None, persist=True):
+            first_redeem_started.set()
+            release_first_redeem.wait(5.0)  # the walk's connect timeouts
+            return super().refresh(base_url, persist)
+
+    client = _SlowDownClient(set())  # no address ever answers
+    client.session_cookie = None
+    stack = _build_link_stack(
+        store,
+        client,
+        discover=lambda timeout_s: None,
+        sleep_after_s=N,
+        clock=clock,
+        wall_clock=clock.wall_clock,
+    )
+    assert stack.machine.phase is LinkPhase.CONNECTED  # a fresh machine, as at power-on
+    speaker = FakeSpeaker()
+    stack.offline.speaker = speaker
+
+    loop_box = []
+
+    def build(*args, **kwargs):
+        loop, parts = _make_loop(wake_events=[WakeEvent(score=0.9)], offline=stack.offline)
+        loop_box.append((loop, parts))
+        return loop
+
+    stop_event = threading.Event()
+    hub_link = threading.Thread(target=stack.link.run, args=(stop_event,), daemon=True)
+    hub_link.start()
+    _wait_for(first_redeem_started.is_set)
+    with patch.object(app_module, "_build_conversation_loop", side_effect=build):
+        boot = threading.Thread(
+            target=run_paired_body,
+            args=(FakeReachyMiniClient(), stack.link, stop_event),
+            kwargs={
+                "cache_dir": Path("/tmp/models"),
+                "offline": stack.offline,
+                "supervisor": stack.supervisor,
+            },
+            daemon=True,
+        )
+        boot.start()
+        # The first redeem has not returned: the body must not claim a link it never had.
+        _wait_for(lambda: bool(loop_box))
+        assert stack.machine.phase is LinkPhase.RECONNECTING
+
+        release_first_redeem.set()  # the first redeem fails, the wake's retry fails too
+        _wait_for(lambda: speaker.said)
+        retries_after_boot = len(client.refreshed_at)
+        assert retries_after_boot >= 1
+
+        # The supervisor's own step keeps retrying on its cadence, nobody calling by hand.
+        clock.advance(31.0)
+        stack.supervisor.step()
+        assert len(client.refreshed_at) > retries_after_boot
+        stop_event.set()
+        boot.join(timeout=3.0)
+        hub_link.join(timeout=3.0)
+    assert speaker.said[0] == ["line.unreachable"]  # the wake took the offline path
+    assert loop_box[0][1]["stt"].call_count == 0
+    assert loop_box[0][1]["turn"].stream_calls == []

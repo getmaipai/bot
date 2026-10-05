@@ -352,6 +352,13 @@ def run_paired_body(
         if not paired:
             return
 
+        if boot_offline:
+            # The machine starts connected; with a stored pairing and no
+            # redeem yet that is not true, so the outage state, the supervisor's
+            # retries and the wake's offline path start now, not when the first
+            # redeem finally fails (its walk can take many seconds).
+            offline.machine.booted_without_contact("the hub has not answered since power-on")
+
         if supervisor is not None:
             threading.Thread(
                 target=supervisor.run, args=(stop_event,), name="link-supervisor", daemon=True

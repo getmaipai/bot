@@ -137,6 +137,22 @@ class LinkStateMachine:
                 self._attempts = 0
         self._announce(edge)
 
+    def booted_without_contact(self, reason: str) -> None:
+        """A body with a stored pairing powered on and the hub has not
+        answered yet. The machine starts ``connected`` only because it has
+        to start somewhere; with no redeem on record that claim is false, so
+        this is a ``link_lost`` unless a redeem already happened (the
+        hub-link thread can win the race; checked under the same lock)."""
+        with self._lock:
+            if self._last_connected_wall is not None:
+                return
+            self._last_error = reason
+            edge = None
+            if self._phase is LinkPhase.CONNECTED:
+                edge = self._move(LinkPhase.RECONNECTING)
+                self._attempts = 0
+        self._announce(edge)
+
     def attempt(self, address: str) -> None:
         """The address walk is about to try ``address``."""
         with self._lock:
