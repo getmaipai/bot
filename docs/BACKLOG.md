@@ -694,6 +694,24 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       container runtime in this environment); the wheel is pure-Python
       with no platform-specific code, so this is a low-risk gap, not a
       guess dressed up as done.
+      **2026-10-05 S-RM08-BOT / S-G12-AARCH64:** added
+      `scripts/prepare-bot-release.sh <tag>` to build the version-matched
+      `maipai_bot-<v>-py3-none-any.whl`, write a SHA-256 sidecar, and
+      stage both under `dist/bot-release/<tag>` for an owner-created Bot
+      release. It never creates or uploads a release. Added
+      `install-reachy.sh --dry-run <host> <wheel>` to print the scp and
+      SSH plan, including package install, daemon startup registration,
+      vendor-app removal, restart, and cleanup. Dry-run has no SSH
+      effects and does not require the wheel to exist. Stand-in daemon
+      test suite reused to cover the existing daemon install/registry
+      route behavior; release and dry-run tests added. Aarch64 compile
+      attempted for base and voice on macOS; uv cannot build the
+      transitive pygobject/pycairo because Cairo and pkg-config are
+      unavailable. The direct dependency probe resolved without
+      transitive dependencies but did not prove
+      `onnxruntime==1.30.0`; `uv sync --extra voice` on the dev Mac did
+      resolve `onnxruntime==1.30.0`. Full aarch64 compile result remains
+      unverified.
 - [x] **G1: audio capture and playback through the daemon's media path**
       (S-M, filed and landed 2026-09-28,
       `docs/dev/reachy-mini-gap-audit-2026-09-27.md`). Objective: the

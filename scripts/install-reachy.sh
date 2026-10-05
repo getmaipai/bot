@@ -3,8 +3,8 @@
 # install it into the daemon's shared apps venv, register it as the
 # startup app, and restart the daemon.
 #
-# Usage: scripts/install-reachy.sh <host> <wheel-path>
-#   host        the robot's hostname or IP (example: 192.0.2.10)
+# Usage: scripts/install-reachy.sh [--dry-run] <host> <wheel-path>
+#   host        the robot's hostname or IP
 #   wheel-path  a built maipai-bot wheel, e.g. from `uv build --wheel`
 #               in body/, or scripts/build-space.sh's dist/space/
 #
@@ -21,8 +21,14 @@
 # bare wheel on the robot pulls only its runtime dependencies.
 set -euo pipefail
 
+DRY_RUN=0
+if [ "${1:-}" = "--dry-run" ]; then
+  DRY_RUN=1
+  shift
+fi
+
 if [ "$#" -ne 2 ]; then
-  echo "usage: $0 <host> <wheel-path>" >&2
+  echo "usage: $0 [--dry-run] <host> <wheel-path>" >&2
   exit 1
 fi
 
@@ -33,13 +39,26 @@ APPS_VENV="/venvs/apps_venv"
 APP_NAME="maipai_bot"
 DAEMON_PORT="${MAIPAI_REACHY_DAEMON_PORT:-8000}"
 
+WHEEL_FILE="$(basename "$WHEEL_PATH")"
+REMOTE_WHEEL="/tmp/$WHEEL_FILE"
+
+if [ "$DRY_RUN" = 1 ]; then
+  printf 'scp %q %q\n' "$WHEEL_PATH" "$SSH_USER@$HOST:$REMOTE_WHEEL"
+  printf 'ssh %q %q\n' "$SSH_USER@$HOST" "$APPS_VENV/bin/pip install --force-reinstall ${REMOTE_WHEEL}[voice]"
+  printf 'ssh %q %q\n' "$SSH_USER@$HOST" "pip install --force-reinstall onnxruntime==1.30.0"
+  printf 'ssh %q %q\n' "$SSH_USER@$HOST" "curl -sf -X PUT http://localhost:$DAEMON_PORT/api/apps/startup-app -H 'Content-Type: application/json' -d '{\"startup_app\": \"$APP_NAME\"}'"
+  printf 'ssh %q %q <<'\''REMOVE_VENDOR_APPS'\''\n' "$SSH_USER@$HOST" "python3 - $DAEMON_PORT $APP_NAME"
+  sed 's/^/  /' < <(sed -n '/^import json$/,/^REMOVE_VENDOR_APPS$/p' "$0" | sed '$d')
+  printf 'REMOVE_VENDOR_APPS\n'
+  printf 'ssh %s "sudo systemctl restart reachy-mini-daemon"\n' "$SSH_USER@$HOST"
+  printf 'ssh %q %q\n' "$SSH_USER@$HOST" "rm -f '$REMOTE_WHEEL'"
+  exit 0
+fi
+
 if [ ! -f "$WHEEL_PATH" ]; then
   echo "wheel not found: $WHEEL_PATH" >&2
   exit 1
 fi
-
-WHEEL_FILE="$(basename "$WHEEL_PATH")"
-REMOTE_WHEEL="/tmp/$WHEEL_FILE"
 
 echo "== copying $WHEEL_FILE to $SSH_USER@$HOST:$REMOTE_WHEEL"
 scp "$WHEEL_PATH" "$SSH_USER@$HOST:$REMOTE_WHEEL"
