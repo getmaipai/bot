@@ -43,6 +43,10 @@ class TurnEvent:
     reply_text: str | None = None  # set only on the DONE event
     conversation_id: str | None = None
     turn_id: str | None = None
+    # The move a reply plan named at its `react` slot. The wire carries no
+    # such field yet, so the real client never sets it; the run loop's
+    # react hook reads it (MOVES-01, behind a flag).
+    react_move: str | None = None
 
 
 @dataclass

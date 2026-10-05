@@ -47,6 +47,7 @@ from maipai_body.link.prints import PrintSync
 from maipai_body.link.rung0 import Rung0Cues
 from maipai_body.link.state import StateReporter
 from maipai_body.link.state_machine import DEFAULT_SLEEP_AFTER_MINUTES, LinkStateMachine
+from maipai_body.moves.react import build_react_hook
 from maipai_body.link.supervisor import LinkSupervisor
 from maipai_body.run_loop import ConversationLoop
 from maipai_body.speech.capture import AudioCapture
@@ -279,6 +280,8 @@ def _build_conversation_loop(
         face_embedder=ensure_embedder(cache_dir),
         face_gallery=gallery,
         offline=offline,
+        # MOVES-01: None unless MAIPAI_BOT_REACT_MOVES is set.
+        react_hook=build_react_hook(client, cache_dir / "moves", os.environ),
     )
     threading.Thread(target=print_sync.run, name="face-print-sync", daemon=True).start()
     return loop

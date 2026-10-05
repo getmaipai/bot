@@ -158,6 +158,7 @@ class ConversationLoop:
         face_gallery: FaceGallery | None = None,
         face_recognition_interval_s: float = _FACE_RECOGNITION_INTERVAL_S,
         offline: OfflineRungs | None = None,
+        react_hook: Callable[..., bool] | None = None,
     ) -> None:
         self._client = client
         self._expression = expression_engine
@@ -218,6 +219,8 @@ class ConversationLoop:
         # it was; with one, a lost link feeds the machine, an outage answers
         # wakes with rung 1 only, and the machine's edges are state changes.
         self._offline = offline
+        # MOVES-01 plan react hook; optional and inert until the wire names a move.
+        self._react_hook = react_hook
         if offline is not None:
             offline.machine.subscribe(lambda _old, _new: self._notify_change())
             if offline.rung0 is not None:
@@ -494,6 +497,8 @@ class ConversationLoop:
         turn_id: str | None = None
         cancelled = False
         speaker_evidence = None
+        react_move: str | None = None
+        react_allowed = False
         face_verdict = self._current_face_verdict()
         if face_verdict is not None:
             # Only the derived fields (dev.md section 6: "never a
@@ -518,7 +523,11 @@ class ConversationLoop:
             for turn_event in self._turn.stream(stt_result.text, speaker_evidence=speaker_evidence):
                 if turn_event.turn_id:
                     turn_id = turn_event.turn_id
+                if turn_event.react_move:
+                    react_move = turn_event.react_move
                 if turn_event.cue is not None:
+                    if turn_event.cue.phase is Phase.SIGNAL:
+                        react_allowed = turn_event.cue.react_allowed
                     if turn_event.cue.phase is Phase.CANCEL:
                         cancelled = True
                         self._render(turn_event.cue)
@@ -548,6 +557,20 @@ class ConversationLoop:
         if not self._speak(text, turn_id, stop_event) and announce:
             self._lost_turn_unannounced = False
         self._enter(FunnelState.IDLE)
+        if react_move and self._react_hook is not None and not stop_event.is_set():
+            self._play_react(react_move, react_allowed)
+
+    def _play_react(self, move: str, react_allowed: bool) -> None:
+        """After the reply; move failure is logged and never loses the turn."""
+        try:
+            self._react_hook(
+                move,
+                ArbitrationState(),
+                react_allowed=react_allowed,
+                muted=self._is_muted(),
+            )
+        except Exception:
+            logger.warning("react move %r failed", move, exc_info=True)
 
     def _speak(
         self, reply_text: str, turn_id: str | None, outer_stop_event: threading.Event

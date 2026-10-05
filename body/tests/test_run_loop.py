@@ -192,6 +192,7 @@ def _make_loop(
     hub_credentials=None,
     offline=None,
     on_change=None,
+    react_hook=None,
 ):
     client = FakeReachyMiniClient(REACHY_MINI_PROFILE, camera_frame=camera_frame)
     engine = _RecordingExpressionEngine(client, REACHY_MINI_PROFILE)
@@ -222,6 +223,7 @@ def _make_loop(
         face_recognition_interval_s=face_recognition_interval_s,
         offline=offline,
         on_change=on_change,
+        react_hook=react_hook,
     )
     parts = {
         "client": client,

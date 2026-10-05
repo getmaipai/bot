@@ -9,6 +9,9 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- MOVES-01's `react` entry point: `ConversationLoop` can call a hook after the
+  reply with the move a plan named, behind the `MAIPAI_BOT_REACT_MOVES` flag
+  (off by default; dormant until the hub's turn stream carries a move name).
 - LINK-STATE-01, the offline ladder's first rungs (Reachy Mini): a
   `connected`, `reconnecting`, `sleeping` state machine in `link/` driven by
   `LinkLifecycle` and the funnel, an address walk (LAN, then a marked
@@ -54,6 +57,9 @@ missing (G3 onward).
 
 ### Added
 
+- MOVES-01's `react` entry point: `ConversationLoop` can call a hook after the
+  reply with the move a plan named, behind the `MAIPAI_BOT_REACT_MOVES` flag
+  (off by default; dormant until the hub's turn stream carries a move name).
 - Reachy Mini as a supported body behind the HAL seam: a real daemon
   client, a fixture-driven fake for tests, and a profile carrying the
   unit's own measured axis limits.
