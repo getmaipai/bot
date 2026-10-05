@@ -121,6 +121,11 @@ does not.
       recorded score. Acceptance: the decision rule applied (latency
       under the rule and every hard row green) and the model named; the
       honesty score handed to the owner (question 13). Waits on RT-01.
+      Background turns: the assistant features (heartbeat, errands,
+      scheduled tasks) are gated by a per-model `background_turns` flag,
+      a new field in the commons model record (owner decision
+      2026-10-05): off for models below the capability floor. This item
+      records the named model's value.
 - [ ] **M-03: the Hailo provider option** (M, only if M-02's rule promotes
       it or v0.2 asks). Objective: the rendered prompt's token count
       against the 2,048-token ceiling, first reply with retained context
@@ -261,6 +266,16 @@ for every item until the box lands. Items marked "unit" need the
 hardware. Measurements M-R1 to M-R6 are the design's section 12 and
 are recorded in `docs/dev/measurements.md` with the daemon version,
 the image release and the profile id in the header.
+
+Two bodies, one body layer (owner decisions, 2026-10-05): the Reachy
+Mini and the Pi 5 + Hailo-10H build are two profiles over one body
+layer, never two code lines. The Reachy Mini (Wireless, CM4 4 GB) is the
+connected body: the hub runs its turns, it must work away from home
+over Tailscale, and it keeps working in a limited way when the hub is
+gone. The Pi + Hailo build is the standalone-capable body. Offline
+behaviour is one shared ladder (LINK-STATE-01 below) with different top
+rungs: rungs 0 to 2 are the same on both, and the Pi + Hailo build adds
+rung 3, where the local runtime takes the turn.
 
 - [ ] **RM-00: the body-capability vocabulary** (S, spec first, filed
       in `commons` as BODY-VOCAB-01). Objective:
@@ -1622,6 +1637,113 @@ the image release and the profile id in the header.
 
 - [ ] **BODY-DAEMON-UPDATE-01: the body software version moves only with a Bot release (amends the Reachy design section 10 and RM-08)** (S, docs, filed 2026-10-01 from home's ROBOT-UPDATES-01 decision; needs Jesse's agreement before the design text changes). Objective: replace the independent "daemon PyPI update as a row, applied only on a click" in `docs/dev/design-reachy-mini-2026-09-27.md` section 10 and in RM-08 above with: the body daemon's version is pinned by Bot's release and moves with it, shown on the card and Updates row as detail ("Body software"), never as its own update. Why: `body/pyproject.toml` hard-pins `reachy-mini==1.11.0` and `scripts/install-reachy.sh` overrides `onnxruntime` because the vendor's own pin silently breaks the wake word, so a daemon upgraded alone from PyPI would break the Bot wheel (UPDATES.md: a sidecar never updates alone). Pointers: those two places, home's ROBOT-UPDATES-01 (landed, home `docs/dev.md`). Acceptance: both texts say it; RM-08's acceptance line about "the daemon version appears ... in the update row" becomes "the MaiPai version and the body software version appear on the card and the Updates row". Out of scope: any code. Exit: `bash scripts/check.sh --docs` in bot.
 
+- [ ] **ROBOT-TAILSCALE-01: the hub half of the Reachy joining the
+      tailnet and reaching the hub away from home** (M, hub half, filed
+      in `home`; the bot half may be S; needs a CREDENTIALS.md review
+      before dispatch, since the auto-provision path is a new credential
+      class). Objective: a Reachy Mini off the home LAN reconnects to its
+      hub over Tailscale with its pairing intact. Facts from
+      `dev/robot-tailscale-access-2026-09-28.md`: the hub's address book
+      (`hubEndpoints.ts`) sorts detected LAN first (priority 10) and the
+      Tailscale entry next (priority 60), and records a `.ts.net` name
+      or a `100.64.0.0/10` address with kind `overlay`; a `.ts.net`
+      name or tailnet address is reachable only by a tailnet member, so
+      the robot must be its own tailnet node (section "The crux"); both
+      join paths are decided (owner's call 2026-09-28, "both": the
+      owner joins the robot by hand with `tailscale up`, and the hub
+      mints a single-use, tagged, pre-authorized auth key at pairing,
+      stored through `lib/secrets.ts`); pairing stays LAN mDNS
+      (`_maipai._tcp`), Tailscale is a post-pairing fallback only
+      (section "What G4 should build regardless"); the 24 h re-redeem
+      heartbeat already exists (`LinkLifecycle`, `link/lifecycle.py`).
+      Not there yet: no authenticated hub-endpoints route (the doc names
+      `GET /api/devices/me/hub-endpoints`, gated like `redeem` and
+      returning `listHubEndpoints()` unfiltered, unlike the CA route),
+      no client that walks the book, and no latency budget for a remote
+      turn (M-R5 measures reconnect p50 and p95 only; the budget is
+      proposed from the number recorded here and set by the owner, never
+      guessed). Hub half: the route, the Tailscale OAuth or API
+      credential setup and its consent flow, the key-minting call, and
+      the revoke path that removes the robot's tailnet node with the
+      device token. Bot half: `link/` caches the book, walks it in the
+      server's priority order, re-fetches it on every successful
+      connection, and detects a hand-joined tailnet (a `tailscaled`
+      identity already present). Acceptance: a Reachy off the home LAN
+      reconnects over the tailnet with its pairing state preserved (no
+      new code, no re-pair); a turn completes over the tailnet with its
+      latency (first delta and total, p50 and p95 over a fixed set)
+      recorded in `docs/dev/measurements.md`; revoking the device ends
+      access (the next redeem and the next tailnet call both fail).
+      Out of scope: installing Tailscale on the hub; a relay or proxy
+      for a robot that is not a tailnet member; any change to LAN
+      pairing. Reuse check: `hubEndpoints.ts` and `tailscale.ts` are used
+      verbatim, `lib/secrets.ts` stores the credential, `link/` extends
+      the existing `LinkLifecycle` and `HubLinkClient`, and M-R5's
+      harness measures the latency; no new address detection, no new
+      secret store. Exit: `bash scripts/check.sh` in bot, the hub's own
+      gate in `home`, and the recorded latency row.
+- [ ] **LINK-STATE-00: `reconnecting` and `sleeping` activity values**
+      (S, spec first, filed in `commons`; prerequisite of LINK-STATE-01).
+      Objective: `robot.state.activity` gains the values `reconnecting`
+      and `sleeping`, so the hub's robot card can tell a robot that is
+      walking its addresses from one that has gone quiet. The shape is
+      in `commons`' `docs/plans/robot-state-spec-01-2026-09-29.md` (that
+      repo is not in this checkout, so it is cited by name only; this
+      item does not edit it). Acceptance: the schema, its fixtures and
+      the tag carry both values, `home`'s card renders them, and `bot`
+      pins the tag. Exit: the `commons` gate and the tag.
+- [ ] **LINK-STATE-01: the offline ladder's first rungs as one state
+      machine** (S, both profiles, after LINK-STATE-00; the spoken
+      parts also wait on G4b's clips or a local TTS). Objective: one
+      machine in `body/maipai_body/link/`, driven by `LinkLifecycle` and
+      the funnel in `run_loop.py`: `connected` goes to `reconnecting`
+      on `link_lost` (the `turn_client.py` and `stt_stream.py` case) or
+      a failed re-redeem, and while there walks the address book (LAN
+      first, then the tailnet entry from ROBOT-TAILSCALE-01); after N
+      minutes (a setting, default to be measured) it goes to
+      `sleeping`; a redeem from either state returns it to `connected`
+      with a reconnect cue. The states are reported through
+      `StateReporter` as `activity` once LINK-STATE-00 lands. Rungs:
+      rung 0 is body-only: breathe, settle, an antenna away pose,
+      tracking off after a while, and a stir on reconnect (primitives
+      from RM-02, no new axis). Rung 1 is the wake word plus a closed
+      list of fixed local commands (stop, quieter, louder, timer, what
+      time is it, are you connected?) with fixed replies. It needs the
+      sherpa-onnx keyword spotter named in `dev.md`'s wake row (the
+      measured alternative to the trained wake model) or a documented
+      alternative; its CPU and false-accept cost on the CM4 beside the
+      wake model is UNVERIFIED and gets a measured row (M-R1's bench)
+      before it ships on that body. Rung 2 is a dynamic offline status
+      built by templates from real `LinkLifecycle` and address-walk
+      values (state, last contact, the address being tried, last error),
+      no model; it is always visible on the app page and spoken only if
+      a local TTS or the G4b clip set can say it. Queue rule: rungs 0
+      to 2 queue nothing, and the status line says so ("nothing is
+      saved for later"). Any later text queue replays only after the
+      person confirms, and a write or physical tool never runs from a
+      replay without that confirmation (the approval design). Shared
+      machine: the Pi + Hailo build runs the same ladder; its rung 3
+      hands the turn to the local runtime (RT-01 and RT-03, the
+      paired-unreachable mode) in place of the fixed list, and on the
+      Reachy Mini there is no rung 3 unless M-R6 passes. Acceptance, as
+      tests on the funnel and `run_loop.py` with the fake body and an
+      injected clock: `link_lost` moves `connected` to `reconnecting`
+      and a failed re-redeem does the same; the address walk tries LAN
+      before the tailnet entry; the machine reaches `sleeping` only
+      after N injected minutes and not before; a redeem returns it to
+      `connected` and fires exactly one reconnect cue; each rung 1
+      command yields its fixed reply and nothing outside the list runs a
+      turn; the rung 2 text contains only values read from the lifecycle
+      and the walk; no turn text is queued in rungs 0 to 2; a replay
+      fixture holding a write tool does not run it until a confirmation
+      event arrives; the funnel never leaves `idle` during an outage
+      except for a rung 1 command. Out of scope: any model call offline,
+      the clip set itself (G4b), a text queue beyond the replay rule
+      above. Reuse check: `LinkLifecycle`, `StateReporter`, the RM-02
+      primitives and `WakeScorer` are reused; the machine adds no new
+      transport, no new store and no new body axis. Exit: `bash
+      scripts/check.sh`.
+
 ## Voice loop
 
 - [ ] **VOICE-01: the speech process** (M). Objective: `body/speech/`
@@ -1700,6 +1822,10 @@ written and reviewed before any of the others is coded.
       never-sync grep test on the robot; a record written on the robot
       round-trips byte-identical through the hub's validator. Exit:
       `bash scripts/check.sh`.
+      Background turns: the assistant features (heartbeat, errands,
+      scheduled tasks) are gated by a per-model `background_turns` flag,
+      a new field in the commons model record (owner decision
+      2026-10-05): off for models below the capability floor.
 - [ ] **RT-03: the local engines** (M). Objective: llama-server for chat
       (the model M-02 names), embed (nomic) and the judge (the 4B, its
       own process at a lower CPU weight, its in-flight request aborted
@@ -1709,6 +1835,10 @@ written and reviewed before any of the others is coded.
       `enable_thinking: false`). Acceptance: M-02, M-04, M-05 recorded;
       the abort-at-arrival test in the deterministic suite with the stub
       engine. Exit: `bash scripts/check.sh`.
+      Background turns: the assistant features (heartbeat, errands,
+      scheduled tasks) are gated by a per-model `background_turns` flag,
+      a new field in the commons model record (owner decision
+      2026-10-05): off for models below the capability floor.
 - [ ] **RT-04: the Tier 0 set in the interpreter** (S). Objective: the
       bundled Tier 0 packages marked for the bot platform installed from
       the same signed bundle and run by the shared TypeScript recipe
