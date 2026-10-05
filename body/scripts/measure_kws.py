@@ -17,8 +17,10 @@ cannot resolve there), after ``pip install sherpa-onnx`` into that venv::
         --label "room, 1 m" --record
 
     # 2. False accepts on ordinary room audio: a long wav of speech that is not a
-    #    command (a television at room level); every hit is a false accept.
+    #    command (a television at room level). Each four-second chunk is an
+    #    independent post-wake window; set the wake-events-per-hour assumption.
     /venvs/apps_venv/bin/python scripts/measure_kws.py false-accepts --wav <long.wav> \\
+        --wake-events-per-hour 30 \\
         --label "television news at room level" --record
 
     # 3. CPU, as its own process so M-R1's sampler can name it. Start this, then
@@ -46,6 +48,7 @@ from maipai_body.measure.kws import (
     listen_to_clip,
     load_wav_16k_mono,
     probe_cpu,
+    score_false_accept_windows,
     summarize_accuracy,
 )
 from maipai_body.measure.run_header import record_section
@@ -115,28 +118,31 @@ def accuracy(args) -> int:
 
 
 def false_accepts(args) -> int:
-    from maipai_body.speech.capture import BLOCK_SAMPLES
-
     samples = load_wav_16k_mono(Path(args.wav))
     engine = SherpaKeywordEngine(_model_dir(args))
-    engine.begin()
-    hits = []
-    for i in range(0, len(samples) - BLOCK_SAMPLES + 1, BLOCK_SAMPLES):
-        tag = engine.accept(samples[i : i + BLOCK_SAMPLES])
-        if tag:
-            hits.append(tag)
-    hours = len(samples) / 16000 / 3600
-    print(f"{len(hits)} hits in {hours:.3f} h: {sorted(set(hits))}")
+    result = score_false_accept_windows(
+        engine,
+        samples,
+        window_s=4.0,
+        wake_events_per_hour=args.wake_events_per_hour,
+    )
+    print(
+        f"false accepts {result.accepted}/{result.windows} windows "
+        f"({result.per_window:.6f} per window); projected "
+        f"{result.projected_per_hour:.3f}/hour assuming "
+        f"{result.wake_events_per_hour:g} wake events/hour"
+    )
     if args.record:
         _record(
             args,
             "Rung 1 keyword spotter: false accepts",
             [
                 *_header(args),
-                f"- audio: {hours:.3f} h of speech that is not a command",
-                f"- hits: {len(hits)} ({len(hits) / hours:.2f} per hour)"
-                if hours
-                else "- hits: n/a",
+                f"- non-command windows: {result.windows} x 4 s",
+                f"- false accepts: {result.accepted}/{result.windows} "
+                f"({result.per_window:.6f} per window)",
+                f"- projected: {result.projected_per_hour:.3f} per hour, assuming "
+                f"{result.wake_events_per_hour:g} wake events/hour",
             ],
         )
     return 0
@@ -177,6 +183,9 @@ def main() -> int:
         p.add_argument("--out-dir", default="measurements")
         if name == "accuracy":
             p.add_argument("--wav-dir", required=True)
+        elif name == "false-accepts":
+            p.add_argument("--wav", required=True)
+            p.add_argument("--wake-events-per-hour", type=float, required=True)
         else:
             p.add_argument("--wav", required=True)
         if name == "cpu":

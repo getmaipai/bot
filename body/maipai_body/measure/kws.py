@@ -55,6 +55,43 @@ def listen_to_clip(recognizer: KeywordSpotterRecognizer, samples: np.ndarray) ->
 
 
 @dataclass(frozen=True)
+class FalseAccepts:
+    windows: int
+    accepted: int
+    wake_events_per_hour: float
+
+    @property
+    def per_window(self) -> float:
+        return self.accepted / self.windows if self.windows else float("nan")
+
+    @property
+    def projected_per_hour(self) -> float:
+        return self.per_window * self.wake_events_per_hour
+
+
+def score_false_accept_windows(
+    engine,
+    samples: np.ndarray,
+    *,
+    wake_events_per_hour: float,
+    window_s: float = 4.0,
+) -> FalseAccepts:
+    """Score independent non-command windows matching the recognizer's post-wake listen."""
+    if window_s <= 0:
+        raise ValueError("window_s must be positive")
+    if wake_events_per_hour < 0:
+        raise ValueError("wake_events_per_hour must be non-negative")
+    window_samples = int(window_s * SAMPLE_RATE)
+    count = len(samples) // window_samples
+    accepted = 0
+    bounded = KeywordSpotterRecognizer(engine, window_s=window_s)
+    for i in range(count):
+        window = samples[i * window_samples : (i + 1) * window_samples]
+        accepted += listen_to_clip(bounded, window) is not None
+    return FalseAccepts(count, accepted, wake_events_per_hour)
+
+
+@dataclass(frozen=True)
 class ClipResult:
     name: str
     expected: str | None  # the phrase that should be heard, None for a near miss

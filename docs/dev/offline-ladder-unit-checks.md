@@ -161,7 +161,8 @@ the copy-over steps).
    /venvs/apps_venv/bin/python scripts/measure_kws.py accuracy --wav-dir <dir> \
        --mode unit --label "room, 1 m" --record
    /venvs/apps_venv/bin/python scripts/measure_kws.py false-accepts --wav <long.wav> \
-       --mode unit --label "television news at room level" --record
+       --wake-events-per-hour 30 --mode unit \
+       --label "television news at room level" --record
    ```
 
    The tests' fixtures are synthesized speech and prove nothing about this row.

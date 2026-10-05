@@ -13,6 +13,7 @@ from maipai_body.measure.kws import (
     listen_to_clip,
     load_wav_16k_mono,
     probe_cpu,
+    score_false_accept_windows,
     summarize_accuracy,
 )
 from maipai_body.speech.capture import BLOCK_SAMPLES
@@ -68,6 +69,38 @@ def test_a_short_clip_is_padded_to_the_window_so_the_listen_ends_on_audio_not_th
 def test_a_hit_in_a_clip_is_returned():
     recognizer = KeywordSpotterRecognizer(_Engine("stop", fire_at=4), window_s=1.0)
     assert listen_to_clip(recognizer, np.zeros(16000, np.float32)) == "stop"
+
+
+def test_false_accept_rate_uses_independent_post_wake_windows_not_one_continuous_stream():
+    class FiresOncePerStream(_Engine):
+        def begin(self):
+            self.n = 0
+            self.streams = getattr(self, "streams", 0) + 1
+
+        def accept(self, block):
+            self.n += 1
+            self.fed += 1
+            return "stop" if self.n == 2 else None
+
+    audio = np.zeros(8 * 16000, np.float32)  # two 4-second post-wake windows
+    engine = FiresOncePerStream()
+    result = score_false_accept_windows(engine, audio, wake_events_per_hour=30)
+    assert engine.streams == 2
+    assert (result.windows, result.accepted) == (2, 2)
+    assert result.per_window == 1
+    assert result.projected_per_hour == 30
+
+    # The old continuous-stream definition starts just one stream and therefore
+    # sees one hit over the same audio, proving the two definitions differ.
+    continuous = KeywordSpotterRecognizer(engine, window_s=8)
+    assert listen_to_clip(continuous, audio) == "stop"
+    assert engine.streams == 3
+
+
+def test_false_accept_projection_validates_assumptions():
+    samples = np.zeros(16000, np.float32)
+    with pytest.raises(ValueError, match="wake_events_per_hour"):
+        score_false_accept_windows(_Engine(), samples, wake_events_per_hour=-1)
 
 
 def test_the_cpu_probe_reports_cpu_seconds_per_audio_second():

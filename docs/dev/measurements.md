@@ -91,7 +91,6 @@ Never a hostname, never a household recording.
 | mid_sentence | blackhole | 1 | 120023.2 | 120023.2 | 32.9 | 32.9 | 15004.5 | 15004.5 | 1 | 1/1 | 0/1 | 0 |
 
 
-<<<<<<< HEAD
 ## RM-07: what leaves the robot (unit), not run yet
 
 - mode: `unit` (the physical Reachy Mini; it has not arrived)
@@ -104,7 +103,7 @@ Never a hostname, never a household recording.
   run the script with `--capture`, `--phase before-install` then `--phase after-install`,
   `--mode unit` and `--record --write-page` (command in the script's docstring).
 - delete this section when the first capture is recorded; the recorder writes one section per phase.
-=======
+
 ## Rung 1 keyword spotter, 2026-10-05
 
 LINK-STATE-01 rung 1 (`maipai_body/speech/kws.py`): sherpa-onnx 1.13.8, the
@@ -113,11 +112,14 @@ threshold 0.25 and score 1.0 (sherpa-onnx's defaults), window 4 s after the wake
 
 **UNVERIFIED on the Compute Module.** Nothing below ran on the unit and none of it
 is real microphone audio; no number here may stand in for the M-R1 and M-R3 rows.
+False accepts are counted per independent 4-second post-wake window, then projected
+per hour using the explicitly supplied wake-events-per-hour assumption; this is not
+an estimate of the wake detector's own false-wake rate.
 
 | row | status | how it is filled |
 |---|---|---|
 | CPU beside the wake model, Compute Module | UNVERIFIED | `scripts/measure_kws.py cpu`, as its own process, with M-R1's sampler (`--process kws=measure_kws.py`) |
-| false accepts per hour on room audio | UNVERIFIED | `scripts/measure_kws.py false-accepts` on a long non-command recording |
+| false accepts per hour on room audio | UNVERIFIED | `scripts/measure_kws.py false-accepts` on a long non-command recording; estimates false accepts/window x the explicit wake-events-per-hour assumption |
 | recall and near misses on real speech through the array | UNVERIFIED | `scripts/measure_kws.py accuracy` on recorded clips |
 | share of the microphone stream with the wake model | UNVERIFIED | `docs/dev/offline-ladder-unit-checks.md`, item 4 |
 
@@ -138,4 +140,3 @@ recall faster than false accepts (at threshold 0.55 and score 1.0: 42 of 96 and
 inside a longer sentence ("stopping by the shop") still fires its keyword: the
 spotter matches a keyword anywhere in its 4 s window, and only the closed list
 and the window keep that to a rung 1 command.
->>>>>>> cd16a9f (Add the rung 1 keyword spotter's measurement script and rows)

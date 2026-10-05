@@ -21,11 +21,7 @@ ALL = (
     "measure_mr3_wake_doa.py",
     "measure_mr4_battery.py",
     "measure_mr5_link.py",
-<<<<<<< HEAD
     "measure_rm07_egress.py",
-=======
-    "measure_kws.py",
->>>>>>> cd16a9f (Add the rung 1 keyword spotter's measurement script and rows)
 )
 
 
