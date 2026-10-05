@@ -45,6 +45,8 @@
   }
   .status.waiting { background: #2a2f3d; color: #d8dbe5; }
   .status.paired { background: #143d24; color: #7ee2a4; }
+  .status.away { background: #3d3414; color: #e2cf7e; }
+  .link-status { font-size: 14px; margin-top: 12px; }
 </style>
 </head>
 <body>
@@ -60,7 +62,16 @@
         const res = await fetch("/api/state");
         const state = await res.json();
         const body = document.getElementById("body");
-        if (state.paired) {
+        const link = state.link || {};
+        if (state.paired && link.phase && link.phase !== "connected") {
+          // The offline ladder: the text is built on the robot from real
+          // values, so it is shown as is.
+          body.innerHTML =
+            '<p>This robot cannot reach your MaiPai Home right now.</p>' +
+            '<span class="status away">' + (link.phase === "sleeping" ? "Asleep" : "Reconnecting") + '</span>' +
+            '<p class="link-status" id="link-status"></p>';
+          document.getElementById("link-status").textContent = link.status + (link.reply ? " " + link.reply : "");
+        } else if (state.paired) {
           body.innerHTML =
             '<p>This robot is connected to your MaiPai Home.</p>' +
             '<span class="status paired">Connected</span>';

@@ -20,7 +20,7 @@ def _store(tmp_path, base_url: str) -> PairingStore:
     return store
 
 
-def test_refresh_at_another_address_redeems_there_and_keeps_that_address(stand_in_hub, tmp_path):
+def test_refresh_at_another_address_redeems_there_and_keeps_it(stand_in_hub, tmp_path):  # noqa: F811
     server, handler = stand_in_hub
     store = _store(tmp_path, "http://127.0.0.1:1")  # the old address, nothing there
     client = HubLinkClient(store, discover=_never_discovers)
@@ -44,7 +44,7 @@ def test_a_failed_redeem_at_another_address_leaves_the_pairing_alone(tmp_path):
     assert client.last_refresh_error.startswith("unreachable: ")
 
 
-def test_a_refusal_is_reported_as_refused_not_unreachable(stand_in_hub, tmp_path):
+def test_a_refusal_is_reported_as_refused_not_unreachable(stand_in_hub, tmp_path):  # noqa: F811
     server, handler = stand_in_hub
     handler.redeem_status = 401
     store = _store(tmp_path, f"http://127.0.0.1:{server.server_port}")

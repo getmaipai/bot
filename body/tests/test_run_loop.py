@@ -45,6 +45,11 @@ class _RecordingExpressionEngine:
         self.muted_calls.append(muted)
         return self._engine.set_muted(muted, arbitration)
 
+    def render_ambient(self, primitive: str, context):
+        self.ambient: list[str] = getattr(self, "ambient", [])
+        self.ambient.append(primitive)
+        return self._engine.render_ambient(primitive, context)
+
 
 class _FakeAudioCapture:
     """One dummy block per call, always - content is irrelevant since
@@ -185,6 +190,8 @@ def _make_loop(
     face_recognition_interval_s: float = 3.0,
     camera_frame=None,
     hub_credentials=None,
+    offline=None,
+    on_change=None,
 ):
     client = FakeReachyMiniClient(REACHY_MINI_PROFILE, camera_frame=camera_frame)
     engine = _RecordingExpressionEngine(client, REACHY_MINI_PROFILE)
@@ -213,6 +220,8 @@ def _make_loop(
         face_embedder=face_embedder,
         face_gallery=face_gallery,
         face_recognition_interval_s=face_recognition_interval_s,
+        offline=offline,
+        on_change=on_change,
     )
     parts = {
         "client": client,

@@ -41,15 +41,17 @@ class Rung0Cues:
     def __init__(
         self,
         *,
-        render: Callable[[str], bool],
         machine: LinkStateMachine,
         clock: Callable[[], float],
+        render: Callable[[str], bool] | None = None,
         settings: Rung0Settings = Rung0Settings(),
         may_drive: Callable[[], bool] = lambda: True,
         speaker=None,
         on_reconnect_spoken: Callable[[], None] | None = None,
     ) -> None:
-        self._render = render
+        # `render`, `may_drive` and `on_reconnect_spoken` may be handed over
+        # later by the funnel (`attach`), which owns the engine and the head.
+        self._render = render or (lambda primitive: False)
         self._machine = machine
         self._clock = clock
         self._settings = settings
@@ -60,6 +62,23 @@ class Rung0Cues:
         self._stage = "none"  # none, settled, away
         self._stir_pending = False
         machine.subscribe(self._on_edge)
+
+    def attach(
+        self,
+        *,
+        render: Callable[[str], bool] | None = None,
+        may_drive: Callable[[], bool] | None = None,
+        on_reconnect_spoken: Callable[[], None] | None = None,
+        speaker=None,
+    ) -> None:
+        if speaker is not None:
+            self._speaker = speaker
+        if render is not None:
+            self._render = render
+        if may_drive is not None:
+            self._may_drive = may_drive
+        if on_reconnect_spoken is not None:
+            self._on_reconnect_spoken = on_reconnect_spoken
 
     def _on_edge(self, old: LinkPhase, new: LinkPhase) -> None:
         with self._lock:
@@ -107,9 +126,13 @@ class Rung0Cues:
         with self._lock:
             self._stage = stage
 
-    def _stir(self) -> None:
+    def stir_body(self) -> None:
+        """The stir itself, without speech (also what a fired timer does)."""
         self._render("perk")
         self._render("settle")
+
+    def _stir(self) -> None:
+        self.stir_body()
         speaker = self._speaker
         if speaker is None or not speaker.can_say([RECONNECT_CLIP]):
             return

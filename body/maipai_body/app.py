@@ -22,10 +22,13 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
+import math
 import os
 import signal
 import threading
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 import reachy_mini
@@ -37,12 +40,24 @@ from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.hal.errors import BodyLost
 from maipai_body.hal.seam import AntennaPositions, HeadActuator, HeadPose
 from maipai_body.link import HubLinkClient, PairingStore, discover_hub
+from maipai_body.link.discovery import DiscoverHub
 from maipai_body.link.lifecycle import LinkLifecycle
+from maipai_body.link.offline import OfflineRungs
 from maipai_body.link.prints import PrintSync
+from maipai_body.link.rung0 import Rung0Cues
 from maipai_body.link.state import StateReporter
+from maipai_body.link.state_machine import DEFAULT_SLEEP_AFTER_MINUTES, LinkStateMachine
+from maipai_body.link.supervisor import LinkSupervisor
 from maipai_body.run_loop import ConversationLoop
 from maipai_body.speech.capture import AudioCapture
 from maipai_body.speech.models import EMBEDDING, MELSPECTROGRAM, WAKE_PHRASE, ensure_wakeword_models
+from maipai_body.speech.offline_clips import (
+    AssetUnavailable,
+    ClipsUnavailable,
+    ManifestError,
+    OfflineSpeaker,
+    ensure_clip_bundle,
+)
 from maipai_body.speech.playback import AudioPlayback
 from maipai_body.speech.stt_stream import SttStreamClient
 from maipai_body.speech.tts_playback import TtsPlaybackClient
@@ -118,6 +133,85 @@ def _log_state(state: str) -> None:
     logger.info("state: %s", state)
 
 
+_SLEEP_AFTER_ENV = "MAIPAI_LINK_SLEEP_AFTER_MIN"
+
+
+def _sleep_after_s(environ: Mapping[str, str] | None = None) -> float:
+    """LINK-STATE-01's "after N minutes" setting, from the environment (no
+    settings store exists yet). An unreadable or non-positive value falls
+    back to the unmeasured default rather than disabling sleep."""
+    environ = os.environ if environ is None else environ
+    raw = environ.get(_SLEEP_AFTER_ENV)
+    if raw is not None:
+        try:
+            minutes = float(raw)
+        except ValueError:
+            minutes = math.nan
+        if math.isfinite(minutes) and minutes > 0:
+            return minutes * 60.0
+        logger.warning("ignoring %s=%r; using the default", _SLEEP_AFTER_ENV, raw)
+    return DEFAULT_SLEEP_AFTER_MINUTES * 60.0
+
+
+@dataclass
+class LinkStack:
+    """The hub link and the offline ladder over it, built together."""
+
+    machine: LinkStateMachine
+    link: LinkLifecycle
+    offline: OfflineRungs
+    supervisor: LinkSupervisor
+
+
+def _build_link_stack(
+    store: PairingStore,
+    client: HubLinkClient,
+    *,
+    discover: DiscoverHub,
+    sleep_after_s: float,
+) -> LinkStack:
+    """LINK-STATE-01's wiring. Rung 1's recognizer and router are left
+    unwired: the keyword spotter's cost on the Compute Module is UNVERIFIED
+    (docs/dev/offline-ladder-unit-checks.md), so a wake during an outage is
+    ignored until that row is recorded and a recognizer is passed in."""
+    machine = LinkStateMachine(sleep_after_s=sleep_after_s)
+    link = LinkLifecycle(store, client, discover=discover, observer=machine, address_walk=True)
+    rung0 = Rung0Cues(machine=machine, clock=time.monotonic)
+    offline = OfflineRungs(machine=machine, rung0=rung0)
+    supervisor = LinkSupervisor(
+        machine=machine,
+        reconnect=link.reconnect_once,
+        rung0=rung0,
+    )
+    return LinkStack(machine=machine, link=link, offline=offline, supervisor=supervisor)
+
+
+def _link_state_payload(link: LinkLifecycle, offline: OfflineRungs) -> dict:
+    """The settings page's frame: pairing as before, plus the ladder's phase
+    and its rung 2 status text (always visible, whatever can be spoken)."""
+    state = link.state
+    return {
+        "paired": state.paired,
+        "code": state.code,
+        "hub_instance_id": state.hub_instance_id,
+        "link": {
+            "phase": offline.machine.phase.value,
+            "status": offline.status_text(),
+            "reply": offline.last_reply.text if offline.last_reply is not None else None,
+        },
+    }
+
+
+def _clip_speaker(cache_dir: Path, playback: AudioPlayback) -> OfflineSpeaker | None:
+    """The offline clip speaker, or None while the bundle is not released
+    or not rendered (G4b): the ladder then cues the body and shows text."""
+    try:
+        return OfflineSpeaker(ensure_clip_bundle(cache_dir), playback)
+    except (AssetUnavailable, ClipsUnavailable, ManifestError) as exc:
+        logger.info("offline clips unavailable, the ladder stays silent: %s", exc)
+        return None
+
+
 def _hold_neutral(client: HeadActuator) -> None:
     """goto neutral, then hold - the floor `run_paired_body` starts
     from every time, whether it ends up waiting for pairing or (once
@@ -138,6 +232,8 @@ def _build_conversation_loop(
     cache_dir: Path,
     link: LinkLifecycle,
     stop_event: threading.Event,
+    *,
+    offline: OfflineRungs | None = None,
 ) -> ConversationLoop:
     """Real construction, once paired: everything G9's `ConversationLoop`
     needs, pointed at the paired hub and the local model cache.
@@ -159,6 +255,10 @@ def _build_conversation_loop(
         embedding_model=wakeword_paths[EMBEDDING.file],
     )
     audio_playback = AudioPlayback(client)
+    if offline is not None:
+        offline.speaker = _clip_speaker(cache_dir, audio_playback)
+        if offline.rung0 is not None:
+            offline.rung0.attach(speaker=offline.speaker)
     gallery = FaceGallery(model_id=_FACE_MODEL_ID, model_sha256=SFACE.sha256)
     print_sync = PrintSync(gallery, hub_credentials, stop_event)
     loop = ConversationLoop(
@@ -174,6 +274,7 @@ def _build_conversation_loop(
         face_detector=FiveLandmarkDetector(),
         face_embedder=ensure_embedder(cache_dir),
         face_gallery=gallery,
+        offline=offline,
     )
     threading.Thread(target=print_sync.run, name="face-print-sync", daemon=True).start()
     return loop
@@ -202,6 +303,8 @@ def run_paired_body(
     stop_event: threading.Event,
     *,
     cache_dir: Path,
+    offline: OfflineRungs | None = None,
+    supervisor: LinkSupervisor | None = None,
 ) -> None:
     """The real boot path: hold neutral until G4's link reports paired,
     then hand off to `ConversationLoop` for the rest of the process's
@@ -287,8 +390,11 @@ def run_paired_body(
 
         def build_loop() -> None:
             try:
+                # Only passed when there is a ladder, so a body without one
+                # builds the loop exactly as before.
+                extra = {"offline": offline} if offline is not None else {}
                 loop = _build_conversation_loop(
-                    client, session_cookie, pairing.base_url, cache_dir, link, stop_event
+                    client, session_cookie, pairing.base_url, cache_dir, link, stop_event, **extra
                 )
                 loop_result.append(loop)
                 loop_ready.set()
@@ -326,6 +432,10 @@ def run_paired_body(
             logger.exception("failed to build the conversation loop")
             return
         _log_state(_STATE_CONVERSATION_LOOP)
+        if supervisor is not None:
+            threading.Thread(
+                target=supervisor.run, args=(stop_event,), name="link-supervisor", daemon=True
+            ).start()
         loop.run(stop_event)
     except BodyLost:
         _log_state(_STATE_BODY_LOST)
@@ -341,23 +451,17 @@ class MaiPaiBody(ReachyMiniApp):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         store = PairingStore(_default_pairing_path())
-        self.link = LinkLifecycle(
-            store,
-            HubLinkClient(store),
-            discover=discover_hub,
+        self._stack = _build_link_stack(
+            store, HubLinkClient(store), discover=discover_hub, sleep_after_s=_sleep_after_s()
         )
+        self.link = self._stack.link
         # The base class only wires static files + index.html; the
         # settings page's own JS polls this for live pairing state.
         if self.settings_app is not None:
 
             @self.settings_app.get("/api/state")
             async def link_state() -> dict:
-                state = self.link.state
-                return {
-                    "paired": state.paired,
-                    "code": state.code,
-                    "hub_instance_id": state.hub_instance_id,
-                }
+                return _link_state_payload(self.link, self._stack.offline)
 
     def run(self, reachy_mini: ReachyMini, stop_event: threading.Event) -> None:
         """Run the body: install the SIGINT handler, start the hub link
@@ -371,7 +475,14 @@ class MaiPaiBody(ReachyMiniApp):
         link_thread.start()
         try:
             client = ReachyMiniClient(REACHY_MINI_PROFILE, reachy=reachy_mini)
-            run_paired_body(client, self.link, stop_event, cache_dir=_default_models_cache_dir())
+            run_paired_body(
+                client,
+                self.link,
+                stop_event,
+                cache_dir=_default_models_cache_dir(),
+                offline=self._stack.offline,
+                supervisor=self._stack.supervisor,
+            )
         finally:
             signal.signal(signal.SIGINT, previous_handler)
             link_thread.join(timeout=5.0)

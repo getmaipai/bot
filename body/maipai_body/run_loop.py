@@ -25,6 +25,7 @@ import logging
 import re
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
@@ -35,6 +36,10 @@ from maipai_body.expression.cue import Cue, Phase
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.suppression import SuppressionContext
 from maipai_body.hal.seam import AudioIO, Camera, FaceTracker, HeadActuator, Imu
+from maipai_body.link.commands import LocalCommand, route_phrase
+from maipai_body.link.offline import OfflineRungs
+from maipai_body.link.replay import ReplayItem
+from maipai_body.link.state_machine import LinkPhase
 from maipai_body.presence.arbitration import ArbitrationState, tracking_may_drive
 from maipai_body.presence.observations import read_presence
 from maipai_body.speech.capture import AudioCapture
@@ -149,6 +154,7 @@ class ConversationLoop:
         face_embedder: SFaceEmbedder | None = None,
         face_gallery: FaceGallery | None = None,
         face_recognition_interval_s: float = _FACE_RECOGNITION_INTERVAL_S,
+        offline: OfflineRungs | None = None,
     ) -> None:
         self._client = client
         self._expression = expression_engine
@@ -205,6 +211,47 @@ class ConversationLoop:
         # outage are announced once. Only the funnel thread reads or
         # writes it (the speak worker reports through an Event).
         self._lost_turn_unannounced = False
+        # LINK-STATE-01: the offline ladder. None keeps the loop exactly as
+        # it was; with one, a lost link feeds the machine, an outage answers
+        # wakes with rung 1 only, and the machine's edges are state changes.
+        self._offline = offline
+        if offline is not None:
+            offline.machine.subscribe(lambda _old, _new: self._notify_change())
+            if offline.rung0 is not None:
+                offline.rung0.attach(
+                    render=self._render_ambient,
+                    may_drive=self._body_is_free,
+                    on_reconnect_spoken=self._reconnect_spoken,
+                )
+
+    def _notify_change(self) -> None:
+        if self._on_change is not None:
+            self._on_change()
+
+    def _render_ambient(self, primitive: str) -> bool:
+        """Rung 0's way onto the body: a state-driven primitive through the
+        same engine, suppression table and lock the turn cues use."""
+        context = SuppressionContext(muted=self._is_muted())
+        return self._expression.render_ambient(primitive, context).rendered
+
+    def _body_is_free(self) -> bool:
+        """Rung 0 may move the head only when no turn and no tracker owns it."""
+        with self._lock:
+            return self._state.funnel == FunnelState.IDLE and not self._state.tracking
+
+    def _reconnect_spoken(self) -> None:
+        """The reconnect clip said the one line, so the hub's own wording of
+        it (``LINK_RESTORED_LINE``) is no longer owed."""
+        self._lost_turn_unannounced = False
+
+    def _in_outage(self) -> bool:
+        return self._offline is not None and self._offline.machine.phase is not LinkPhase.CONNECTED
+
+    def _tracking_allowed(self) -> bool:
+        offline = self._offline
+        if offline is None or offline.rung0 is None:
+            return True
+        return offline.rung0.tracking_allowed()
 
     @property
     def state(self) -> RunLoopState:
@@ -229,8 +276,15 @@ class ConversationLoop:
     def snapshot(self) -> dict[str, object]:
         """Return the reportable funnel state without exposing live state."""
         with self._lock:
+            activity = self._state.funnel.value
+            idle = self._state.funnel == FunnelState.IDLE
+        if idle and self._offline is not None:
+            phase = self._offline.machine.phase
+            if phase is not LinkPhase.CONNECTED:
+                activity = phase.value  # `reconnecting` or `sleeping` (spec-v0.1.73)
+        with self._lock:
             return {
-                "activity": self._state.funnel.value,
+                "activity": activity,
                 "muted": self._state.muted,
                 "tracking": self._state.tracking,
             }
@@ -272,12 +326,15 @@ class ConversationLoop:
         context = SuppressionContext(muted=self._is_muted())
         self._expression.handle(cue, context)
 
-    def _link_lost(self) -> None:
+    def _link_lost(self, reason: str = "the hub stopped answering") -> None:
         """Section 7: loss of the hub mid-turn is `cancel`, `link_lost`.
         Renders it once (the stop primitive holds the pose, so the head
-        settles where it is) and owes the one line on reconnect."""
+        settles where it is) and owes the one line on reconnect. With the
+        offline ladder it also tells the machine, which starts the walk."""
         self._render(Cue(phase=Phase.CANCEL, cue_seq=self._next_cue_seq()))
         self._lost_turn_unannounced = True
+        if self._offline is not None:
+            self._offline.machine.link_lost(reason)
 
     def set_muted(self, muted: bool) -> None:
         """The software-mute toggle's own entry point (G8's own state,
@@ -310,7 +367,10 @@ class ConversationLoop:
                 event = self._poll_wake(stop_event)
                 if event is None:
                     continue
-                self._run_turn(stop_event)
+                if self._in_outage():
+                    self._run_offline_command(stop_event)
+                else:
+                    self._run_turn(stop_event)
         finally:
             self._capture.stop()
             presence_thread.join(timeout=2.0)
@@ -330,6 +390,41 @@ class ConversationLoop:
                     return wake_event
             stop_event.wait(_WAKE_POLL_SLEEP_S)
         return None
+
+    def _run_offline_command(self, stop_event: threading.Event) -> None:
+        """Rung 1: a wake during an outage listens for one of the closed
+        list of local commands and nothing else. No STT stream, no turn, no
+        queue: a phrase off the list is dropped (the gate only counts the
+        refusal) and the funnel never leaves `idle` for it. A command
+        shows `speaking` for its fixed reply and goes back to `idle`."""
+        offline = self._offline
+        assert offline is not None
+        if offline.recognizer is None or offline.router is None:
+            return  # no keyword spotter wired (its CPU cost is UNVERIFIED)
+        try:
+            heard = offline.recognizer.listen(self._capture, stop_event)
+        except Exception:
+            logger.warning("local command recognizer failed", exc_info=True)
+            return
+        command = route_phrase(heard) if heard else None
+        if command is None:
+            if heard:
+                offline.gate.offer(ReplayItem(item_id=uuid.uuid4().hex, text=heard))
+            return
+        reply = offline.router.handle(command)
+        offline.last_reply = reply
+        self._enter(FunnelState.SPEAKING)
+        try:
+            if command is LocalCommand.STOP:
+                self._playback.stop()
+                self._render(Cue(phase=Phase.CANCEL, cue_seq=self._next_cue_seq()))
+            speaker = offline.speaker
+            if speaker is not None and reply.clip_ids and speaker.can_say(reply.clip_ids):
+                speaker.say(reply.clip_ids, stop_event=stop_event)
+        except Exception:
+            logger.warning("rung 1 reply failed", exc_info=True)
+        finally:
+            self._enter(FunnelState.IDLE)
 
     def _run_turn(self, stop_event: threading.Event) -> None:
         if self._hub_credentials is not None:
@@ -352,11 +447,11 @@ class ConversationLoop:
 
         try:
             stt_result = self._stt.run(self._capture)
-        except Exception:
+        except Exception as exc:
             logger.warning("stt stream failed; back to idle", exc_info=True)
             # The listen cue already moved the head; a lost stream is a
             # lost turn, so it settles and is announced like any other.
-            self._link_lost()
+            self._link_lost(f"speech stream lost: {exc}")
             self._enter(FunnelState.IDLE)
             return
 
@@ -408,9 +503,9 @@ class ConversationLoop:
                         self._render(turn_event.cue)
                 if turn_event.reply_text is not None:
                     reply_text = turn_event.reply_text
-        except (TurnLinkLost, requests.RequestException):
+        except (TurnLinkLost, requests.RequestException) as exc:
             logger.warning("turn stream link lost", exc_info=True)
-            self._link_lost()
+            self._link_lost(f"turn stream lost: {exc}")
             self._enter(FunnelState.IDLE)
             return
 
@@ -477,7 +572,7 @@ class ConversationLoop:
         if link_lost.is_set():
             # Mid-sentence loss: the reply was not finished, so this is a
             # cancel, never the settle a finished reply earns.
-            self._link_lost()
+            self._link_lost("speech playback lost the hub")
             return True
         self._render(Cue(phase=Phase.DONE, cue_seq=self._next_cue_seq()))
         return False
@@ -528,7 +623,9 @@ class ConversationLoop:
                 continue
             arbitration = ArbitrationState(tracking_active=observation.face_detected)
             not_speaking = self._current_funnel() != FunnelState.SPEAKING
-            should_track = tracking_may_drive(arbitration) and not_speaking
+            should_track = (
+                tracking_may_drive(arbitration) and not_speaking and self._tracking_allowed()
+            )
             with self._lock:
                 already_tracking = self._state.tracking
             if should_track and not already_tracking:
