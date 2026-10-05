@@ -143,3 +143,57 @@ def test_time_to_still_is_none_if_the_head_never_settles():
 
     trace = [_s(100 + i * 33, yaw=0.05 * i) for i in range(20)]
     assert time_to_still(trace, after_ns=100 * MS) is None
+
+
+class _Feed:
+    def __init__(self, frames, raises=None):
+        self._frames = iter(frames)
+        self._raises = raises
+        self.closed = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._raises is not None:
+            raise self._raises
+        return next(self._frames)
+
+    def close(self):
+        self.closed = True
+
+
+class _Client:
+    def __init__(self, feed):
+        self.feed = feed
+
+    def state_feed(self, frequency):
+        return self.feed
+
+
+def _frame(seq):
+    return StateFrame.stamped(
+        seq, head_pose=HeadPose(), antennas=AntennaPositions(left=0.0, right=0.0)
+    )
+
+
+def test_the_recorder_closes_its_feed_when_it_is_told_to_stop():
+    """A feed left open keeps a socket and a keepalive thread alive for the life of the
+    process; hundreds of repeats would load the daemon the measurement is reading."""
+    from maipai_body.measure.motion import FeedRecorder
+
+    feed = _Feed([_frame(1), _frame(2), _frame(3)])
+    recorder = FeedRecorder()
+    recorder.stop()
+    recorder.run(_Client(feed))
+    assert feed.closed is True
+    assert len(recorder.samples) == 1  # one frame in hand when the stop was seen
+
+
+def test_the_recorder_closes_its_feed_when_the_feed_itself_fails():
+    from maipai_body.measure.motion import FeedRecorder
+
+    feed = _Feed([], raises=OSError("socket gone"))
+    recorder = FeedRecorder()
+    recorder.run(_Client(feed))
+    assert feed.closed is True

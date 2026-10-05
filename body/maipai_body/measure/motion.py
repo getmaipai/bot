@@ -97,6 +97,13 @@ class FeedRecorder:
                     break
         except Exception:
             pass
+        finally:
+            close = getattr(feed, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except Exception:
+                    pass
 
     def stop(self) -> None:
         self._stop.set()

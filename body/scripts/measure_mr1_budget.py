@@ -5,16 +5,24 @@ and throttle flags over an hour, a turn every two minutes, for three
 configurations. Run each on a fresh boot with nothing else going on, one
 after the other, and record all three before reading the decision.
 
+On the unit, the scripts run from a copy of ``body/scripts`` with the apps venv
+that ``scripts/install-reachy.sh`` installed the wheel into (``uv run`` cannot
+resolve there; the lockfile is scoped to the dev Mac)::
+
+    scp -r body/scripts pollen@<robot address>:maipai-scripts
+    ssh pollen@<robot address>
+    cd maipai-scripts/..    # any directory; --out-dir defaults to ./measurements
+
 1. The daemon alone (the body app stopped, no turns)::
 
-    uv run python scripts/measure_mr1_budget.py --config daemon --turn-interval-s 0 \\
+    /venvs/apps_venv/bin/python scripts/measure_mr1_budget.py --config daemon --turn-interval-s 0 \\
         --image-release <release> --record
 
 2. The ``pod``-tier body (the app running and paired; the hub does stt and
    tts). The utterance is a 16 kHz 16-bit mono WAV of someone saying
    something a household would say, ending where the speech ends::
 
-    uv run python scripts/measure_mr1_budget.py --config pod \\
+    /venvs/apps_venv/bin/python scripts/measure_mr1_budget.py --config pod \\
         --utterance-wav <file.wav> --image-release <release> --record
 
 3. ``stt`` and ``tts`` on the robot (the ``robot`` tier): the same app, with
@@ -24,7 +32,7 @@ after the other, and record all three before reading the decision.
    build's recorded M-06 endpoint-to-transcript p95 (not in this repo yet;
    M-06 is open in the backlog)::
 
-    uv run python scripts/measure_mr1_budget.py --config robot \\
+    /venvs/apps_venv/bin/python scripts/measure_mr1_budget.py --config robot \\
         --utterance-wav <file.wav> --stt-base-url http://127.0.0.1:<port> \\
         --tts-base-url http://127.0.0.1:<port> --process stt=<pattern> \\
         --process tts=<pattern> --m06-p95-ms <figure> --image-release <release> --record
@@ -63,7 +71,7 @@ from maipai_body.measure.budget import (
 )
 from maipai_body.measure.loop_bench import NullAudioIO
 from maipai_body.measure.report import budget_section, daemon_version_from
-from maipai_body.measure.run_header import new_run_header, upsert_markdown_section, write_run
+from maipai_body.measure.run_header import new_run_header, record_section, write_run
 from maipai_body.measure.stand_in_hub import StandInHub
 from maipai_body.measure.turn_driver import (
     NoUsablePairing,
@@ -214,12 +222,13 @@ def main() -> None:
     if decision is not None:
         print(f"decision: {decision}")
     if args.record:
-        upsert_markdown_section(
+        written = record_section(
             MEASUREMENTS_MD,
             f"## M-R1: the Compute Module budget, {args.config} (unit)",
             budget_section(header, args.config, summary, decision, duration_s=args.duration_s),
+            fallback_dir=args.out_dir,
         )
-        print(f"updated {MEASUREMENTS_MD}")
+        print(f"recorded in {written}")
 
 
 if __name__ == "__main__":
