@@ -20,6 +20,13 @@ checklist (`docs/dev.md`).
   unit's service user to dialout for the Eyes serial port, idempotently. The
   rule is limited to the design's USB ids, 2e8a:10fc.
 
+- EYES-03 (Reachy Mini): a clean-room serial client for the Reachy Eyes
+  (`eyes_client.py`) with one writer thread, an exclusive port, a 50 ms write
+  timeout, latest-look-wins, capped reconnect and a reply drain. Its wire
+  lines are one unverified table, documented in
+  `docs/dev/eyes-wire-protocol.md`, and `scripts/probe_eyes.py` shows what
+  the real unit answers on arrival. Nothing is wired into the app yet.
+
 - RM-07 egress tooling (`maipai_body/measure/netcapture.py`,
   `body/scripts/measure_rm07_egress.py`): reads a packet capture, groups the
   robot's own connections by destination and port, labels each against the

@@ -1927,6 +1927,25 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       not vendor source. It installs no vendor package and no firmware; not
       run on a unit (no unit, and the sandbox cannot run the daemon).
 
+- [x] **EYES-03: clean-room serial client and protocol note** (M, Reachy
+      Mini only). `bodies/reachy_mini/eyes_client.py` (`EyesClient`, an
+      `Indicator`): one writer thread, `exclusive=True`, 50 ms write timeout,
+      latest look wins, reconnect backoff doubling from 0.5 s to a 30 s cap
+      with the wanted look replayed, reply drain into a bounded log. Every
+      wire line is data in one `WireProtocol` table, all UNVERIFIED, since
+      the README summary gave command names but not line syntax;
+      `docs/dev/eyes-wire-protocol.md` cites only that summary and lists
+      what the owner's unit must settle. `ack` is two `BLINK` lines (no
+      cited ack command); off is intensity 0. `scripts/probe_eyes.py` sends
+      nothing by default (no documented ping) and may send only table
+      commands. Tests: `tests/test_eyes_client.py` over a pty
+      (`tests/eyes_fakes.py`): a byte test bans every command word outside
+      the table and names RGB, ANIMA, CAPTURE, CFG, ENERGY, SHIMMER,
+      ASYMMETRY, ACK, STARTLE, RED; no `reachy_eyes` import, dependency or
+      lockfile entry; none of the vendor's constants. Not built: wiring the
+      client into the app (a later row), breathing. Live lines: not run,
+      sandbox cannot run the daemon and no unit.
+
 ## Voice loop
 
 - [ ] **VOICE-01: the speech process** (M). Objective: `body/speech/`
