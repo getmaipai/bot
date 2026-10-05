@@ -193,6 +193,7 @@ The body track starts now; nothing here waits on the hub.
       hardware run; the capture pipeline's measured frame rate recorded.
       Out of scope: the room sensors (BODY-09), ArcFace (SPEAK-04), the
       drive controller, the brake. Exit: `bash scripts/check.sh`.
+      Pi + Hailo build: NO PRIORITY by owner decision 2026-10-05. Nothing for it is dispatched or started until the owner says so.
 - [ ] **BODY-09: the room sensors** (S, after standalone). Objective: the
       VL53L5CX units, the radars, the VEML7700, the BME688, the MCP23017,
       the INA228 and DS18B20 when fitted, behind the same seam with
@@ -1425,6 +1426,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       2026-09-28, not analyzed, a `home`/`go` item regardless). Exit:
       `bash scripts/check.sh`, plus the CPU measurement recorded in
       `docs/dev/measurements.md`.
+      Pi + Hailo build: NO PRIORITY by owner decision 2026-10-05. Nothing for it is dispatched or started until the owner says so.
       **Landed 2026-09-28: the offline pipeline (detect, align, embed,
       match), not yet the run-loop wiring.** `vision/detect.py`
       (`FiveLandmarkDetector`, all five YuNet points); `vision/
@@ -1873,6 +1875,7 @@ value; RT-02 and RT-03 carry it.
       pipelines by that one policy; no process keeps its own. Acceptance:
       a fake thermal ceiling in the body pauses the judge and the idle
       motion in the deterministic test. Exit: `bash scripts/check.sh`.
+      Pi + Hailo build: NO PRIORITY by owner decision 2026-10-05. Nothing for it is dispatched or started until the owner says so.
 - [ ] **UPD-01: self-update with rollback** (M, after standalone).
       Objective: the robot's own update path per UPDATES.md: stage, swap,
       health check, rollback, the runtime pin and the body versioned
