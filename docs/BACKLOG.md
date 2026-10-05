@@ -637,21 +637,31 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       every two minutes. Decision rule in section 12: the `robot` tier
       only if endpoint-to-transcript p95 is under M-06's figure plus
       500 ms and nothing throttles.
+      Status 2026-10-05: script, sampler and decision rule built and proven on fakes
+      (`body/scripts/measure_mr1_budget.py`, `dev/measure-runbook.md`); needs the unit.
 - [ ] **M-R2: cue to motion** (S, sim then unit). Cue to first
       state-feed delta p50 and p95 per primitive; the stall behaviour
       under a held head at each fraction; amplitude, peak velocity and
       settling time against the declared limits.
+      Status 2026-10-05: sim rows recorded in `dev/measurements.md` (p50 and p95, stall
+      reference); the unit run and the held-head rows need the unit.
 - [ ] **M-R3: wake and direction of arrival on this array** (S, unit).
       False accepts per hour and recall at section 6's ear gates on the
       daemon's 16 kHz path; bearing error at eight angles; barge-in
       through the chip's echo cancellation at conversation level.
+      Status 2026-10-05: script, bearing maths and the M-08 gates built and proven on
+      scripted audio (`dev/measure-runbook.md`); needs the unit.
 - [ ] **M-R4: battery** (S, unit). Runtime idle, in conversation, and
       with tracking, by the clock to the LED's red; whether any
       readable fact exists; whether it runs while charging. The card
       says "battery level unknown" until this row exists.
+      Status 2026-10-05: probe, crash-safe heartbeat log and report built and proven on
+      fakes (`dev/measure-runbook.md`); needs the unit.
 - [ ] **M-R5: the link** (S, sim then unit). Wi-Fi loss mid-turn and
       mid-sentence: `cancel` raised, the pose settled, the one line on
       reconnect; reconnection p50 and p95.
+      Status 2026-10-05: sim rows recorded in `dev/measurements.md`, with the loop fixed to
+      cancel once and say the line once; the radio and the Compute Module need the unit.
 - [ ] **M-R6: the household runtime on the Compute Module** (M, unit,
       after v0.1, after RT-01). Bun, the pinned runtime, the embed model
       and MiniCPM5-1B at Q4_K_M beside the daemon and the `pod`-tier
