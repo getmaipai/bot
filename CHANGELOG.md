@@ -36,6 +36,13 @@ checklist (`docs/dev.md`).
   acknowledgement and the status line instead of nothing; a body with a
   stored pairing starts the ladder at power-on with the hub away; only a LAN
   answer overwrites the stored pairing address.
+- S-KWS-RUNG1 (Reachy Mini): the sherpa-onnx keyword spotter behind rung 1's
+  recognizer interface for the closed command list, in `speech/kws.py`, behind
+  a new optional `kws` extra and not wired into the app. The model is fetched
+  and checksummed, never vendored. Fixtures are synthesized speech;
+  `scripts/measure_kws.py` measures accuracy, false accepts and CPU on the unit.
+  The Compute Module CPU and false-accept row is UNVERIFIED
+  (`docs/dev/measurements.md`).
 - The robot's state frame now carries `app_version`, the installed
   `maipai-bot` version, in every frame (`daemon_version` is still the
   vendor SDK's), so the hub can compare a robot to a Bot release.

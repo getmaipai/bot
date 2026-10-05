@@ -1854,6 +1854,38 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       defense against an on-path attacker. See
       `docs/dev/offline-ladder-unit-checks.md`.**
 
+- [ ] **S-KWS-RUNG1: the keyword spotter behind rung 1's recognizer**
+      (S, Reachy Mini only, after LINK-STATE-01). Objective: a real
+      `CommandRecognizer` for the closed command list (stop, quieter,
+      louder, timer, what time is it, are you connected), built on the
+      sherpa-onnx keyword spotter named in `dev.md`'s wake row. Acceptance:
+      recorded-audio fixtures yield each command and a near-miss list
+      yields none; the funnel never leaves `idle` except for a rung 1
+      command; the Compute Module CPU and false-accept row is written as
+      UNVERIFIED with a measurement script entry. Exit: `bash
+      scripts/check.sh`. **Built 2026-10-05 on the branch
+      `cloud/kws-rung1`, not landed:** `speech/kws.py` (pinned model
+      fetched on demand, a committed keyword file, a bounded listen window
+      after the wake), behind a new optional `kws` extra, with scripted-engine
+      tests that always run and real-model tests gated on
+      `MAIPAI_KWS_MODELS_DIR`. The funnel tests show each spotted command
+      reaching its fixed reply with no turn, and a wake followed by nothing
+      on the list leaving the funnel in `idle` with an empty trace. The
+      fixtures are SYNTHESIZED speech (two Piper voices), not recordings, and
+      are labelled so: on them 17 of 22 command clips are heard, none as
+      another command, and 0 of 48 near-miss clips are accepted; a wider
+      synthesized sweep heard 71 percent and accepted 3.8 percent of near
+      misses (`docs/dev/measurements.md`). Open: every figure that needs the
+      unit is UNVERIFIED (CPU beside the wake model, false accepts per hour,
+      recall on real speech, sharing the microphone stream), with the
+      commands in `docs/dev/offline-ladder-unit-checks.md` item 4 and
+      `scripts/measure_kws.py`; the recognizer is not wired into the app,
+      which also lacks a `VolumeControl` for the body and the `cmd.*` clips
+      (G4b); `uv.lock` does not carry the `kws` extra yet (regenerate with
+      `uv lock` on the dev Mac). A keyword fires inside longer speech
+      ("stopping by the shop"), which the window and the closed list bound
+      but do not remove.
+
 ## Voice loop
 
 - [ ] **VOICE-01: the speech process** (M). Objective: `body/speech/`

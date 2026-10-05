@@ -73,8 +73,12 @@ on this page has been run on a unit, and no number here is a measurement.
   EXPR-04, not built.
 - Rung 1 (`link/commands.py`): a closed list (stop, quieter, louder, timer,
   what time is it, are you connected) behind a `CommandRecognizer` interface.
-  No real recognizer is wired. Replies are clip ids plus text; the text is on
-  the app page, the clips are spoken only when the bundle can say every id.
+  `speech/kws.py` is the sherpa-onnx keyword spotter that implements it
+  (`uv sync --extra kws`; the model is fetched and checksummed on first use).
+  It is not wired into the app: that waits on the CPU and false-accept row
+  below and on a `VolumeControl` for the body. Replies are clip ids plus text;
+  the text is on the app page, the clips are spoken only when the bundle can
+  say every id.
 - Rung 2 (`link/status.py`): a template over the machine's real values (last
   contact, attempts, the address tried, the path that answered, the last
   error), no model. Always on the app page; spoken only as `line.unreachable`.
@@ -89,7 +93,8 @@ on this page has been run on a unit, and no number here is a measurement.
 ## UNVERIFIED
 
 - The sherpa-onnx keyword spotter's CPU and false-accepts on the Compute
-  Module beside the wake model. No recognizer ships until this row exists.
+  Module beside the wake model (`docs/dev/measurements.md`, "Rung 1 keyword
+  spotter"). The recognizer exists but is not wired until this row does.
 - That the Compute Module's wake model and a keyword spotter can share the
   microphone stream the way `AudioCapture` hands blocks out.
 - Every default interval above.
@@ -133,17 +138,33 @@ the copy-over steps).
        --wifi-outage-s 20 --wifi-trials 5 --record
    ```
 
-4. The keyword spotter's CPU beside the wake model (M-R1's sampler, with the
-   spotter running as its own process, named so it gets its own figures).
-   There is no recognizer in this repo to start, so this row cannot run yet;
-   when one exists:
+4. The keyword spotter's CPU beside the wake model. Install `sherpa-onnx` into
+   the apps venv, start the probe as its own process (it feeds a recorded
+   utterance to the spotter at real-time pace, which is what a live microphone
+   does), and run M-R1's sampler beside it with the probe named so it gets its
+   own figures:
 
    ```
+   /venvs/apps_venv/bin/pip install "sherpa-onnx>=1.13.8,<2"
+   /venvs/apps_venv/bin/python scripts/measure_kws.py cpu --wav <utterance.wav> \
+       --seconds 3700 --mode unit --label "pod config, beside the wake model" --record &
    /venvs/apps_venv/bin/python scripts/measure_mr1_budget.py --config pod \
-       --utterance-wav <file.wav> --process kws=<pattern> --image-release <release> --record
+       --utterance-wav <file.wav> --process kws=measure_kws.py --image-release <release> --record
    ```
 
-   Its false-accept rate has no harness (M-R3 covers the wake model only).
+   Then recall and false accepts, on real speech through the array. Record the
+   six commands and the near-miss list as 16 kHz mono wavs named
+   `<phrase with underscores>__<n>.wav` (`stop__01.wav`; any other name is a
+   near miss), and a long non-command recording (a television at room level):
+
+   ```
+   /venvs/apps_venv/bin/python scripts/measure_kws.py accuracy --wav-dir <dir> \
+       --mode unit --label "room, 1 m" --record
+   /venvs/apps_venv/bin/python scripts/measure_kws.py false-accepts --wav <long.wav> \
+       --mode unit --label "television news at room level" --record
+   ```
+
+   The tests' fixtures are synthesized speech and prove nothing about this row.
 
 5. Real volume: `VolumeControl` is a seam with no body implementation. The
    daemon has `/api/volume/current` and `/api/volume/set`; the step size

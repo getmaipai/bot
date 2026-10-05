@@ -91,6 +91,7 @@ Never a hostname, never a household recording.
 | mid_sentence | blackhole | 1 | 120023.2 | 120023.2 | 32.9 | 32.9 | 15004.5 | 15004.5 | 1 | 1/1 | 0/1 | 0 |
 
 
+<<<<<<< HEAD
 ## RM-07: what leaves the robot (unit), not run yet
 
 - mode: `unit` (the physical Reachy Mini; it has not arrived)
@@ -103,3 +104,38 @@ Never a hostname, never a household recording.
   run the script with `--capture`, `--phase before-install` then `--phase after-install`,
   `--mode unit` and `--record --write-page` (command in the script's docstring).
 - delete this section when the first capture is recorded; the recorder writes one section per phase.
+=======
+## Rung 1 keyword spotter, 2026-10-05
+
+LINK-STATE-01 rung 1 (`maipai_body/speech/kws.py`): sherpa-onnx 1.13.8, the
+`sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01` int8 model, six keywords,
+threshold 0.25 and score 1.0 (sherpa-onnx's defaults), window 4 s after the wake.
+
+**UNVERIFIED on the Compute Module.** Nothing below ran on the unit and none of it
+is real microphone audio; no number here may stand in for the M-R1 and M-R3 rows.
+
+| row | status | how it is filled |
+|---|---|---|
+| CPU beside the wake model, Compute Module | UNVERIFIED | `scripts/measure_kws.py cpu`, as its own process, with M-R1's sampler (`--process kws=measure_kws.py`) |
+| false accepts per hour on room audio | UNVERIFIED | `scripts/measure_kws.py false-accepts` on a long non-command recording |
+| recall and near misses on real speech through the array | UNVERIFIED | `scripts/measure_kws.py accuracy` on recorded clips |
+| share of the microphone stream with the wake model | UNVERIFIED | `docs/dev/offline-ladder-unit-checks.md`, item 4 |
+
+What was run, in the sandbox (x86, no daemon, no unit), mode `sim`:
+
+| what | result |
+|---|---|
+| committed fixtures, synthesized speech, 2 Piper voices | 17 of 22 command clips heard, 0 heard as another command, 0 of 48 near-miss clips accepted |
+| wider synthesized sweep, 2 voices at 3 speeds, 32 command and 78 near-miss utterances each | 68 of 96 command clips heard (71 percent), 9 of 234 near-miss clips accepted (3.8 percent) |
+| CPU, one core of a 2.1 GHz Xeon, 120 s of audio unpaced | 0.019 CPU s per audio s (not the Compute Module, not paced, no wake model beside it) |
+
+Findings from the sweep: the single-word commands (`timer`, `stop`, `louder`)
+are heard least often; near misses that were accepted at least once are `top`
+(as stop), `clouder` (louder), `are you collected` (are you connected) and
+`what time was it` (what time is it). Raising the threshold or the score cut
+recall faster than false accepts (at threshold 0.55 and score 1.0: 42 of 96 and
+3 of 234), so the defaults stay until real recordings say otherwise. A phrase
+inside a longer sentence ("stopping by the shop") still fires its keyword: the
+spotter matches a keyword anywhere in its 4 s window, and only the closed list
+and the window keep that to a rung 1 command.
+>>>>>>> cd16a9f (Add the rung 1 keyword spotter's measurement script and rows)
