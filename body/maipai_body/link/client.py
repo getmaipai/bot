@@ -95,6 +95,7 @@ class HubLinkClient:
         self._store = store
         self._session = session or requests.Session()
         self._discover = discover
+        self.last_refresh_error: str | None = None
 
     @property
     def session_cookie(self) -> str | None:
@@ -269,16 +270,34 @@ class HubLinkClient:
                 "than the one this pairing was made with"
             )
 
-    def refresh(self) -> bool:
+    def refresh(self, base_url: str | None = None) -> bool:
         """Re-establish a session from the persisted pairing, e.g. at
         startup or after a 401 mid-session. Returns False (never
         raises) when there is no pairing, or the hub refuses it - the
-        caller's own offline-first floor handles either the same way."""
+        caller's own offline-first floor handles either the same way.
+
+        ``base_url`` redeems the same device token at another address (the
+        one an address walk found). A success there is kept as the pairing's
+        address, since the turn clients read it from the store; a failure
+        leaves the pairing untouched. :attr:`last_refresh_error` says why
+        the last call failed (``refused: ...``, ``unreachable: ...`` or
+        ``not paired``) and is ``None`` after a success."""
         pairing = self._store.load()
         if pairing is None:
+            self.last_refresh_error = "not paired"
             return False
+        candidate = pairing
+        if base_url is not None and base_url != pairing.base_url:
+            candidate = pairing.model_copy(update={"base_url": base_url})
         try:
-            self._redeem(pairing)
-        except (PairingRefused, requests.RequestException):
+            self._redeem(candidate)
+        except PairingRefused as exc:
+            self.last_refresh_error = f"refused: {exc}"
             return False
+        except requests.RequestException as exc:
+            self.last_refresh_error = f"unreachable: {type(exc).__name__}"
+            return False
+        if candidate is not pairing:
+            self._store.save(candidate)
+        self.last_refresh_error = None
         return True

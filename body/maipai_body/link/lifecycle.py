@@ -14,7 +14,14 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
+from maipai_body.link.address_walk import (
+    AddressWalker,
+    HubEndpoint,
+    TailnetEndpoints,
+    no_tailnet_endpoints,
+)
 from maipai_body.link.client import HubLinkClient, PairingRefused, PairingTimedOut
 from maipai_body.link.discovery import DiscoverHub
 from maipai_body.link.store import PairingStore
@@ -35,6 +42,18 @@ class LinkState:
     last_error: str | None = None
 
 
+class LinkObserver(Protocol):
+    """What the offline ladder's state machine hears from the lifecycle:
+    every address tried, every redeem that worked and every one that
+    did not (with the client's own reason)."""
+
+    def attempt(self, address: str) -> None: ...
+
+    def redeemed(self, path: str, address: str | None = None) -> None: ...
+
+    def redeem_failed(self, error: str) -> None: ...
+
+
 class LinkLifecycle:
     """Owns the robot's own view of its hub link across the app's
     lifetime: unpaired (discovering, or showing a code and waiting for
@@ -49,12 +68,31 @@ class LinkLifecycle:
         discover: DiscoverHub,
         label: str = "Reachy Mini",
         on_code: Callable[[str], None] | None = None,
+        observer: LinkObserver | None = None,
+        address_walk: bool = False,
+        tailnet: TailnetEndpoints = no_tailnet_endpoints,
     ) -> None:
         self._store = store
         self._client = client
         self._discover = discover
         self._label = label
         self._on_code = on_code
+        self._observer = observer
+        # LINK-STATE-01: with `address_walk` a re-redeem walks the LAN then
+        # the tailnet (`tailnet` is ROBOT-TAILSCALE-01's seam) instead of
+        # retrying the one stored address.
+        self._walker = (
+            AddressWalker(
+                paired_base_url=self._stored_base_url,
+                discover=discover,
+                try_endpoint=self._try_endpoint,
+                tailnet=tailnet,
+                on_attempt=self._note_attempt,
+            )
+            if address_walk
+            else None
+        )
+        self._redeem_lock = threading.Lock()  # one redeem or walk at a time
         self._lock = threading.Lock()
         self._state = LinkState(paired=False)
 
@@ -88,6 +126,65 @@ class LinkLifecycle:
         pair/refresh, not a stale copy taken once at construction."""
         return self._client
 
+    def _stored_base_url(self) -> str | None:
+        pairing = self._store.load()
+        return pairing.base_url if pairing is not None else None
+
+    def _try_endpoint(self, endpoint: HubEndpoint) -> tuple[bool, str | None]:
+        ok = self._client.refresh(base_url=endpoint.base_url)
+        return ok, None if ok else self._client.last_refresh_error
+
+    def _note_attempt(self, endpoint: HubEndpoint) -> None:
+        if self._observer is not None:
+            self._observer.attempt(endpoint.base_url)
+
+    def _redeem_existing(self) -> bool:
+        """Re-redeem the persisted pairing (walking the address book when
+        asked to) and tell the observer what happened. Serialized: the
+        heartbeat, the pairing loop and the supervisor all come through here."""
+        with self._redeem_lock:
+            if self._walker is None:
+                ok = self._client.refresh()
+                if ok:
+                    path, address = "lan", self._stored_base_url()
+                    error = None
+                else:
+                    path, address = "", None
+                    error = getattr(self._client, "last_refresh_error", None)
+                    error = error or "the hub did not answer"
+            else:
+                result = self._walker.walk()
+                ok = result.answered is not None
+                if ok:
+                    path, address = result.answered.kind.value, result.answered.base_url
+                    error = None
+                else:
+                    path, address = "", None
+                    errors = [a.error for a in result.attempts if a.error]
+                    error = errors[-1] if errors else "not paired"
+        if self._observer is not None:
+            if ok:
+                self._observer.redeemed(path, address)
+            else:
+                self._observer.redeem_failed(error)
+        return ok
+
+    def reconnect_once(self) -> bool:
+        """One re-redeem of the stored pairing: what the ladder's
+        supervisor calls on its own cadence while the link is down. Never
+        asks for a new code. True means the hub answered."""
+        pairing = self._store.load()
+        if pairing is None:
+            if self._observer is not None:
+                self._observer.redeem_failed("not paired")
+            return False
+        if self._redeem_existing():
+            self._set_state(
+                paired=True, code=None, hub_instance_id=pairing.hub_instance_id, last_error=None
+            )
+            return True
+        return False
+
     def _set_state(self, **changes) -> None:
         with self._lock:
             for key, value in changes.items():
@@ -106,6 +203,10 @@ class LinkLifecycle:
                 paired = self._discover_and_pair()
                 if not paired:
                     stop_event.wait(DISCOVERY_RETRY_S)
+                    # A stored pairing is retried before asking for a new
+                    # code: a hub that was only away answers it with no
+                    # approval needed (LINK-STATE-01).
+                    paired = self._try_existing_pairing()
             if stop_event.is_set():
                 return
             self._heartbeat(stop_event)
@@ -114,7 +215,7 @@ class LinkLifecycle:
         pairing = self._store.load()
         if pairing is None:
             return False
-        if self._client.refresh():
+        if self._redeem_existing():
             self._set_state(
                 paired=True, code=None, hub_instance_id=pairing.hub_instance_id, last_error=None
             )
@@ -161,7 +262,7 @@ class LinkLifecycle:
         ``stop_event`` is set, then returns - never recurses into
         :meth:`run`; the caller's own outer loop is what re-pairs."""
         while not stop_event.wait(REFRESH_INTERVAL_S):
-            if not self._client.refresh():
+            if not self._redeem_existing():
                 logger.warning("session refresh failed; re-pairing")
                 self._set_state(paired=False)
                 return
