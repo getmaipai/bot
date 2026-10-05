@@ -98,3 +98,27 @@ def test_a_trial_that_never_cancels_is_an_error_row_not_a_number(bench):
     )
     assert row["cancel_ms"] is None
     assert row["error"] == "no cancel within 0.3 s"
+
+
+def test_the_link_stays_down_for_the_outage_so_the_reconnect_is_read_at_a_known_phase(bench):
+    row = run_trial(
+        bench,
+        "mid_turn",
+        "reset",
+        cancel_timeout_s=5.0,
+        settle_window_s=0.2,
+        recover_timeout_s=5.0,
+        outage_s=1.2,
+    )
+    assert row["outage_s"] == 1.2
+    assert bench.hub.restored_at - bench.hub.loss_at >= 1.2
+    # up for less than one 0.4 s interval after the outage, whatever phase it fell in
+    assert 0.0 <= row["reconnect_ms"] < 400.0 + 1500.0
+
+
+def test_stratified_outages_cover_the_report_interval_evenly():
+    from maipai_body.measure.link_loss import stratified_outages
+
+    assert stratified_outages(4, interval_s=8.0) == [1.0, 3.0, 5.0, 7.0]
+    assert stratified_outages(1, interval_s=15.0) == [7.5]
+    assert stratified_outages(0, interval_s=15.0) == []

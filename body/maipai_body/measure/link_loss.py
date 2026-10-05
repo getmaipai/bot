@@ -130,6 +130,17 @@ class LinkLossBench:
         self._wake_engine.trigger()
 
 
+def stratified_outages(count: int, *, interval_s: float) -> list[float]:
+    """``count`` outage lengths spread evenly across one report interval.
+
+    The reconnect clock is the state reporter's interval, so how long the
+    link stays down decides where in that interval it returns. Restoring
+    at the same moment every trial would measure one phase of it; spreading
+    the outages makes p50 and p95 describe the whole interval.
+    """
+    return [(i + 0.5) / count * interval_s for i in range(count)]
+
+
 def run_trial(
     bench: LinkLossBench,
     scenario: str,
@@ -138,8 +149,12 @@ def run_trial(
     cancel_timeout_s: float,
     settle_window_s: float = 1.0,
     recover_timeout_s: float = 30.0,
+    outage_s: float = 0.0,
 ) -> dict[str, Any]:
-    """One loss and one recovery: the cancel, the pose, the reconnect, the line."""
+    """One loss and one recovery: the cancel, the pose, the reconnect, the line.
+
+    The link stays down for at least ``outage_s`` from the moment it was lost.
+    """
     if scenario not in SCENARIOS:
         raise ValueError(f"scenario must be one of {SCENARIOS}, not {scenario!r}")
     hub = bench.hub
@@ -163,7 +178,7 @@ def run_trial(
                 return stamp
         return None
 
-    row: dict[str, Any] = {"scenario": scenario, "mode": mode}
+    row: dict[str, Any] = {"scenario": scenario, "mode": mode, "outage_s": outage_s}
     if not _wait_for(lambda: _cancel_ns() is not None, cancel_timeout_s):
         # The link stays down until the harness lifts it, so the loop is
         # still waiting; lift it and let the turn end before reporting.
@@ -191,6 +206,8 @@ def run_trial(
     )
 
     bench.wait_idle(recover_timeout_s)
+    if hub.loss_at is not None:
+        time.sleep(max(0.0, outage_s - (time.monotonic() - hub.loss_at)))
     hub.restore()
     restored = hub.restored_at
     assert restored is not None

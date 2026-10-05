@@ -91,10 +91,11 @@ _PERSON_ID_RE = re.compile(r"^person-[a-z0-9]{6,}$")
 
 # M-R5 / design record section 4: when a turn was lost to the link, the
 # robot says one line once the hub answers again, never one per failed
-# turn. Spoken as the head of the next reply that reaches the hub: the
-# hub's own `tts` route is the only voice this body has, so the first
-# moment it can speak at all is the first moment the hub answers. The
-# wording is a first cut for the owner's call (the design record names
+# turn. Spoken as the head of the next reply that reaches the hub: until
+# G4b's pre-rendered offline clips exist the hub's own `tts` route is the
+# only voice this body has, so the first moment it can speak at all is the
+# first moment the hub answers. G4b's reconnect clip replaces this text.
+# The wording is a first cut for the owner's call (the design record names
 # the unreachable line, "I can't reach home right now", not this one).
 LINK_RESTORED_LINE = "Sorry, I lost my connection to home for a moment."
 
