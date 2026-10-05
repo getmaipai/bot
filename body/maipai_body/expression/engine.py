@@ -14,7 +14,7 @@ from maipai_body.hal.seam import BodyProfile, HeadActuator
 from maipai_body.presence.arbitration import ArbitrationState, expression_may_drive
 
 from .cue import Cue, map_cue_to_primitive
-from .primitives import MUTED_STATE
+from .primitives import MUTED_STATE, PRIMITIVE_NAMES
 from .renderers import renderer_for
 from .suppression import SuppressionContext, suppression_reason
 
@@ -100,6 +100,51 @@ class ExpressionEngine:
         direction = (
             cue.target_direction_rad if cue.target_direction_rad is not None else doa_angle_rad
         )
+        self._render_named(primitive, direction)
+        return ExpressionOutcome(
+            cue_seq=cue.cue_seq,
+            primitive=primitive,
+            suppressed_reason=None,
+            rendered=True,
+            rendered_primitive=primitive,
+        )
+
+    def render_primitive(
+        self,
+        primitive: str,
+        context: SuppressionContext,
+        *,
+        doa_angle_rad: float = 0.0,
+        target_direction_rad: float | None = None,
+        cue_seq: int = -1,
+    ) -> ExpressionOutcome:
+        """Render a named primitive through this engine's suppression and lock rules.
+
+        Use this for explicit primitive controls that have no cue mapping,
+        such as the dashboard's ``breathe`` and ``track`` buttons.
+        """
+        if primitive not in PRIMITIVE_NAMES:
+            raise ValueError(f"unknown expression primitive {primitive!r}")
+        reason = suppression_reason(primitive, context)
+        if reason is not None:
+            return ExpressionOutcome(
+                cue_seq=cue_seq,
+                primitive=primitive,
+                suppressed_reason=reason,
+                rendered=False,
+            )
+        direction = target_direction_rad if target_direction_rad is not None else doa_angle_rad
+        self._render_named(primitive, direction)
+        return ExpressionOutcome(
+            cue_seq=cue_seq,
+            primitive=primitive,
+            suppressed_reason=None,
+            rendered=True,
+            rendered_primitive=primitive,
+        )
+
+    def _render_named(self, primitive: str, direction: float) -> None:
+        """Serialize a body-column render, except stop which has absolute priority."""
         if primitive == "stop":
             # A code review (2026-09-27) found the render lock inverts
             # `stop`'s absolute priority (suppression.py: "stop is never
@@ -119,13 +164,6 @@ class ExpressionEngine:
         else:
             with self._render_lock:
                 self._render(primitive, self._client, self._profile, doa_angle_rad=direction)
-        return ExpressionOutcome(
-            cue_seq=cue.cue_seq,
-            primitive=primitive,
-            suppressed_reason=None,
-            rendered=True,
-            rendered_primitive=primitive,
-        )
 
     def render_ambient(self, primitive: str, context: SuppressionContext) -> ExpressionOutcome:
         """Render a primitive named by a body state (the offline ladder's

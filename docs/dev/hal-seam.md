@@ -110,11 +110,15 @@ answers `get_face_target()`/`get_doa()`/`read()` for the IMU.
 
 ## What's deliberately not built yet
 
-- **A 3D view in the dashboard.** The 2D web dashboard exists
-  (`maipai_body/dashboard/`, `EXPR-05`): state from the seam's feed,
-  primitives through the expression engine, identical for every body.
-  A live 3D view matching Pollen's MuJoCo viewer (WebGL, a model per
-  body) is a separate undertaking, not built.
+- **A web dashboard to see and drive a body without hardware.**
+  Pollen's own simulator ships a native 3D viewer
+  (`reachy-mini-daemon --sim`, `mjpython` on macOS); nothing in this
+  repo yet renders a body's state in a browser or lets someone drive it
+  from one. Backlogged as `EXPR-05` in `docs/BACKLOG.md`: a small,
+  body-agnostic page built against the seam alone (the state feed for
+  telemetry, the expression engine for triggering primitives), so it
+  works identically against the fake, the Reachy Mini simulator, and
+  the MaiPai build once it exists.
 - **The arbitration/blending limiter itself** (EXPR-01's own remaining
   gap): today each primitive issues its commands independently: nothing
   yet stops two from firing back to back or blends two small compatible

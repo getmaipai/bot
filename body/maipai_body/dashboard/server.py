@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,8 +15,7 @@ from maipai_body import expression as _expression  # noqa: F401  (registers ever
 from maipai_body.expression.cue import Cue, Phase
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.primitives import PRIMITIVE_NAMES
-from maipai_body.expression.renderers import renderer_for
-from maipai_body.expression.suppression import SuppressionContext, suppression_reason
+from maipai_body.expression.suppression import SuppressionContext
 from maipai_body.hal.errors import BodyLost, NotSupported, OutOfEnvelope
 from maipai_body.hal.seam import BodyProfile
 from maipai_body.presence.arbitration import ArbitrationState
@@ -133,6 +133,8 @@ class _Handler(BaseHTTPRequestHandler):
                     isinstance(direction, bool) or not isinstance(direction, int | float)
                 ):
                     return self._error(HTTPStatus.BAD_REQUEST, "direction_rad must be a number")
+                if direction is not None and not math.isfinite(direction):
+                    return self._error(HTTPStatus.BAD_REQUEST, "direction_rad must be finite")
                 outcome = self.server.render(path[len(prefix) :], direction)
                 return self._json(HTTPStatus.OK, outcome)
         except BodyLost as error:
@@ -244,37 +246,24 @@ class DashboardServer:
         direction = float(direction_rad) if direction_rad is not None else None
         live_doa = self.pump.latest_doa_angle()
         if primitive in _DIRECT:
-            outcome = self._render_direct(primitive, direction, live_doa)
+            result = self.engine.render_primitive(
+                primitive,
+                self._context(),
+                doa_angle_rad=live_doa,
+                target_direction_rad=direction,
+                cue_seq=self._next_seq(),
+            )
         else:
             cue = Cue(cue_seq=self._next_seq(), target_direction_rad=direction, **_CUES[primitive])
             result = self.engine.handle(cue, self._context(), doa_angle_rad=live_doa)
-            outcome = {
-                "primitive": result.primitive,
-                "rendered": result.rendered,
-                "suppressed_reason": result.suppressed_reason,
-                "rendered_primitive": result.rendered_primitive,
-            }
+        outcome = {
+            "primitive": result.primitive,
+            "rendered": result.rendered,
+            "suppressed_reason": result.suppressed_reason,
+            "rendered_primitive": result.rendered_primitive,
+        }
         self.pump.record_outcome(outcome)
         return outcome
-
-    def _render_direct(
-        self, primitive: str, direction: float | None, live_doa: float
-    ) -> dict[str, Any]:
-        reason = suppression_reason(primitive, self._context())
-        rendered = reason is None
-        if rendered:
-            renderer_for(self.profile.id)(
-                primitive,
-                self.client,
-                self.profile,
-                doa_angle_rad=direction if direction is not None else live_doa,
-            )
-        return {
-            "primitive": primitive,
-            "rendered": rendered,
-            "suppressed_reason": reason,
-            "rendered_primitive": primitive if rendered else None,
-        }
 
     def set_muted(self, muted: bool) -> dict[str, Any]:
         result = self.engine.set_muted(muted, self.arbitration)

@@ -132,6 +132,22 @@ def test_every_primitive_button_renders_through_the_engine(served, primitive):
     assert len(client.sent_commands) > before
 
 
+@pytest.mark.parametrize("primitive", ["breathe", "track"])
+def test_non_cue_primitives_are_dispatched_by_the_expression_engine(served, monkeypatch, primitive):
+    server, _ = served
+    dispatched = []
+    original = server.engine.render_primitive
+
+    def record_dispatch(name, context, **kwargs):
+        dispatched.append(name)
+        return original(name, context, **kwargs)
+
+    monkeypatch.setattr(server.engine, "render_primitive", record_dispatch)
+    status, _, data = _request(server, "POST", f"/api/primitive/{primitive}", {})
+    assert status == 200 and json.loads(data)["rendered"] is True
+    assert dispatched == [primitive]
+
+
 def test_state_carries_the_direction_of_arrival_when_the_body_reports_one():
     client = _DoaFake(REACHY_MINI_PROFILE)
     server = DashboardServer(client, REACHY_MINI_PROFILE, port=0, state_hz=50.0)
@@ -164,6 +180,17 @@ def test_a_bad_direction_is_a_400_and_sends_nothing(served):
     server, client = served
     status, _, _ = _request(server, "POST", "/api/primitive/glance", {"direction_rad": "left"})
     assert status == 400
+    assert client.sent_commands == []
+
+
+@pytest.mark.parametrize("direction", [float("nan"), float("inf"), float("-inf")])
+def test_a_non_finite_direction_is_a_400_and_sends_nothing(served, direction):
+    server, client = served
+    status, _, data = _request(
+        server, "POST", "/api/primitive/glance", {"direction_rad": direction}
+    )
+    assert status == 400
+    assert "finite" in json.loads(data)["error"]
     assert client.sent_commands == []
 
 
