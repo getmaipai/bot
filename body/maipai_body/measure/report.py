@@ -124,3 +124,60 @@ def link_loss_section(
             lines.append(f"| {r['outage_s']:g} | {reached} |")
     lines.append("")
     return "\n".join(lines)
+
+
+def _pair(summary: dict[str, Any], unit: str = "ms") -> str:
+    if summary.get("p50") is None:
+        return "n/a"
+    return f"{summary['p50']:.1f} / {summary['p95']:.1f} {unit}"
+
+
+def budget_section(
+    header: dict[str, Any],
+    config: str,
+    summary: dict[str, Any],
+    decision: dict[str, Any] | None,
+    *,
+    duration_s: float,
+) -> str:
+    temp = summary["temp_c_max"]
+    available = summary["mem_available_mb_min"]
+    turns = summary["turns"]
+    lines = [
+        f"## M-R1: the Compute Module budget, {config} ({header['mode']}), {header['date']}",
+        "",
+        *section_header_lines(header),
+        f"- run: {summary['samples']} samples over {duration_s:g} s; {turns['n']} turns "
+        f"({turns['failed']} failed)",
+        "",
+        "| process | RSS max (MB) | CPU p50 / p95 (%) |",
+        "|---|---|---|",
+    ]
+    for name, figures in summary["processes"].items():
+        if not figures or figures["rss_mb_max"] is None:
+            lines.append(f"| {name} | not running | |")
+        else:
+            lines.append(
+                f"| {name} | {figures['rss_mb_max']:.1f} | {_pair(figures['cpu_pct'], '')} |"
+            )
+    lines += [
+        "",
+        f"- temperature max: {'n/a' if temp is None else f'{temp:.1f} C'}",
+        f"- memory available, minimum: {'n/a' if available is None else f'{available:.0f} MB'}",
+        f"- throttled samples: {summary['throttled']['samples_throttled_now']}; flags ever "
+        f"set: {summary['throttled']['ever_flagged_bits']:#x}",
+    ]
+    for key, label in (
+        ("endpoint_to_transcript_ms", "endpoint to transcript"),
+        ("turn_first_event_ms", "turn first event"),
+        ("tts_first_audio_ms", "tts first audio"),
+    ):
+        if key in turns:
+            lines.append(f"- {label} p50 / p95: {_pair(turns[key])}")
+    if decision is None:
+        lines.append("- decision: not evaluated for this configuration")
+    else:
+        verdict = "adopted" if decision["adopt"] else "not adopted"
+        lines.append(f"- decision: robot tier {verdict} ({decision['reason']})")
+    lines.append("")
+    return "\n".join(lines)

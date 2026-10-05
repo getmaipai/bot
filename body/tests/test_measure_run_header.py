@@ -83,3 +83,14 @@ def test_upsert_appends_when_the_section_is_new(tmp_path):
     upsert_markdown_section(path, "## M-R5:", "## M-R5: link (sim), 2026-10-05\n\nrows\n")
     assert path.read_text().endswith("rows\n")
     assert "# Bench" in path.read_text()
+
+
+def test_write_run_takes_a_tag_so_three_configs_on_one_day_do_not_overwrite_each_other(tmp_path):
+    header = new_run_header(
+        row="M-R1", mode="unit", profile_id="p", daemon_version="1", date="2026-10-05"
+    )
+    daemon_run = write_run(tmp_path, header, [{"a": 1}], tag="daemon")
+    pod_run = write_run(tmp_path, header, [{"a": 2}], tag="pod")
+    assert daemon_run.name == "M-R1-unit-daemon-2026-10-05.json"
+    assert pod_run.name == "M-R1-unit-pod-2026-10-05.json"
+    assert daemon_run != pod_run
