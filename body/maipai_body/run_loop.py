@@ -36,7 +36,7 @@ from maipai_body.expression.cue import Cue, Phase
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.suppression import SuppressionContext
 from maipai_body.hal.seam import AudioIO, Camera, FaceTracker, HeadActuator, Imu
-from maipai_body.link.commands import LocalCommand, route_phrase
+from maipai_body.link.commands import LocalCommand, Reply, route_phrase
 from maipai_body.link.offline import OfflineRungs
 from maipai_body.link.replay import ReplayItem
 from maipai_body.link.state_machine import LinkPhase
@@ -70,6 +70,9 @@ SETTLE_GATE_S = 0.5
 # at all - the wake scorer's own docstring already documents that a
 # fresh wake fires cleanly once per phrase.
 _WAKE_POLL_SLEEP_S = 0.01
+# The body's acknowledgement of a wake the hub cannot take (the same primitive
+# rung 0 uses as its stir): the user always sees that the wake was heard.
+_WAKE_ACK_PRIMITIVE = "perk"
 
 # FACE-01's own capped rate: "once every few seconds while a face is
 # present, not per frame" (design-face-recognition-models-2026-09-28.md
@@ -367,7 +370,7 @@ class ConversationLoop:
                 event = self._poll_wake(stop_event)
                 if event is None:
                     continue
-                if self._in_outage():
+                if self._in_outage() and not self._retry_link():
                     self._run_offline_command(stop_event)
                 else:
                     self._run_turn(stop_event)
@@ -391,16 +394,36 @@ class ConversationLoop:
             stop_event.wait(_WAKE_POLL_SLEEP_S)
         return None
 
+    def _retry_link(self) -> bool:
+        """A wake during an outage first walks the addresses once, at once,
+        so a hub that already came back is used with no dead time. True
+        means the link is up and the wake runs as a normal turn."""
+        offline = self._offline
+        if offline is not None and offline.retry_link is not None:
+            try:
+                offline.retry_link()
+            except Exception:
+                logger.warning("wake-time address walk failed", exc_info=True)
+        return not self._in_outage()
+
     def _run_offline_command(self, stop_event: threading.Event) -> None:
         """Rung 1: a wake during an outage listens for one of the closed
         list of local commands and nothing else. No STT stream, no turn, no
         queue: a phrase off the list is dropped (the gate only counts the
         refusal) and the funnel never leaves `idle` for it. A command
-        shows `speaking` for its fixed reply and goes back to `idle`."""
+        shows `speaking` for its fixed reply and goes back to `idle`.
+        A wake is never silent: the acknowledgement animation always plays,
+        and with no keyword spotter wired the rung 2 status line is the reply."""
         offline = self._offline
         assert offline is not None
+        self._render_ambient(_WAKE_ACK_PRIMITIVE)
         if offline.recognizer is None or offline.router is None:
-            return  # no keyword spotter wired (its CPU cost is UNVERIFIED)
+            # No keyword spotter wired (its CPU cost is UNVERIFIED).
+            status = offline.status()
+            reply = Reply(status.text, status.clip_ids)
+            offline.last_reply = reply
+            self._speak_reply(reply, None, stop_event)
+            return
         try:
             heard = offline.recognizer.listen(self._capture, stop_event)
         except Exception:
@@ -413,6 +436,13 @@ class ConversationLoop:
             return
         reply = offline.router.handle(command)
         offline.last_reply = reply
+        self._speak_reply(reply, command, stop_event)
+
+    def _speak_reply(
+        self, reply: Reply, command: LocalCommand | None, stop_event: threading.Event
+    ) -> None:
+        offline = self._offline
+        assert offline is not None
         self._enter(FunnelState.SPEAKING)
         try:
             if command is LocalCommand.STOP:

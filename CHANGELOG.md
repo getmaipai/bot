@@ -17,6 +17,11 @@ checklist (`docs/dev.md`).
   yet), a rung 2 status text on the app page, and `reconnecting` and
   `sleeping` published as `robot.state.activity`. What needs the unit is in
   `docs/dev/offline-ladder-unit-checks.md`.
+- LINK-STATE-01 review fixes (Reachy Mini): a wake during an outage walks
+  the addresses at once and runs the turn if the hub answers, else plays the
+  acknowledgement and the status line instead of nothing; a body with a
+  stored pairing starts the ladder at power-on with the hub away; only a LAN
+  answer overwrites the stored pairing address.
 - The robot's state frame now carries `app_version`, the installed
   `maipai-bot` version, in every frame (`daemon_version` is still the
   vendor SDK's), so the hub can compare a robot to a Bot release.

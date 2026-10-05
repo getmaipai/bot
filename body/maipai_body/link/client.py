@@ -96,6 +96,9 @@ class HubLinkClient:
         self._session = session or requests.Session()
         self._discover = discover
         self.last_refresh_error: str | None = None
+        # The address the last successful redeem used, whether or not it was
+        # kept as the pairing (a tailnet answer is not). Turn clients read it.
+        self.active_base_url: str | None = None
 
     @property
     def session_cookie(self) -> str | None:
@@ -270,7 +273,7 @@ class HubLinkClient:
                 "than the one this pairing was made with"
             )
 
-    def refresh(self, base_url: str | None = None) -> bool:
+    def refresh(self, base_url: str | None = None, *, persist: bool = True) -> bool:
         """Re-establish a session from the persisted pairing, e.g. at
         startup or after a 401 mid-session. Returns False (never
         raises) when there is no pairing, or the hub refuses it - the
@@ -278,8 +281,10 @@ class HubLinkClient:
 
         ``base_url`` redeems the same device token at another address (the
         one an address walk found). A success there is kept as the pairing's
-        address, since the turn clients read it from the store; a failure
-        leaves the pairing untouched. :attr:`last_refresh_error` says why
+        address when ``persist`` is true (the walk passes it for LAN answers
+        only, so a tailnet answer never overwrites the stored LAN address);
+        either way :attr:`active_base_url` names it. A failure leaves the
+        pairing untouched. :attr:`last_refresh_error` says why
         the last call failed (``refused: ...``, ``unreachable: ...`` or
         ``not paired``) and is ``None`` after a success."""
         pairing = self._store.load()
@@ -297,7 +302,8 @@ class HubLinkClient:
         except requests.RequestException as exc:
             self.last_refresh_error = f"unreachable: {type(exc).__name__}"
             return False
-        if candidate is not pairing:
+        if candidate is not pairing and persist:
             self._store.save(candidate)
+        self.active_base_url = candidate.base_url
         self.last_refresh_error = None
         return True

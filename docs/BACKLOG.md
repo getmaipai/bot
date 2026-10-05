@@ -1796,9 +1796,14 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       values). Open: the tailnet seam waits on ROBOT-TAILSCALE-01; no
       keyword spotter exists, so rung 1 is wired off and its CPU and
       false-accept row is UNVERIFIED; the clips rung 1 needs are not in
-      the G4b bundle; the default intervals are unmeasured; a robot that
-      boots while the hub is away still waits for pairing before the loop
-      (and so the ladder) starts. See
+      the G4b bundle; the default intervals are unmeasured. Boot with the hub away
+      (review fix): a body with a stored pairing starts the supervisor and
+      builds the loop without waiting for the first redeem, so the ladder,
+      sleeping and the wake cue run from power-on. Still not covered: a
+      body that was never paired still waits for pairing (there is no hub
+      to be away from), and a first boot with an empty model cache and no
+      network cannot build the loop (the wake model download fails), so the
+      ladder runs but a wake is not heard. See
       `docs/dev/offline-ladder-unit-checks.md`.**
 
 ## Voice loop

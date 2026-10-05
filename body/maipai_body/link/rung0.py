@@ -52,6 +52,10 @@ class Rung0Cues:
         # `render`, `may_drive` and `on_reconnect_spoken` may be handed over
         # later by the funnel (`attach`), which owns the engine and the head.
         self._render = render or (lambda primitive: False)
+        # The supervisor can start before the funnel exists (boot with the
+        # hub away); until a body is attached nothing renders and no stage
+        # advances, so the cues are rendered once the funnel arrives.
+        self._has_render = render is not None
         self._machine = machine
         self._clock = clock
         self._settings = settings
@@ -75,6 +79,7 @@ class Rung0Cues:
             self._speaker = speaker
         if render is not None:
             self._render = render
+            self._has_render = True
         if may_drive is not None:
             self._may_drive = may_drive
         if on_reconnect_spoken is not None:
@@ -98,6 +103,8 @@ class Rung0Cues:
 
     def tick(self) -> None:
         """Render whatever the current phase owes the body, if it is free."""
+        if not self._has_render:
+            return
         snap = self._machine.snapshot()
         with self._lock:
             stage, stir = self._stage, self._stir_pending

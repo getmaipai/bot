@@ -235,13 +235,15 @@ def test_no_turn_text_is_queued_in_rungs_0_to_2():
     assert "Nothing is saved for later." in offline.status_text()
 
 
-def test_with_no_recognizer_wired_a_wake_during_an_outage_does_nothing():
-    offline, *_ = _rungs(recognizer=False)
+def test_with_no_recognizer_wired_a_wake_during_an_outage_runs_no_turn_but_is_not_silent():
+    offline, _clock, _volume, speaker = _rungs(recognizer=False)
     offline.machine.link_lost("x")
     loop, parts = _make_loop(wake_events=[WakeEvent(score=0.9)], offline=offline)
     _run_one_wake(loop)
-    assert loop.state.trace == []
+    assert [t.state for t in loop.state.trace] == [FunnelState.SPEAKING, FunnelState.IDLE]
+    assert speaker.said == [["line.unreachable"]]
     assert parts["stt"].call_count == 0
+    assert parts["turn"].stream_calls == []
 
 
 def test_unrendered_clips_leave_the_reply_visible_but_unspoken():

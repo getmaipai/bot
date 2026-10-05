@@ -35,7 +35,7 @@ class _AddressClient(_FakeClient):
         self.refreshed_at: list[str | None] = []
         self.last_refresh_error: str | None = None
 
-    def refresh(self, base_url: str | None = None) -> bool:
+    def refresh(self, base_url: str | None = None, persist: bool = True) -> bool:
         self.refreshed_at.append(base_url)
         url = base_url or "http://192.0.2.10:80"
         ok = url in self.answering

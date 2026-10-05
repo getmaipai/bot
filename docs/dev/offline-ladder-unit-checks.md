@@ -17,7 +17,20 @@ on this page has been run on a unit, and no number here is a measurement.
   (`no_tailnet_endpoints`) is the marked seam for ROBOT-TAILSCALE-01 and
   returns nothing today, so the walk is LAN only until that item's bot half
   lands. `HubLinkClient.refresh(base_url=...)` redeems at the address the walk
-  found and keeps it.
+  found. Only a LAN answer is kept as the pairing's address; a tailnet answer
+  is used for the session (`active_base_url`, which the turn clients read) and
+  the stored LAN address stays the record.
+- A wake during an outage is never silent. The funnel first walks the
+  addresses once at once (`OfflineRungs.retry_link`), so a hub that already
+  came back costs no dead time and the wake runs as a normal turn. If the walk
+  fails, the `perk` acknowledgement plays; with no recognizer wired the rung 2
+  status line is the reply (`line.unreachable` if the bundle can say it, the
+  text on the app page always), and with one wired rung 1 listens as before.
+- Boot with the hub away: with a stored pairing, `run_paired_body` starts the
+  supervisor and builds the loop without waiting for a successful redeem (the
+  loop reads the live cookie at its first turn). Rung 0 renders nothing until
+  the funnel attaches its body, so no cue stage is spent early. Not covered: a
+  body never paired, and a first boot with an empty model cache and no network.
 - `link/supervisor.py`: the walk at once on a loss, then every
   `reconnect_interval_s`, and every `sleeping_interval_s` once asleep.
 - Rung 0 (`link/rung0.py`): `settle` and `breathe` on loss, the `muted`

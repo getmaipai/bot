@@ -83,7 +83,9 @@ def test_run_paired_body_hands_the_ladder_to_the_loop_and_starts_the_supervisor(
 
     fake_loop = MagicMock()
     fake_loop.snapshot.return_value = {"activity": "idle", "muted": False, "tracking": False}
-    fake_loop.run.side_effect = lambda event: ran.wait(2.0)
+    # The loop returns when the supervisor thread has started (an event step,
+    # not a sleep); the long timeout only bounds a failing run.
+    fake_loop.run.side_effect = lambda event: ran.wait(30.0)
 
     with patch.object(app_module, "_build_conversation_loop", return_value=fake_loop) as build:
         run_paired_body(

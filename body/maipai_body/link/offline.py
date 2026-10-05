@@ -10,6 +10,7 @@ as its activity, and lets rung 0 decide when tracking may run.
 from __future__ import annotations
 
 import datetime
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -17,7 +18,7 @@ from maipai_body.link.commands import CommandRecognizer, CommandRouter, Reply
 from maipai_body.link.replay import ReplayGate
 from maipai_body.link.rung0 import Rung0Cues
 from maipai_body.link.state_machine import LinkStateMachine
-from maipai_body.link.status import build_status
+from maipai_body.link.status import OfflineStatus, build_status
 
 
 class ClipSpeaker(Protocol):
@@ -47,10 +48,17 @@ class OfflineRungs:
     tz: datetime.tzinfo | None = None
     # The last rung 1 reply, for the app page (text stays visible when unspoken).
     last_reply: Reply | None = None
+    # One fast address walk, run on a wake during an outage so a hub that
+    # already came back is used at once instead of at the supervisor's next
+    # walk. True means the hub answered. Unset means the wake only cues.
+    retry_link: Callable[[], bool] | None = None
+
+    def status(self) -> OfflineStatus:
+        """Rung 2: the status line built from the machine's real values."""
+        return build_status(self.machine.snapshot(), tz=self.tz)
 
     def status_text(self) -> str:
-        """Rung 2: the status line built from the machine's real values."""
-        return build_status(self.machine.snapshot(), tz=self.tz).text
+        return self.status().text
 
     def timer_due(self) -> None:
         """A local timer fired: the body stirs, and the done clip is spoken if

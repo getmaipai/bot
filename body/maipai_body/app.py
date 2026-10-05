@@ -169,18 +169,22 @@ def _build_link_stack(
     *,
     discover: DiscoverHub,
     sleep_after_s: float,
+    clock: Callable[[], float] = time.monotonic,
+    wall_clock: Callable[[], float] = time.time,
 ) -> LinkStack:
     """LINK-STATE-01's wiring. Rung 1's recognizer and router are left
     unwired: the keyword spotter's cost on the Compute Module is UNVERIFIED
-    (docs/dev/offline-ladder-unit-checks.md), so a wake during an outage is
-    ignored until that row is recorded and a recognizer is passed in."""
-    machine = LinkStateMachine(sleep_after_s=sleep_after_s)
+    (docs/dev/offline-ladder-unit-checks.md), so a wake during an outage
+    gets the acknowledgement animation and the status line until that row is
+    recorded and a recognizer is passed in."""
+    machine = LinkStateMachine(clock=clock, wall_clock=wall_clock, sleep_after_s=sleep_after_s)
     link = LinkLifecycle(store, client, discover=discover, observer=machine, address_walk=True)
-    rung0 = Rung0Cues(machine=machine, clock=time.monotonic)
-    offline = OfflineRungs(machine=machine, rung0=rung0)
+    rung0 = Rung0Cues(machine=machine, clock=clock)
+    offline = OfflineRungs(machine=machine, rung0=rung0, retry_link=link.reconnect_once)
     supervisor = LinkSupervisor(
         machine=machine,
         reconnect=link.reconnect_once,
+        clock=clock,
         rung0=rung0,
     )
     return LinkStack(machine=machine, link=link, offline=offline, supervisor=supervisor)
@@ -292,9 +296,21 @@ def _hub_credentials_reader(link: LinkLifecycle, base_url: str) -> Callable[[], 
         else:
             if pairing is not None:
                 last_known_good_url[0] = pairing.base_url
-        return link.hub_client.session_cookie or "", last_known_good_url[0]
+        # The address that last answered wins over the stored one: a tailnet
+        # answer is not persisted (the LAN address stays the pairing) but the
+        # turn clients must still reach the hub where it answered.
+        answered = getattr(link.hub_client, "active_base_url", None)
+        return link.hub_client.session_cookie or "", answered or last_known_good_url[0]
 
     return read
+
+
+def _has_stored_pairing(link: LinkLifecycle) -> bool:
+    try:
+        return link.pairing_store.load() is not None
+    except Exception:
+        logger.warning("could not read the stored pairing at boot", exc_info=True)
+        return False
 
 
 def run_paired_body(
@@ -322,14 +338,24 @@ def run_paired_body(
         _hold_neutral(client)
         _log_state(_STATE_HOLDING_NEUTRAL)
         _log_state(_STATE_WAITING_FOR_PAIRING)
+        # A body that was paired before does not wait for the hub: the ladder
+        # and the wake behavior run from boot, whether or not the first
+        # redeem has succeeded (LINK-STATE-01). A body never paired still
+        # waits for pairing, as before.
+        boot_offline = offline is not None and _has_stored_pairing(link)
         paired = False
         while not stop_event.is_set():
-            if link.state.paired:
+            if link.state.paired or boot_offline:
                 paired = True
                 break
             stop_event.wait(_STOP_POLL_INTERVAL_S)
         if not paired:
             return
+
+        if supervisor is not None:
+            threading.Thread(
+                target=supervisor.run, args=(stop_event,), name="link-supervisor", daemon=True
+            ).start()
 
         pairing = link.pairing_store.load()
         if pairing is None:
@@ -339,7 +365,11 @@ def run_paired_body(
             logger.error("link reports paired but the pairing record could not be read")
             return
         session_cookie = link.hub_client.session_cookie
-        if not session_cookie:
+        if not session_cookie and boot_offline:
+            # The hub has not answered yet. The loop re-reads the live cookie
+            # at its first turn boundary, so an empty one here is never used.
+            session_cookie = ""
+        elif not session_cookie:
             # Same shape as the unreadable-pairing-record case above: a
             # code review (2026-09-28) caught this silently falling
             # back to "" and building every hub client anyway, which
@@ -432,10 +462,6 @@ def run_paired_body(
             logger.exception("failed to build the conversation loop")
             return
         _log_state(_STATE_CONVERSATION_LOOP)
-        if supervisor is not None:
-            threading.Thread(
-                target=supervisor.run, args=(stop_event,), name="link-supervisor", daemon=True
-            ).start()
         loop.run(stop_event)
     except BodyLost:
         _log_state(_STATE_BODY_LOST)

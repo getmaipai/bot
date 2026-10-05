@@ -19,6 +19,7 @@ from typing import Protocol
 from maipai_body.link.address_walk import (
     AddressWalker,
     HubEndpoint,
+    PathKind,
     TailnetEndpoints,
     no_tailnet_endpoints,
 )
@@ -131,7 +132,9 @@ class LinkLifecycle:
         return pairing.base_url if pairing is not None else None
 
     def _try_endpoint(self, endpoint: HubEndpoint) -> tuple[bool, str | None]:
-        ok = self._client.refresh(base_url=endpoint.base_url)
+        # Only a LAN answer becomes the pairing's stored address; a tailnet
+        # answer is used for this session and the LAN address stays the record.
+        ok = self._client.refresh(base_url=endpoint.base_url, persist=endpoint.kind is PathKind.LAN)
         return ok, None if ok else self._client.last_refresh_error
 
     def _note_attempt(self, endpoint: HubEndpoint) -> None:
