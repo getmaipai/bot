@@ -64,6 +64,12 @@ sim = ["reachy-mini[mujoco]==1.11.0"]
 # here too so a future openwakeword version dropping it as its own
 # dependency can't silently break G7 underneath this group.
 voice = ["openwakeword>=0.6.0,<0.7", "scipy>=1.14,<2"]
+# LINK-STATE-01 rung 1: the sherpa-onnx keyword spotter behind the offline
+# command recognizer (maipai_body/speech/kws.py). Opt-in like `voice`: it is
+# not wired into the app until its Compute Module CPU and false-accept row is
+# measured (docs/dev/measurements.md, UNVERIFIED). The model itself is fetched
+# on first use, pinned by sha256, never vendored.
+kws = ["sherpa-onnx>=1.13.8,<2"]
 
 [dependency-groups]
 dev = [

@@ -1,0 +1,496 @@
+{
+  "synthesized": true,
+  "generator": "scripts/make_kws_fixtures.py",
+  "fixtures": [
+    {
+      "file": "amy-low__stop.wav",
+      "kind": "command",
+      "command": "stop",
+      "phrase": "stop",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__stop_it.wav",
+      "kind": "command",
+      "command": "stop",
+      "phrase": "stop it",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__quieter.wav",
+      "kind": "command",
+      "command": "quieter",
+      "phrase": "quieter",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__be_quieter.wav",
+      "kind": "command",
+      "command": "quieter",
+      "phrase": "be quieter",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__louder.wav",
+      "kind": "command",
+      "command": "louder",
+      "phrase": "louder",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__be_louder.wav",
+      "kind": "command",
+      "command": "louder",
+      "phrase": "be louder",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__a_little_louder.wav",
+      "kind": "command",
+      "command": "louder",
+      "phrase": "a little louder",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__timer.wav",
+      "kind": "command",
+      "command": "timer",
+      "phrase": "timer",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__set_a_timer.wav",
+      "kind": "command",
+      "command": "timer",
+      "phrase": "set a timer",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__what_time_is_it.wav",
+      "kind": "command",
+      "command": "time",
+      "phrase": "what time is it",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__are_you_connected.wav",
+      "kind": "command",
+      "command": "connected",
+      "phrase": "are you connected",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__step.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "step",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__shop.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "shop",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__quiet.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "quiet",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__lauder.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "lauder",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__tire.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "tire",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__are_you_corrected.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "are you corrected",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__chop.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "chop",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__bolder.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "bolder",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__dimmer.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "dimmer",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__play_some_music.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "play some music",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__tell_me_a_story.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "tell me a story",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__hey_my_bike.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "hey my bike",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__what_is_the_weather.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "what is the weather",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__are_you_happy.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "are you happy",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__turn_on_the_light.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "turn on the light",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__timber.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "timber",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__time_it.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "time it",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__what_is_it.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "what is it",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__who_are_you.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "who are you",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__are_you_there.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "are you there",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__hold_the_door.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "hold the door",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__good_morning.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "good morning",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__thank_you.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "thank you",
+      "voice": "amy-low"
+    },
+    {
+      "file": "amy-low__what_is_your_name.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "what is your name",
+      "voice": "amy-low"
+    },
+    {
+      "file": "ryan-medium__stop.wav",
+      "kind": "command",
+      "command": "stop",
+      "phrase": "stop",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__stop_it.wav",
+      "kind": "command",
+      "command": "stop",
+      "phrase": "stop it",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__quieter.wav",
+      "kind": "command",
+      "command": "quieter",
+      "phrase": "quieter",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__be_quieter.wav",
+      "kind": "command",
+      "command": "quieter",
+      "phrase": "be quieter",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__louder.wav",
+      "kind": "command",
+      "command": "louder",
+      "phrase": "louder",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__be_louder.wav",
+      "kind": "command",
+      "command": "louder",
+      "phrase": "be louder",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__a_little_louder.wav",
+      "kind": "command",
+      "command": "louder",
+      "phrase": "a little louder",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__timer.wav",
+      "kind": "command",
+      "command": "timer",
+      "phrase": "timer",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__set_a_timer.wav",
+      "kind": "command",
+      "command": "timer",
+      "phrase": "set a timer",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__what_time_is_it.wav",
+      "kind": "command",
+      "command": "time",
+      "phrase": "what time is it",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__are_you_connected.wav",
+      "kind": "command",
+      "command": "connected",
+      "phrase": "are you connected",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__step.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "step",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__shop.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "shop",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__quiet.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "quiet",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__lauder.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "lauder",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__tire.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "tire",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__are_you_corrected.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "are you corrected",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__chop.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "chop",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__bolder.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "bolder",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__dimmer.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "dimmer",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__play_some_music.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "play some music",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__tell_me_a_story.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "tell me a story",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__hey_my_bike.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "hey my bike",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__what_is_the_weather.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "what is the weather",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__are_you_happy.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "are you happy",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__turn_on_the_light.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "turn on the light",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__timber.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "timber",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__time_it.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "time it",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__what_is_it.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "what is it",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__who_are_you.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "who are you",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__are_you_there.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "are you there",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__hold_the_door.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "hold the door",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__good_morning.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "good morning",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__thank_you.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "thank you",
+      "voice": "ryan-medium"
+    },
+    {
+      "file": "ryan-medium__what_is_your_name.wav",
+      "kind": "near_miss",
+      "command": null,
+      "phrase": "what is your name",
+      "voice": "ryan-medium"
+    }
+  ]
+}
