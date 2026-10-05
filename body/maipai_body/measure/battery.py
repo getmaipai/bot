@@ -165,12 +165,35 @@ def current_facts(
     }
 
 
-def _read_boot_id() -> str:
-    return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
 
 
 def _boot_clock() -> float:
-    return time.clock_gettime(time.CLOCK_BOOTTIME)
+    """Seconds since boot. Linux (the unit's Compute Module) counts suspend too;
+    elsewhere (a dev Mac rehearsing the tool) the nearest clock the OS has."""
+    for name in ("CLOCK_BOOTTIME", "CLOCK_UPTIME_RAW"):
+        clock_id = getattr(time, name, None)
+        if clock_id is not None:
+            return time.clock_gettime(clock_id)
+    return time.monotonic()
+
+
+def _read_boot_id(
+    path: Path | None = None,
+    boot_clock: Callable[[], float] = _boot_clock,
+    wall_clock: Callable[[], float] = time.time,
+) -> str:
+    """The kernel's boot id, or where there is none a stand-in that still tells boots apart.
+
+    ``path`` only exists on Linux. Without it the id is the boot's start
+    time (wall clock minus time since boot) rounded to the minute, which is
+    the same on every read within one boot and differs between boots; it
+    is prefixed ``derived-`` so a log never passes it off as a kernel id.
+    """
+    try:
+        return (path or BOOT_ID_PATH).read_text().strip()
+    except OSError:
+        return f"derived-{round((wall_clock() - boot_clock()) / 60) * 60}"
 
 
 class HeartbeatLog:

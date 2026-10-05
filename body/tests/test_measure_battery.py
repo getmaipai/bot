@@ -13,7 +13,9 @@ import os
 import pytest
 
 from maipai_body.measure.battery import (
+    BOOT_ID_PATH,
     HeartbeatLog,
+    _read_boot_id,
     analyze_runs,
     find_fact_keys,
     probe_battery_facts,
@@ -261,10 +263,49 @@ def test_a_work_item_that_raises_is_counted_not_fatal_to_the_heartbeat(tmp_path)
     assert beats[-1]["turns_failed"] >= 1
 
 
+@pytest.mark.skipif(
+    not BOOT_ID_PATH.exists(), reason=f"{BOOT_ID_PATH} is Linux-only; the unit runs Linux"
+)
 def test_the_log_defaults_to_the_kernels_boot_id_and_the_boot_clock(tmp_path):
     log = HeartbeatLog(tmp_path / "hb.jsonl")
     log.append(workload="idle", extra={})
     log.close()
     record = read_heartbeats(tmp_path / "hb.jsonl")[0]
-    assert record["boot_id"] == open("/proc/sys/kernel/random/boot_id").read().strip()
+    assert record["boot_id"] == BOOT_ID_PATH.read_text().strip()
     assert record["t_boot_s"] > 0.0
+
+
+def test_without_a_kernel_boot_id_the_id_is_derived_from_the_boot_time(tmp_path):
+    missing = tmp_path / "no_boot_id"
+    # booted at wall 1000: any read during that boot gives the same id
+    first = _read_boot_id(missing, boot_clock=lambda: 50.0, wall_clock=lambda: 1050.0)
+    later = _read_boot_id(missing, boot_clock=lambda: 80.4, wall_clock=lambda: 1080.4)
+    other_boot = _read_boot_id(missing, boot_clock=lambda: 5.0, wall_clock=lambda: 9005.0)
+    assert first == later == "derived-1020"  # the boot time, rounded to the minute
+    assert other_boot != first
+    assert first.startswith("derived-")
+
+
+def test_the_default_log_works_where_the_kernel_boot_id_is_absent(tmp_path, monkeypatch):
+    import maipai_body.measure.battery as battery
+
+    monkeypatch.setattr(battery, "BOOT_ID_PATH", tmp_path / "no_boot_id")
+    log = HeartbeatLog(tmp_path / "hb.jsonl")
+    log.append(workload="idle", extra={})
+    log.close()
+    record = read_heartbeats(tmp_path / "hb.jsonl")[0]
+    assert record["boot_id"].startswith("derived-")
+    assert record["t_boot_s"] > 0.0
+
+
+def test_the_boot_clock_falls_back_to_the_monotonic_clock_where_the_os_has_no_boot_clock(
+    monkeypatch,
+):
+    import time
+
+    import maipai_body.measure.battery as battery
+
+    monkeypatch.delattr(time, "CLOCK_BOOTTIME", raising=False)
+    monkeypatch.delattr(time, "CLOCK_UPTIME_RAW", raising=False)
+    monkeypatch.setattr(time, "monotonic", lambda: 42.0)
+    assert battery._boot_clock() == 42.0
