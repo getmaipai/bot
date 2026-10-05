@@ -27,7 +27,11 @@ REPO = Path(__file__).resolve().parents[2]
 CLIENT_SRC = Path(eyes_client.__file__)
 
 # Written out by hand from the order, independent of the table under test.
-DOCUMENTED_WORDS = {"GREEN", "BLUE", "WHITE", "AMBER", "CYAN", "MAGENTA", "INTENSITY", "BLINK"}
+DOCUMENTED_LINE_PATTERNS = (
+    re.compile(r"(?:GREEN|BLUE|WHITE|AMBER|CYAN|MAGENTA)\Z"),
+    re.compile(r"INTENSITY (?:0|[1-9][0-9]?|100)\Z"),
+    re.compile(r"BLINK(?: ON| OFF)?\Z"),
+)
 BANNED = (
     "RGB",
     "ANIMA",
@@ -47,6 +51,10 @@ def pty():
     fake = FakeEyesSerial()
     yield fake
     fake.close()
+
+
+def is_documented_wire_line(line: str) -> bool:
+    return any(pattern.fullmatch(line) for pattern in DOCUMENTED_LINE_PATTERNS)
 
 
 @pytest.fixture
@@ -206,17 +214,25 @@ def test_only_table_commands_are_ever_written(pty, make_client):
     lines = pty.lines()
     assert "INTENSITY 0" in lines
     for line in lines:
-        assert line.split(" ")[0] in DOCUMENTED_WORDS, line
+        assert is_documented_wire_line(line), line
     raw = pty.captured.decode("ascii")
     for word in BANNED:
         assert not re.search(rf"\b{word}", raw), word
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["BLINK STARTLE", "INTENSITY 50 STARTLE", "CYAN EXTRA", "INTENSITY 101"],
+)
+def test_byte_guard_rejects_undocumented_command_arguments(line):
+    assert not is_documented_wire_line(line)
 
 
 def test_the_table_has_no_banned_word_and_no_red():
     table = repr(DEFAULT_PROTOCOL)
     for word in BANNED:
         assert word not in table, word
-    assert set(DEFAULT_PROTOCOL.colours.values()) <= DOCUMENTED_WORDS
+    assert all(is_documented_wire_line(colour) for colour in DEFAULT_PROTOCOL.colours.values())
     assert set(DEFAULT_PROTOCOL.colours) == set(Palette) - {Palette.OFF}
 
 

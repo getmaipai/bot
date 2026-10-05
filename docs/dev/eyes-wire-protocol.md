@@ -2,26 +2,26 @@
 
 Status: every wire string below is UNVERIFIED. This note, the client in
 `body/maipai_body/bodies/reachy_mini/eyes_client.py` and the probe in
-`scripts/probe_eyes.py` were written from the order's summary of the
-vendor's public README and from our own repo notes. No vendor source,
-firmware, demo, default or tuned value was read, and nothing from the
-vendor package is imported, depended on or locked (a test enforces the
-last three).
+`scripts/probe_eyes.py` use only this citation for vendor protocol claims:
+the vendor README as summarised to the owner on 2026-10-05. No vendor
+source, firmware, demo, default or tuned value was read, and nothing from
+the vendor package is imported, depended on or locked (a test enforces
+the last three).
 
 ## What is cited
 
-Only the following facts, all from the public README as summarised to us
-(the summary's wording is itself unverified; no line numbers were
-available to this session, so none are cited):
+The following command names and transport details are cited to the vendor
+README as summarised to the owner on 2026-10-05. Their syntax and behavior
+remain UNVERIFIED until the unit probe is run.
 
-| Fact | Where it lives in our code |
-|---|---|
-| The board is driven over USB serial at 115200 baud | `WireProtocol.baud` |
-| Named colours: RED, GREEN, BLUE, WHITE, AMBER, CYAN, MAGENTA | `WireProtocol.colours` (RED is not in the table, our seam bans it) |
-| An intensity setting (`set_intensity`) | `WireProtocol.intensity` |
-| A blink (`blink`) | `WireProtocol.blink` |
-| Blinking can be enabled and disabled | `WireProtocol.blink_enable`, `blink_disable` |
-| USB ids `2e8a:10fc` | arrival-day probe noted in `scripts/udev/reachy-eyes-setup.sh`, to be confirmed with `lsusb` |
+| Fact or command | Citation | Where it lives in our code |
+|---|---|---|
+| USB serial, 115200 baud | the vendor README as summarised to the owner on 2026-10-05 | `WireProtocol.baud` |
+| Colour names RED, GREEN, BLUE, WHITE, AMBER, CYAN, MAGENTA (UNVERIFIED as wire strings) | the vendor README as summarised to the owner on 2026-10-05 | `WireProtocol.colours` (RED is not in the table; our seam bans it) |
+| Command name `set_intensity` | the vendor README as summarised to the owner on 2026-10-05 | `WireProtocol.intensity` |
+| Command name `blink` | the vendor README as summarised to the owner on 2026-10-05 | `WireProtocol.blink` |
+| Blinking can be enabled and disabled | the vendor README as summarised to the owner on 2026-10-05 | `WireProtocol.blink_enable`, `blink_disable` |
+| USB ids `2e8a:10fc` | `scripts/udev/reachy-eyes-setup.sh`, to be confirmed with `lsusb` at arrival | `find_eyes_port()` |
 
 ## What is not known
 
@@ -31,27 +31,27 @@ not known. The client keeps all of them as data in one frozen table,
 `WireProtocol` (`DEFAULT_PROTOCOL`), so the owner's unit can settle them
 by editing that table and nothing else:
 
-| Intent | Wire line (UNVERIFIED) |
-|---|---|
-| colour | the colour name, upper case, e.g. `CYAN` |
-| intensity | `INTENSITY <n>`, `n` an integer percent 0 to 100 (scale UNVERIFIED) |
-| blink once | `BLINK` |
-| enable blinking | `BLINK ON` |
-| disable blinking | `BLINK OFF` |
-| line terminator | `\n` |
+| Intent | Wire line (UNVERIFIED) | Citation |
+|---|---|---|
+| colour | `CYAN` (example) | the vendor README as summarised to the owner on 2026-10-05 |
+| intensity | `INTENSITY <n>`, `n` an integer percent 0 to 100 (scale UNVERIFIED) | the vendor README as summarised to the owner on 2026-10-05, command name only |
+| blink once | `BLINK` | the vendor README as summarised to the owner on 2026-10-05, command name only |
+| enable blinking | `BLINK ON` | the vendor README as summarised to the owner on 2026-10-05, command names only |
+| disable blinking | `BLINK OFF` | the vendor README as summarised to the owner on 2026-10-05, command names only |
+| line terminator | `\n` (UNVERIFIED) | probe on the owner's unit |
 
 `OFF` has no documented command, so the client turns the eyes off with an
 intensity of 0.
 
 Nothing else is ever written. The test `test_only_table_commands_are_ever_written`
-captures every byte sent through a pty over a full run and fails on any line
-whose command word is outside the table. A second test bans by name RGB,
-ANIMA, CAPTURE, every CFG, ENERGY, SHIMMER, ASYMMETRY, ACK, STARTLE and
-RED. These stay out until a public README line or the maintainer's written
-reply cites them. A `blink` pulse sends `BLINK`. The seam's `ack` pulse
-has no cited wire command, so it is two `BLINK` lines. Breathing is not a
-wire feature; if wanted it is a host-driven series of `INTENSITY` lines
-by a caller, never autonomy inside this client.
+captures every byte sent through a pty over a full run and fails unless each
+complete line matches one documented command and its allowed argument grammar.
+A second test bans by name RGB, ANIMA, CAPTURE, every CFG, ENERGY, SHIMMER,
+ASYMMETRY, ACK, STARTLE and RED. The owner decision of 2026-10-05 is: no
+maintainer contact, clean-room go given. A `blink` pulse sends `BLINK`. The
+seam's `ack` pulse has no cited wire command, so it is two `BLINK` lines.
+Breathing is not a wire feature; if wanted it is a host-driven series of
+`INTENSITY` lines by a caller, never autonomy inside this client.
 
 ## Client behaviour
 
@@ -72,13 +72,13 @@ by a caller, never autonomy inside this client.
 
 `uv run python scripts/probe_eyes.py` finds the board by USB ids (or
 `--port`), opens it with the same settings and, by default, sends nothing:
-the README as summarised documents no status or ping command. It logs
-whatever the unit says unprompted for `--listen` seconds. `--send NAME`
-may send one named command from the table (for example `blink`), so the
-owner can see what the unit answers to each wire line and fix the table.
-It cannot send anything outside the table.
+the README summary as relayed to the owner documents no status or ping
+command. It logs whatever the unit says unprompted for `--listen` seconds.
+`--send NAME` may send one named command from the table (for example
+`blink`), so the owner can see what the unit answers to each wire line and
+fix the table. It cannot send anything outside the table.
 
-Record the unit's answers below when the unit arrives (device check 8):
+unit probe results: pending (scripts/probe_eyes.py on the owner's unit at arrival)
 
 - [ ] lsusb ids confirmed
 - [ ] line terminator
