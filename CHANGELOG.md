@@ -9,6 +9,12 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- RM-07 egress tooling (`maipai_body/measure/netcapture.py`,
+  `body/scripts/measure_rm07_egress.py`): reads a packet capture, groups the
+  robot's own connections by destination and port, labels each against the
+  design's allowed list and fails on an unlisted endpoint. The Reachy Mini
+  privacy page's "what leaves the robot" rows are now generated from that
+  list. The capture on the unit is still to do.
 - MOVES-01's `react` entry point: `ConversationLoop` can call a hook after the
   reply with the move a plan named, behind the `MAIPAI_BOT_REACT_MOVES` flag
   (off by default; dormant until the hub's turn stream carries a move name).

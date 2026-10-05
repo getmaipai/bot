@@ -508,6 +508,26 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       page's rows match it; the software mute and camera-off are
       labelled so. Out of scope: fixing the vendor's image. Exit: the
       recorded capture and the page.
+      Tooling landed (S-RM07-TOOLING, `cloud/rm07-tooling`; the unit
+      capture itself is still open, so this item stays unchecked):
+      `body/maipai_body/measure/netcapture.py` reads pcap and pcapng
+      with no third-party parser, keeps the connections the robot opened,
+      groups them by destination and port (names from the capture's own
+      DNS answers and TLS server names), labels each against the allowed
+      list (the hub, the PyPI update check, and the local plumbing of DNS,
+      mDNS and DHCP) and fails on anything else;
+      `body/scripts/measure_rm07_egress.py` runs `tcpdump` or reads a
+      file, prints the table, diffs and rewrites the generated block of
+      `docs/user/reachy-mini-privacy.md`, and records the `measurements.md`
+      section per phase. The page's rows come from the generator, and a
+      test keeps them there. A `--rehearse` mode captures real packets on
+      loopback against a fake hub and an optional fake stray endpoint.
+      Open for the unit: the 24-hour before and after captures, the
+      software mute and camera-off labels. For a human to decide: the
+      design says "the hub, the update check, and nothing else", and the
+      list adds DNS, mDNS and DHCP to the local router as labelled rows
+      that never leave the house; NTP or any other public endpoint the
+      first capture finds is reported as unlisted, not added.
 - [ ] **RM-08: install and update from Home** (M, unit, after
       ROBOT-DEVICE-01 and ROBOT-CARD-01). Objective: the Devices page's
       add flow runs RM-03's offline install over SSH and rotates the

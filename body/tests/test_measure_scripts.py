@@ -21,6 +21,7 @@ ALL = (
     "measure_mr3_wake_doa.py",
     "measure_mr4_battery.py",
     "measure_mr5_link.py",
+    "measure_rm07_egress.py",
 )
 
 

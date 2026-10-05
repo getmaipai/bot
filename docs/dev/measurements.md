@@ -90,3 +90,16 @@ Never a hostname, never a household recording.
 | mid_turn | blackhole | 1 | 120283.5 | 120283.5 | 22.7 | 22.7 | 15005.4 | 15005.4 | 1 | 1/1 | 0/1 | 0 |
 | mid_sentence | blackhole | 1 | 120023.2 | 120023.2 | 32.9 | 32.9 | 15004.5 | 15004.5 | 1 | 1/1 | 0/1 | 0 |
 
+
+## RM-07: what leaves the robot (unit), not run yet
+
+- mode: `unit` (the physical Reachy Mini; it has not arrived)
+- not run: the unit is not here, so there is no capture. Nothing below is measured.
+- tooling: `body/scripts/measure_rm07_egress.py` reads a `tcpdump` capture, groups the
+  connections the robot opened by destination and port, and labels each against the
+  design's allowed list. The pipeline is rehearsed on loopback (`--rehearse`, a fake hub
+  and a fake stray endpoint) and tested on hand-built captures; those prove the tool, not the robot.
+- to record, on the isolated network, 24 hours before the MaiPai install and 24 hours after:
+  run the script with `--capture`, `--phase before-install` then `--phase after-install`,
+  `--mode unit` and `--record --write-page` (command in the script's docstring).
+- delete this section when the first capture is recorded; the recorder writes one section per phase.
