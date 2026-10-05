@@ -215,3 +215,139 @@ def test_budget_section_without_a_decision_says_so():
     text = budget_section(header, "daemon", summary, None, duration_s=60.0)
     assert "decision: not evaluated for this configuration" in text
     assert "temperature max: n/a" in text
+
+
+def test_wake_doa_section_reports_whatever_parts_were_run_and_the_gates():
+    from maipai_body.measure.report import wake_doa_section
+
+    header = new_run_header(
+        row="M-R3",
+        mode="unit",
+        profile_id="reachy_mini",
+        daemon_version="1.11.0",
+        date="2026-10-05",
+    )
+    parts = {
+        "false_accepts": {"label": "tv at room level", "events": 1, "listened_hours": 2.5},
+        "recall": [
+            {"condition": "quiet_1m", "attempts": 10, "hits": 9},
+            {"condition": "tv_3m", "attempts": 10, "hits": 8},
+        ],
+        "doa": [
+            {
+                "bearing_deg": 90.0,
+                "expected_array_rad": 0.0,
+                "readings": 60,
+                "speech_readings": 50,
+                "median_measured_rad": 0.1,
+                "error_deg": summarize([4.0, 6.0, 9.0]),
+            }
+        ],
+        "barge_in": {"attempts": 10, "hits": 7, "self_triggers": 0, "control_s": 60.0},
+        "gates": {
+            "false_accepts": {"pass": True, "gate": "g1", "value": "1 in 2.50 h"},
+            "recall_quiet_1m": {"pass": True, "gate": "g2", "value": "9/10"},
+            "recall_tv_3m": {"pass": None, "gate": "g3", "value": "3/3", "note": "few attempts"},
+            "near_miss": {"pass": False, "gate": "g4", "value": "1 wakes"},
+        },
+    }
+    text = wake_doa_section(header, parts)
+    assert text.startswith("## M-R3: wake and direction of arrival (unit), 2026-10-05\n")
+    assert "- false accepts: 1 in 2.50 h (tv at room level)" in text
+    assert "| quiet_1m | 9/10 |" in text
+    assert "| 90 | 0.000 | 0.100 | 50/60 | 6.0 | 9.0 |" in text
+    assert "barge-in: 7/10 woke through playback; 0 self-triggers in 60 s of playback alone" in text
+    assert "| false_accepts | pass |" in text
+    assert "| recall_tv_3m | undecided |" in text
+    assert "| near_miss | FAIL |" in text
+
+
+def test_wake_doa_section_with_only_one_part_run_has_only_that_part():
+    from maipai_body.measure.report import wake_doa_section
+
+    header = new_run_header(row="M-R3", mode="unit", profile_id="p", daemon_version="1")
+    text = wake_doa_section(
+        header, {"recall": [{"condition": "quiet_1m", "attempts": 2, "hits": 2}]}
+    )
+    assert "| quiet_1m | 2/2 |" in text
+    assert "bearing" not in text
+    assert "barge-in" not in text
+
+
+def test_battery_section_reports_what_the_probe_found_and_each_runs_clock():
+    from maipai_body.measure.report import battery_section
+
+    header = new_run_header(
+        row="M-R4",
+        mode="unit",
+        profile_id="reachy_mini",
+        daemon_version="1.11.0",
+        date="2026-10-05",
+    )
+    probe = {
+        "readable": False,
+        "level_readable": False,
+        "charger_readable": False,
+        "power_supply": [],
+        "daemon_facts": [],
+        "daemon_paths": [],
+        "unreachable_sources": [],
+        "indirect": {
+            "under_voltage_flags": {"under_voltage_now": False, "under_voltage_occurred": True}
+        },
+    }
+    runs = [
+        {
+            "boot_id": "a",
+            "workload": "idle",
+            "charging": "no",
+            "heartbeats": 400,
+            "runtime_s": 11_880.0,
+            "uncertainty_s": 30.0,
+            "max_gap_s": 31.0,
+            "gap_warning": False,
+            "facts_seen": {},
+        },
+        {
+            "boot_id": "b",
+            "workload": "conversation",
+            "charging": "yes",
+            "heartbeats": 20,
+            "runtime_s": 600.0,
+            "uncertainty_s": 30.0,
+            "max_gap_s": 900.0,
+            "gap_warning": True,
+            "facts_seen": {"BAT0.capacity": {"first": "100", "last": "97"}},
+        },
+    ]
+    text = battery_section(header, probe, runs)
+    assert text.startswith("## M-R4: battery (unit), 2026-10-05\n")
+    assert "- readable battery or charger fact: none found" in text
+    assert "under-voltage occurred: yes" in text
+    assert "| idle | no | 3:18:00 | 30 | 400 | no |" in text
+    assert "| conversation | yes | 0:10:00 | 30 | 20 | GAP |" in text
+    assert "BAT0.capacity 100 to 97" in text
+
+
+def test_battery_section_lists_the_facts_a_probe_did_find():
+    from maipai_body.measure.report import battery_section
+
+    header = new_run_header(row="M-R4", mode="unit", profile_id="p", daemon_version="1")
+    probe = {
+        "readable": True,
+        "level_readable": True,
+        "charger_readable": False,
+        "power_supply": [{"name": "BAT0", "type": "Battery", "values": {"capacity": "88"}}],
+        "daemon_facts": [
+            {"source": "/api/daemon/status", "path": "power.battery_percent", "value": 80}
+        ],
+        "daemon_paths": ["/api/power/battery"],
+        "unreachable_sources": [],
+        "indirect": {"under_voltage_flags": None},
+    }
+    text = battery_section(header, probe, [])
+    assert "- readable battery or charger fact: level" in text
+    assert "BAT0 (Battery): capacity=88" in text
+    assert "power.battery_percent = 80" in text
+    assert "/api/power/battery" in text
+    assert "under-voltage" in text and "unreadable" in text

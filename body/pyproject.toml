@@ -105,6 +105,9 @@ select = ["E", "F", "I", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "unit_only: needs the physical Reachy Mini (MAIPAI_UNIT=1 and a non-simulator daemon on port 8000)",
+]
 
 [build-system]
 requires = ["hatchling"]

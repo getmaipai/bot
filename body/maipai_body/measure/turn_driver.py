@@ -19,12 +19,31 @@ import numpy as np
 import numpy.typing as npt
 
 from maipai_body.bodies.reachy_mini.fake import _load_wav_as_stereo_16k
+from maipai_body.link import HubLinkClient, PairingStore
 from maipai_body.speech.stt_stream import SttStreamClient
 from maipai_body.speech.tts_playback import TtsPlaybackClient
 from maipai_body.speech.turn_client import TurnClient
 
 _BLOCK_SAMPLES = 512
 _RATE = 16_000
+
+
+class NoUsablePairing(RuntimeError):
+    pass
+
+
+def open_hub_session(pairing_path: Path) -> tuple[str, str]:
+    """``(session cookie, hub base url)`` redeemed from the robot's own persisted pairing.
+
+    The measurement runs beside the paired app and borrows its pairing
+    through the same store and client, never a second way in.
+    """
+    store = PairingStore(pairing_path)
+    link = HubLinkClient(store)
+    pairing = store.load()
+    if pairing is None or not link.refresh() or not link.session_cookie:
+        raise NoUsablePairing(f"no usable hub pairing at {pairing_path}: pair the robot first")
+    return link.session_cookie, pairing.base_url
 
 
 def load_utterance(path: Path) -> npt.NDArray[np.float32]:
