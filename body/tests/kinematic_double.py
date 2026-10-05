@@ -9,13 +9,19 @@ models a head someone is holding still: commands are accepted and
 nothing moves. ``goto`` blocks for its duration (scaled by ``time_scale``
 to keep tests fast), as the real SDK's ``goto_target`` does, so a
 primitive's second step starts after its first.
+
+The lag and the frame stamps read an injected ``clock`` and the feed
+paces on an injected ``sleep``, so a test can drive them with a fake
+clock and get frames at exact multiples of the period; the feed paces
+to a deadline, so a sleep that overshoots does not push later frames
+out and thin the frames in a window.
 """
 
 from __future__ import annotations
 
 import math
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from maipai_body.bodies.reachy_mini.fake import FakeReachyMiniClient
 from maipai_body.hal.seam import AntennaPositions, HeadPose, StateFrame
@@ -30,22 +36,26 @@ class KinematicFakeClient(FakeReachyMiniClient):
         time_constant_s: float = 0.04,
         time_scale: float = 0.25,
         held: bool = False,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
+        self._clock = clock
+        self._sleep = sleep
         self.time_constant_s = time_constant_s
         self.time_scale = time_scale
         self.held = held
         self._from = [0.0] * _AXES
         self._to = [0.0] * _AXES
-        self._t0 = time.monotonic()
+        self._t0 = clock()
 
     def goto(self, pose=None, antennas=None, body_yaw=None, duration_s=0.5, method="minjerk"):
         super().goto(pose, antennas, body_yaw, duration_s, method)
         time.sleep(duration_s * self.time_scale)
 
     def _now_vector(self) -> list[float]:
-        alpha = 1.0 - math.exp(-(time.monotonic() - self._t0) / self.time_constant_s)
+        alpha = 1.0 - math.exp(-(self._clock() - self._t0) / self.time_constant_s)
         return [a + (b - a) * alpha for a, b in zip(self._from, self._to, strict=True)]
 
     def _apply(self, pose, antennas, body_yaw) -> None:
@@ -59,7 +69,7 @@ class KinematicFakeClient(FakeReachyMiniClient):
             target[3], target[4] = antennas.left, antennas.right
         self._from = self._now_vector()
         self._to = target
-        self._t0 = time.monotonic()
+        self._t0 = self._clock()
 
     def state_feed(self, frequency: float = 10.0) -> _KinematicFeed:
         self._require_connected()
@@ -71,17 +81,23 @@ class _KinematicFeed:
         self._client = client
         self._period_s = period_s
         self._seq = 0
+        self._next_at: float | None = None
 
     def __iter__(self) -> Iterator[StateFrame]:
         return self
 
     def __next__(self) -> StateFrame:
         self._client._require_connected()
-        time.sleep(self._period_s)
+        clock = self._client._clock
+        if self._next_at is None:
+            self._next_at = clock()
+        self._next_at += self._period_s
+        self._client._sleep(max(0.0, self._next_at - clock()))
         pitch, roll, yaw, left, right = self._client._now_vector()
         self._seq += 1
-        return StateFrame.stamped(
-            self._seq,
+        return StateFrame(
+            t_received_ns=round(clock() * 1e9),
+            seq=self._seq,
             head_pose=HeadPose(pitch=pitch, roll=roll, yaw=yaw),
             antennas=AntennaPositions(left=left, right=right),
         )

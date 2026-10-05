@@ -194,15 +194,23 @@ def run_trial(
 
     cancel_ns = _cancel_ns()
     assert cancel_ns is not None
-    time.sleep(settle_window_s)
+    # The window runs on the feed's own stamps, not on a sleep here: a sleep
+    # races the feed thread, and a frame or two short of the window can turn
+    # a settle into "never settled".
+    window_end_ns = cancel_ns + round(settle_window_s * 1e9)
+    _wait_for(
+        lambda: (recorder.latest_ns() or 0) >= window_end_ns,
+        settle_window_s + 2.0,
+    )
     recorder.stop()
     feed_thread.join(timeout=2.0)
+    window = [s for s in recorder.samples if s.t_received_ns <= window_end_ns]
     phases = [phase for phase, _ in bench.rendered[rendered_before:]]
     row.update(
         phases=[phase.value for phase in phases],
         cancels=phases.count(Phase.CANCEL),
         cancel_ms=(cancel_ns - hub.loss_at * 1e9) / 1e6 if hub.loss_at is not None else None,
-        pose_still_after_cancel_ms=time_to_still(recorder.samples, cancel_ns),
+        pose_still_after_cancel_ms=time_to_still(window, cancel_ns),
     )
 
     bench.wait_idle(recover_timeout_s)

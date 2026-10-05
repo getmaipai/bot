@@ -10,7 +10,9 @@ from __future__ import annotations
 import pytest
 
 from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
+from maipai_body.hal.seam import HeadPose
 from maipai_body.measure.link_loss import LinkLossBench, run_trial, summarize_trials
+from maipai_body.measure.motion import sample_from_frame, time_to_still
 from maipai_body.measure.stand_in_hub import StandInHub
 from tests.kinematic_double import KinematicFakeClient
 
@@ -46,8 +48,10 @@ def _trial(bench, scenario):
     ],
 )
 def test_a_reset_is_one_cancel_a_settled_pose_a_reconnect_and_one_line(bench, scenario, phases):
+    # the head settles ~150 ms after a cancel and "still" is five frames more: the window
+    # holds that twice over, so a frame lost to a slow machine cannot read as "never settled"
     row = run_trial(
-        bench, scenario, "reset", cancel_timeout_s=5.0, settle_window_s=0.3, recover_timeout_s=5.0
+        bench, scenario, "reset", cancel_timeout_s=5.0, settle_window_s=0.6, recover_timeout_s=5.0
     )
     # one cancel, in the right place in the turn, never a done after it
     assert row["phases"] == phases
@@ -122,3 +126,35 @@ def test_stratified_outages_cover_the_report_interval_evenly():
     assert stratified_outages(4, interval_s=8.0) == [1.0, 3.0, 5.0, 7.0]
     assert stratified_outages(1, interval_s=15.0) == [7.5]
     assert stratified_outages(0, interval_s=15.0) == []
+
+
+def _driven_settle(overshoot_s):
+    """The kinematic double on a fake clock: the pose settle after a step, and the frame stamps."""
+    now = [100.0]
+
+    def sleep(seconds):
+        now[0] += seconds + overshoot_s
+
+    client = KinematicFakeClient(
+        REACHY_MINI_PROFILE, clock=lambda: now[0], sleep=sleep, time_constant_s=0.04
+    )
+    client.set_target(pose=HeadPose(pitch=0.3))
+    cancel_ns = round(now[0] * 1e9)
+    feed = client.state_feed(frequency=30.0)
+    samples = [sample_from_frame(next(feed)) for _ in range(10)]
+    stamps = [sample.t_received_ns - cancel_ns for sample in samples]
+    return time_to_still(samples, cancel_ns), stamps
+
+
+def test_the_settle_time_is_a_function_of_the_fake_clock_not_of_machine_speed():
+    exact, exact_stamps = _driven_settle(0.0)
+    slow, slow_stamps = _driven_settle(0.002)  # every sleep wakes 2 ms late
+    # a late wake-up delays one frame by its own 2 ms and no more: the lateness does not
+    # pile up, so a window holds the same frames on a slow machine as on a fast one
+    assert [slow - exact for slow, exact in zip(slow_stamps, exact_stamps, strict=True)] == [
+        2_000_000
+    ] * 10
+    assert exact_stamps == [round((i + 1) / 30.0 * 1e9) for i in range(10)]
+    assert exact is not None and slow is not None
+    assert 100.0 <= exact <= 170.0
+    assert abs(slow - exact) <= 3.0

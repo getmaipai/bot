@@ -105,6 +105,11 @@ class FeedRecorder:
                 except Exception:
                     pass
 
+    def latest_ns(self) -> int | None:
+        """The feed's own stamp of the newest sample, or ``None`` before the first."""
+        samples = self.samples
+        return samples[-1].t_received_ns if samples else None
+
     def stop(self) -> None:
         self._stop.set()
 
