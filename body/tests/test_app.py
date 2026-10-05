@@ -312,7 +312,7 @@ _SCHEMA_ENV = "MAIPAI_ROBOT_STATE_SCHEMA"
 @pytest.mark.skipif(
     not os.environ.get(_SCHEMA_ENV),
     reason=f"set {_SCHEMA_ENV} to commons' spec/schemas/robot-state.schema.json "
-    "(spec-v0.1.57 or later); bot does not pin maipai-spec yet",
+    "(spec-v0.1.73 or later); bot does not pin maipai-spec yet",
 )
 def test_state_frames_fit_the_published_robot_state_schema():
     schema = json.loads(Path(os.environ[_SCHEMA_ENV]).read_text())
@@ -322,6 +322,20 @@ def test_state_frames_fit_the_published_robot_state_schema():
     assert set(frame) <= set(schema["properties"])
     assert set(schema["required"]) <= set(frame)
     assert isinstance(frame["app_version"], str)
+
+
+@pytest.mark.skipif(
+    not os.environ.get(_SCHEMA_ENV),
+    reason=f"set {_SCHEMA_ENV} to commons' spec/schemas/robot-state.schema.json "
+    "(spec-v0.1.73 or later)",
+)
+def test_published_robot_state_schema_carries_the_ladder_activities():
+    schema = json.loads(Path(os.environ[_SCHEMA_ENV]).read_text())
+
+    activity = json.dumps(schema["properties"]["activity"])
+
+    assert '"reconnecting"' in activity
+    assert '"sleeping"' in activity
 
 
 def test_run_paired_body_stops_within_one_second_during_conversation_loop_build(caplog):

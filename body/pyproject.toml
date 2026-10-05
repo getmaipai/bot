@@ -21,7 +21,7 @@ dependencies = [
     # reachy-mini version bump can't silently drop or reversion it under us.
     "numpy>=2.0,<3",
     # AGENTS.md names maipai-spec, pinned at the same tag Home pins
-    # (spec-v0.1.48), as this body's dependency once it consumes spec
+    # (spec-v0.1.73), as this body's dependency once it consumes spec
     # shapes. Not pinned yet: commons/spec/pyproject.toml has no
     # [build-system] table, so `pip`/`uv` fall back to setuptools'
     # legacy flat-layout autodiscovery over the whole spec/ workspace

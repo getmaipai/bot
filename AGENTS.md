@@ -18,7 +18,8 @@ Fresh rebuild on the platform design, started 2026-09-03: see
 [docs/dev.md](docs/dev.md) for the design record and
 [docs/BACKLOG.md](docs/BACKLOG.md) for what's built and what's missing.
 The shared record shapes live in `getmaipai/commons`'s `spec/` workspace
-(tagged `spec-v0.1.48` as of this writing, the tag Home pins); this
+(tagged `spec-v0.1.73` as of this writing, the tag Home pins; it adds
+`reconnecting` and `sleeping` to `robot.state.activity`); this
 repo's Python body does not pin `maipai-spec` yet, since
 `commons/spec/pyproject.toml` has no `[build-system]` table and a
 git-installed build fails on setuptools' flat-layout autodiscovery
