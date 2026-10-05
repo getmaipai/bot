@@ -1803,6 +1803,8 @@ The org's privacy rule is in [PRIVACY.md](https://github.com/getmaipai/.github/b
 
 - **Recorded moves library (MOVES-01).** What: the emotions library's move files (JSON). From where: huggingface.co, a public dataset, no account or token. When: only when an admin runs `body/scripts/pin_moves_library.py` or installs the package; never at runtime without that. What is sent: an ordinary file request (URL and standard HTTP headers), no household data. Every file is pinned by full commit revision and sha256 checksum before use: `ensure_move` refuses an unpinned or checksum-mismatched file.
 
+- **Teaching a move (MOVES-02).** None added. A taught move is recorded from the body's own state feed and kept as a file on this device; the modules import no network library (`body/tests/test_moves_teach.py` asserts it).
+
 ## Research notes
 
 - [`dev/research-minicpm5-reachy-mini-2026-09-27.md`](dev/research-minicpm5-reachy-mini-2026-09-27.md):

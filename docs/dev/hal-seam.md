@@ -30,6 +30,7 @@ Declared once, in `body/maipai_body/hal/seam.py`:
   Every implementation clamps a target against the profile's axes
   before it reaches any hardware or daemon; a vendor's own clamp, where
   one exists, is the second line, never the first.
+- **`Teachable`**: `enable_gravity_compensation`, `disable_gravity_compensation` and `state_feed`, what MOVES-02 needs to read a trajectory a person moves by hand. Whoever enables it disables it; never during expression.
 - **`StateFeed`**: an iterator of typed, monotonically stamped frames
   (head pose, antennas, body yaw, direction of arrival).
 - **`AudioIO`**, **`Camera`**, **`Imu`**, **`FaceTracker`**: the sensor

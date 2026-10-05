@@ -46,7 +46,9 @@ STATE_FRAMES_PATH = FIXTURES_DIR / "state_frames.jsonl"
 class SentCommand:
     """One command the fake recorded as "reaching the daemon"."""
 
-    kind: str  # "goto" | "set_target" | "hold" | "enable" | "disable"
+    kind: (
+        str  # "goto" | "set_target" | "hold" | "enable" | "disable" | "gravity_on" | "gravity_off"
+    )
     pose: HeadPose | None = None
     antennas: AntennaPositions | None = None
     body_yaw: float | None = None
@@ -108,6 +110,7 @@ class FakeReachyMiniClient:
         self._lost = False
         self.sent_commands: list[SentCommand] = []
         self.motors_enabled = True
+        self.gravity_compensation = False
         self._current_pose = HeadPose()
         self._current_antennas = AntennaPositions(left=0.0, right=0.0)
         self._current_body_yaw = 0.0
@@ -206,6 +209,16 @@ class FakeReachyMiniClient:
         self._require_connected()
         self.motors_enabled = False
         self.sent_commands.append(SentCommand(kind="disable"))
+
+    def enable_gravity_compensation(self) -> None:
+        self._require_connected()
+        self.gravity_compensation = True
+        self.sent_commands.append(SentCommand(kind="gravity_on"))
+
+    def disable_gravity_compensation(self) -> None:
+        self._require_connected()
+        self.gravity_compensation = False
+        self.sent_commands.append(SentCommand(kind="gravity_off"))
 
     def _apply(
         self, pose: HeadPose | None, antennas: AntennaPositions | None, body_yaw: float | None

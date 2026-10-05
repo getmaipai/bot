@@ -46,6 +46,21 @@ def matrix_to_pose(matrix: npt.NDArray[np.float64]) -> HeadPose:
     return HeadPose(x=x, y=y, z=z, roll=roll, pitch=pitch, yaw=yaw)
 
 
+def pose_to_matrix(pose: HeadPose) -> npt.NDArray[np.float64]:
+    """A seam pose to a 4x4 head transform, the inverse of ``matrix_to_pose``."""
+    cr, sr = math.cos(pose.roll), math.sin(pose.roll)
+    cp, sp = math.cos(pose.pitch), math.sin(pose.pitch)
+    cy, sy = math.cos(pose.yaw), math.sin(pose.yaw)
+    matrix = np.eye(4)
+    matrix[:3, :3] = [
+        [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+        [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+        [-sp, cp * sr, cp * cr],
+    ]
+    matrix[:3, 3] = [pose.x, pose.y, pose.z]
+    return matrix
+
+
 def _lerp(a: float, b: float, frac: float) -> float:
     return a + (b - a) * frac
 

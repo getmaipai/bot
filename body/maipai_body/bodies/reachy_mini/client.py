@@ -180,6 +180,22 @@ class ReachyMiniClient:
         except _CONNECTION_LOST_ERRORS as error:
             self._mark_lost(error)
 
+    # -- Teachable --
+
+    def enable_gravity_compensation(self) -> None:
+        self._require_connected()
+        try:
+            self._reachy.enable_gravity_compensation()
+        except _CONNECTION_LOST_ERRORS as error:
+            self._mark_lost(error)
+
+    def disable_gravity_compensation(self) -> None:
+        self._require_connected()
+        try:
+            self._reachy.disable_gravity_compensation()
+        except _CONNECTION_LOST_ERRORS as error:
+            self._mark_lost(error)
+
     # -- AudioIO --
 
     def start_recording(self) -> None:

@@ -176,6 +176,29 @@ class HeadActuator(Protocol):
 
 
 @runtime_checkable
+class Teachable(Protocol):
+    """A body whose head a person can move by hand while its state is read back.
+
+    MOVES-02 is the consumer: gravity compensation lets the head and
+    antennas be posed by hand without fighting the motors, and the state
+    feed reads the trajectory. Never enabled during expression (design
+    record section 5); whoever turns it on turns it off.
+    """
+
+    def enable_gravity_compensation(self) -> None:
+        """Make the head limp enough to be moved by hand, yet not fall."""
+        ...
+
+    def disable_gravity_compensation(self) -> None:
+        """Return to position control."""
+        ...
+
+    def state_feed(self, frequency: float = 10.0) -> StateFeed:
+        """A feed of stamped state frames at roughly ``frequency`` Hz."""
+        ...
+
+
+@runtime_checkable
 class StateFeed(Protocol):
     """A stream of typed, monotonically stamped state frames."""
 

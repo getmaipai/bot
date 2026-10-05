@@ -597,6 +597,26 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       vendor's move JSON shape, names it, replays it; offline, no
       model. Acceptance: a recorded move replays on the simulator
       within the envelope. Exit: the catalog's CI.
+      Status 2026-10-05: body side built, tests first
+      (`body/tests/test_moves_teach.py`). The seam gains `Teachable`
+      (gravity compensation on and off, plus the state feed);
+      `moves/recorder.py` writes the vendor's move JSON, refusing a
+      recording outside the envelope rather than clipping it;
+      `moves/store.py` keeps one slug-named file per move on this device
+      and never shadows a library name; `moves/teach.py` turns gravity
+      compensation on only for the recording, always off after, then
+      holds the pose; replay is MOVES-01's `MovePlayer`, and "do my
+      wave" goes through `MovesService`. Not built: a spoken "teach you
+      a move" trigger and the catalog manifest (no catalog host in this
+      repo yet); the box stays unchecked. The simulator has no hand, so
+      its run replays a scripted trajectory.
+      Needs the unit: `cd body && MAIPAI_BODY_UNIT=1 MAIPAI_UNIT_HOST=<robot> uv run pytest tests/test_moves_teach_unit.py -v -s`,
+      or interactively `uv run python scripts/teach_move_live.py wave --seconds 8 --host <robot>`.
+      Whether gravity compensation holds the head up without drift, how
+      faithfully the replay follows the hand, and the state feed rate
+      actually reached at 50 Hz are all unmeasured and judged on the unit.
+      Outbound connection: none. Taught moves are written and read on this
+      device only; the modules import no network library (a test asserts it).
 - [ ] **GUEST-01: a store app as a guest** (M, after v0.1; the design's
       section 11). Objective: a catalog package of kind `app` wrapping
       a Hugging Face Space at a pinned revision with its `data_sources`
