@@ -90,6 +90,10 @@ Never a hostname, never a household recording.
 | mid_turn | blackhole | 1 | 120283.5 | 120283.5 | 22.7 | 22.7 | 15005.4 | 15005.4 | 1 | 1/1 | 0/1 | 0 |
 | mid_sentence | blackhole | 1 | 120023.2 | 120023.2 | 32.9 | 32.9 | 15004.5 | 15004.5 | 1 | 1/1 | 0/1 | 0 |
 
+## S-EXPR-02: motion onset stamps
+
+- simulator rows: not run, sandbox cannot run the daemon; to be recorded locally on a Mac with `reachy-mini-daemon --sim`
+
 
 ## RM-07: what leaves the robot (unit), not run yet
 

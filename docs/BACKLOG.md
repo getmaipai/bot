@@ -2091,7 +2091,7 @@ value; RT-02 and RT-03 carry it.
       `docs/dev/measurements.md` (Reachy Mini has no encoders; the
       state feed is RM-01's own stand-in, same as its acceptance
       already established).
-- [ ] **EXPR-02: motion onset measurement** (S, after EXPR-01 and
+- [x] **EXPR-02: motion onset measurement** (S, after EXPR-01 and
       VOICE-01). Objective: the stamps of `dev.md` section 5
       (`t_heard`, `t_cue_emitted`, `t_cue_received`, `t_motion_command`,
       `t_encoder_onset`, `t_first_audio_out`, `t_acoustic_onset` from the
@@ -2120,6 +2120,7 @@ value; RT-02 and RT-03 carry it.
       run the daemon, see `docs/dev/measurements.md`) and the unit row,
       which stays on the checklist; the output latency of the real device is
       the unit's own capture, never the fake's.
+      Status: committed, live verification outstanding (simulator rows).
 - [ ] **EXPR-03: the engine's cues** (M, after WIRE-01 for connected mode
       and RT-01 for local; the plan half after ACT-03). Objective: the
       runtime emits `ExpressionCue` at the phases of `dev.md` section 5

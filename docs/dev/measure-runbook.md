@@ -9,6 +9,8 @@ on a unit: the only recorded figures are the simulator rows in
 
 ## Before the first run
 
+- EXPR-02 simulator rows: on a Mac with `reachy-mini-daemon --sim`, record the command and feed stamps in `measurements.md`.
+
 1. Install the wheel the way the robot is always installed:
    `scripts/install-reachy.sh <host> <wheel>`. That puts the package, including
    `maipai_body.measure`, in the daemon's apps venv at `/venvs/apps_venv`.
