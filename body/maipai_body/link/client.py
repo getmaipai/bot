@@ -46,6 +46,18 @@ class PairingRefused(RuntimeError):
     distinct from a network failure, which is worth retrying."""
 
 
+class IdentityMismatch(PairingRefused):
+    """The endpoint's identity was not verified (a different certificate, a
+    different or missing instance id): the device token was NOT sent there.
+    The walk goes on to its next address."""
+
+
+class PairingRevoked(PairingRefused):
+    """The hub answered the redeem with 401 or 403: the device token is
+    dead (revoked, expired, disabled profile). Authoritative, so the walk
+    stops and nothing retries it; only a new pairing replaces the token."""
+
+
 class PairingTimedOut(RuntimeError):
     """No approval arrived within the code's own 5-minute window."""
 
@@ -96,6 +108,10 @@ class HubLinkClient:
         self._session = session or requests.Session()
         self._discover = discover
         self.last_refresh_error: str | None = None
+        # Why the last refresh failed: "unreachable" (try the next address),
+        # "identity" (this endpoint is not proven to be the hub; token not
+        # sent), "revoked" (the hub refused the token) or "not_paired".
+        self.last_refresh_kind: str | None = None
         # The address the last successful redeem used, whether or not it was
         # kept as the pairing (a tailnet answer is not). Turn clients read it.
         self.active_base_url: str | None = None
@@ -197,7 +213,9 @@ class HubLinkClient:
             time.sleep(POLL_INTERVAL_S)
         raise PairingTimedOut(f"no approval within {POLL_TIMEOUT_S:.0f}s")
 
-    def _redeem(self, pairing: HubPairing) -> None:
+    def _redeem(
+        self, pairing: HubPairing, *, changed: bool = False, instance_id: str | None = None
+    ) -> None:
         """Exchange the device token for a session cookie on this
         pairing's own base_url. Raises :class:`PairingRefused` on a
         confirmed identity mismatch (see :meth:`_verify_identity`,
@@ -208,14 +226,17 @@ class HubLinkClient:
         can be up to five minutes), or on 401 (unknown/expired token,
         disabled profile) or 403 (an unrotated robot credential -
         ROBOT-DEVICE-01's own gate)."""
-        self._verify_identity(pairing)
+        if changed:
+            self._verify_changed_address(pairing, instance_id)
+        else:
+            self._verify_identity(pairing)
         resp = self._session.post(
             f"{pairing.base_url}/api/auth/devices/redeem",
             json={"token": pairing.device_token},
             timeout=10,
         )
         if resp.status_code in (401, 403):
-            raise PairingRefused(f"hub refused redemption: {resp.status_code} {resp.text[:200]}")
+            raise PairingRevoked(f"hub refused redemption: {resp.status_code} {resp.text[:200]}")
         resp.raise_for_status()
 
     def _verify_identity(self, pairing: HubPairing) -> None:
@@ -259,7 +280,7 @@ class HubLinkClient:
                 logger.warning("could not verify hub certificate before redeeming: %s", exc)
                 return  # inconclusive (host unreachable for the check) - not a mismatch
             if actual != pairing.fingerprint:
-                raise PairingRefused(
+                raise IdentityMismatch(
                     f"hub at {pairing.base_url} presented a different TLS certificate "
                     "than the one this pairing was made with"
                 )
@@ -268,42 +289,112 @@ class HubLinkClient:
         if address is None or address.host != host or address.port != port:
             return  # inconclusive: no fresh answer for this host, or a different service
         if address.instance_id != pairing.fingerprint:
-            raise PairingRefused(
+            raise IdentityMismatch(
                 f"hub at {pairing.base_url} now advertises a different instance id "
                 "than the one this pairing was made with"
             )
 
-    def refresh(self, base_url: str | None = None, *, persist: bool = True) -> bool:
+    def _verify_changed_address(self, pairing: HubPairing, instance_id: str | None) -> None:
+        """The identity rule for an address the pairing was NOT made at
+        (an address walk's candidate). Unlike the pairing's own address,
+        "could not check" is not good enough: the device token goes only to
+        an endpoint whose identity was positively verified.
+
+        https: the certificate presented now must hash to the fingerprint
+        pinned at pairing time. No pinned value, or a certificate that cannot
+        be fetched, means no token (an unfetchable certificate is reported as
+        a network failure, so the walk tries the next address).
+
+        http: there is no certificate, so the proof is the hub's instance
+        id, which the pairing carries (``hub_instance_id``) and which the
+        caller must present for THIS address: the walk's mDNS answer at that
+        host and port, or the tailnet address book's entry (that book comes
+        from the hub over the authenticated route). The instance id is
+        compared; neither the candidate's host name nor the name mDNS
+        advertises for the LAN is, so a hub reached at its tailnet name
+        passes. No proof, or another instance id, means no token. Honest
+        scope: an mDNS TXT record is unauthenticated, so this rejects the
+        wrong hub, not an on-path attacker; https is the only path with
+        that defense."""
+        parsed = urlparse(pairing.base_url)
+        if parsed.scheme == "https":
+            if pairing.fingerprint is None:
+                raise IdentityMismatch(
+                    f"no certificate is pinned for this pairing, so {pairing.base_url} "
+                    "cannot be verified"
+                )
+            if parsed.hostname is None:
+                raise IdentityMismatch(f"{pairing.base_url} has no host to verify")
+            try:
+                actual = _https_fingerprint(parsed.hostname, parsed.port or 443)
+            except (OSError, ssl.SSLError) as exc:
+                raise requests.ConnectionError(f"could not fetch the certificate: {exc}") from exc
+            if actual != pairing.fingerprint:
+                raise IdentityMismatch(
+                    f"hub at {pairing.base_url} presented a different TLS certificate "
+                    "than the one this pairing was made with"
+                )
+            return
+        if instance_id is None:
+            raise IdentityMismatch(
+                f"nothing proves {pairing.base_url} is this pairing's hub (no instance id "
+                "for that address), so the device token was not sent"
+            )
+        if instance_id != pairing.hub_instance_id:
+            raise IdentityMismatch(
+                f"{pairing.base_url} is hub {instance_id!r}, not this pairing's "
+                f"{pairing.hub_instance_id!r}; the device token was not sent"
+            )
+
+    def refresh(
+        self,
+        base_url: str | None = None,
+        *,
+        persist: bool = True,
+        instance_id: str | None = None,
+    ) -> bool:
         """Re-establish a session from the persisted pairing, e.g. at
         startup or after a 401 mid-session. Returns False (never
         raises) when there is no pairing, or the hub refuses it - the
         caller's own offline-first floor handles either the same way.
 
         ``base_url`` redeems the same device token at another address (the
-        one an address walk found). A success there is kept as the pairing's
-        address when ``persist`` is true (the walk passes it for LAN answers
-        only, so a tailnet answer never overwrites the stored LAN address);
+        one an address walk found); ``instance_id`` is the proof for that
+        address on plain http (see :meth:`_verify_changed_address`). A success
+        there is kept as the pairing's address when ``persist`` is true (the
+        walk passes it for LAN answers only, so a tailnet answer never
+        overwrites the stored LAN address);
         either way :attr:`active_base_url` names it. A failure leaves the
         pairing untouched. :attr:`last_refresh_error` says why
         the last call failed (``refused: ...``, ``unreachable: ...`` or
-        ``not paired``) and is ``None`` after a success."""
+        ``not paired``) and is ``None`` after a success;
+        :attr:`last_refresh_kind` is its machine-readable kind."""
         pairing = self._store.load()
         if pairing is None:
             self.last_refresh_error = "not paired"
+            self.last_refresh_kind = "not_paired"
             return False
         candidate = pairing
-        if base_url is not None and base_url != pairing.base_url:
+        changed = base_url is not None and base_url != pairing.base_url
+        if changed:
             candidate = pairing.model_copy(update={"base_url": base_url})
         try:
-            self._redeem(candidate)
+            self._redeem(candidate, changed=changed, instance_id=instance_id)
+        except PairingRevoked as exc:
+            self.last_refresh_error = f"refused: {exc}"
+            self.last_refresh_kind = "revoked"
+            return False
         except PairingRefused as exc:
             self.last_refresh_error = f"refused: {exc}"
+            self.last_refresh_kind = "identity"
             return False
         except requests.RequestException as exc:
             self.last_refresh_error = f"unreachable: {type(exc).__name__}"
+            self.last_refresh_kind = "unreachable"
             return False
         if candidate is not pairing and persist:
             self._store.save(candidate)
         self.active_base_url = candidate.base_url
         self.last_refresh_error = None
+        self.last_refresh_kind = None
         return True

@@ -190,7 +190,7 @@ def test_a_tailnet_answer_does_not_overwrite_the_stored_lan_address(tmp_path):
     persisted: list[tuple[str | None, bool]] = []
 
     class _Client(_AddressClient):
-        def refresh(self, base_url=None, persist=True):
+        def refresh(self, base_url=None, persist=True, instance_id=None):
             persisted.append((base_url, persist))
             return super().refresh(base_url)
 
@@ -213,11 +213,11 @@ def test_the_real_client_keeps_the_lan_pairing_on_an_unpersisted_redeem(stand_in
     client = HubLinkClient(store, discover=_never_discovers)
     other = f"http://127.0.0.1:{server.server_port}"
 
-    assert client.refresh(base_url=other, persist=False) is True
+    assert client.refresh(base_url=other, persist=False, instance_id="hub-test") is True
 
     assert store.load().base_url == "http://127.0.0.1:1"
     assert client.active_base_url == other  # the turn clients still reach the hub
-    assert client.refresh(base_url=other) is True  # a LAN answer is kept
+    assert client.refresh(base_url=other, instance_id="hub-test") is True  # a LAN answer is kept
     assert store.load().base_url == other
 
 
@@ -248,7 +248,7 @@ def test_an_unreachable_hub_at_real_boot_is_reconnecting_and_a_wake_takes_the_of
     release_first_redeem = threading.Event()
 
     class _SlowDownClient(_AddressClient):
-        def refresh(self, base_url=None, persist=True):
+        def refresh(self, base_url=None, persist=True, instance_id=None):
             first_redeem_started.set()
             release_first_redeem.wait(5.0)  # the walk's connect timeouts
             return super().refresh(base_url, persist)

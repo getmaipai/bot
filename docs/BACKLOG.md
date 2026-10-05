@@ -1803,7 +1803,20 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       body that was never paired still waits for pairing (there is no hub
       to be away from), and a first boot with an empty model cache and no
       network cannot build the loop (the wake model download fails), so the
-      ladder runs but a wake is not heard. See
+      ladder runs but a wake is not heard. Second review fixes
+      (2026-10-05): a stored pairing with no contact since power-on now
+      starts the machine `reconnecting` at boot (it started `connected`
+      until the first redeem's walk failed, so retries and the wake's offline
+      path waited on it); the device token goes to a changed address only
+      after a positive identity proof (pinned certificate on https, the
+      pairing's instance id presented for that address on http, so a hub
+      reached at its tailnet name passes), and the walk tells a network
+      failure and an identity mismatch (next address) from a 401 or 403
+      (revoked: the walk stops, the token goes nowhere else, nothing
+      retries it, and the body asks for a new code). Still open: the
+      tailnet entries must carry the hub's instance id once
+      ROBOT-TAILSCALE-01 fills that seam, and plain-http identity is no
+      defense against an on-path attacker. See
       `docs/dev/offline-ladder-unit-checks.md`.**
 
 ## Voice loop

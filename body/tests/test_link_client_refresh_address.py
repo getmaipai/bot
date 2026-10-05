@@ -26,7 +26,7 @@ def test_refresh_at_another_address_redeems_there_and_keeps_it(stand_in_hub, tmp
     client = HubLinkClient(store, discover=_never_discovers)
     new_url = f"http://127.0.0.1:{server.server_port}"
 
-    assert client.refresh(base_url=new_url) is True
+    assert client.refresh(base_url=new_url, instance_id="hub-test") is True
 
     assert handler.redeem_calls == 1
     assert store.load().base_url == new_url
@@ -38,7 +38,7 @@ def test_a_failed_redeem_at_another_address_leaves_the_pairing_alone(tmp_path):
     store = _store(tmp_path, "http://127.0.0.1:2")
     client = HubLinkClient(store, discover=_never_discovers)
 
-    assert client.refresh(base_url="http://127.0.0.1:1") is False
+    assert client.refresh(base_url="http://127.0.0.1:1", instance_id="hub-test") is False
 
     assert store.load().base_url == "http://127.0.0.1:2"
     assert client.last_refresh_error.startswith("unreachable: ")

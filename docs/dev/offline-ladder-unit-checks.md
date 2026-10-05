@@ -31,6 +31,38 @@ on this page has been run on a unit, and no number here is a measurement.
   loop reads the live cookie at its first turn). Rung 0 renders nothing until
   the funnel attaches its body, so no cue stage is spent early. Not covered: a
   body never paired, and a first boot with an empty model cache and no network.
+  The machine starts `connected` only because it must start somewhere, so
+  with a stored pairing `run_paired_body` also calls
+  `LinkStateMachine.booted_without_contact` before the supervisor starts: the
+  phase is `reconnecting` from power-on (unless the hub-link thread already
+  redeemed, checked under the machine's lock), so the supervisor retries and
+  a wake takes the offline path while the first redeem's walk is still in
+  flight. `tests/test_link_review_fixes.py` drives that real ordering (no
+  hand-called `reconnect_once`).
+- Who gets the device token at a changed address (`link/client.py`,
+  `_verify_changed_address`). The pairing's own address keeps the older
+  check. Any other address the walk tries needs a positive proof, or the
+  token is not sent: https, the certificate pinned at pairing time (no pin, or
+  a certificate that cannot be fetched, is no token; an unfetchable one counts
+  as a network failure); plain http, the instance id the pairing carries
+  (`hub_instance_id`) presented for that address, either the walk's mDNS
+  answer at that host and port or the tailnet address book's entry
+  (`HubEndpoint.instance_id`, which ROBOT-TAILSCALE-01 must fill from the
+  hub's own authenticated response). The candidate's host name and the LAN
+  name mDNS advertises are not compared, so a hub reached at its tailnet name
+  passes. Limit, stated plainly: an mDNS TXT record is unauthenticated, so on
+  http this rejects the wrong hub, not an on-path attacker; https is the only
+  path with that defense.
+- Failure kinds in the walk (`address_walk.FailureKind`): a network failure
+  and an identity mismatch both go on to the next address (a mismatch never
+  sent the token); a 401 or 403 from the redeem is `revoked`, stops the walk,
+  and the token is sent nowhere else. `LinkLifecycle` remembers the revoked
+  token and presents it no more (no walk, no supervisor retry, no wake retry),
+  reports `pairing revoked ...` as the last error (rung 2 and the app page),
+  sets `paired` false, and `run()` leaves the heartbeat (polled every 5 s) to
+  ask for a new code; a fresh pairing tells the machine it redeemed. The
+  pairing's own address is still trusted as the pairing made it, so a 401 from
+  it counts as authoritative.
 - `link/supervisor.py`: the walk at once on a loss, then every
   `reconnect_interval_s`, and every `sleeping_interval_s` once asleep.
 - Rung 0 (`link/rung0.py`): `settle` and `breathe` on loss, the `muted`

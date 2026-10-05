@@ -35,7 +35,9 @@ class _AddressClient(_FakeClient):
         self.refreshed_at: list[str | None] = []
         self.last_refresh_error: str | None = None
 
-    def refresh(self, base_url: str | None = None, persist: bool = True) -> bool:
+    def refresh(
+        self, base_url: str | None = None, persist: bool = True, instance_id: str | None = None
+    ) -> bool:
         self.refreshed_at.append(base_url)
         url = base_url or "http://192.0.2.10:80"
         ok = url in self.answering
@@ -72,12 +74,12 @@ def test_a_failed_heartbeat_is_reported_as_a_failed_re_redeem(tmp_path, monkeypa
     calls = {"n": 0}
     real_refresh = client.refresh
 
-    def refresh(base_url=None):
+    def refresh(base_url=None, persist=True, instance_id=None):
         calls["n"] += 1
         if calls["n"] == 1:
             client.last_refresh_error = None
             return True
-        return real_refresh(base_url)
+        return real_refresh(base_url, persist, instance_id)
 
     client.refresh = refresh
     lifecycle = LinkLifecycle(store, client, discover=lambda timeout_s: None, observer=observer)

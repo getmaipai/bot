@@ -21,6 +21,7 @@ from maipai_body.link.address_walk import (
     HubEndpoint,
     PathKind,
     TailnetEndpoints,
+    classify_base_url,
     no_tailnet_endpoints,
 )
 from maipai_body.link.client import HubLinkClient, PairingRefused, PairingTimedOut
@@ -33,6 +34,7 @@ logger = logging.getLogger("maipai_body.link.lifecycle")
 # own citation of lib/session.ts) so a missed tick or two is never a risk.
 REFRESH_INTERVAL_S = 24.0 * 60 * 60  # 24h
 DISCOVERY_RETRY_S = 30.0
+_HEARTBEAT_POLL_S = 5.0  # how often the heartbeat looks for a revoked pairing
 
 
 @dataclass
@@ -94,6 +96,9 @@ class LinkLifecycle:
             else None
         )
         self._redeem_lock = threading.Lock()  # one redeem or walk at a time
+        # The device token a hub answered 401 or 403 to. While the stored
+        # token is that one, nothing presents it again: no walk, no retry.
+        self._revoked_token: str | None = None
         self._lock = threading.Lock()
         self._state = LinkState(paired=False)
 
@@ -131,11 +136,18 @@ class LinkLifecycle:
         pairing = self._store.load()
         return pairing.base_url if pairing is not None else None
 
-    def _try_endpoint(self, endpoint: HubEndpoint) -> tuple[bool, str | None]:
+    def _try_endpoint(self, endpoint: HubEndpoint) -> tuple:
         # Only a LAN answer becomes the pairing's stored address; a tailnet
         # answer is used for this session and the LAN address stays the record.
-        ok = self._client.refresh(base_url=endpoint.base_url, persist=endpoint.kind is PathKind.LAN)
-        return ok, None if ok else self._client.last_refresh_error
+        ok = self._client.refresh(
+            base_url=endpoint.base_url,
+            persist=endpoint.kind is PathKind.LAN,
+            instance_id=endpoint.instance_id,
+        )
+        if ok:
+            return True, None, None
+        kind = getattr(self._client, "last_refresh_kind", None) or "unreachable"
+        return False, self._client.last_refresh_error, kind
 
     def _note_attempt(self, endpoint: HubEndpoint) -> None:
         if self._observer is not None:
@@ -146,8 +158,15 @@ class LinkLifecycle:
         asked to) and tell the observer what happened. Serialized: the
         heartbeat, the pairing loop and the supervisor all come through here."""
         with self._redeem_lock:
-            if self._walker is None:
+            pairing = self._store.load()
+            if pairing is not None and pairing.device_token == self._revoked_token:
+                ok, path, address = False, "", None
+                error = "pairing revoked: the hub refused this device's token; pair again"
+            elif self._walker is None:
                 ok = self._client.refresh()
+                if not ok and pairing is not None:
+                    if getattr(self._client, "last_refresh_kind", None) == "revoked":
+                        self._revoked_token = pairing.device_token
                 if ok:
                     path, address = "lan", self._stored_base_url()
                     error = None
@@ -158,6 +177,8 @@ class LinkLifecycle:
             else:
                 result = self._walker.walk()
                 ok = result.answered is not None
+                if result.revoked and pairing is not None:
+                    self._revoked_token = pairing.device_token
                 if ok:
                     path, address = result.answered.kind.value, result.answered.base_url
                     error = None
@@ -165,12 +186,21 @@ class LinkLifecycle:
                     path, address = "", None
                     errors = [a.error for a in result.attempts if a.error]
                     error = errors[-1] if errors else "not paired"
+                    if result.revoked:
+                        error = f"pairing revoked: {error}"
+        if not ok and self._token_revoked(pairing):
+            # Surface it on the app page and let run() leave the heartbeat
+            # to ask for a new code, instead of waiting out the interval.
+            self._set_state(paired=False, last_error=error)
         if self._observer is not None:
             if ok:
                 self._observer.redeemed(path, address)
             else:
                 self._observer.redeem_failed(error)
         return ok
+
+    def _token_revoked(self, pairing) -> bool:
+        return pairing is not None and pairing.device_token == self._revoked_token
 
     def reconnect_once(self) -> bool:
         """One re-redeem of the stored pairing: what the ladder's
@@ -258,13 +288,27 @@ class LinkLifecycle:
             paired=True, code=None, hub_instance_id=result.pairing.hub_instance_id, last_error=None
         )
         logger.info("paired with hub %s", result.pairing.hub_instance_id)
+        if self._observer is not None:
+            # A fresh token redeemed: the ladder leaves a revoked or lost state.
+            self._observer.redeemed(
+                classify_base_url(result.pairing.base_url).value, result.pairing.base_url
+            )
         return True
 
     def _heartbeat(self, stop_event: threading.Event) -> None:
         """Re-redeems on a slow interval until a refresh fails or
         ``stop_event`` is set, then returns - never recurses into
         :meth:`run`; the caller's own outer loop is what re-pairs."""
-        while not stop_event.wait(REFRESH_INTERVAL_S):
+        waited = 0.0
+        poll_s = min(REFRESH_INTERVAL_S, _HEARTBEAT_POLL_S)
+        while not stop_event.wait(poll_s):
+            waited += poll_s
+            if self._token_revoked(self._store.load()):
+                logger.warning("the hub revoked this pairing; re-pairing")
+                return
+            if waited < REFRESH_INTERVAL_S:
+                continue
+            waited = 0.0
             if not self._redeem_existing():
                 logger.warning("session refresh failed; re-pairing")
                 self._set_state(paired=False)

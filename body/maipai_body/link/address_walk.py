@@ -32,11 +32,24 @@ class PathKind(StrEnum):
     TAILNET = "tailnet"
 
 
+class FailureKind(StrEnum):
+    """Why an endpoint did not take the redeem; the walk acts on it."""
+
+    UNREACHABLE = "unreachable"  # a network failure: try the next address
+    IDENTITY = "identity"  # not proven to be the hub, token not sent: next address
+    REVOKED = "revoked"  # a 401/403: the hub refused the token, stop the walk
+
+
 @dataclass(frozen=True)
 class HubEndpoint:
     kind: PathKind
     base_url: str
     source: str  # "paired", "mdns" or "tailnet"
+    # The hub instance id this address is known to belong to: from the mDNS
+    # answer, or from the tailnet address book (ROBOT-TAILSCALE-01 must fill
+    # it from the hub's own authenticated response). It is the proof for a
+    # plain-http address other than the pairing's own; None means unproven.
+    instance_id: str | None = None
 
 
 def classify_base_url(base_url: str) -> PathKind:
@@ -69,15 +82,19 @@ class AttemptRecord:
     endpoint: HubEndpoint
     ok: bool
     error: str | None
+    failure: FailureKind | None = None
 
 
 @dataclass
 class WalkResult:
     answered: HubEndpoint | None
     attempts: list[AttemptRecord] = field(default_factory=list)
+    revoked: bool = False  # an endpoint refused the token; the walk stopped there
 
 
-TryEndpoint = Callable[[HubEndpoint], tuple[bool, str | None]]
+# ``(ok, error)`` or ``(ok, error, failure_kind)``; a failure with no kind is
+# a network failure.
+TryEndpoint = Callable[[HubEndpoint], tuple]
 
 
 class AddressWalker:
@@ -125,7 +142,12 @@ class AddressWalker:
             found = None
         if found is not None:
             scheme = "https" if found.tls else "http"
-            lan = HubEndpoint(PathKind.LAN, f"{scheme}://{found.host}:{found.port}", "mdns")
+            lan = HubEndpoint(
+                PathKind.LAN,
+                f"{scheme}://{found.host}:{found.port}",
+                "mdns",
+                instance_id=found.instance_id,
+            )
             if fresh(lan):
                 yield lan
 
@@ -140,9 +162,16 @@ class AddressWalker:
         for endpoint in self._endpoints(result.attempts):
             if self._on_attempt is not None:
                 self._on_attempt(endpoint)
-            ok, error = self._try(endpoint)
-            result.attempts.append(AttemptRecord(endpoint, ok, error))
+            ok, error, *rest = self._try(endpoint)
+            failure = None
+            if not ok:
+                failure = FailureKind(rest[0]) if rest and rest[0] else FailureKind.UNREACHABLE
+            result.attempts.append(AttemptRecord(endpoint, ok, error, failure))
             if ok:
                 result.answered = endpoint
+                break
+            if failure is FailureKind.REVOKED:
+                # The hub itself said no: no other address gets the token.
+                result.revoked = True
                 break
         return result
