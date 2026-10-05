@@ -127,6 +127,25 @@ class ExpressionEngine:
             rendered_primitive=primitive,
         )
 
+    def render_ambient(self, primitive: str, context: SuppressionContext) -> ExpressionOutcome:
+        """Render a primitive named by a body state (the offline ladder's
+        rung 0), not by a turn's cue. Same suppression table and render
+        lock as :meth:`handle`; arbitration is the caller's to check."""
+        reason = suppression_reason(primitive, context)
+        if reason is not None:
+            return ExpressionOutcome(
+                cue_seq=-1, primitive=primitive, suppressed_reason=reason, rendered=False
+            )
+        with self._render_lock:
+            self._render(primitive, self._client, self._profile)
+        return ExpressionOutcome(
+            cue_seq=-1,
+            primitive=primitive,
+            suppressed_reason=None,
+            rendered=True,
+            rendered_primitive=primitive,
+        )
+
     def set_muted(self, muted: bool, arbitration: ArbitrationState) -> ExpressionOutcome | None:
         """The mute contract's own entry point - a state change, not a cue.
 

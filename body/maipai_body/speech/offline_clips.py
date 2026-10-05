@@ -200,6 +200,16 @@ class OfflineSpeaker:
         self._said: set[str] = set()
         self._lock = threading.Lock()
 
+    def can_say(self, clip_ids: list[str]) -> bool:
+        """True when every id is in the manifest, rendered (stamped) and its
+        file is on disk. A cheap check (no checksum read): ``say`` still
+        verifies each clip when it loads it."""
+        try:
+            clips = [self.bundle.manifest.clip(c) for c in clip_ids]
+        except KeyError:
+            return False
+        return all(c.sha256 and (self.bundle.directory / c.file).exists() for c in clips)
+
     def say(self, clip_ids: list[str], *, stop_event: threading.Event | None = None) -> bool:
         """True if every clip was pushed; False if ``stop_event`` cut it
         short. An unknown id raises ``KeyError`` before anything plays."""
