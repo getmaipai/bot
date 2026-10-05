@@ -160,3 +160,58 @@ def test_link_loss_section_without_wifi_rows_has_no_wifi_table():
 
     header = new_run_header(row="M-R5", mode="sim", profile_id="p", daemon_version="1")
     assert "Wi-Fi" not in link_loss_section(header, [], wifi_rows=[])
+
+
+def test_budget_section_reports_processes_temperature_throttle_turns_and_the_decision():
+    from maipai_body.measure.report import budget_section
+
+    header = new_run_header(
+        row="M-R1",
+        mode="unit",
+        profile_id="reachy_mini",
+        daemon_version="1.11.0",
+        date="2026-10-05",
+    )
+    summary = {
+        "samples": 720,
+        "processes": {
+            "daemon": {"samples": 720, "rss_mb_max": 310.5, "cpu_pct": summarize([10.0, 40.0])},
+            "body": None,
+        },
+        "temp_c_max": 71.2,
+        "mem_available_mb_min": 1200.0,
+        "throttled": {"samples_throttled_now": 0, "ever_flagged_bits": 0},
+        "turns": {
+            "n": 30,
+            "failed": 1,
+            "endpoint_to_transcript_ms": summarize([800.0, 1100.0]),
+            "turn_first_event_ms": summarize([300.0]),
+            "tts_first_audio_ms": summarize([]),
+        },
+    }
+    decision = {"adopt": False, "limit_ms": 1000.0, "reason": "p95 1100 ms is not under 1000 ms"}
+    text = budget_section(header, "robot", summary, decision, duration_s=3600.0)
+    assert text.startswith("## M-R1: the Compute Module budget, robot (unit), 2026-10-05\n")
+    assert "| daemon | 310.5 |" in text
+    assert "| body | not running |" in text
+    assert "temperature max: 71.2 C" in text
+    assert "throttled samples: 0" in text
+    assert "endpoint to transcript p50 / p95: 800.0 / 1100.0 ms" in text
+    assert "decision: robot tier not adopted (p95 1100 ms is not under 1000 ms)" in text
+
+
+def test_budget_section_without_a_decision_says_so():
+    from maipai_body.measure.report import budget_section
+
+    header = new_run_header(row="M-R1", mode="unit", profile_id="p", daemon_version="1")
+    summary = {
+        "samples": 1,
+        "processes": {},
+        "temp_c_max": None,
+        "mem_available_mb_min": None,
+        "throttled": {"samples_throttled_now": 0, "ever_flagged_bits": 0},
+        "turns": {"n": 0, "failed": 0},
+    }
+    text = budget_section(header, "daemon", summary, None, duration_s=60.0)
+    assert "decision: not evaluated for this configuration" in text
+    assert "temperature max: n/a" in text

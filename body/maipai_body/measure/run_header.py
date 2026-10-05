@@ -47,12 +47,15 @@ def _reject_hostnames(value: Any) -> None:
             _reject_hostnames(inner)
 
 
-def write_run(out_dir: Path, header: dict[str, Any], rows: list[dict[str, Any]]) -> Path:
-    """Write one run as ``<row>-<mode>-<date>.json`` under ``out_dir``."""
+def write_run(
+    out_dir: Path, header: dict[str, Any], rows: list[dict[str, Any]], *, tag: str | None = None
+) -> Path:
+    """Write one run as ``<row>-<mode>[-<tag>]-<date>.json`` under ``out_dir``."""
     _reject_hostnames(header)
     _reject_hostnames(rows)
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{header['row']}-{header['mode']}-{header['date']}.json"
+    stem = "-".join(part for part in (header["row"], header["mode"], tag, header["date"]) if part)
+    path = out_dir / f"{stem}.json"
     path.write_text(json.dumps({"header": header, "rows": rows}, indent=2) + "\n")
     return path
 
