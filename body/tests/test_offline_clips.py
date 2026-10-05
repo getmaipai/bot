@@ -44,14 +44,16 @@ def _install(tmp_path, manifest: oc.Manifest, *, sizes: dict[str, int] | None = 
     )
 
 
-def test_manifest_covers_the_four_phrase_classes():
+def test_manifest_covers_the_five_phrase_classes():
     manifest = oc.load_manifest()
     ids = {c.id for c in manifest.clips}
     assert {oc.char_clip_id(ch) for ch in ALPHABET} <= ids
     assert oc.CODE_PROMPT in ids
     for line in oc.PHRASES:
         assert len([i for i in ids if i.startswith(f"{line}.")]) in range(4, 7)
-    assert len(ids) == len(manifest.clips)
+    assert {oc.UNREACHABLE, oc.FREEFALL, oc.RECONNECT} <= ids
+    assert set(oc.CARRY_LINES) <= ids  # MOVE-CARRY-01c's rotating lift lines
+    assert len(ids) == len(manifest.clips) == 39  # no clip beyond the five classes
 
 
 def test_pairing_alphabet_is_the_32_characters_the_hub_issues():

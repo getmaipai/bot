@@ -309,6 +309,7 @@ deterministic, read from the playback ledger, no model.
 | speak | the low-amplitude sway on the audio envelope | in phase with the sway | none |
 | stop | `set_target` to the current pose, trajectories cancelled, then hold | hold | hold |
 | muted (a state, not a cue) | neutral | both fully down and still | none |
+| held (a state, not a cue; lifted or carried) | holds where it is through `stop`, per motor mode; never limp | soft and low, once, then still | none |
 
 The envelope is the daemon's limits scaled by a per-profile fraction
 written into the robot's device-scope settings with the date of the run

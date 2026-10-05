@@ -45,6 +45,9 @@ class _RecordingExpressionEngine:
         self.muted_calls.append(muted)
         return self._engine.set_muted(muted, arbitration)
 
+    def render_held_look(self):
+        return self._engine.render_held_look()
+
     def render_primitive(self, primitive: str, context, **kwargs):
         return self._engine.render_primitive(primitive, context, **kwargs)
 

@@ -24,3 +24,6 @@ PRIMITIVE_NAMES: tuple[str, ...] = (
 # distinction); it is rendered directly by the mute contract, never by
 # map_cue_to_primitive.
 MUTED_STATE = "muted"
+
+# MOVE-CARRY-01c: the held look, antennas only. Also a state, never a cue.
+HELD_STATE = "held"

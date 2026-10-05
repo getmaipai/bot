@@ -14,7 +14,7 @@ from maipai_body.hal.seam import BodyProfile, HeadActuator
 from maipai_body.presence.arbitration import ArbitrationState, expression_may_drive
 
 from .cue import Cue, map_cue_to_primitive
-from .primitives import MUTED_STATE, PRIMITIVE_NAMES
+from .primitives import HELD_STATE, MUTED_STATE, PRIMITIVE_NAMES
 from .renderers import renderer_for
 from .suppression import SuppressionContext, suppression_reason
 
@@ -182,6 +182,20 @@ class ExpressionEngine:
             suppressed_reason=None,
             rendered=True,
             rendered_primitive=primitive,
+        )
+
+    def render_held_look(self) -> ExpressionOutcome:
+        """MOVE-CARRY-01c: the antennas go once to the held pose. A state, not a
+        cue, so the held suppression does not apply; the caller owns the gating
+        (the setting, the mute, one render per lift)."""
+        with self._render_lock:
+            self._render(HELD_STATE, self._client, self._profile)
+        return ExpressionOutcome(
+            cue_seq=-1,
+            primitive=None,
+            suppressed_reason=None,
+            rendered=True,
+            rendered_primitive=HELD_STATE,
         )
 
     def set_muted(self, muted: bool, arbitration: ArbitrationState) -> ExpressionOutcome | None:

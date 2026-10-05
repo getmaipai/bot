@@ -1941,7 +1941,19 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       amended; profile flag `carry_gravity_compensation` (default off,
       UNVERIFIED, never toggled while a teach session holds it).
       `tests/test_motion_state_hold.py`. These holds are not governed by the
-      setting (01c).
+      setting. MOVE-CARRY-01c built (same branch): `presence/carry_reaction.py`
+      (the setting values, `PresenceEntry`, `line_allowed`), the `held` look
+      (antennas only, `render_held_look`, section 5's new `held` row), three
+      rotating lift lines as G4b clips (`line.carry.1` to `.3`, unrendered
+      until the local bundle build), and `link/hello.py` declaring
+      `robot.motion.carry_reaction` (select off, look, look_and_line;
+      default look; device scope; label and lives_in) for the `hello`.
+      `tests/test_motion_state_carry.py`. Open: the bot has no `hello`
+      transport and no age-band presence feed, so nothing sends the
+      declaration and `presence_entries` is unwired (no information gives
+      the silent look); the registry wire shape and the presence source are
+      SPLIT to commons and Home. The eyes row waits on EYES-02. Clip
+      rendering stays local.
 
 ## Voice loop
 

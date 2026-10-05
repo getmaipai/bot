@@ -73,4 +73,7 @@ REACHY_MINI_EXPRESSION_ENVELOPE: dict[str, PrimitiveEnvelope] = {
     # 0.25, tilt's 0.20, or glance's 0.15; a design default like every
     # other fraction here, for M-R2 to verify or correct.
     "muted": PrimitiveEnvelope(antenna_fraction=0.30, duration_s=0.5),
+    # Design record section 5's `held` row: antennas soft and low, then still.
+    # The same fraction as attend's subtle low; head and body yaw untouched.
+    "held": PrimitiveEnvelope(antenna_fraction=0.08, duration_s=0.8),
 }
