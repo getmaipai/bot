@@ -41,6 +41,7 @@ from maipai_body.link.offline import OfflineRungs
 from maipai_body.link.replay import ReplayItem
 from maipai_body.link.state_machine import LinkPhase
 from maipai_body.presence.arbitration import ArbitrationState, tracking_may_drive
+from maipai_body.presence.motion_state import MotionState, MotionStateMachine
 from maipai_body.presence.observations import read_presence
 from maipai_body.speech.capture import AudioCapture
 from maipai_body.speech.offline_clips import FREEFALL as FREEFALL_CLIP
@@ -162,6 +163,9 @@ class ConversationLoop:
         face_recognition_interval_s: float = _FACE_RECOGNITION_INTERVAL_S,
         offline: OfflineRungs | None = None,
         react_hook: Callable[..., bool] | None = None,
+        motion_clock: Callable[[], float] = time.monotonic,
+        carry_gravity_compensation: bool = False,
+        teach_active: Callable[[], bool] | None = None,
     ) -> None:
         self._client = client
         self._expression = expression_engine
@@ -226,6 +230,16 @@ class ConversationLoop:
         self._offline = offline
         # MOVES-01 plan react hook; optional and inert until the wire names a move.
         self._react_hook = react_hook
+        # MOVE-CARRY-01: lifted, carried and put down. `holding` is the motion
+        # floor: no tracking, cue, breathe or move is commanded while it is true.
+        self._motion = MotionStateMachine()
+        self._motion_state = MotionState.RESTING
+        self._motion_clock = motion_clock
+        # UNVERIFIED and off by default (the profile's carry_gravity_compensation);
+        # never toggled while a MOVES-02 teach session holds it.
+        self._carry_gravity_compensation = carry_gravity_compensation
+        self._teach_active = teach_active or (lambda: False)
+        self._gravity_on_by_us = False
         if offline is not None:
             offline.machine.subscribe(lambda _old, _new: self._notify_change())
             if offline.rung0 is not None:
@@ -242,8 +256,15 @@ class ConversationLoop:
     def _render_ambient(self, primitive: str) -> bool:
         """Rung 0's way onto the body: a state-driven primitive through the
         same engine, suppression table and lock the turn cues use."""
-        context = SuppressionContext(muted=self._is_muted())
-        return self._expression.render_ambient(primitive, context).rendered
+        return self._expression.render_ambient(primitive, self._suppression_context()).rendered
+
+    def _suppression_context(self) -> SuppressionContext:
+        return SuppressionContext(muted=self._is_muted(), held=self._motion.holding)
+
+    @property
+    def motion_state(self) -> MotionState:
+        """The latest motion state; tip and freefall outrank the held states."""
+        return self._motion_state
 
     def _body_is_free(self) -> bool:
         """Rung 0 may move the head only when no turn and no tracker owns it."""
@@ -334,8 +355,7 @@ class ConversationLoop:
             return self._cue_seq
 
     def _render(self, cue: Cue) -> None:
-        context = SuppressionContext(muted=self._is_muted())
-        self._expression.handle(cue, context)
+        self._expression.handle(cue, self._suppression_context())
 
     def _link_lost(self, reason: str = "the hub stopped answering") -> None:
         """Section 7: loss of the hub mid-turn is `cancel`, `link_lost`.
@@ -597,6 +617,9 @@ class ConversationLoop:
 
     def _play_react(self, move: str, react_allowed: bool) -> None:
         """After the reply; move failure is logged and never loses the turn."""
+        if self._motion.holding:
+            logger.info("react move %r skipped: the body is held", move)
+            return
         try:
             self._react_hook(
                 move,
@@ -704,37 +727,69 @@ class ConversationLoop:
         so `speaking` is checked explicitly here, beside (not instead
         of) `tracking_may_drive()`'s own stop/service check."""
         while not stop_event.wait(self._presence_interval_s):
-            try:
-                observation = read_presence(self._client)
-            except Exception:
-                logger.warning("presence read failed", exc_info=True)
-                continue
-            self._on_freefall(observation.freefall_detected)
-            arbitration = ArbitrationState(tracking_active=observation.face_detected)
-            not_speaking = self._current_funnel() != FunnelState.SPEAKING
-            should_track = (
-                tracking_may_drive(arbitration) and not_speaking and self._tracking_allowed()
-            )
-            with self._lock:
-                already_tracking = self._state.tracking
-            if should_track and not already_tracking:
-                self._client.enable_tracking()
-                with self._lock:
-                    self._state.tracking = True
-                if self._on_change is not None:
-                    self._on_change()
-            elif not should_track and already_tracking:
-                self._client.disable_tracking()
-                with self._lock:
-                    self._state.tracking = False
-                if self._on_change is not None:
-                    self._on_change()
-
-            if observation.face_detected:
-                self._maybe_check_face(stop_event)
+            self._presence_tick(stop_event)
 
         if self._face_check_thread is not None:
             self._face_check_thread.join(timeout=_FACE_CHECK_JOIN_TIMEOUT_S)
+
+    def _presence_tick(self, stop_event: threading.Event) -> None:
+        try:
+            observation = read_presence(self._client)
+        except Exception:
+            logger.warning("presence read failed", exc_info=True)
+            return
+        self._on_freefall(observation.freefall_detected)
+        was_held = self._motion.holding
+        self._motion_state = self._motion.update(observation.imu, self._motion_clock())
+        held = self._motion.holding
+        arbitration = ArbitrationState(tracking_active=observation.face_detected)
+        not_speaking = self._current_funnel() != FunnelState.SPEAKING
+        should_track = (
+            tracking_may_drive(arbitration)
+            and not_speaking
+            and self._tracking_allowed()
+            and not held
+        )
+        with self._lock:
+            already_tracking = self._state.tracking
+        if should_track and not already_tracking:
+            self._client.enable_tracking()
+            with self._lock:
+                self._state.tracking = True
+            if self._on_change is not None:
+                self._on_change()
+        elif not should_track and already_tracking:
+            self._client.disable_tracking()
+            with self._lock:
+                self._state.tracking = False
+            if self._on_change is not None:
+                self._on_change()
+
+        try:
+            if held and not was_held:
+                self._on_lifted()
+            elif was_held and not held:
+                self._on_put_down()
+        except Exception:
+            logger.warning("carry hold handling failed", exc_info=True)
+
+        if observation.face_detected:
+            self._maybe_check_face(stop_event)
+
+    def _on_lifted(self) -> None:
+        """The head holds where it is, once, and nothing moves it until put down."""
+        self._expression.render_primitive("stop", self._suppression_context())
+        if self._carry_gravity_compensation and not self._teach_active():
+            self._client.enable_gravity_compensation()
+            self._gravity_on_by_us = True
+
+    def _on_put_down(self) -> None:
+        """After the stillness window (the machine's own): release what the lift
+        took, settle once, and let tracking resume on the next tick."""
+        if self._gravity_on_by_us:
+            self._gravity_on_by_us = False
+            self._client.disable_gravity_compensation()
+        self._expression.render_primitive("settle", self._suppression_context())
 
     def _on_freefall(self, falling: bool) -> None:
         """One line per fall (design record section 7): said on the rising

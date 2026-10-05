@@ -301,6 +301,7 @@ def _build_conversation_loop(
         offline=offline,
         # MOVES-01: None unless MAIPAI_BOT_REACT_MOVES is set.
         react_hook=build_react_hook(client, cache_dir / "moves", os.environ),
+        carry_gravity_compensation=REACHY_MINI_PROFILE.carry_gravity_compensation,
     )
     threading.Thread(target=print_sync.run, name="face-print-sync", daemon=True).start()
     return loop

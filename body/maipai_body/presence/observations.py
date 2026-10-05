@@ -10,7 +10,7 @@ from typing import Protocol
 
 from pydantic import BaseModel
 
-from maipai_body.hal.seam import AudioIO, FaceTracker, Imu
+from maipai_body.hal.seam import AudioIO, FaceTracker, Imu, ImuReading
 
 from .safety import is_freefall, is_tipped
 
@@ -30,6 +30,7 @@ class PresenceObservation(BaseModel):
     speech_detected: bool = False
     tip_detected: bool = False
     freefall_detected: bool = False
+    imu: ImuReading | None = None
 
 
 def read_presence(client: PresenceSource) -> PresenceObservation:
@@ -47,4 +48,5 @@ def read_presence(client: PresenceSource) -> PresenceObservation:
         speech_detected=doa.speech_detected if doa is not None else False,
         tip_detected=is_tipped(imu) if imu is not None else False,
         freefall_detected=is_freefall(imu) if imu is not None else False,
+        imu=imu,
     )
