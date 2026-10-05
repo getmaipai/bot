@@ -17,6 +17,7 @@ from pcap_builder import (
     client_hello,
     dns_response,
     icmp_frame,
+    ipv4_fragment,
     pcap,
     pcapng,
     sample_session,
@@ -283,6 +284,23 @@ def test_script_fails_on_an_unlisted_endpoint_and_names_it(tmp_path):
     result = _script("--pcap", str(path), "--robot-ip", ROBOT, "--hub", f"{HUB}:8443")
     assert result.returncode == 1
     assert f"NOT ON THE LIST: tcp {STRAY_IP}:443" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        ipv4_fragment(ROBOT, STRAY_IP, offset=1),
+        ipv4_fragment(ROBOT, STRAY_IP, offset=0, more_fragments=True),
+    ],
+    ids=("noninitial-fragment-hides-endpoint", "initial-fragment-missing-tail"),
+)
+def test_script_fails_and_counts_fragments_that_hide_an_outbound_endpoint(tmp_path, fragment):
+    path = tmp_path / "fragmented-stray.pcap"
+    path.write_bytes(pcap([fragment]))
+    result = _script("--pcap", str(path), "--robot-ip", ROBOT, "--hub", f"{HUB}:8443")
+    assert result.returncode == 1
+    assert "ignored IP fragments: 1; capture is incomplete" in result.stdout
+    assert "result: FAIL, capture contains ignored IP fragments" in result.stdout
 
 
 def test_script_check_page_passes_on_the_committed_page():

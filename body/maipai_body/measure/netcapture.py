@@ -49,7 +49,14 @@ class Packet:
 # --- reading captures -------------------------------------------------------
 
 
-def read_pcap(source: bytes | Path | str) -> list[Packet]:
+@dataclass
+class CaptureDiagnostics:
+    ignored_fragments: int = 0
+
+
+def read_pcap(
+    source: bytes | Path | str, *, diagnostics: CaptureDiagnostics | None = None
+) -> list[Packet]:
     data = source if isinstance(source, bytes) else Path(source).read_bytes()
     if len(data) >= 4 and data[:4] == b"\x0a\x0d\x0d\x0a":
         frames = _pcapng_frames(data)
@@ -59,7 +66,7 @@ def read_pcap(source: bytes | Path | str) -> list[Packet]:
         raise ValueError("not a pcap or pcapng file")
     packets = []
     for ts, linktype, frame in frames:
-        packet = _decode(ts, linktype, frame)
+        packet = _decode(ts, linktype, frame, diagnostics=diagnostics)
         if packet is not None:
             packets.append(packet)
     return packets
@@ -103,7 +110,9 @@ def _pcapng_frames(data: bytes) -> Iterable[tuple[float, int, bytes]]:
         pos += total
 
 
-def _decode(ts: float, linktype: int, frame: bytes) -> Packet | None:
+def _decode(
+    ts: float, linktype: int, frame: bytes, *, diagnostics: CaptureDiagnostics | None = None
+) -> Packet | None:
     if linktype == _LINK_ETHERNET:
         if len(frame) < 14:
             return None
@@ -121,9 +130,9 @@ def _decode(ts: float, linktype: int, frame: bytes) -> Packet | None:
     else:
         return None
     if ethertype == 0x0800:
-        parsed = _ipv4(ip)
+        parsed = _ipv4(ip, diagnostics=diagnostics)
     elif ethertype == 0x86DD:
-        parsed = _ipv6(ip)
+        parsed = _ipv6(ip, diagnostics=diagnostics)
     else:
         return None
     if parsed is None:
@@ -132,16 +141,19 @@ def _decode(ts: float, linktype: int, frame: bytes) -> Packet | None:
     return _transport(ts, len(frame), src, dst, proto, transport)
 
 
-def _ipv4(ip: bytes):
+def _ipv4(ip: bytes, *, diagnostics: CaptureDiagnostics | None = None):
     if len(ip) < 20 or ip[0] >> 4 != 4:
         return None
     ihl = (ip[0] & 0x0F) * 4
-    if struct.unpack("!H", ip[6:8])[0] & 0x1FFF:
-        return None  # a later fragment carries no transport header
+    fragment_field = struct.unpack("!H", ip[6:8])[0]
+    if fragment_field & (0x2000 | 0x1FFF):
+        if diagnostics is not None:
+            diagnostics.ignored_fragments += 1
+        return None  # fragments need reassembly before transport parsing
     return socket.inet_ntoa(ip[12:16]), socket.inet_ntoa(ip[16:20]), ip[9], ip[ihl:]
 
 
-def _ipv6(ip: bytes):
+def _ipv6(ip: bytes, *, diagnostics: CaptureDiagnostics | None = None):
     if len(ip) < 40 or ip[0] >> 4 != 6:
         return None
     src = str(ipaddress.IPv6Address(ip[8:24]))
@@ -150,6 +162,10 @@ def _ipv6(ip: bytes):
     while nxt in (0, 43, 60) and len(rest) >= 8:
         nxt, size = rest[0], (rest[1] + 1) * 8
         rest = rest[size:]
+    if nxt == 44:
+        if diagnostics is not None:
+            diagnostics.ignored_fragments += 1
+        return None  # fragment headers need reassembly before transport parsing
     return src, dst, nxt, rest
 
 

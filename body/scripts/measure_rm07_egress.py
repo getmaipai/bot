@@ -64,7 +64,13 @@ CAPTURE_SOURCE = (
 PHASES = ("before-install", "after-install")
 
 
-def _section(header: dict, phase: str, rows: list[nc.Row], seconds: float | None) -> str:
+def _section(
+    header: dict,
+    phase: str,
+    rows: list[nc.Row],
+    seconds: float | None,
+    ignored_fragments: int = 0,
+) -> str:
     lines = [
         f"## RM-07: what leaves the robot ({header['mode']}), {phase}, {header['date']}",
         "",
@@ -76,7 +82,17 @@ def _section(header: dict, phase: str, rows: list[nc.Row], seconds: float | None
         "",
         nc.render_capture_table(rows).rstrip("\n"),
         "",
-        f"- result: {'pass' if nc.passes(rows) else 'FAIL, an endpoint is not on the list'}",
+        *(
+            [f"- ignored IP fragments: {ignored_fragments}; capture is incomplete"]
+            if ignored_fragments
+            else []
+        ),
+        "- result: "
+        + (
+            "pass"
+            if nc.passes(rows) and not ignored_fragments
+            else "FAIL, unlisted endpoint or ignored fragments"
+        ),
         "",
     ]
     return "\n".join(lines)
@@ -124,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
 
     rows: list[nc.Row] | None = None
     seconds = None
+    diagnostics = nc.CaptureDiagnostics()
     if has_source:
         if args.rehearse:
             tmp = Path(tempfile.mkdtemp(prefix="rm07-rehearsal-"))
@@ -151,20 +168,26 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 pcap_path = args.pcap
         try:
-            packets = nc.read_pcap(pcap_path)
+            packets = nc.read_pcap(pcap_path, diagnostics=diagnostics)
         except (OSError, ValueError) as err:
             print(f"cannot read {pcap_path}: {err}", file=sys.stderr)
             return 2
         rows = nc.label_groups(nc.group_egress(packets, robot_ip), hub)
         print(nc.render_capture_table(rows))
+        if diagnostics.ignored_fragments:
+            print(f"ignored IP fragments: {diagnostics.ignored_fragments}; capture is incomplete")
         bad = nc.unlisted(rows)
         for row in bad:
             print(f"NOT ON THE LIST: {row.proto} {row.host}:{row.port} ({row.flows} flows)")
-        print(
-            "result: " + ("pass" if not bad else f"FAIL, {len(bad)} destination(s) not on the list")
-        )
+        if diagnostics.ignored_fragments:
+            print("result: FAIL, capture contains ignored IP fragments")
+        else:
+            print(
+                "result: "
+                + ("pass" if not bad else f"FAIL, {len(bad)} destination(s) not on the list")
+            )
 
-    status = 0 if rows is None else (0 if nc.passes(rows) else 1)
+    status = 0 if rows is None or (nc.passes(rows) and diagnostics.ignored_fragments == 0) else 1
 
     if args.record and rows is not None:
         header = new_run_header(
@@ -188,11 +211,12 @@ def main(argv: list[str] | None = None) -> int:
             }
             for r in rows
         ]
+        run.append({"ignored_ip_fragments": diagnostics.ignored_fragments})
         print(f"wrote {write_run(args.out_dir, header, run, tag=args.phase)}")
         written = record_section(
             MEASUREMENTS_MD,
             f"## RM-07: what leaves the robot ({args.mode}), {args.phase}",
-            _section(header, args.phase, rows, seconds),
+            _section(header, args.phase, rows, seconds, diagnostics.ignored_fragments),
             fallback_dir=args.out_dir,
         )
         print(f"recorded in {written}")
@@ -203,7 +227,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.write_page:
             if status:
-                print("not writing the page: the capture has unlisted endpoints", file=sys.stderr)
+                print(
+                    "not writing the page: the capture has unlisted endpoints or ignored fragments",
+                    file=sys.stderr,
+                )
                 return 1
             PAGE.write_text(nc.replace_page_block(PAGE.read_text(), block))
             print(f"wrote the generated block in {PAGE}")

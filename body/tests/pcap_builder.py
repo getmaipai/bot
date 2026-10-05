@@ -49,6 +49,31 @@ def tcp_frame(src, sport, dst, dport, *, flags=0x02, payload=b"") -> bytes:
     return ethernet(ip + tcp, 0x86DD if ":" in src else 0x0800)
 
 
+def ipv4_fragment(
+    src: str,
+    dst: str,
+    *,
+    offset: int = 1,
+    more_fragments: bool = False,
+    payload=b"hidden outbound data",
+) -> bytes:
+    """An IPv4 fragment: addresses remain visible, transport ports may not."""
+    header = struct.pack(
+        "!BBHHHBBH4s4s",
+        0x45,
+        0,
+        20 + len(payload),
+        0x4242,
+        offset | (0x2000 if more_fragments else 0),
+        64,
+        6,
+        0,
+        socket.inet_aton(src),
+        socket.inet_aton(dst),
+    )
+    return ethernet(header + payload)
+
+
 def udp_frame(src, sport, dst, dport, payload=b"") -> bytes:
     udp = struct.pack("!HHHH", sport, dport, 8 + len(payload), 0) + payload
     ip = _ip(src, dst, 17, udp)
