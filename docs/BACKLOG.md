@@ -302,7 +302,7 @@ it is dispatched or started until the owner says so.
 The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
 
 
-- [ ] **RM-00: the body-capability vocabulary** (S, spec first, filed
+- [x] **RM-00: the body-capability vocabulary** (S, spec first, filed
       in `commons` as BODY-VOCAB-01). Objective:
       `spec/vocab/capabilities.json` gains the ids a body profile
       declares (section 2): `head_6dof`, `head_pan_tilt`, `roll`,
@@ -315,7 +315,11 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       `commons/docs/BACKLOG.md`. Acceptance: both fixtures validate in
       TypeScript and Python; the tag is bumped and `bot` pins it.
       Out of scope: any renderer. Exit: `commons` `bash
-      scripts/check.sh` and the tag.
+      scripts/check.sh` and the tag. Landed for Bot at spec-v0.1.76:
+      `body/tests/test_profile.py` checks the Reachy Mini base and Eyes
+      profile against the two pinned fixtures, verifies the capability
+      vocabulary membership, and validates the Reachy and MaiPai fixtures
+      with the generated Python Device model.
 
 - [x] **RM-01: the profile and the daemon client** (M, sim). Objective:
       `body/bodies/reachy_mini/` wraps the `reachy-mini` SDK (PyPI,
