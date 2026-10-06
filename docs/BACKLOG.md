@@ -2000,6 +2000,78 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       client into the app (a later row), breathing. Live lines: not run,
       sandbox cannot run the daemon and no unit.
 
+- [x] **EYES-02: the Eyes director, looks table and live-capture tap** (L, Reachy
+      Mini only; the Pi build and Hailo are untouched). Built 2026-10-06,
+      cloud session, branch `cloud/eyes-02-director`, after BODY-05 (ticked
+      above, built first as the order requires). `indicator/looks.py` is the
+      one look table and the only site of a colour or a level (a grep test):
+      rows for live (green), camera (cyan), alarm (amber, bright and dim),
+      held (magenta, the row MOVE-CARRY-01c's eyes line was waiting for),
+      muted (amber, steady), idle, listening, thinking, speaking and sleep.
+      No red anywhere; `LIVE_FLOOR` and `CAMERA_FLOOR` are 0.5 as constants
+      and the two cues ignore the day, night and child levels. Lower child
+      night level is a rule in `looks.py` on the presence list (a child, a
+      teen, an unknown person or no information); an empty list is nobody
+      and is not lowered. Startle stays unrepresentable at the seam for any
+      audience, which is stricter than "never near a child, teen or
+      unknown". `indicator/director.py` subscribes to `FunnelView` (the
+      shown state plus muted, held and alarm facts of the one G9 funnel) and
+      to `LiveCaptureTap` facts and reads nothing else; an AST test holds
+      that it imports neither the turn client, playback nor face tracking.
+      A capture cue stays up at least 0.5 s (`CUE_HOLD_S`); the alarm blinks
+      at one cycle per second (`ALARM_PERIOD_S`, asserted at 1 s or more).
+      `indicator/live.py`: `LiveCaptureTap` wraps the client behind the
+      `AudioIO` and `Camera` seams and forwards everything else. Green means
+      the voice is being sent to the hub: the run loop holds
+      `sending_to_hub()` around the STT stream only, so wake scoring (local)
+      is not live. It is a software indicator, not a hardware mute or light.
+      The cue rises before a capture and falls after it. The daemon's face
+      tracker is reported as camera use through `enable_tracking`; the tap
+      cannot see what the daemon does beyond that (a unit row). `app.py`
+      gives the tap, not the bare client, to the loop, `AudioCapture`, the
+      wake scorer, playback and the react hook; `expression/` may not import
+      `indicator/live.py` (AST test); an inventory test enumerates every
+      `start_recording`, `get_audio_sample`, `get_frame` and
+      `get_frame_jpeg` reference (attribute or `getattr`) and fails on any
+      site outside the tap, the real client and the three consumers that
+      get the tap from the wiring (`vision/capture.py` has no production
+      caller yet). Settings: exactly seven robot-only keys,
+      `robot.indicator.` plus `enabled`, `brightness`, `night_brightness`,
+      `night_start`, `night_end`, `sleep_eyes` and `alarm`, each with
+      `label`, `lives_in` (the robot device page, "Devices, this robot",
+      shared with `robot.motion.carry_reaction`), `scope: device`,
+      `honoured_by: [bot]` and `needs` set to `eyes` on Reachy or
+      `light_ring` on the build; `sleep_eyes` declares `off` and `dim` in
+      `range`; `robot.indicator.enabled` false never turns off the live or
+      camera cue (tested). The quiet-hours grep, repeated (quiet hours,
+      night, bedtime, do not disturb over `docs/`, `body/` and `scripts/`),
+      found no key to reuse, only the mirror's note that breathing is gated
+      in quiet hours (`docs/dev.md`), so the night window is `night_start`
+      and `night_end`. `profile_for_eyes()` adds `eyes` to the profile only
+      while the Eyes report connected; the static profile never claims it.
+      Settings values and the presence feed are the director's defaults
+      until the `hello` transport and an age-band feed exist (neither is in
+      the bot): no presence information means unknown, so nights are at the
+      lowest level until then. Tests: `tests/test_indicator_looks.py`,
+      `_director.py`, `_live.py`, `_settings.py`, `_profile.py`,
+      `_wiring.py`, `_replay.py` and `tests/test_run_loop_settle.py`; the
+      replay runs a fast scripted turn through the real loop, tap and
+      director with the real 0.5 s gate and finds no funnel look flash (the
+      legacy trace itself is not in this clone). `FunnelState` moved to
+      `presence/funnel.py` and `run_loop.py` imports it (the old definition
+      is deleted). Not verified: the settings key shapes against
+      spec-v0.1.74's `settings-key.schema.json` (commons is not reachable
+      here; the test runs when `MAIPAI_SPEC_SETTINGS_KEY_SCHEMA` names the
+      file), and the field and type names used are copied from the one
+      existing declaration. SPLIT to other repos, not done here: the
+      registry wire shape for the seven keys and the hello transport
+      (commons and Home), the age-band presence feed (Home), the
+      `light_ring` driver on the build (the same keys already declare
+      `needs: [light_ring]`), and a quiet-hours key if Home defines one
+      (then `night_start` and `night_end` are dropped). Live lines: not run,
+      sandbox cannot run the daemon and no unit; rows in
+      `docs/dev/measurements.md`.
+
 ## Voice loop
 
 - [ ] **VOICE-01: the speech process** (M). Objective: `body/speech/`

@@ -144,3 +144,17 @@ recall faster than false accepts (at threshold 0.55 and score 1.0: 42 of 96 and
 inside a longer sentence ("stopping by the shop") still fires its keyword: the
 spotter matches a keyword anywhere in its 4 s window, and only the closed list
 and the window keep that to a rung 1 command.
+
+## EYES-02: the Eyes director (Reachy Mini)
+
+Every row needs the unit. None ran: the sandbox cannot run the daemon and there
+is no unit, so each line below is "not run: sandbox cannot run the daemon".
+
+| row | status | how it is filled |
+|---|---|---|
+| live cue visible in a lit room at the floor level (0.5) | not run: sandbox cannot run the daemon | on the unit, speak a turn, watch the green; raise the floor if it is not seen from 2 m |
+| camera cue visible at its floor (0.5) | not run: sandbox cannot run the daemon | enable tracking with a face in view, watch the cyan |
+| the wire lines behind each colour and level | not run: sandbox cannot run the daemon | `docs/dev/eyes-wire-protocol.md`, still UNVERIFIED |
+| the day, night and lowest-night levels | not run: sandbox cannot run the daemon | judged in a dark room; the numbers in `indicator/looks.py` are design defaults |
+| the amber alarm at its period (1 s) | not run: sandbox cannot run the daemon | tip the body past the tilt limit and watch the blink |
+| the daemon's own camera use, seen by the tap through `enable_tracking` only | not run: sandbox cannot run the daemon | confirm the daemon opens no camera stream outside tracking |

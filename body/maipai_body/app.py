@@ -35,10 +35,13 @@ import reachy_mini
 from reachy_mini import ReachyMini, ReachyMiniApp
 
 from maipai_body.bodies.reachy_mini.client import ReachyMiniClient
+from maipai_body.bodies.reachy_mini.eyes_client import EyesClient
 from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.hal.errors import BodyLost
-from maipai_body.hal.seam import AntennaPositions, HeadActuator, HeadPose
+from maipai_body.hal.seam import AntennaPositions, HeadActuator, HeadPose, Indicator, NullIndicator
+from maipai_body.indicator.director import EyesDirector
+from maipai_body.indicator.live import LiveCaptureTap
 from maipai_body.link import HubLinkClient, PairingStore, discover_hub
 from maipai_body.link.discovery import DiscoverHub
 from maipai_body.link.lifecycle import LinkLifecycle
@@ -249,6 +252,42 @@ def _hold_neutral(client: HeadActuator) -> None:
     client.hold()
 
 
+def _start_eyes() -> Indicator:
+    """The Reachy Eyes, or a null indicator when they cannot be started. An
+    absent board is not an error: the client reports ``connected=False`` and
+    keeps looking; the body runs the same without it."""
+    try:
+        eyes = EyesClient()
+        eyes.start()
+        return eyes
+    except Exception:
+        logger.warning("the Reachy Eyes could not be started; running without them", exc_info=True)
+        return NullIndicator()
+
+
+def _attach_eyes(
+    client: ReachyMiniClient, stop_event: threading.Event
+) -> tuple[LiveCaptureTap, EyesDirector]:
+    """EYES-02: the one tap every mic open and frame read goes through, and the
+    director that turns its facts and the funnel's shown state into looks.
+    Settings and presence are the director's defaults until their transports
+    exist (the hello and the presence feed are not built in the bot)."""
+    indicator = _start_eyes()
+    tap = LiveCaptureTap(client)
+    director = EyesDirector(indicator)
+    tap.subscribe(director.on_capture)
+
+    def close_when_stopped() -> None:
+        stop_event.wait()
+        director.close()
+        close = getattr(indicator, "close", None)
+        if close is not None:
+            close()
+
+    threading.Thread(target=close_when_stopped, name="eyes-close", daemon=True).start()
+    return tap, director
+
+
 def _build_conversation_loop(
     client: ReachyMiniClient,
     session_cookie: str,
@@ -272,13 +311,16 @@ def _build_conversation_loop(
     fresh install ever reaches a paired state.
     """
     hub_credentials = _hub_credentials_reader(link, base_url)
+    # From here every consumer gets the tap, never the bare client: it is how
+    # the green live cue knows when the voice is leaving for the hub.
+    tap, director = _attach_eyes(client, stop_event)
     wakeword_paths = ensure_wakeword_models(cache_dir)
     wake_engine = OpenWakeWordEngine(
         wake_phrase_model=wakeword_paths[WAKE_PHRASE.file],
         melspec_model=wakeword_paths[MELSPECTROGRAM.file],
         embedding_model=wakeword_paths[EMBEDDING.file],
     )
-    audio_playback = AudioPlayback(client)
+    audio_playback = AudioPlayback(tap)
     if offline is not None:
         offline.speaker = _clip_speaker(cache_dir, audio_playback)
         if offline.rung0 is not None:
@@ -286,11 +328,11 @@ def _build_conversation_loop(
     gallery = FaceGallery(model_id=_FACE_MODEL_ID, model_sha256=SFACE.sha256)
     print_sync = PrintSync(gallery, hub_credentials, stop_event)
     loop = ConversationLoop(
-        client=client,
-        expression_engine=ExpressionEngine(client, REACHY_MINI_PROFILE),
-        audio_capture=AudioCapture(client),
+        client=tap,
+        expression_engine=ExpressionEngine(tap, REACHY_MINI_PROFILE),
+        audio_capture=AudioCapture(tap),
         audio_playback=audio_playback,
-        wake_scorer=WakeScorer(wake_engine, client),
+        wake_scorer=WakeScorer(wake_engine, tap),
         stt_client=SttStreamClient(base_url, session_cookie),
         turn_client=TurnClient(base_url, session_cookie),
         tts_client=TtsPlaybackClient(base_url, session_cookie, audio_playback),
@@ -300,9 +342,11 @@ def _build_conversation_loop(
         face_gallery=gallery,
         offline=offline,
         # MOVES-01: None unless MAIPAI_BOT_REACT_MOVES is set.
-        react_hook=build_react_hook(client, cache_dir / "moves", os.environ),
+        react_hook=build_react_hook(tap, cache_dir / "moves", os.environ),
         carry_gravity_compensation=REACHY_MINI_PROFILE.carry_gravity_compensation,
+        capture_scope=tap.sending_to_hub,
     )
+    loop.subscribe_view(director.on_view)
     threading.Thread(target=print_sync.run, name="face-print-sync", daemon=True).start()
     return loop
 

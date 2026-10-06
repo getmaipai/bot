@@ -16,7 +16,32 @@ of its own and no thread: the caller supplies the clock and schedules the
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import StrEnum
+
 _LONG_AGO = float("-inf")
+
+
+class FunnelState(StrEnum):
+    IDLE = "idle"
+    LISTENING = "listening"
+    THINKING = "thinking"
+    SPEAKING = "speaking"
+
+
+@dataclass(frozen=True)
+class FunnelView:
+    """Everything the funnel's readers (the eyes' director first) are given.
+
+    ``shown`` is the settled state. ``muted``, ``held`` (lifted or carried)
+    and ``alarm`` (tipped or in freefall) are separate facts of the same
+    funnel, immediate rather than gated: a safety signal never waits.
+    """
+
+    shown: FunnelState
+    muted: bool = False
+    held: bool = False
+    alarm: bool = False
 
 
 class SettleGate[S]:

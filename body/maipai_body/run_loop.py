@@ -27,8 +27,8 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
-from enum import StrEnum
 
 import requests
 
@@ -48,7 +48,7 @@ from maipai_body.presence.carry_reaction import (
     PresenceEntry,
     line_allowed,
 )
-from maipai_body.presence.funnel import SettleGate
+from maipai_body.presence.funnel import FunnelState, FunnelView, SettleGate
 from maipai_body.presence.motion_state import MotionState, MotionStateMachine
 from maipai_body.presence.observations import read_presence
 from maipai_body.speech.capture import AudioCapture
@@ -118,13 +118,6 @@ _PERSON_ID_RE = re.compile(r"^person-[a-z0-9]{6,}$")
 LINK_RESTORED_LINE = "Sorry, I lost my connection to home for a moment."
 
 
-class FunnelState(StrEnum):
-    IDLE = "idle"
-    LISTENING = "listening"
-    THINKING = "thinking"
-    SPEAKING = "speaking"
-
-
 @dataclass
 class StateTransition:
     state: FunnelState
@@ -141,6 +134,8 @@ class RunLoopState:
     # What readers are shown: `funnel` after the settle gate (BODY-05).
     shown: FunnelState = FunnelState.IDLE
     muted: bool = False
+    held: bool = False
+    alarm: bool = False
     tracking: bool = False
     trace: list[StateTransition] = field(default_factory=list)
     shown_trace: list[StateTransition] = field(default_factory=list)
@@ -179,6 +174,7 @@ class ConversationLoop:
         presence_entries: Callable[[], Sequence[PresenceEntry] | None] | None = None,
         settle_gate_s: float = SETTLE_GATE_S,
         funnel_clock: Callable[[], float] = time.monotonic,
+        capture_scope: Callable[[], AbstractContextManager[object]] | None = None,
     ) -> None:
         self._client = client
         self._expression = expression_engine
@@ -234,7 +230,11 @@ class ConversationLoop:
         self._funnel_clock = funnel_clock
         self._settle = SettleGate(settle_gate_s, initial=FunnelState.IDLE)
         self._settle_timer: threading.Timer | None = None
-        self._funnel_subscribers: list[Callable[[FunnelState], None]] = []
+        self._view_subscribers: list[Callable[[FunnelView], None]] = []
+        # EYES-02: wraps the one stretch where the voice leaves for the hub (the
+        # STT stream), so the live cue is true to what is sent; local wake
+        # scoring and rung 1 stay outside it.
+        self._capture_scope = capture_scope or nullcontext
         self._cue_seq = 0
         # A turn was lost to the link and the line about it is still
         # owed. A plain bool, not a count: several lost turns in one
@@ -327,12 +327,31 @@ class ConversationLoop:
                 shown_trace=list(self._state.shown_trace),
             )
 
-    def subscribe_funnel(self, callback: Callable[[FunnelState], None]) -> None:
-        """Tell ``callback`` each time the SHOWN funnel state changes (after the
-        settle gate), on whichever thread made the change. This and
-        ``state.shown`` are the readers' whole view of the funnel."""
+    def subscribe_view(self, callback: Callable[[FunnelView], None]) -> None:
+        """Tell ``callback`` the funnel's ``FunnelView`` whenever the SHOWN state,
+        the mute, the held state or the alarm changes, on whichever thread made
+        the change. This and ``view()`` are the readers' whole view of the
+        funnel (the eyes' director reads nothing else of the loop)."""
         with self._lock:
-            self._funnel_subscribers.append(callback)
+            self._view_subscribers.append(callback)
+
+    def view(self) -> FunnelView:
+        with self._lock:
+            return self._view_locked()
+
+    def _view_locked(self) -> FunnelView:
+        state = self._state
+        return FunnelView(shown=state.shown, muted=state.muted, held=state.held, alarm=state.alarm)
+
+    def _emit_view(self) -> None:
+        with self._lock:
+            view = self._view_locked()
+            subscribers = list(self._view_subscribers)
+        for callback in subscribers:
+            try:
+                callback(view)
+            except Exception:
+                logger.warning("funnel subscriber failed", exc_info=True)
 
     def _enter(self, funnel: FunnelState) -> None:
         now = self._funnel_clock()
@@ -340,29 +359,19 @@ class ConversationLoop:
             self._state.funnel = funnel
             self._state.trace.append(StateTransition(state=funnel, at_monotonic=now))
             shown_changed = self._settle.offer(funnel, now)
-            subscribers = self._publish_shown_locked(now) if shown_changed else []
+            if shown_changed:
+                self._record_shown_locked(now)
             self._arm_settle_timer_locked(now)
         logger.info("funnel: %s", funnel)
-        self._tell_funnel_subscribers(subscribers)
+        if shown_changed:
+            self._emit_view()
         if self._on_change is not None:
             self._on_change()
 
-    def _publish_shown_locked(
-        self, now: float
-    ) -> list[tuple[Callable[[FunnelState], None], FunnelState]]:
+    def _record_shown_locked(self, now: float) -> None:
         shown = self._settle.shown
         self._state.shown = shown
         self._state.shown_trace.append(StateTransition(state=shown, at_monotonic=now))
-        return [(callback, shown) for callback in self._funnel_subscribers]
-
-    def _tell_funnel_subscribers(
-        self, calls: list[tuple[Callable[[FunnelState], None], FunnelState]]
-    ) -> None:
-        for callback, shown in calls:
-            try:
-                callback(shown)
-            except Exception:
-                logger.warning("funnel subscriber failed", exc_info=True)
 
     def _arm_settle_timer_locked(self, now: float) -> None:
         if self._settle_timer is not None:
@@ -380,11 +389,13 @@ class ConversationLoop:
         now = self._funnel_clock()
         with self._lock:
             landed = self._settle.flush(now)
-            calls = self._publish_shown_locked(now) if landed else []
+            if landed:
+                self._record_shown_locked(now)
             self._arm_settle_timer_locked(now)
-        self._tell_funnel_subscribers(calls)
-        if landed and self._on_change is not None:
-            self._on_change()
+        if landed:
+            self._emit_view()
+            if self._on_change is not None:
+                self._on_change()
 
     def _cancel_settle_timer(self) -> None:
         with self._lock:
@@ -469,6 +480,7 @@ class ConversationLoop:
         self._expression.set_muted(muted, arbitration)
         with self._lock:
             self._state.muted = muted
+        self._emit_view()
         if self._on_change is not None:
             self._on_change()
 
@@ -601,7 +613,8 @@ class ConversationLoop:
         self._render(Cue(phase=Phase.HEARD, cue_seq=self._next_cue_seq()))
 
         try:
-            stt_result = self._stt.run(self._capture)
+            with self._capture_scope():
+                stt_result = self._stt.run(self._capture)
         except Exception as exc:
             logger.warning("stt stream failed; back to idle", exc_info=True)
             # The listen cue already moved the head; a lost stream is a
@@ -831,6 +844,9 @@ class ConversationLoop:
         was_held = self._motion.holding
         self._motion_state = self._motion.update(observation.imu, self._motion_clock())
         held = self._motion.holding
+        self._publish_motion_facts(
+            held, self._motion_state in (MotionState.TIPPED, MotionState.FREEFALL)
+        )
         self._on_freefall(observation.freefall_detected)
         arbitration = ArbitrationState(tracking_active=observation.face_detected)
         not_speaking = self._current_funnel() != FunnelState.SPEAKING
@@ -865,6 +881,14 @@ class ConversationLoop:
 
         if observation.face_detected:
             self._maybe_check_face(stop_event)
+
+    def _publish_motion_facts(self, held: bool, alarm: bool) -> None:
+        """Held and alarm are funnel facts for readers; told only when one flips."""
+        with self._lock:
+            if (self._state.held, self._state.alarm) == (held, alarm):
+                return
+            self._state.held, self._state.alarm = held, alarm
+        self._emit_view()
 
     def _on_lifted(self) -> None:
         """Attempt each lift action independently; one failure must not skip the look."""

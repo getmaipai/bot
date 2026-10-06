@@ -9,12 +9,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from maipai_body.indicator.settings import ROBOT_DEVICE_PAGE, eyes_settings_declaration
 from maipai_body.presence.carry_reaction import DEFAULT_CARRY_REACTION, CarryReaction
 
 CARRY_REACTION_KEY = "robot.motion.carry_reaction"
 
 
-def settings_declaration() -> list[dict[str, Any]]:
+def settings_declaration(eyes_capability: str = "eyes") -> list[dict[str, Any]]:
+    """Every robot-only key. ``eyes_capability`` is the body's id for its eyes:
+    ``eyes`` on Reachy, ``light_ring`` on the MaiPai build (the keys' ``needs``)."""
     return [
         {
             "key": CARRY_REACTION_KEY,
@@ -23,7 +26,8 @@ def settings_declaration() -> list[dict[str, Any]]:
             "default": DEFAULT_CARRY_REACTION.value,
             "scope": "device",
             "label": "When I am picked up",
-            "lives_in": "Devices, this robot, Movement",
+            "lives_in": f"{ROBOT_DEVICE_PAGE}, Movement",
             "honoured_by": ["bot"],
-        }
+        },
+        *eyes_settings_declaration(eyes_capability),
     ]

@@ -21,7 +21,7 @@ than invented twice (the test named for that promise is
 
 from __future__ import annotations
 
-from maipai_body.hal.seam import AxisLimit, BodyProfile
+from maipai_body.hal.seam import AxisLimit, BodyProfile, Indicator
 
 _DESIGN_RECORD = (
     "docs/dev/design-reachy-mini-2026-09-27.md section 1 (Pollen's own docs, read 2026-09-27)"
@@ -115,3 +115,11 @@ REACHY_MINI_PROFILE = BodyProfile(
     physical_cuts=[],
     speech_placement="pod",
 )
+
+
+def profile_for_eyes(indicator: Indicator | None) -> BodyProfile:
+    """The profile with ``eyes`` declared only while the Eyes answer (EYES-02)."""
+    if indicator is None or not indicator.spec().connected:
+        return REACHY_MINI_PROFILE
+    caps = [*REACHY_MINI_PROFILE.capabilities, "eyes"]
+    return REACHY_MINI_PROFILE.model_copy(update={"capabilities": caps})

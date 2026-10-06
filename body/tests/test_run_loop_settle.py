@@ -81,10 +81,10 @@ def test_readers_see_the_held_state_while_the_loop_already_acts_on_the_raw_one()
         _stop(stop_event, thread)
 
 
-def test_subscribers_are_told_only_the_shown_changes():
+def test_subscribers_are_told_the_shown_state_not_the_raw_one():
     loop, _ = _quick_turn_loop()
     heard: list[FunnelState] = []
-    loop.subscribe_funnel(heard.append)
+    loop.subscribe_view(lambda view: heard.append(view.shown))
     stop_event, thread = _start(loop)
     try:
         _wait_for(lambda: heard[-1:] == [FunnelState.IDLE])

@@ -9,6 +9,14 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- EYES-02, the Eyes director (Reachy Mini): one look table (`indicator/looks.py`,
+  no red), a director that reads only the funnel's shown state and the
+  live-capture facts, and `LiveCaptureTap`, which wraps the mic and camera so
+  the green cue shows whenever the voice is being sent to the hub and cannot be
+  bypassed or turned off. Seven robot-only settings (`robot.indicator.*`), and
+  the profile declares `eyes` only while the Eyes are connected. Not run on a
+  unit.
+
 - BODY-05, the presence funnel's settle gate (Reachy Mini): the existing G9
   funnel in `run_loop.py` now holds every state it shows for at least 0.5 s
   (`SETTLE_GATE_S`, the legacy 45 ms flash test). Readers get the settled
