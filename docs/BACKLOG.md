@@ -626,8 +626,9 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       `app_version` in both the first `starting` frame and every later
       frame, beside `daemon_version`, which stays the vendor SDK's
       version. The hub compares `app_version` to a `getmaipai/bot`
-      release. Bot does not pin `maipai-spec` (see `AGENTS.md`), so
-      there is no pin to bump; the schema-fit test runs when
+      release. Bot pins the spec source at spec-v0.1.76 but cannot
+      install it as a Python distribution yet (see `AGENTS.md`); the
+      schema-fit test runs when
       `MAIPAI_ROBOT_STATE_SCHEMA` points at commons'
       `spec/schemas/robot-state.schema.json`. Landed 2026-09-29.
 

@@ -1385,12 +1385,13 @@ read live from the daemon's own `/api/kinematics/urdf`) and a fake
 (`fake.py`) that replays a real goto-then-hold trace recorded against
 the MuJoCo simulator (`fixtures/`). The suite runs on the fake always
 and on the live simulator when `MAIPAI_BODY_LIVE=1`; both passed on
-this commit. The `maipai-spec` pin AGENTS.md names is not yet in
-`body/pyproject.toml`: `commons/spec/pyproject.toml` has no
-`[build-system]` table, so a git-installed build fails on setuptools'
-flat-layout autodiscovery across the whole spec workspace, and RM-01
-needs no spec shapes to proceed (see the comment in
-`body/pyproject.toml`).
+this commit. Bot's `spec-v0.1.76` source pin is read through
+`MAIPAI_SPEC_DIR` by the gate and tests; it is not an installed Python
+dependency because `commons/spec/pyproject.toml` has no `[build-system]`
+table, so a git-installed build fails on setuptools' flat-layout
+autodiscovery across the whole spec workspace. The pinned source provides
+the capability vocabulary and `Device` fixtures used by RM-00 (see
+`AGENTS.md` and `body/pyproject.toml`).
 
 **Landed 2026-09-27 (EXPR-01, RM-02):**
 `body/maipai_body/expression/` maps a cue to a primitive

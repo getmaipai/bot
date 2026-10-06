@@ -312,7 +312,7 @@ _SCHEMA_ENV = "MAIPAI_ROBOT_STATE_SCHEMA"
 @pytest.mark.skipif(
     not os.environ.get(_SCHEMA_ENV),
     reason=f"set {_SCHEMA_ENV} to commons' spec/schemas/robot-state.schema.json "
-    "(spec-v0.1.73 or later); bot does not pin maipai-spec yet",
+    "(spec-v0.1.73 or later); Bot pins the source, not a Python distribution",
 )
 def test_state_frames_fit_the_published_robot_state_schema():
     schema = json.loads(Path(os.environ[_SCHEMA_ENV]).read_text())
