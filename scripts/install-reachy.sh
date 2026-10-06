@@ -49,6 +49,13 @@ ROBOT_SUBNET="${MAIPAI_REACHY_SUBNET:-}"
 
 WHEEL_FILE="$(basename "$WHEEL_PATH")"
 REMOTE_WHEEL="/tmp/$WHEEL_FILE"
+RELEASE_VERSION="${WHEEL_FILE#maipai_bot-}"
+RELEASE_VERSION="${RELEASE_VERSION%%-*}"
+WHEELHOUSE="$(dirname "$WHEEL_PATH")/maipai_bot-$RELEASE_VERSION-wheelhouse-aarch64-cp312.tar"
+REMOTE_WHEELHOUSE="/tmp/$(basename "$WHEELHOUSE")"
+REMOTE_WHEELHOUSE_DIR="/tmp/maipai-wheelhouse-$RELEASE_VERSION"
+REMOTE_WHEEL_SHA="$WHEEL_PATH.sha256"
+REMOTE_WHEELHOUSE_SHA="$WHEELHOUSE.sha256"
 
 if [ "$DRY_RUN" = 1 ]; then
   for value in "$HUB_ADDRESS" "$ROUTER_ADDRESS" "$ROBOT_SUBNET"; do
@@ -71,9 +78,15 @@ if [ "$DRY_RUN" = 1 ]; then
   printf 'scp %q %q %q\n' "$ROBOT_CONF" "$ROBOT_NFT" "$SSH_USER@$HOST:/tmp/"
   printf 'ssh %q %q\n' "$SSH_USER@$HOST" "sudo bash /tmp/configure.sh '$HUB_ADDRESS' '$ROUTER_ADDRESS' '$ROBOT_SUBNET' '${MAIPAI_TAILNET_ENABLED:-0}' /tmp/maipai.nft"
   printf 'ssh %q %q\n' "$SSH_USER@$HOST" "sudo systemctl enable nftables.service"
-  printf 'scp %q %q\n' "$WHEEL_PATH" "$SSH_USER@$HOST:$REMOTE_WHEEL"
-  printf 'ssh %q %q\n' "$SSH_USER@$HOST" "$APPS_VENV/bin/pip install --force-reinstall ${REMOTE_WHEEL}[voice]"
-  printf 'ssh %q %q\n' "$SSH_USER@$HOST" "pip install --force-reinstall onnxruntime==1.30.0"
+  printf 'release payload: %s %s and SHA-256 sidecars\n' "$WHEEL_FILE" "$(basename "$WHEELHOUSE")"
+  printf 'local validation: sha256sum -c %q; tar contains onnxruntime-1.30.0 aarch64 and sherpa_onnx aarch64 wheels\n' "$REMOTE_WHEELHOUSE_SHA"
+  printf 'install mode: pip install --no-index --find-links <wheelhouse> --no-deps; all requirements come from its lock file\n'
+  printf 'scp %q %q %q %q %q\n' "$WHEEL_PATH" "$REMOTE_WHEEL_SHA" "$WHEELHOUSE" "$REMOTE_WHEELHOUSE_SHA" "$SSH_USER@$HOST:/tmp/"
+  printf 'ssh %q %q\n' "$SSH_USER@$HOST" "sha256sum -c /tmp/$(basename "$REMOTE_WHEEL_SHA") && sha256sum -c /tmp/$(basename "$REMOTE_WHEELHOUSE_SHA")"
+  printf 'ssh %q %q\n' "$SSH_USER@$HOST" "mkdir -p '$REMOTE_WHEELHOUSE_DIR' && tar -xf '$REMOTE_WHEELHOUSE' -C '$REMOTE_WHEELHOUSE_DIR'"
+  printf 'ssh %q %q\n' "$SSH_USER@$HOST" "python3 -c check-pinned-reachy-mini-wheel-for-posthog; fail-if-found"
+  printf 'ssh %q %q\n' "$SSH_USER@$HOST" "$APPS_VENV/bin/pip install --no-index --find-links '$REMOTE_WHEELHOUSE_DIR' --no-deps --force-reinstall '$REMOTE_WHEEL'"
+  printf 'ssh %q %q\n' "$SSH_USER@$HOST" "$APPS_VENV/bin/pip install --no-index --find-links '$REMOTE_WHEELHOUSE_DIR' --no-deps --force-reinstall -r '$REMOTE_WHEELHOUSE_DIR/requirements-aarch64-cp312.txt'"
   printf 'ssh %q %q\n' "$SSH_USER@$HOST" "curl -sf -X PUT http://localhost:$DAEMON_PORT/api/apps/startup-app -H 'Content-Type: application/json' -d '{\"startup_app\": \"$APP_NAME\"}'"
   printf 'ssh %q %q <<'\''REMOVE_VENDOR_APPS'\''\n' "$SSH_USER@$HOST" "python3 - $DAEMON_PORT $APP_NAME"
   sed 's/^/  /' < <(sed -n '/^import json$/,/^REMOVE_VENDOR_APPS$/p' "$0" | sed '$d')
@@ -95,9 +108,25 @@ if [ ! -f "$WHEEL_PATH" ]; then
   echo "wheel not found: $WHEEL_PATH" >&2
   exit 1
 fi
+if [ ! -f "$WHEELHOUSE" ] || [ ! -f "$REMOTE_WHEEL_SHA" ] || [ ! -f "$REMOTE_WHEELHOUSE_SHA" ]; then
+  echo "wheelhouse or SHA-256 sidecars missing beside release wheel" >&2
+  exit 1
+fi
+(
+  cd "$(dirname "$WHEEL_PATH")"
+  sha256sum -c "$(basename "$REMOTE_WHEEL_SHA")" 2>/dev/null || shasum -a 256 -c "$(basename "$REMOTE_WHEEL_SHA")"
+  sha256sum -c "$(basename "$REMOTE_WHEELHOUSE_SHA")" 2>/dev/null || shasum -a 256 -c "$(basename "$REMOTE_WHEELHOUSE_SHA")"
+  tar -tf "$(basename "$WHEELHOUSE")" | rg -q 'onnxruntime-1\.30\.0-.*aarch64.*\.whl$'
+  tar -tf "$(basename "$WHEELHOUSE")" | rg -q 'sherpa[_-]onnx-.*aarch64.*\.whl$'
+)
 
 echo "== copying $WHEEL_FILE to $SSH_USER@$HOST:$REMOTE_WHEEL"
-scp "$WHEEL_PATH" "$SSH_USER@$HOST:$REMOTE_WHEEL"
+scp "$WHEEL_PATH" "$REMOTE_WHEEL_SHA" "$WHEELHOUSE" "$REMOTE_WHEELHOUSE_SHA" "$SSH_USER@$HOST:/tmp/"
+
+echo "== verifying release checksums"
+ssh "$SSH_USER@$HOST" "cd /tmp && sha256sum -c '$(basename "$REMOTE_WHEEL_SHA")' && sha256sum -c '$(basename "$REMOTE_WHEELHOUSE_SHA")'"
+ssh "$SSH_USER@$HOST" "mkdir -p '$REMOTE_WHEELHOUSE_DIR' && tar -xf '$REMOTE_WHEELHOUSE' -C '$REMOTE_WHEELHOUSE_DIR'"
+ssh "$SSH_USER@$HOST" "python3 -c 'import glob,zipfile,sys; p=glob.glob(\"$REMOTE_WHEELHOUSE_DIR/reachy_mini-1.11.0-*.whl\"); assert len(p)==1, p; z=zipfile.ZipFile(p[0]); bad=[n for n in z.namelist() if n.endswith((\".py\",\".json\")) and b\"posthog\" in z.read(n).lower()]; print(bad); sys.exit(bool(bad))'"
 
 echo "== installing into $APPS_VENV"
 REMOTE_VERSION="$(ssh "$SSH_USER@$HOST" "$APPS_VENV/bin/pip show reachy-mini | sed -n 's/^Version: //p'")"
@@ -107,20 +136,13 @@ if [ "$REMOTE_VERSION" != "1.11.0" ]; then
 fi
 # [voice]: G2's wake-word scoring is core to a conversational robot, not
 # an optional extra an operator has to remember to ask for separately.
-ssh "$SSH_USER@$HOST" "$APPS_VENV/bin/pip install --force-reinstall '${REMOTE_WHEEL}[voice]'"
+ssh "$SSH_USER@$HOST" "$APPS_VENV/bin/pip install --no-index --find-links '$REMOTE_WHEELHOUSE_DIR' --no-deps --force-reinstall '$REMOTE_WHEEL'"
 
-# reachy-mini==1.11.0 hard-pins onnxruntime==1.27.0, verified (G2,
-# docs/BACKLOG.md) to silently mis-score every wake-word inference with
-# no error. The dev bench's `[tool.uv] override-dependencies` in
-# body/pyproject.toml fixes this for `uv sync`, but that directive is
-# uv-resolver-only - it never reaches a real install, and this script
-# installs with plain pip over SSH, which would otherwise re-resolve
-# straight back to reachy-mini's own broken pin (worse, the
-# --force-reinstall above actively pulls it back down if a prior run
-# somehow had the right version). Force it explicitly, every install,
-# so this fix actually reaches the unit, not just the dev bench.
-echo "== forcing onnxruntime to the version verified to score correctly (reachy-mini's own 1.27.0 pin silently breaks wake word)"
-ssh "$SSH_USER@$HOST" "$APPS_VENV/bin/pip install --force-reinstall 'onnxruntime==1.30.0'"
+# All transitive wheels are resolved by uv from pyproject.toml and staged
+# in the release archive. `--no-deps` preserves uv's onnxruntime 1.30.0
+# override over reachy-mini's upstream 1.27.0 metadata pin.
+echo "== installing the locked dependencies from the offline wheelhouse"
+ssh "$SSH_USER@$HOST" "$APPS_VENV/bin/pip install --no-index --find-links '$REMOTE_WHEELHOUSE_DIR' --no-deps --force-reinstall -r '$REMOTE_WHEELHOUSE_DIR/requirements-aarch64-cp312.txt'"
 
 echo "== registering $APP_NAME as the startup app"
 ssh "$SSH_USER@$HOST" \
@@ -200,5 +222,6 @@ ssh "$SSH_USER@$HOST" "sudo systemctl restart reachy-mini-daemon"
 
 echo "== cleaning up the staged wheel"
 ssh "$SSH_USER@$HOST" "rm -f '$REMOTE_WHEEL'"
+ssh "$SSH_USER@$HOST" "rm -f '$REMOTE_WHEELHOUSE' '$REMOTE_WHEELHOUSE_SHA' '$REMOTE_WHEEL_SHA'; rm -rf '$REMOTE_WHEELHOUSE_DIR'"
 
 echo "== done: $APP_NAME installed on $HOST"

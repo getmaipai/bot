@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 from pathlib import Path
 
@@ -22,8 +23,9 @@ def test_install_dry_run_prints_the_full_plan_without_syncing_or_ssh(tmp_path):
         env=env,
     )
     assert not sync_calls.exists()
-    assert "scp /tmp/future.whl pollen@example-host:/tmp/future.whl" in result.stdout
-    assert "onnxruntime==1.30.0" in result.stdout
+    assert "scp /tmp/future.whl" in result.stdout
+    assert "pollen@example-host:/tmp/" in result.stdout
+    assert "onnxruntime-1.30.0" in result.stdout
     assert "startup-app" in result.stdout
     assert "REMOVE_VENDOR_APPS" in result.stdout
     assert "systemctl restart reachy-mini-daemon" in result.stdout
@@ -33,7 +35,11 @@ def test_install_dry_run_prints_the_full_plan_without_syncing_or_ssh(tmp_path):
 def test_release_builder_stages_wheel_and_sha256_without_publishing(tmp_path):
     stage = ROOT / "dist/bot-release/v0.1.0"
     try:
-        subprocess.run([str(SCRIPTS / "prepare-bot-release.sh"), "v0.1.0"], check=True)
+        subprocess.run(
+            [str(SCRIPTS / "prepare-bot-release.sh"), "v0.1.0"],
+            check=True,
+            env={**os.environ, "MAIPAI_SKIP_WHEELHOUSE": "1"},
+        )
         wheel = stage / "maipai_bot-0.1.0-py3-none-any.whl"
         checksum = stage / f"{wheel.name}.sha256"
         assert wheel.is_file()

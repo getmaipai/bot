@@ -29,7 +29,7 @@ if [ ! -f "$WHEEL" ]; then
   echo "expected pure Python wheel not found: $WHEEL" >&2
   exit 1
 fi
-DIST_INFO_VERSION="$(python - "$WHEEL" <<'PY'
+DIST_INFO_VERSION="$(python3 - "$WHEEL" <<'PY'
 import sys
 import zipfile
 
@@ -44,6 +44,11 @@ if [ "$DIST_INFO_VERSION" != "$VERSION" ]; then
   exit 1
 fi
 (cd "$STAGE" && shasum -a 256 "$(basename "$WHEEL")" > "$(basename "$WHEEL").sha256")
+ASSETS=("$WHEEL" "$WHEEL.sha256")
+if [ "${MAIPAI_SKIP_WHEELHOUSE:-0}" != 1 ]; then
+  scripts/build-wheelhouse.sh "$VERSION" "$STAGE"
+  ASSETS+=("$STAGE/maipai_bot-$VERSION-wheelhouse-aarch64-cp312.tar" "$STAGE/maipai_bot-$VERSION-wheelhouse-aarch64-cp312.tar.sha256")
+fi
 echo "Staged release assets in $STAGE:"
-ls -1 "$WHEEL" "$WHEEL.sha256"
-echo "No release was pushed or uploaded. Attach these two files to $TAG when the owner publishes it."
+ls -1 "${ASSETS[@]}"
+echo "No release was pushed or uploaded. Attach these $((${#ASSETS[@]})) files to $TAG when the owner publishes it."
