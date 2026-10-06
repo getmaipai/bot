@@ -322,6 +322,9 @@ def _build_conversation_loop(
     wake phrase, SFace) happen here, synchronously, the first time a
     fresh install ever reaches a paired state.
     """
+    from maipai_body.link.assets import AssetSync
+
+    AssetSync(base_url, session_cookie).sync(cache_dir)
     hub_credentials = _hub_credentials_reader(link, base_url)
     # From here every consumer gets the tap, never the bare client: it is how
     # the green live cue knows when the voice is leaving for the hub.

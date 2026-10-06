@@ -38,8 +38,9 @@ from typing import Protocol
 import numpy as np
 import numpy.typing as npt
 
+from maipai_body.link.assets import pinned_asset
 from maipai_body.link.commands import COMMAND_PHRASES
-from maipai_body.model_assets import PinnedAsset, ensure_asset
+from maipai_body.model_assets import ensure_asset
 from maipai_body.speech.capture import BLOCK_DURATION_S
 
 logger = logging.getLogger("maipai_body.speech.kws")
@@ -66,12 +67,8 @@ MODEL_FILES = {
     "decoder": f"decoder-{_SUFFIX}",
     "joiner": f"joiner-{_SUFFIX}",
 }
-# Apache 2.0, k2-fsa/sherpa-onnx's `kws-models` release; fetched, never vendored.
-KWS_MODEL = PinnedAsset(
-    file=f"{_MODEL_DIR}.tar.bz2",
-    url=f"https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/{_MODEL_DIR}.tar.bz2",
-    sha256="f170013b4716e41b62b9bfd809687c207cef798ef9bc6534d524e17af9b6561a",
-)
+# The shared spec pin is Apache-2.0; the hub is the only asset source.
+KWS_MODEL = pinned_asset("sherpa-kws-zipformer-gigaspeech-3_3m")
 
 
 class KeywordSpotterUnavailable(RuntimeError):

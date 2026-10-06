@@ -1,27 +1,22 @@
-"""The pinned move libraries: a revision and a checksum per file, fetched on demand.
+"""The pinned move libraries: optional packages installed by Home.
 
-"Download, don't vendor": nothing from Pollen's libraries is tracked
-here. ``pins.json`` names, per library, the dataset repo, a full commit
-revision, its licence and a sha256 per move file; ``ensure_move`` fetches
-one file through ``model_assets.ensure_asset`` (the repo's one
-download-verify-rename mechanism) and refuses anything that does not
-match. ``pins.json`` is written by ``body/scripts/pin_moves_library.py``
-from the live dataset; it ships empty until that has been run with
-network access, so every fetch fails with a clear "no pin" error rather
-than trusting an unpinned file.
+"Download, don't vendor": ``pins.json`` names a full commit revision,
+licence and sha256 per move file. Home installs this optional package;
+the base robot never fetches directly from a dataset host.
 
 The dances library is excluded until its licence is stated.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from maipai_body.model_assets import AssetUnavailable, PinnedAsset, ensure_asset
+from maipai_body.model_assets import AssetUnavailable
 
 PINS_PATH = Path(__file__).with_name("pins.json")
 EXCLUDED_LIBRARIES = {"dances": "licence unverified; excluded until Pollen states one"}
@@ -54,20 +49,30 @@ def load_pins(path: Path = PINS_PATH) -> list[LibraryPin]:
     return [LibraryPin(**entry) for entry in json.loads(path.read_text())["pins"]]
 
 
-def move_url(pin: LibraryPin, name: str) -> str:
-    return f"https://huggingface.co/datasets/{pin.repo}/resolve/{pin.revision}/{name}.json"
-
-
 def ensure_move(pin: LibraryPin, name: str, cache_dir: Path) -> Path:
-    """The verified local file for ``name``, fetched once and cached under the pin's revision."""
+    """Return an installed optional move, never contacting its source repository."""
     if name not in pin.files:
         raise AssetUnavailable(f"{name} is not in the pinned {pin.library} library")
     if not _SHA256.fullmatch(pin.files[name]):
         # Refuse before any request: an unpinned file is never fetched.
         raise AssetUnavailable(f"{name} in the {pin.library} library has no valid sha256 pin")
-    asset = PinnedAsset(
-        file=f"{pin.library}-{pin.revision[:12]}-{name}.json",
-        url=move_url(pin, name),
-        sha256=pin.files[name],
+    path = cache_dir / f"{pin.library}-{pin.revision[:12]}-{name}.json"
+    candidates = [path]
+    if cache_dir.is_dir():
+        candidates.extend(
+            candidate
+            for candidate in cache_dir.rglob("*.json")
+            if candidate != path and candidate.is_file()
+        )
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+        if digest == pin.files[name]:
+            return candidate
+    if path.exists():
+        path.unlink()
+    raise AssetUnavailable(
+        f"{name} is not installed or failed its checksum; install the optional moves package "
+        "through Home"
     )
-    return ensure_asset(asset, cache_dir)

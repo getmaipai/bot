@@ -23,13 +23,12 @@ from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.primitives import PRIMITIVE_NAMES
 from maipai_body.expression.suppression import SuppressionContext
 from maipai_body.hal.seam import HeadPose
-from maipai_body.model_assets import AssetUnavailable, ChecksumMismatch
+from maipai_body.model_assets import AssetUnavailable
 from maipai_body.moves.library import (
     EXCLUDED_LIBRARIES,
     LibraryPin,
     ensure_move,
     load_pins,
-    move_url,
 )
 from maipai_body.moves.player import MovePlayer, MoveRefused
 from maipai_body.moves.recorded_move import InvalidMove, RecordedMove, matrix_to_pose
@@ -137,81 +136,33 @@ def _pin(tmp_path: Path, payload: bytes, *, revision: str = "a" * 40) -> Library
     )
 
 
-def test_the_move_url_is_pinned_to_the_revision():
-    pin = LibraryPin(
-        library="emotions",
-        repo="o/r",
-        revision="b" * 40,
-        license="Apache-2.0",
-        files={"happy1": "0" * 64},
-    )
-    assert (
-        move_url(pin, "happy1")
-        == f"https://huggingface.co/datasets/o/r/resolve/{'b' * 40}/happy1.json"
-    )
-
-
 def test_a_pin_without_a_full_revision_is_rejected():
     with pytest.raises(ValueError):
         LibraryPin(library="emotions", repo="o/r", revision="main", license="Apache-2.0", files={})
 
 
-def test_ensure_move_downloads_verifies_and_caches(tmp_path, monkeypatch):
+def test_ensure_move_reads_verified_optional_package_asset(tmp_path):
     payload = json.dumps(_move_json()).encode()
     pin = _pin(tmp_path, payload)
-    calls: list[str] = []
-
-    class _Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def raise_for_status(self):
-            pass
-
-        def iter_content(self, chunk_size):
-            yield payload
-
-    def fake_get(url, **kwargs):
-        calls.append(url)
-        return _Response()
-
-    monkeypatch.setattr("maipai_body.model_assets.requests.get", fake_get)
+    target = tmp_path / f"{pin.library}-{pin.revision[:12]}-happy1.json"
+    target.write_bytes(payload)
     path = ensure_move(pin, "happy1", tmp_path)
     assert path.read_bytes() == payload
     ensure_move(pin, "happy1", tmp_path)
-    assert len(calls) == 1  # the second call is served from the cache
 
 
-def test_a_checksum_mismatch_is_refused_and_leaves_nothing_behind(tmp_path, monkeypatch):
+def test_a_checksum_mismatch_is_refused_and_leaves_nothing_behind(tmp_path):
     payload = b'{"tampered": true}'
     pin = _pin(tmp_path, b"something else")
-
-    class _Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def raise_for_status(self):
-            pass
-
-        def iter_content(self, chunk_size):
-            yield payload
-
-    monkeypatch.setattr("maipai_body.model_assets.requests.get", lambda *a, **k: _Response())
-    with pytest.raises(ChecksumMismatch):
+    target = tmp_path / f"{pin.library}-{pin.revision[:12]}-happy1.json"
+    target.write_bytes(payload)
+    with pytest.raises(AssetUnavailable):
         ensure_move(pin, "happy1", tmp_path)
-    assert list(tmp_path.rglob("*.json")) == []
+    assert not target.exists()
 
 
 @pytest.mark.parametrize("bad_sum", ["", "abc123", "Z" * 64, "A" * 64])
-def test_ensure_move_refuses_an_unpinned_checksum_before_any_request(
-    tmp_path, monkeypatch, bad_sum
-):
+def test_ensure_move_refuses_an_unpinned_checksum(tmp_path, bad_sum):
     pin = LibraryPin(
         library="emotions",
         repo="o/r",
@@ -219,16 +170,8 @@ def test_ensure_move_refuses_an_unpinned_checksum_before_any_request(
         license="Apache-2.0",
         files={"happy1": bad_sum},
     )
-    calls: list[str] = []
-
-    def fake_get(url, **kwargs):
-        calls.append(url)
-        raise AssertionError("no request may be made for an unpinned file")
-
-    monkeypatch.setattr("maipai_body.model_assets.requests.get", fake_get)
     with pytest.raises(AssetUnavailable):
         ensure_move(pin, "happy1", tmp_path)
-    assert calls == []
 
 
 def test_a_move_the_pin_does_not_list_is_unavailable(tmp_path):

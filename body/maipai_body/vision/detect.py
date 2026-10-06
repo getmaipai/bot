@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import numpy.typing as npt
+from huggingface_hub.errors import EntryNotFoundError, LocalEntryNotFoundError
 from reachy_mini.vision.face_detector import FaceDetector, _nms
 
 _STRIDES = (8, 16, 32)
@@ -55,6 +56,14 @@ class FiveLandmarkDetector(FaceDetector):
     """`FaceDetector`, with all five YuNet landmarks kept instead of
     three. Everything else (the model, the score/NMS thresholds, the
     padding and resize in `detect()`) is inherited unchanged."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        try:
+            super().__init__(*args, **kwargs)
+        except (EntryNotFoundError, LocalEntryNotFoundError) as exc:
+            raise RuntimeError(
+                "YuNet is missing from the offline cache; run a paired hub asset sync first"
+            ) from exc
 
     def _decode(
         self, outputs: dict[str, npt.NDArray[np.float32]], width: int

@@ -246,8 +246,8 @@ def test_pairing_characters_stay_fixed_and_do_not_go_through_line_picker(tmp_pat
     assert len(client.pushed_audio) == 5
 
 
-def test_ensure_bundle_without_a_pinned_release_asset_says_how_to_get_it(tmp_path):
-    with pytest.raises(oc.AssetUnavailable, match="release"):
+def test_ensure_bundle_without_a_hub_asset_says_it_is_not_installed(tmp_path):
+    with pytest.raises(oc.AssetUnavailable, match="hub has not installed"):
         oc.ensure_clip_bundle(tmp_path)
 
 

@@ -23,6 +23,19 @@ fi
 STAGE="dist/bot-release/$TAG"
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
+SPEC_DIR="${MAIPAI_SPEC_DIR:-../commons-tags/spec-spec-v0.1.76/spec}"
+SPEC_ASSETS="$SPEC_DIR/assets/robot-assets.json"
+PACKAGE_ASSETS="body/maipai_body/robot-assets.json"
+if [ ! -f "$SPEC_ASSETS" ]; then
+  echo "shared robot asset pins are missing at $SPEC_ASSETS" >&2
+  exit 1
+fi
+if [ -e "$PACKAGE_ASSETS" ]; then
+  echo "$PACKAGE_ASSETS already exists; refusing to overwrite it" >&2
+  exit 1
+fi
+cp "$SPEC_ASSETS" "$PACKAGE_ASSETS"
+trap 'rm -f "$PACKAGE_ASSETS"' EXIT
 (cd body && uv build --wheel --out-dir "../$STAGE")
 WHEEL="$STAGE/maipai_bot-$VERSION-py3-none-any.whl"
 if [ ! -f "$WHEEL" ]; then

@@ -49,6 +49,7 @@ def _build(indicator, stop_event=None):
         "_hub_credentials_reader",
     ]
     patches = [patch.object(app_module, name, MagicMock()) for name in heavy]
+    patches.append(patch("maipai_body.link.assets.AssetSync.sync", return_value={}))
     patches.append(patch.object(app_module, "AudioCapture", _Capture))
     patches.append(patch.object(app_module, "ConversationLoop", _Loop))
     patches.append(patch.object(app_module, "_start_eyes", return_value=indicator))

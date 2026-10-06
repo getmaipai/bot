@@ -3,8 +3,8 @@ with no hub to synthesize them.
 
 A fixed bundle (the 32 pairing-code characters, a code prompt, the
 hub-unreachable line, the freefall line, the reconnect line) rendered
-once at release time and shipped as a Bot release asset, never a
-tracked file. The manifest (``offline_clips.json``) is tracked: clip ids,
+once and synchronized as a device-specific Home asset, never a tracked
+file. The manifest (``offline_clips.json``) is tracked: clip ids,
 the text each clip speaks, file names and sha256 checksums. Checksums
 are empty until the clips are rendered (``scripts/render_offline_clips.py``
 stamps them); an unrendered manifest refuses to play, never silently
@@ -32,7 +32,7 @@ import numpy as np
 import numpy.typing as npt
 
 from maipai_body.model_assets import AssetUnavailable as AssetUnavailable
-from maipai_body.model_assets import PinnedAsset, _sha256_of, ensure_asset
+from maipai_body.model_assets import _sha256_of
 from maipai_body.speech.playback import AudioPlayback
 from maipai_body.speech.tts_playback import _pcm16_to_float32, _resample
 
@@ -438,17 +438,7 @@ class OfflineSpeakerLike(Protocol):
     def say(self, clip_ids: list[str], *, stop_event: threading.Event | None = None) -> bool: ...
 
 
-BUNDLE_ASSET = PinnedAsset(
-    file="offline-clips-v1.zip",
-    url="",  # pinned once the bundle is attached to a Bot release
-    sha256="",
-    unavailable_hint=(
-        "The offline speech clips ship as a Bot release asset rendered from "
-        "the MaiPai voice; render and attach one with "
-        "scripts/render_offline_clips.py (see docs/BACKLOG.md's G4b entry), "
-        "then pin its URL and sha256 here."
-    ),
-)
+BUNDLE_FILE = "offline-clips-v1.zip"
 
 
 def extract_bundle(zip_path: Path, target: Path) -> Path:
@@ -464,9 +454,23 @@ def extract_bundle(zip_path: Path, target: Path) -> Path:
 
 
 def ensure_clip_bundle(cache_dir: Path, manifest: Manifest | None = None) -> ClipBundle:
-    """Fetches (once), extracts and verifies the release bundle."""
+    """Extracts the verified clip bundle synchronized from the paired hub."""
     manifest = manifest or load_manifest()
-    zip_path = ensure_asset(BUNDLE_ASSET, cache_dir)
+    zip_path = cache_dir / BUNDLE_FILE
+    sidecar = zip_path.with_suffix(zip_path.suffix + ".asset.json")
+    try:
+        metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise AssetUnavailable("the hub has not installed the robot clip bundle") from exc
+    if (
+        not zip_path.is_file()
+        or metadata.get("kind") != "clip_bundle"
+        or metadata.get("bytes") != zip_path.stat().st_size
+        or metadata.get("sha256") != _sha256_of(zip_path)
+    ):
+        zip_path.unlink(missing_ok=True)
+        sidecar.unlink(missing_ok=True)
+        raise AssetUnavailable("the synchronized robot clip bundle failed verification")
     directory = extract_bundle(zip_path, cache_dir / "offline-clips")
     bundle = ClipBundle(directory, manifest)
     bundle.verify()

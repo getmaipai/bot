@@ -7,13 +7,13 @@ body/, against a reachable hub with a signed-in session::
         --hub https://HUB:PORT --session-cookie VALUE --out build/clips
 
 Writes the WAVs and a stamped ``manifest.json`` into ``--out`` and packs
-``offline-clips-v1.zip`` beside them; prints the zip's sha256 to pin in
-``offline_clips.BUNDLE_ASSET``. Copy the stamped manifest over
+``offline-clips-v1.zip`` beside them; prints the zip's sha256 for Home's
+device asset manifest. Copy the stamped manifest over
 ``maipai_body/speech/offline_clips.json`` and commit it. Then verify::
 
     uv run python scripts/render_offline_clips.py verify --out build/clips
 
-Listen to every clip before attaching the zip to a Bot release. Record
+Listen to every clip before installing the bundle through Home. Record
 the voice's licence check in docs/dev.md first and only then set
 ``voice.licence_checked`` in the manifest. Fill ``voice.name`` with the
 voice actually used.
