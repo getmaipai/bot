@@ -1,0 +1,12 @@
+# Reachy Mini media stack, 2026-10-05
+
+Source: [Pollen Robotics, Reachy Mini media stack](https://huggingface.co/blog/pollen-robotics/reachy-mini-media-stack). Every hardware and performance fact below is vendor-stated and **UNVERIFIED** until checked on the unit.
+
+| Area | Vendor-stated fact (UNVERIFIED) | What it means for MaiPai |
+|---|---|---|
+| Camera | Raspberry Pi Camera 3 Wide, Sony IMX708, 12 MP, autofocus. Main stream is 1920x1080 at 60 fps. On the CM4, libcamera feeds H.264 (`v4l2h264enc`) for wireless use, plus local GStreamer `unixfdsink` IPC at `/tmp/reachymini_camera_socket`; local clients can read frames without WebRTC. | The body process uses the SDK's local `get_frame()` path. Face and gesture work requests a low-resolution, low-frame-rate stream. Never use 1080p60 for those tasks. Measure 640x360 at 10 fps and 5 fps in M-R1. |
+| Audio | Seeed reSpeaker XVF3800 (XMOS), four PDM MEMS microphones, maximum 16 kHz sample rate, -26 dBFS sensitivity, 64 dBA SNR, and a 5 W / 4 ohm speaker. Built-in acoustic echo cancellation is always active. XMOS parameters can be tuned. | Unit barge-in can rely on chip AEC without MaiPai adding AEC. In the simulator, software AEC replaces the chip. Record XMOS parameter defaults and any tuning on arrival day. |
+| Direction of arrival | The microphone array is LINEAR and covers only the front 180 degrees. Sound from behind is ambiguous and can appear as a mirrored angle. | EXPR-04 treats DoA as a front-half bearing. Face tracking confirms it; without confirmation, the robot slowly turns its body to resolve ambiguity. FAKES-02 scripts mirrored readings. |
+| Remote media | WebRTC uses `webrtcsink`/`webrtcsrc`; signalling goes through the `pollen-robotics/reachy_mini_central` Hugging Face Space and is paired with a Hugging Face account. Media is peer-to-peer, with TURN relay for internet via `fastrtc/turn-service`. | MaiPai does not use the WebRTC/Hugging Face path. RM-07's egress capture must confirm no connection to the signalling Space or TURN. |
+| Latency | Pollen reports about 100 ms glass-to-glass over local 5 GHz Wi-Fi on its test rig. | EXPR-02 cue-to-motion and first-audio budgets are measured on our setup, never assumed from this result. |
+| Developer advice | Use AEC for always-listening; connect the client to the router for lowest latency; tune the jitter buffer on rough networks. | Keep always-listening enabled with the available AEC, use the router-connected client path, and tune buffering only against measured network conditions. |

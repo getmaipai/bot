@@ -528,6 +528,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       list adds DNS, mDNS and DHCP to the local router as labelled rows
       that never leave the house; NTP or any other public endpoint the
       first capture finds is reported as unlisted, not added.
+      Also confirm no connection to the signalling Space or TURN.
 - [ ] **RM-08: install and update from Home** (M, unit, after
       ROBOT-DEVICE-01 and ROBOT-CARD-01). Objective: the Devices page's
       add flow runs RM-03's offline install over SSH and rotates the
@@ -663,6 +664,8 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       500 ms and nothing throttles.
       Status 2026-10-05: script, sampler and decision rule built and proven on fakes
       (`body/scripts/measure_mr1_budget.py`, `dev/measure-runbook.md`); needs the unit.
+      Measure camera frames at 640x360 and 10 fps and 5 fps: CM4 CPU
+      percentage and memory with the wake model and keyword spotter running.
 - [ ] **M-R2: cue to motion** (S, sim then unit). Cue to first
       state-feed delta p50 and p95 per primitive; the stall behaviour
       under a held head at each fraction; amplitude, peak velocity and
@@ -2225,7 +2228,10 @@ value; RT-02 and RT-03 carry it.
       on a fresh track or direction of arrival; freeze then settle on a
       stale or conflicting track; breathing on the idle policy with its
       suppressions. Acceptance: the deterministic trajectory tests; the
-      physical run recorded. Exit: `bash scripts/check.sh`.
+      physical run recorded. DoA covers only the front half: confirm a
+      bearing with face tracking, otherwise turn the body slowly to
+      resolve a possible mirrored behind-robot reading. Exit:
+      `bash scripts/check.sh`.
 - [ ] **EXPR-05: a body-agnostic web dashboard** (M, sim; owner's ask,
       2026-09-27). Objective: a small web page (a lightweight Python
       HTTP server in `body/`, no framework beyond what a health check
@@ -2466,6 +2472,13 @@ All after `spec/link/` and hub v0.3.
       shape and the command channel, which is a placeholder until
       ROBOT-MUTE-01 decides the transport. Live lines: not run, sandbox
       cannot run the daemon.
+
+- [ ] **FAKES-02: mirrored DoA and low-resolution camera stream** (S,
+      after S-FAKES-01). Script front/back ambiguous mirrored DoA readings
+      and provide low-resolution frames in the fake. Acceptance: EXPR-04
+      resolves an ambiguous bearing by face tracking or a slow body turn;
+      camera consumers can request the measured low-resolution stream.
+      Exit: `bash scripts/check.sh`.
 
 ## Docs and status
 
