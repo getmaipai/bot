@@ -301,6 +301,7 @@ Pi + Hailo build: NO PRIORITY by owner decision 2026-10-05. Nothing for
 it is dispatched or started until the owner says so.
 The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
 
+
 - [ ] **RM-00: the body-capability vocabulary** (S, spec first, filed
       in `commons` as BODY-VOCAB-01). Objective:
       `spec/vocab/capabilities.json` gains the ids a body profile
@@ -315,6 +316,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       TypeScript and Python; the tag is bumped and `bot` pins it.
       Out of scope: any renderer. Exit: `commons` `bash
       scripts/check.sh` and the tag.
+
 - [x] **RM-01: the profile and the daemon client** (M, sim). Objective:
       `body/bodies/reachy_mini/` wraps the `reachy-mini` SDK (PyPI,
       Apache-2.0) behind the HAL seam BODY-02 names, declaring the
@@ -340,6 +342,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       loss (closing the daemon socket underneath a live client) proving
       `BodyLost`. Not run: anything needing the physical unit (up to 90
       days out per the design record).
+
 - [ ] **RM-02: the expression column on the simulator** (M, sim, with
       EXPR-01). Objective: the primitive table's Reachy Mini column
       (section 5: roll for the tilt, the antennas as a channel, body
@@ -386,6 +389,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       `stop` still always renders normally regardless (its suppression
       reason is always `None`; see 2026-09-27's second addition below).
       Tested against the fake; not yet run against a live daemon.
+
 - [x] **RM-03: the app packaging and the install scripts** (S, sim).
       Objective: `maipai-bot` as a Python package exposing
       `MaiPaiBody(ReachyMiniApp)` under the `reachy_mini_apps`
@@ -446,6 +450,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       validation is tested, not the scp/ssh/systemctl calls themselves -
       see the 2026-09-27 addition above for the vendor-app-removal
       step's own verification level).
+
 - [ ] **RM-04: the `pod`-tier speech path** (M, sim then unit, after
       ROBOT-ROUTES-01). Objective: wake, Silero VAD, endpointing and
       direction of arrival in the body from the daemon's 16 kHz audio,
@@ -461,6 +466,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       nothing ambient leaves the body (a test asserts the bytes sent are
       the endpointed span). Out of scope: the `robot` tier (M-R1
       decides). Exit: `bash scripts/check.sh` and the round trip.
+
 - [ ] **RM-05: the hub client** (M, sim, after ROBOT-DEVICE-01 and
       ROBOT-ROUTES-01). Objective: pairing by the spoken code and the
       app's own page (section 9), the token sealed and the fingerprint
@@ -485,6 +491,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       what a live run would still need (a combined stand-in, or a real
       `reachy-mini-daemon --sim` session). The device state frame for
       ROBOT-CARD-01 is G10's own item, not started.
+
 - [x] **RM-06: presence and tracking** (S, sim, after RM-01).
       Objective: the daemon's face tracking as the `track` source under
       the arbitration priority, its "a face is tracked" fact plus the
@@ -520,7 +527,8 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       corrected priority above. Live detection against a real face
       still waits on a sim scene (or unit) that actually has one to
       detect, same caveat as before.
-- [ ] **RM-07: privacy on the unit** (S, unit, first day). Objective:
+
+- [ ] **RM-07 (amended): the allowed list is four rows** (S, unit, first day). Objective:
       the unit on an isolated network with every outbound connection
       captured for 24 hours before and after the MaiPai install, the
       vendor's apps removed and the store token never set; the list on
@@ -551,7 +559,10 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       that never leave the house; NTP or any other public endpoint the
       first capture finds is reported as unlisted, not added.
       Also confirm no connection to the signalling Space or TURN.
-- [ ] **RM-08: install and update from Home** (M, unit, after
+      Amendment from Reachy design v2:
+      (S; amends 2026-10-05). The egress tool labels only the hub (LAN, or the tailnet when opted in), DHCP, DNS and mDNS as allowed; PyPI is removed from the list; NTP, GitHub, Hugging Face, Cloudflare and Google STUN are named deny rows the capture must show absent after ROBOT-DAEMON-CONF-01. The privacy page regenerates. Cloud: yes.
+
+- [ ] **RM-08 (amended): install and update from Home, hub-only** (M, unit, after
       ROBOT-DEVICE-01 and ROBOT-CARD-01). Objective: the Devices page's
       add flow runs RM-03's offline install over SSH and rotates the
       default password into the credentials center (refusing to finish
@@ -562,6 +573,11 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       daemon version appears on the card and in the update row. Out of
       scope: the Space listing (owner's call). Exit: the flow exercised
       on the unit and its captures.
+      Amendment from Reachy design v2:
+      (M, unit). Acceptance line becomes: a fresh unit joins Home with no terminal, no third-party account, no PyPI and no Hugging Face; the MaiPai version and the body software version appear on the card; the daemon configuration read-backs pass; the password is rotated and the host key pinned. Cloud: no.
+      Amendment from Reachy design v2:
+      (upstream #599, #1251). The add flow asks the admin to confirm the charger is plugged in (the robot cannot tell), refuses to start otherwise, and never runs an install or a firmware flash from a schedule. Cloud: no.
+
 - [x] **G10-BODY: push the robot.state frame to the hub** (S, design
       resolved 2026-09-29 by design-resolver, unblocking `home`'s
       ROBOT-CARD-01). Objective: `body/maipai_body/link/state.py`'s
@@ -598,6 +614,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       `bash scripts/check.sh`. Landed 2026-09-29: the body pushes state
       on changes and a 15s heartbeat; Reachy Mini reports SDK version
       `1.11.0` from `reachy_mini.__version__`.
+
 - [x] **G10-VERSION: the robot sends `app_version`** (S, after
       `commons` spec-v0.1.57). `state_snapshot()` in
       `body/maipai_body/app.py` sends the installed `maipai-bot`
@@ -609,7 +626,8 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       there is no pin to bump; the schema-fit test runs when
       `MAIPAI_ROBOT_STATE_SCHEMA` points at commons'
       `spec/schemas/robot-state.schema.json`. Landed 2026-09-29.
-- [ ] **RM-09: the user guide** (S, with RM-08). Objective: the
+
+- [ ] **RM-09 (amended): the user guide** (S, with RM-08). Objective: the
       user-tier page from the box to the first conversation (the
       vendor's Wi-Fi setup, Add a robot in Home, the spoken code, what
       the antennas mean, the honest limits: software mute, software
@@ -617,7 +635,10 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       screenshots of the Devices flow. Mirror: DOCS-02. Acceptance: the
       dad test on the page; every screenshot opened and judged. Exit:
       the standards core.
-- [ ] **MOVES-01: the recorded moves package** (S, after RM-02, after
+      Amendment from Reachy design v2:
+      (S). The honest limits paragraph becomes: software mute (the Eyes amber), watch level instead of a camera shutter (the Eyes dark segment), no battery readout (three estimated bands after M-R4 or "level unknown"), no screen (the Eyes and the card). Cloud: yes (docs).
+
+- [ ] **MOVES-01 (amended): both Pollen datasets through the hub, the clip index, the age allow-list** (S, after RM-02, after
       v0.1). Objective: a catalog package (`platforms: [bot]`, category
       Robot body, `requires: ["moves_recorded"]`) that fetches Pollen's
       emotions library (Apache-2.0) and dances library (licence
@@ -637,6 +658,11 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       Simulator run 2026-10-05: `reachy-mini-daemon --sim --headless` (reachy-mini 1.11.0, MuJoCo 3.3.0) answered on port 8000, but this sandbox's daemon cannot start its media server (no GStreamer webrtc rust plugin), so `ReachyMini()` with the default media backend fails on port 8443 and `MAIPAI_BODY_LIVE=1 pytest tests/test_moves_live.py` errors in fixture setup, not in a test. The same two tests, `test_moves_live.py::test_do_the_happy_dance_plays_the_move_on_the_body` and `test_moves_teach.py::test_a_taught_move_replays_through_the_player_within_the_envelope`, were then run against the same simulator with `ReachyMini(media_backend="no_media")` injected into `ReachyMiniClient`, and both passed (the daemon accepted the whole stream; nothing was read back from the state feed, and the physical motion was not looked at). Not run: the `body_client[live]` fixture itself, because the sandbox cannot run the daemon's media server.
       React entry point 2026-10-05: `moves/react.py` is the hook for the plan's `react` slot, behind the `MAIPAI_BOT_REACT_MOVES` flag (off unless set to 1, true, yes or on). `ConversationLoop` takes an optional `react_hook` and calls it after the reply is spoken with the move name from `TurnEvent.react_move` and the plan cue's `react_allowed`; a failing hook is logged and never costs the turn. The turn stream carries no move name on the wire yet, so the real client never sets `react_move` and the hook is dormant until the hub sends one (a Home-side shape, not decided here). Tests: `body/tests/test_moves_react.py`.
       Outbound connection (org rules: Download, don't vendor; Privacy: no connection added without review). What: the emotions library's move files (JSON). From where: huggingface.co, a public dataset, no account or token. When: only when an admin runs `body/scripts/pin_moves_library.py` or installs the package; never at runtime without that. What is sent: an ordinary file request (URL and standard HTTP headers), no household data. Every file is pinned by full commit revision and sha256 checksum before use: `ensure_move` refuses an unpinned or checksum-mismatched file (tests in `body/tests/test_moves.py`).
+      Amendment from Reachy design v2:
+      (S; amends 2026-10-05).
+            Amends: the dances dataset JSON is included (its card is Apache-2.0; the GitHub code is never read); the pin script runs on the dev Mac and the pins and sha256 go into PKG-MOVES-01's package manifest (catalog), never into `robot-assets.json` (commons); the hub fetches and serves them through the one downloader only when the optional pack is installed (OWNER-ANSWERS 7); `metadata.jsonl` is the clip index; the pin script reports each clip's excursion against the profile and lists over-envelope clips as excluded (never clipped); the child and teen allow-list excludes `rage, furious, dying, contempt, disgusted, go_away, reprimand`; motion only (no Opus sidecars) in v1; the player streams through the limiter, never the daemon's dataset route.
+            Acceptance adds (fail-first): an over-envelope clip is excluded, not clipped; the allow-list test per band; `moves/` imports no network library (exists); the NOTICE carries Apache-2.0, attribution and the `reachy_mini_community_moves` tag; the base `robot-assets.json` has no moves entry and a robot with no pack installed has no clip library. Cloud: yes except the pin run.
+
 - [ ] **MOVES-02: teach it a move** (S, after MOVES-01). Objective: a
       catalog app: gravity compensation on, a person moves the head
       and antennas by hand, the body records the trajectory in the
@@ -668,6 +694,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       SDK names checked 2026-10-05: `enable_gravity_compensation` and `disable_gravity_compensation` exist in reachy-mini 1.11.0, at `reachy_mini/reachy_mini.py` lines 1088 and 1092 of the wheel, each sending `SetGravityCompensationCmd(enabled=True|False)` to the daemon. The names are confirmed; what the daemon does with the command under MuJoCo (whether the simulated head holds its pose, drifts or ignores it) stays UNVERIFIED, and so does the behavior on a physical unit.
       Outbound connection: none. Taught moves are written and read on this
       device only; the modules import no network library (a test asserts it).
+
 - [ ] **GUEST-01: a store app as a guest** (M, after v0.1; the design's
       section 11). Objective: a catalog package of kind `app` wrapping
       a Hugging Face Space at a pinned revision with its `data_sources`
@@ -678,7 +705,9 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       duration. Acceptance: one reviewed community app (no cloud model,
       no store token) runs and yields on the simulator. Exit: the
       catalog's CI and `bash scripts/check.sh`.
-- [ ] **M-R1: the Compute Module budget** (S, unit). The daemon alone;
+      Note: must be hub-fetched, no Hugging Face dependency.
+
+- [ ] **M-R1 (amended): the Compute Module budget with watching, wake, the keyword spotter and gestures** (S, unit). The daemon alone;
       with the `pod`-tier body; with `stt` and `tts` on the robot: RSS,
       CPU, temperature and throttle flags over an hour with a turn
       every two minutes. Decision rule in section 12: the `robot` tier
@@ -688,29 +717,38 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       (`body/scripts/measure_mr1_budget.py`, `dev/measure-runbook.md`); needs the unit.
       Measure camera frames at 640x360 and 10 fps and 5 fps: CM4 CPU
       percentage and memory with the wake model and keyword spotter running.
+      Amendment from Reachy design v2:
+      (S, unit). Configs: `daemon`, `pod`, `pod+watch` (YuNet 5 Hz, SFace), `pod+watch+gesture` (armed), each one hour with a turn every two minutes; the vision and gesture processes named to the sampler; the `robot` tier config is dropped (D20). Decision rule: no throttle, p95 wake-to-motion under 150 ms; a failing gesture row makes gestures game-only. Cloud: no.
+
 - [ ] **M-R2: cue to motion** (S, sim then unit). Cue to first
       state-feed delta p50 and p95 per primitive; the stall behaviour
       under a held head at each fraction; amplitude, peak velocity and
       settling time against the declared limits.
       Status 2026-10-05: sim rows recorded in `dev/measurements.md` (p50 and p95, stall
       reference); the unit run and the held-head rows need the unit.
-- [ ] **M-R3: wake and direction of arrival on this array** (S, unit).
+
+- [ ] **M-R3 (amended): wake, DoA, barge-in, the phrases, the mic after motion** (S, unit).
       False accepts per hour and recall at section 6's ear gates on the
       daemon's 16 kHz path; bearing error at eight angles; barge-in
       through the chip's echo cancellation at conversation level.
       Status 2026-10-05: script, bearing maths and the M-08 gates built and proven on
       scripted audio (`dev/measure-runbook.md`); needs the unit.
+      Amendment from Reachy design v2:
+      (S, unit). Adds: recall and false accepts per acceptance and decline phrase and per rung 1 command on real speech through the array; DoA at eight bearings including four behind the robot (the mirror rule); barge-in through the chip AEC at conversation and alarm volume decides `robot.barge_in.open_mic`'s availability; the STT-quality-after-motion row (upstream #1334, UNVERIFIED): a fixed sentence transcribed by the hub 0, 30 and 90 s after a 5 s clip and after 60 s of idle breathing, with and without the antennas frozen, decides the idle amplitude while listening and any post-motion listening delay. Cloud: no.
+
 - [ ] **M-R4: battery** (S, unit). Runtime idle, in conversation, and
       with tracking, by the clock to the LED's red; whether any
       readable fact exists; whether it runs while charging. The card
       says "battery level unknown" until this row exists.
       Status 2026-10-05: probe, crash-safe heartbeat log and report built and proven on
       fakes (`dev/measure-runbook.md`); needs the unit.
+
 - [ ] **M-R5: the link** (S, sim then unit). Wi-Fi loss mid-turn and
       mid-sentence: `cancel` raised, the pose settled, the one line on
       reconnect; reconnection p50 and p95.
       Status 2026-10-05: sim rows recorded in `dev/measurements.md`, with the loop fixed to
       cancel once and say the line once; the radio and the Compute Module need the unit.
+
 - [ ] **M-R6: the household runtime on the Compute Module** (M, unit,
       after v0.1, after RT-01). Bun, the pinned runtime, the embed model
       and MiniCPM5-1B at Q4_K_M beside the daemon and the `pod`-tier
@@ -719,6 +757,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       paired-unreachable mode for this body as its own design
       amendment; a fail is recorded and the product table's wording
       stands.
+
 - [x] **G12: packaging for the unit** (S, filed and landed 2026-09-27
       by a Fable-model audit, `docs/dev/reachy-mini-gap-audit-2026-09-27.md`).
       Objective: `body/pyproject.toml` pinned `reachy-mini[mujoco]`,
@@ -761,6 +800,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       `onnxruntime==1.30.0`; `uv sync --extra voice` on the dev Mac did
       resolve `onnxruntime==1.30.0`. Full aarch64 compile result remains
       unverified.
+
 - [x] **G1: audio capture and playback through the daemon's media path**
       (S-M, filed and landed 2026-09-28,
       `docs/dev/reachy-mini-gap-audit-2026-09-27.md`). Objective: the
@@ -846,6 +886,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       idempotency guard with sizing never completed, now `_recording` flips
       only after sizing succeeds. Both new tests, one proving the raise, one
       (already added) proving idempotency doesn't discard the pre-roll ring.
+
 - [x] **G2: wake word on the robot** (M, `docs/dev/reachy-mini-gap-audit-2026-09-27.md`,
       `docs/dev/wakeword-community-research-2026-09-28.md`). Objective:
       score G1's capture blocks against MaiPai's own trained "hey maipai"
@@ -966,6 +1007,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       - bash read the bare form as an array subscript and expanded to
       nothing, caught by `shellcheck`, not the review) was a second-order
       fix the review's own finding required to actually work.
+
 - [x] **G4: the hub client on the robot - discovery, pairing, the
       sealed token** (M, `docs/dev/reachy-mini-gap-audit-2026-09-27.md`).
       Objective: browse `_maipai._tcp`, request a pairing code as kind
@@ -1097,7 +1139,8 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       pass never happens" rule) - verified instead by the full gate
       staying green (196 tests) and reading the reverted diff
       carefully by hand.
-- [ ] **G4b: pre-rendered offline speech clips** (S, blocks family use
+
+- [ ] **G4b (amended): pairing clips inside the wheel, every other clip from the hub** (S, blocks family use
       and RM-05's unreachable-line acceptance - `design-resolver`'s own
       G4 verdict, 2026-09-28). Objective: the phrases the robot must be
       able to speak with no hub reachable to synthesize them - the 32
@@ -1139,6 +1182,11 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       step (owner-side): run `scripts/render_offline_clips.py render`
       against the hub, listen to every variant, verify, then attach the
       generated zip as the release asset. Rendering is not part of G4c.
+      Amendment from Reachy design v2:
+      (S; amends G4b 2026-10-05).
+            Amends: the pairing-code characters and prompt are rendered once from the MaiPai voice at release time and shipped inside the wheel under `maipai_body/clips/` (our own audio, licence recorded in `dev.md`); the unreachable, reconnect, freefall, carry, rung 1, offer and alarm clips come from the hub's bundle (ROBOT-CLIPS-01) through the asset channel; `BUNDLE_ASSET` and the GitHub release path are removed.
+            Acceptance (fail-first): a fresh robot with no hub speaks its pairing code from the wheel's clips; a robot with no bundle shows text and plays nothing for the other ids; a bundle whose manifest sha mismatches is refused. Cloud: yes.
+
 - [x] **G3+G6: the streaming turn round trip** (M, revised design -
       `docs/dev/robot-streaming-turn-2026-09-28.md`, superseding the
       original gap-audit's own batch-WAV G3/G6). Objective: after G2's
@@ -1206,6 +1254,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       including one that reverts the `_give_up` fix and confirms it
       genuinely fails without it, matching the session's own standing
       rigor for a review-caught fix.
+
 - [x] **G7: the reply on the robot's speaker - streamed TTS playback**
       (S-M, `docs/dev/reachy-mini-gap-audit-2026-09-27.md`). Objective:
       stream the hub's own `POST /api/tts` WAV reply into G1's
@@ -1276,6 +1325,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       test, driven through a real stand-in server, passed regardless of
       whether the fix was present - a false-confidence test caught and
       replaced before landing, not shipped).
+
 - [x] **G8: barge-in and the honest software mute**
       (S-M, `docs/dev/reachy-mini-gap-audit-2026-09-27.md`). Objective:
       a "stop" heard during playback cuts it locally, cancels the turn
@@ -1308,6 +1358,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       (`test_set_muted_is_edge_triggered_and_updates_state`,
       `test_poll_wake_drains_capture_but_never_scores_while_muted` in
       `body/tests/test_run_loop.py`); only the caller is missing.
+
 - [x] **G9: the run loop - one state machine driving audio, cues,
       tracking and the head** (M, `docs/dev/
       reachy-mini-gap-audit-2026-09-27.md`). Objective: replace
@@ -1399,6 +1450,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       real transition times are recorded in `RunLoopState.trace`
       regardless, so a test can measure the gap, but nothing currently
       holds a fast state open to close it.
+
 - [x] **G11 (floor only): presence and tracking wired into the run
       loop** (bot, `docs/dev/reachy-mini-gap-audit-2026-09-27.md`).
       Objective (the audit's own floor, not the full item): "nothing
@@ -1418,6 +1470,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       tracking against the real simulator with a face injected into
       the scene (the audit's own acceptance for this floor) is
       deferred with G9's own live-verification gap above.
+
 - [x] **G11-VISION: design note for the still-image call** (S, design
       only - `docs/dev/design-vision-still-image-2026-09-28.md`).
       Objective: the gap audit's own instruction ("record the
@@ -1462,6 +1515,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       `test_camera_frame.py`, 3 in `test_vision_capture.py`).
       **Not built:** any turn-loop wiring, hub route, or consent-flow
       code - all wait on the `vision` role existing on the hub side.
+
 - [ ] **FACE-01: face identity on the robot** (M, after the spec's
       print record; models resolved 2026-09-28, the design pass this
       entry used to ask for is done). The chain of record:
@@ -1722,6 +1776,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       the live session cookie and pairing URL at each turn boundary and
       reconstructs its three hub clients only when that pair changes.
       Exit: `bash scripts/check.sh`.
+
 - [x] **FACE-05: stop_event isn't polled during the first-boot model
       download** (S, filed 2026-09-28 from a code review of FACE-01's
       construction pass). Objective: `app.py`'s `run_paired_body` stops
@@ -1749,10 +1804,11 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       `stop_event`, honoring a stop during downloads within one poll
       interval.**
 
-- [ ] **BODY-DAEMON-UPDATE-01: the body software version moves only with a Bot release (amends the Reachy design section 10 and RM-08)** (S, docs, filed 2026-10-01 from home's ROBOT-UPDATES-01 decision; needs Jesse's agreement before the design text changes). Objective: replace the independent "daemon PyPI update as a row, applied only on a click" in `docs/dev/design-reachy-mini-2026-09-27.md` section 10 and in RM-08 above with: the body daemon's version is pinned by Bot's release and moves with it, shown on the card and Updates row as detail ("Body software"), never as its own update. Why: `body/pyproject.toml` hard-pins `reachy-mini==1.11.0` and `scripts/install-reachy.sh` overrides `onnxruntime` because the vendor's own pin silently breaks the wake word, so a daemon upgraded alone from PyPI would break the Bot wheel (UPDATES.md: a sidecar never updates alone). Pointers: those two places, home's ROBOT-UPDATES-01 (landed, home `docs/dev.md`). Acceptance: both texts say it; RM-08's acceptance line about "the daemon version appears ... in the update row" becomes "the MaiPai version and the body software version appear on the card and the Updates row". Out of scope: any code. Exit: `bash scripts/check.sh --docs` in bot.
+- [ ] **BODY-DAEMON-UPDATE-01: accepted** (S, docs, filed 2026-10-01 from home's ROBOT-UPDATES-01 decision; needs Jesse's agreement before the design text changes). Objective: replace the independent "daemon PyPI update as a row, applied only on a click" in `docs/dev/design-reachy-mini-2026-09-27.md` section 10 and in RM-08 above with: the body daemon's version is pinned by Bot's release and moves with it, shown on the card and Updates row as detail ("Body software"), never as its own update. Why: `body/pyproject.toml` hard-pins `reachy-mini==1.11.0` and `scripts/install-reachy.sh` overrides `onnxruntime` because the vendor's own pin silently breaks the wake word, so a daemon upgraded alone from PyPI would break the Bot wheel (UPDATES.md: a sidecar never updates alone). Pointers: those two places, home's ROBOT-UPDATES-01 (landed, home `docs/dev.md`). Acceptance: both texts say it; RM-08's acceptance line about "the daemon version appears ... in the update row" becomes "the MaiPai version and the body software version appear on the card and the Updates row". Out of scope: any code. Exit: `bash scripts/check.sh --docs` in bot.
+      Amendment from Reachy design v2:
+      (S, docs). The design text changes as the item says; the owner's agreement is recorded as decision D18 of Reachy design v2. Cloud: yes.
 
-- [ ] **ROBOT-TAILSCALE-01: the hub half of the Reachy joining the
-      tailnet and reaching the hub away from home** (M, hub half, filed
+- [ ] **ROBOT-TAILSCALE-01 (bot half, amended): detect a hand-joined tailnet, walk the book** (M, hub half, filed
       in `home`; the bot half may be S; needs a CREDENTIALS.md review
       before dispatch, since the auto-provision path is a new credential
       class). Objective: a Reachy Mini off the home LAN reconnects to its
@@ -1796,6 +1852,9 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       harness measures the latency; no new address detection, no new
       secret store. Exit: `bash scripts/check.sh` in bot, the hub's own
       gate in `home`, and the recorded latency row.
+      Amendment from Reachy design v2:
+      (S; after ROBOT-ENDPOINTS-01). The auto-provisioning half is dropped (OWNER-ANSWERS 1). The bot half: `address_walk`'s tailnet provider reads the hub's filtered book; a `tailscaled` identity already present is detected and reported; the firewall's tailnet ruleset is installed only when `robot.offlan.tailnet` is on (ROBOT-DAEMON-CONF-01's second ruleset). Acceptance (fail-first): with the key off the walk never tries an overlay address even when the book contains one (the hub filters, the robot also refuses). Cloud: yes.
+
 - [ ] **LINK-STATE-00: `reconnecting` and `sleeping` activity values**
       (S, spec first, filed in `commons`; prerequisite of LINK-STATE-01).
       Objective: `robot.state.activity` gains the values `reconnecting`
@@ -1806,6 +1865,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       item does not edit it). Acceptance: the schema, its fixtures and
       the tag carry both values, `home`'s card renders them, and `bot`
       pins the tag. Exit: the `commons` gate and the tag.
+
 - [ ] **LINK-STATE-01: the offline ladder's first rungs as one state
       machine** (S, Reachy Mini only, after LINK-STATE-00; the spoken
       parts also wait on G4b's clips or a local TTS). Objective: one
@@ -1951,6 +2011,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       with `lsusb` on the unit at arrival; this is an arrival-day probe,
       not vendor source. It installs no vendor package and no firmware; not
       run on a unit (no unit, and the sandbox cannot run the daemon).
+
 - [ ] **MOVE-CARRY-01: Reachy knows when it is lifted, carried and put down** (M as three S slices, Reachy Mini only, after S-FAKES-01; 01c's eyes row after EYES-02; the hub report is MOVE-CARRY-02).
       Governs: body/maipai_body/presence/motion_state.py, body/maipai_body/presence/safety.py (read only), body/maipai_body/expression/suppression.py, body/maipai_body/run_loop.py, body/maipai_body/bodies/reachy_mini/profile, body/tests/test_motion_state*.py, docs/dev/design-reachy-mini-2026-09-27.md sections 5 to 7.
       Amends: design-reachy-mini-2026-09-27.md section 6 ("The IMU is read for the tip and freefall observations the safety section uses" becomes tip, freefall and the held states); section 7 gains a "Lifted and carried" bullet (no motion commanded while held, head holds, floor unchanged); section 5's table gains a `held` state row.
@@ -2069,6 +2130,187 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       (then `night_from` and `night_to` are dropped). Live lines: not run,
       sandbox cannot run the daemon and no unit; rows in
       `docs/dev/measurements.md`.
+
+- [ ] **ROBOT-DAEMON-CONF-01: the daemon configured off, the robot hardened** (M, Reachy Mini only, 2026-10-05; Reachy design v2 D2, REVIEW section 6).
+      Governs: scripts/install-reachy.sh, scripts/robot-conf/ (new: the systemd drop-in, the daemon config fragment, the nftables ruleset, the timer masks), body/maipai_body/app.py (SETTINGS_APP_URL), body/tests/test_install_*.py, docs/user/reachy-mini-privacy.md, docs/dev/design-reachy-mini-2026-09-27.md section 8 and 10.
+      Amends: design section 8 (the outbound table gains the TURN credential thread and the 24 h dataset check, each with its off switch) and section 10 (no PyPI, no Space); RM-07's allowed list; RM-03 (the install gains the configuration step).
+      Supersedes: the privacy page's "how to stop it" rows that name `--no-media` (it also disables the local media path we need) and the PyPI update row.
+      Reuse check: reachy-mini 1.11.0's own flags (`--dataset-update-interval 0`, `--no-preload-datasets`, `--fastapi-host 127.0.0.1`), its config value `turn_enabled` (read by `media/media_server.py` through `get_turn_enabled()`; file location UNVERIFIED, found on arrival), `DELETE /api/hf-auth/token`, `HF_HUB_OFFLINE=1`; systemd drop-ins and nftables are the OS's own; no fork of the daemon.
+      Objective: the installer writes `/etc/systemd/system/reachy-mini-daemon.service.d/maipai.conf` (ExecStart with the flags above, `Environment=HF_HUB_OFFLINE=1`, `HTTP_PROXY` unset), the daemon config fragment with `turn_enabled: false`, masks `systemd-timesyncd`, `apt-daily.timer` and `apt-daily-upgrade.timer`, deletes any Hugging Face token, installs an nftables egress policy (output allowed only to the robot's own subnet, multicast mDNS, DHCP and DNS to the router; everything else dropped and logged; an opt-in second ruleset for a tailnet), binds our settings page to `127.0.0.1:8042`, restricts SSH input to the hub's address, and reads every setting back, failing on a mismatch; the BLE provisioning service stays for Wi-Fi setup with its PyPI call blocked by the firewall.
+      Acceptance (fail-first): a test on the dry-run plan that every step above appears exactly once and no step contains `pypi`, `huggingface` or `--no-media`; a test that the drop-in's ExecStart carries all four flags and the environment line; the stand-in daemon test that the token delete is called before the restart; the egress tool's allowed list shrinks to the hub, DHCP, DNS and mDNS (`measure/netcapture.py`) and the page regenerates with four rows; the unit rows (RM-07 capture, the read-backs) stay UNVERIFIED until arrival. Exit: `bash scripts/check.sh`. Cloud: yes (the plan and tests), the unit rows local.
+
+- [ ] **ROBOT-ASSETS-01 (bot half): the hub is the only asset source** (M, Reachy Mini only, 2026-10-05; after Home's hub half and SPEC-ROBOT-01).
+      Governs: body/maipai_body/model_assets.py, speech/models.py, vision/models.py, vision/detect.py, moves/library.py, speech/offline_clips.py, link/assets.py (new), body/tests/test_assets_*.py.
+      Amends: G2, FACE-01, MOVES-01, G4b (each loses its direct URL); design section 10.
+      Supersedes: `speech/models.py`'s GitHub release URLs, `vision/models.py`'s OpenCV Zoo URL, `moves/library.py`'s `move_url`, G4b's `BUNDLE_ASSET` release URL.
+      Reuse check: `model_assets.ensure_asset` keeps its download-verify-rename shape with one source (the hub's `/api/devices/me/assets/{id}`) and the pin list read from the spec; the vendored `FaceDetector` is left as is and finds YuNet in a pre-filled `huggingface_hub` cache under `HF_HUB_OFFLINE=1` (cache-first, verified by reading `hf_hub_download`'s behaviour); no second downloader.
+      Objective: `AssetSync` on the channel's `asset_changed` and at boot pulls the manifest and any missing or changed file (sha256 verified), places YuNet in the HF cache layout the SDK reads, places the clip bundle and, only when the optional moves pack is installed, its moves (never from the base pin list); `ensure_*` functions take the hub source only; a grep test fails on any `http://` or `https://` literal in `maipai_body/` outside `link/` and the dashboard's loopback bind.
+      Acceptance (fail-first): with networking monkeypatched to refuse every host but the stand-in hub, a fresh cache builds the conversation loop (wake front end, phrase, SFace, YuNet) from the hub alone; a manifest entry whose bytes fail the sha256 is refused and reported, never used; `FiveLandmarkDetector()` constructs with `HF_HUB_OFFLINE=1` and the pre-filled cache and raises a clear error without it; the grep test. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **ROBOT-WHEELHOUSE-01: the release carries a wheelhouse; the install never reaches PyPI** (S, 2026-10-05).
+      Governs: scripts/build-wheelhouse.sh (new), scripts/prepare-bot-release.sh, scripts/install-reachy.sh, body/tests/test_release_*.py.
+      Amends: G12 (the aarch64 proof becomes the wheelhouse build), RM-08's bot half.
+      Reuse check: `pip download --platform manylinux2014_aarch64 --python-version 3.12 --only-binary=:all:` on the dev Mac; `pip install --no-index --find-links`; no custom resolver.
+      Objective: `build-wheelhouse.sh` resolves `maipai_bot[voice,kws]` plus `onnxruntime==1.30.0` for `manylinux2014_aarch64` `cp312` into `maipai_bot-<v>-wheelhouse-aarch64-cp312.tar` with a sha256 sidecar staged beside the wheel; the installer's real and dry-run paths use `--no-index --find-links`; the install fails if any dependency is missing from the tar.
+      Acceptance (fail-first): a test that the dry-run plan contains no `pypi`, `--index-url` or a bare `pip install <name>`; a test that the wheelhouse lists `onnxruntime-1.30.0` and `sherpa_onnx` aarch64 wheels; the real `pip install` on the CM4 stays an arrival-day row. Exit: `bash scripts/check.sh`. Cloud: no (needs pip with network on the dev Mac).
+
+- [ ] **ROBOT-TIME-01: the robot's clock comes from the hub** (S, 2026-10-05).
+      Governs: body/maipai_body/link/client.py, link/timesync.py (new), body/tests/test_timesync.py.
+      Amends: `dev.md` section 7's "the hub is the time authority on the link" gains its mechanism; ROBOT-DAEMON-CONF-01 masks timesyncd.
+      Reuse check: the redeem response's `Date` header and the channel's `time` command; `date -s` through the SDK's own privileged helper or a sudoers line written by the installer (UNVERIFIED which exists; arrival-day row); no NTP client.
+      Objective: at every redeem and every `time` command the robot compares its clock to the hub's; drift over 1 s is corrected; the state frame reports `clock_synced`; HLC stamping waits for the first sync after boot.
+      Acceptance (fail-first): a scripted redeem with a `Date` 90 s ahead corrects the injected clock once; a drift under 1 s changes nothing; with no contact since boot the frame reports `clock_synced: false`. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **CHANNEL-CLIENT-01: the robot listens on the hub's command channel** (M, 2026-10-05; after Home ROBOT-CHANNEL-01 and SPEC-ROBOT-01).
+      Governs: body/maipai_body/link/channel.py (new), link/commands.py (the dispatcher), run_loop.py (one hook: `apply_command`), measure/stand_in_hub.py (the channel route), body/tests/test_channel_*.py.
+      Amends: G10-BODY (the channel is the second direction); LINK-STATE-01 (a channel drop counts as `link_lost`).
+      Reuse check: `websockets` is already a dependency; `LinkLifecycle`'s cookie reader; the stand-in hub.
+      Objective: one WebSocket per paired body, opened after redeem, reopened by the supervisor with `Last-Event-Id`, acks per command, a dispatcher keyed on `kind` (`mute`, `unmute`, `time`, `settings_changed`, `asset_changed` first; later items register `alarm`, `notify`, `notify_gesture`, `offer`, `capture_request`, `play_move`, `live_view_*`); unknown kinds are acked and ignored (additive rule).
+      Acceptance (fail-first): a command delivered twice with the same id runs once; a drop and reconnect replays the missed command; `mute` flips `set_muted` edge-triggered and the state frame reports it within one heartbeat; an unknown kind never raises. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **MUTE-LOCAL-01: an on-robot unmute, so a hub mute can never strand the robot** (S, 2026-10-05; closes the reason ROBOT-MUTE-01 was parked).
+      Governs: body/maipai_body/link/commands.py (rung 1 list), speech/kws.py keyword file, run_loop.py (mute edges), body/tests/test_mute_local.py.
+      Amends: G8 (the software mute gains a local unmute path); the rung 1 command list gains "listen again" (unmute) and "stop listening" (mute).
+      Reuse check: the keyword spotter and the muted pose exist; the Eyes muted look (EYES-02).
+      Objective: while muted the wake scorer is off but the keyword spotter stays on for exactly the unmute phrase; "stop listening" mutes locally and reports; both are reflected on the card through the state frame; nothing streams while muted (the existing zero-upload test stays).
+      Acceptance (fail-first): a muted fixture with the unmute phrase unmutes and renders `settle`; a muted fixture with a question yields zero STT uploads; the words "physical mute" appear nowhere in `body/`. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **S-EXPR-01R: the blending limiter, the motion worker, the entry blend and the energy-modulated speak** (M, Reachy Mini first, 2026-10-05; Reachy design v2 section 4.1; architect's answer to Q1 of the buildout plan: priority with an amplitude budget per axis).
+      Governs: body/maipai_body/expression/{engine,envelope,primitives,blend,worker}.py, expression/reachy_mini_renderer.py, presence/arbitration.py (read only), body/tests/test_expression_*.py, docs/dev.md section 5 (numbers), docs/dev/measurements.md (one sim row).
+      Amends: EXPR-01 (closes "no blending limiter exists"); `dev.md` section 5's "never summed then clipped" gains the rule and numbers; RM-02's `speak` row becomes energy-modulated; G7 (sway from the ledger).
+      Supersedes: the render lock as the collision mechanism (the worker's queue replaces it; `stop` stays a flag the worker reads every tick).
+      Reuse check: no vendor limiter (1.11.0 gives `goto_target` and `set_target` only); the apps sum then clamp, which section 5 forbids; reuse the arbitration table, the `stop` bypass, `hold()`'s `StopMoveCmd`, S-FAKES-01.
+      Objective: one 50 Hz worker thread is the only `set_target` writer; layers (safety, service, gaze, expression, idle) write per-axis targets; per axis the highest active layer keeps its share (gaze 0.7 of yaw and pitch, expression 1.0 of antennas and roll while gaze is active, idle the remainder), targets are scaled before the sum, then a rate limiter (yaw 1.0, pitch 0.7, roll 0.2, body 0.5, antennas 2.0 rad/s; acceleration 4 and 8 rad/s2; dt capped 70 ms), then the profile clamp; a dt-aware low-pass (tau 65 ms, 120 ms on relaxation); discrete moves get a distance-scaled entry blend (head 0.015 s per magic-mm, antennas 0.005 s per degree, body 0.015 s per degree, slowest wins, clamp 0.2 to 1.5 s, skip under 0.15 s); `speak` sway amplitude follows the playback ledger's RMS with a 0.2 s lag and a hysteretic gate (-35 and -45 dBFS); the rest pose is identity head, antennas at the anti-resonance offset, body 0; a dropped cue is counted and logged; `set_target` errors log once per second with a suppressed count.
+      Acceptance (fail-first): two simultaneous layers never exceed a profile limit or a rate cap on any axis; a tilt during gaze keeps gaze within its share and never snaps at the mode switch; `stop` reaches the daemon within one tick while a 2 s goto is in flight (`_SlowGotoClient`); a dropped cue appears in the counter; the sway is zero during silence in the ledger; a sim row of tilt during track recorded. Constants UNMEASURED with M-R2 rows. Exit: `bash scripts/check.sh`. Cloud: yes (sim row local).
+
+- [ ] **S-EXPR-04: gaze, idle, body follow, DoA disambiguation, the new primitives** (M, after S-EXPR-01R and S-FAKES-01; Reachy design v2 sections 4.2 to 4.5).
+      Governs: body/maipai_body/expression/{gaze,idle}.py, expression/primitives.py (`thinking`, `offer`, `shake`), presence/*, run_loop.py (`_presence_loop` region only), body/tests/test_gaze*.py, test_idle*.py, test_doa*.py.
+      Amends: EXPR-04's objective gains the numbers; RM-02's residual (body follows head) is folded in; design section 5's table gains `thinking`, `offer`, `shake` and the `sleep` and `held` states.
+      Reuse check: our own YuNet target (FACE-WATCH-01) and the DoA fake are the inputs; the daemon's `start_head_tracking` is not used (one writer, D10); FAKES-02's mirrored DoA readings.
+      Objective: the gaze law of section 4.4 (deadband subtracted, send epsilon, head leads 0.22 rad then body at min(0.5 rad/s, delta x 2.5), total under 175 degrees, settle 260 ms after a body move, target continuity, the loss ladder: coast 0.6 s, drop 0.8 s, home 3 s, look-around 6 s, never tilt down past 5 degrees); the idle policy of section 4.3 with `robot.idle.level`; the DoA rule of section 4.5 (a 20 degree probe turn when the bearing is within 25 degrees of plus or minus 90 and no face confirms it); the `thinking`, `offer` and `shake` primitives; the `sleep` state distinct from `muted`.
+      Acceptance (fail-first): deterministic trajectory tests per rule; the idle loop never emits a clip, a line or an offer; a stale detection older than 250 ms never moves a motor; a mirrored DoA fixture ends with the body facing the true source inside the 160 degree limit; `sleep` and `muted` differ on the antenna axis by at least 0.3 rad in the fake's trace. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **SETTLE-GATE: enforce the 0.5 s settle gate on the one funnel** (S, run-loop lane; EYES-02's precondition; BODY-05 ticked by this).
+      Governs: body/maipai_body/run_loop.py, body/tests/test_run_loop_settle.py.
+      Objective: `SETTLE_GATE_S` holds a funnel state open for 0.5 s before it is published to the Eyes, the card frame and `snapshot()`; `stop` and the alarm bypass the gate.
+      Acceptance (fail-first): the legacy 45 ms flash trace replays with no published state shorter than 0.5 s; a `stop` publishes at once. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **FACE-WATCH-01: always-on recognition under watch levels** (M, Reachy Mini only, 2026-10-05; OWNER-ANSWERS 4: enrolled only, a child needs a parent's enrolment, a teen must agree, visitors never recognised; Reachy design v2 section 5.1; after S-FAKES-01, SPEC-ROBOT-01 and Home FACE-CONSENT-02, which must land first because today's enrolment lets an admin enroll a teen or a guest without consent). The level key is `robot.camera.watch_level`, declared by SETTINGS-ROBOT-01.
+      Governs: body/maipai_body/vision/{watch,detect,recognize}.py, run_loop.py (the vision thread hook), link/state.py (`watch_level`), body/tests/test_watch_*.py, docs/dev/design-reachy-mini-2026-09-27.md section 4 and 6, docs/dev/measure-runbook.md (M-R1 rows).
+      Amends: FACE-01 ("opportunistic, capped, never continuous" becomes continuous low-rate under a watch level); design section 4's amendment paragraph and section 6; the privacy page ("camera off" becomes watch level `off`, software, not a shutter).
+      Supersedes: FACE-01's trigger from `get_face_target()` (the daemon's tracker is no longer the detector; our YuNet at 5 Hz is).
+      Reuse check: the landed pipeline (`detect`, `align`, `embed`, `gallery`) is reused unchanged; the vendored YuNet; the state frame.
+      Objective: a vision thread reads the local frame at the lowest size the SDK serves (UNVERIFIED), resizes to 320x240, runs YuNet at 5 Hz, tracks faces with the continuity rule, embeds a new track at once and each tracked face every 2 s, matches with the model-id guard, and publishes `present` and the face verdict; the watch level is the stricter of `robot.camera.watch_level` and each person's `person.vision.watch` (an unenrolled or guest face is presence only, always); at `off` the frame stream is not opened; frames never persist past one cycle; the thermal rule drops the rate to 2 Hz at 70 C.
+      Acceptance (fail-first): at `presence` no embedding runs (the embedder is a counting fake); at `off` the camera seam is never read; a guest face never produces a person id even with a near-threshold match (the print is absent); a child's print produces an id only when `person.vision.watch` is `identify`; a teen's print produces an id only when the teen's own `person.vision.watch` is `identify`; a guest or unenrolled track's transient embedding is discarded inside the cycle, never persisted and never compared across appearances (nothing is inferred from repeated appearances); revocation removes matching within one sync; the M-R1 row for CPU at 5 Hz beside wake, KWS and the daemon stays UNVERIFIED. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **AUDIO-TUNE-01: tune the XVF3800 and set the mic volume at every connect** (S, Reachy Mini only, after G1; from SYNTHESIS item 1).
+      Governs: body/maipai_body/bodies/reachy_mini/audio_config.py (new), client.py, body/tests/test_audio_config.py, docs/dev/measure-runbook.md (M-R3 row).
+      Amends: G1 (a start step); M-R3 (records chip defaults and the tuned set).
+      Reuse check: `POST /api/audio/config/apply` and `GET /api/audio/config/parameter/{name}` exist in 1.11.0; the parameter set is Pollen's own published starting point.
+      Objective: at connect, read and log the chip defaults, apply `PP_AGCMAXGAIN=10, PP_MIN_NS=0.8, PP_MIN_NN=0.8, PP_GAMMA_E=0.5, PP_GAMMA_ETAIL=0.5, PP_NLATTENONOFF=0, PP_MGSCALE=(4,1,1)` with verify and a 0.1 s settle, set the microphone volume to 100 and the ALSA `PCM` and `PCM,1` controls to 100 percent (upstream #576), set `robot.volume` only between turns (upstream #1319: a volume set mid-stream silences playback until restart); a self-heal when the capture peak is 0 for 5 s (the XMOS `REBOOT`, wait 4 s, re-apply) and a "no audio device" health state when the device is absent (#770, #1322); a failure logs and never blocks; the set is a profile value.
+      Acceptance (fail-first): on a fake daemon the set is applied and verified; a verify mismatch is logged and the body continues; the endpoint absent in the sim is handled; the mic volume is set on every reconnect; a volume change requested mid-playback is applied at the next idle, never during the stream; five seconds of zero samples trigger exactly one reboot and re-apply. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **BARGE-02: the local stop word, the flush, the reply tail and the generation tags** (S, after G8, S-KWS-RUNG1 landed, Home STT-TURN-02; merges SYNTHESIS's BARGEIN-FLUSH-01).
+      Governs: body/maipai_body/speech/{playback,tts_playback,kws}.py, run_loop.py (speech section), body/tests/test_bargein*.py.
+      Amends: G8 (barge-in cancels, flushes the daemon's queued audio through `/api/media/clear_incoming_audio` or the SDK's `clear_player()`, drains ours in place, resets the sway, freezes the antennas); G7 (listening resumes 450 ms after the last played sample).
+      Reuse check: the keyword spotter's closed list already contains `stop`; `clear_incoming_audio` exists in 1.11.0 and nothing calls it; the hub's generation on every chunk (STT-TURN-02).
+      Objective: during playback the keyword spotter runs with `stop` only (the wake word stays live); a spotted stop or a wake does all four actions; chunks carrying a stale generation are dropped before the push; the stream reopens only after the tail; the open-mic bleed gate (mic RMS above 1.6 x 0.4 x TTS energy + 0.01, 250 ms grace) exists behind `robot.barge_in.open_mic` (declared by SETTINGS-ROBOT-01), default off; full talk-over stays a switch until the arrival-day test (OWNER-ANSWERS 6).
+      Acceptance (fail-first): no queued sample plays after a stop; a stale-generation chunk never reaches the fake's playback; the stream does not reopen inside the tail; the robot's own last syllable on a loop-back fixture never re-wakes it. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **FOLLOWUP-01: the follow-up window without the wake word** (S, after BARGE-02, SETTINGS-ROBOT-01; OWNER-ANSWERS 2).
+      Governs: run_loop.py (speech section), body/tests/test_followup.py.
+      Objective: after the tail, the default window is 8 s (`robot.follow_up.seconds`, declared by SETTINGS-ROBOT-01) for adults and teens; for a child it is off unless a parent turns on `person.robot.follow_up`; with the key on for the speaker and the seconds above 0, the stream reopens for that many seconds with the Eyes green; the hub's `no_speech` or silence closes it; a second reply re-arms it; `present` with an unknown speaker uses the child default.
+      Acceptance (fail-first): with the window at 0 nothing reopens; a child-band speaker never gets the window without the parent switch, and gets it with the switch on; an unknown speaker keeps the child default; an adult and a teen get 8 s by default; the Eyes are green for the whole window and the state frame says `listening`. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **OFFER-01: the offer on the robot** (M, after S-EXPR-04, S-KWS-RUNG1 landed, CHANNEL-CLIENT-01, Home INITIATIVE-01; Reachy design v2 section 6.2).
+      Governs: body/maipai_body/initiative/offer.py (new), link/commands.py (the `offer` kind), speech/kws.py (the acceptance and decline sets), run_loop.py (one hook), body/tests/test_offer*.py.
+      Amends: NOTIFICATIONS.md's "the robot speaks once at a natural moment" is the offer (org doc edit filed separately).
+      Reuse check: the keyword spotter, the `offer` primitive, the Eyes offer look, `ask_answer` on the turn (exists on the hub).
+      Objective: an `offer` command passes the local gates (not mid-turn, not muted, not held, not sleeping, not in a guest app, the person present and attentive by face and DoA), renders `offer`, opens a 10 s spotter window with the accept set (`go ahead`, `yes please`, and the variant `okay go ahead`; OWNER-ANSWERS 3, no brand name) and the decline set (`not now`, `no thanks`), accepted by spoken words only (a gesture or a touch never accepts an offer), re-offers once at 5 s, then expires; acceptance opens a turn with `ask_answer {offer_id, approved: true}` and the stream; decline sends the answer and settles; nothing streams before acceptance.
+      Acceptance (fail-first): an offer while speaking is deferred and never rendered mid-turn; a near-miss fixture never accepts; the accept fixture opens exactly one turn carrying the offer id; a child person's offer command is refused locally too (belt and braces); a wave, a thumbs up and an antenna touch during the window never accept it; the window closes at 10 s with the antennas settled. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **ALARM-PLAY-01: the safety alarm on the robot** (S, after CHANNEL-CLIENT-01, ROBOT-ASSETS-01, Home SAFETY-ALARM-01).
+      Governs: body/maipai_body/initiative/alarm.py (new), speech/offline_clips.py (the alarm clip ids), expression/suppression.py (the alarm rows), run_loop.py (one hook), body/tests/test_alarm*.py.
+      Reuse check: the clip player, the Eyes alarm look, the volume floor constant in `looks.py`'s sibling table.
+      Objective: an `alarm` command plays the chime and the area line (generic when missing) at the floor volume through quiet hours, mute and initiative-off, holds the alarm pose (head up, antennas high, still), shows the amber pulse, repeats every `repeat_seconds` while the hub's state is active, speaks the child line when any presence entry is a child or unknown, sends a spotted "stop" or "I know" as an acknowledgement action with the speaker's evidence, and obeys the next state; never synthesises, never runs a turn.
+      Acceptance (fail-first): a muted, quiet-hours fixture still plays the chime at the floor; a child-present fixture plays the child line; a spotted "stop" sends one acknowledgement and does not stop repeats until the hub's state changes; no LLM or TTS client is imported by the module (an import test). Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **CAPTURE-01: one frame to the hub on request** (S, after CHANNEL-CLIENT-01, Home CAPTURE-REQ-01).
+      Governs: body/maipai_body/vision/capture.py, link/commands.py (`capture_request`), run_loop.py (the THINKING-state hook), body/tests/test_capture*.py.
+      Reuse check: `capture_frame_data_uri()` exists; the Eyes capture look; `POST /api/turn/{id}/frame` (hub).
+      Objective: a `capture_request` for the current turn renders the signal cue if not yet rendered, switches the Eyes to cyan before the frame is read, reads one 640x480 JPEG, posts it, returns the Eyes; refused with a spoken line at watch level `off`; a dominant-colour question is answered locally in numpy when the plan says `colour_only`.
+      Acceptance (fail-first): the Eyes look changes before `get_frame` is called (ordering test on the fake); a request for a finished turn is ignored; at `off` no frame is read. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **LIVE-VIEW-01 (bot half): the JPEG stream to the hub** (S, after CHANNEL-CLIENT-01, Home LIVE-VIEW-01).
+      Objective: `live_view_start` opens the stream WebSocket and pushes 640x360 JPEG at 5 fps with the Eyes cyan until `live_view_stop`, a 10 min cap or a channel drop; never while held or during an alarm.
+      Acceptance (fail-first): the Eyes are cyan for every frame; a drop stops the stream within one heartbeat; a held robot refuses the start. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **GESTURE-01: wave, open palm, thumbs up, fist, victory, point** (M, after FACE-WATCH-01, S-FAKES-02; Reachy design v2 section 5.3; architect ruling on the vocabulary).
+      Governs: body/maipai_body/vision/gestures.py (new), vision/models.py (the hand model pin from the spec), run_loop.py (one hook), body/tests/test_gesture*.py, docs/dev/measure-runbook.md (M-R1 row).
+      Amends: design section 4's "gesture recognition on this body is not analyzed here"; `hand_pose` becomes the observation.
+      Reuse check: a hand-landmark model (MediaPipe hand landmarker, Apache-2.0) pinned in `robot-assets.json` and served by the hub; the classifier on top is ours, deterministic, observations only; never in a safety, consent or privacy path; a gesture never accepts an offer (OWNER-ANSWERS 3 names spoken words only, and acceptance releases prepared, possibly personal content, which is the privacy path); gestures stay observations for games and packages, and re-adding gesture acceptance needs Jesse.
+      Objective: armed only (a frontal face within about 1.5 m by face width, a game or offer window); 5 Hz on a 256 px crop; the vocabulary and debounce of section 5.3; no frame stored; the model never loads while unarmed.
+      Acceptance (fail-first): landmark-sequence fixtures yield each gesture and a near-miss set yields none; the model is never constructed when unarmed; a wave, point or any other gesture during an offer window never accepts it, with `robot.gestures.enabled` on or off (a test); the model never loads when `robot.gestures.enabled` is off or when unarmed; the M-R1 row UNVERIFIED. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **TOUCH-01: antenna touch as acknowledge or wake** (S on fakes; unit proof before any wider use; after S-EXPR-01R).
+      Governs: body/maipai_body/presence/touch.py, body/tests/test_touch*.py, docs/dev/measure-runbook.md (experiments T0 to T4).
+      Reuse check: the state feed's present antenna angles against the worker's commanded ones; the suppression table.
+      Objective: a deviation above 0.4 rad held for 3 samples, re-armed below 0.1 rad, refractory 0.25 s, suppressed while any layer drives the antennas and for 260 ms after; meaning acknowledge or wake only; a touch never accepts an offer (OWNER-ANSWERS 3: spoken words only).
+      Acceptance (fail-first): a scripted push yields one event; breathing and a clip yield none; the double crossing merges; a touch during an offer window does not accept the offer. Thresholds UNMEASURED. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **KNOCK-01: a knock wakes the robot from sleep** (S on fakes; unit proof; after MOVE-CARRY-01a).
+      Objective: an IMU accelerometer transient above a threshold with 200 ms minimum spacing, gated while the robot moves and never while `lifted` or `carried`; a double knock within 1 s wakes from sleep and asks the status line; the mic onset detector (2 kHz high-pass, spectral flux) is the second candidate if the IMU is too coarse.
+      Acceptance (fail-first): a scripted carry never reads as a knock; a double knock wakes exactly once. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **MOTOR-RECOVER-01: the awake gate, the latched servo, the silent write failure and the safe exit** (M, after S-EXPR-01R; from SYNTHESIS item 11 and upstream #589, #1402, mc#47, #1306, #1417, #1430).
+      Governs: body/maipai_body/bodies/reachy_mini/{client,motors}.py, presence/motor_health.py (new), run_loop.py (one hook), scripts/robot-conf/ (the sudoers line for the daemon restart), body/tests/test_motor_*.py, docs/dev/measure-runbook.md.
+      Reuse check: the controller's raw read (`async_read_raw_bytes`, `/ws/raw/write`) for the XL330 error register (address 70) and input voltage (144); the daemon's `/api/motors/status`; no vendor watchdog exists.
+      Objective: no target is sent during `wake_up` or `goto_sleep`, for 2.2 s after a wake, and never as a stream straight from the sleep pose (a `goto` to neutral first); `motor_control_mode == enabled` is asserted and read back before any motion; a position-change watchdog (present pose not following the commanded pose for 2 s with no fault reported) first cycles `disabled` then `enabled`, then reads the error register per servo and, on a latched input-voltage error, offers a per-motor `reboot()` through the hub's card (never silently while a person may be touching the head), then a daemon restart through the installer's sudoers line, and raises a Repair naming which step helped; the state frame carries `motors_latched` and `motors_stuck`; on exit the body enables the motors and goes to the rest pose over the distance-scaled duration; a plain stop never sleeps the robot; no motion is commanded while the servo bus voltage reads above 7.0 V (charging) until M-R4 clears it.
+      Acceptance (fail-first): a fake that ignores `enabled` after a fault is recovered by the cycle; a fake with a latched 0x01 error is reported and `reboot()` is called only on the hub's command; targets during the wake move are dropped and counted; a stream request from the sleep pose becomes a `goto` first; a fake reading 7.2 V refuses motion with a logged reason. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **AUDIO-FW-01: the XVF3800 firmware 2.1.4, flashed by the hub on the owner's go** (S, Reachy Mini only; upstream #1242, #1146; not dispatchable until the firmware's licence is read and recorded, X4).
+      Objective: the hub holds Pollen's `reachymini_ua_io16_6ch_lin_v2.1.4.bin` and its `update.sh` as pinned assets (Apache-2.0 repo; the firmware's own licence recorded in NOTICE, UNVERIFIED); the installer reads the board's firmware version and flashes only when older, only on the charger, only after the owner's go in Home; the 6-channel raw mics are not consumed yet.
+      Acceptance (fail-first): the dry-run plan contains the flash step only when the stand-in reports an older version; a flash is never attempted on battery or unattended. Exit: `bash scripts/check.sh`. Cloud: yes (plan and tests).
+
+- [ ] **THERMAL-01: the warm Compute Module slows, says so, never crashes** (S).
+      Objective: the CM4 temperature and throttle flags (the sampler exists) drive the vision rate (2 Hz at 70 C), suspend gestures at 75 C, drop the idle level to `still` at 78 C, say one clip line once, and show the Eyes error look only at a real fault; the state frame carries `thermal`.
+      Acceptance (fail-first): a scripted temperature ramp changes the rates in that order and back with hysteresis of 3 C; the line plays once per episode. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **SLEEP-AUTO-01: dark and quiet means sleep, arrival wakes** (S, after S-EXPR-04).
+      Objective: a dark frame (mean luma under a threshold, no frame stored) and no DoA speech for 10 min enters `sleep`; a face, speech or a knock wakes; quiet hours enter sleep regardless; the wake word stays live.
+      Acceptance (fail-first): light alone or sound alone never sleeps; a face wakes within one presence tick. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **SOUND-EVENTS-01: on-robot sound tags as hints only** (M, filed, not scheduled; OWNER-ANSWERS 5: later, off by default, switch per robot; architect ruling first).
+      Objective: an audio tagger (YAMNet-class, Apache-2.0, pinned via the hub) at 1 Hz, off by default per robot, labels from a closed list sent as `sound_event` observations that can only create tier 2 offers; never a safety input, never a capture trigger, never recorded.
+      Acceptance (fail-first): the alarm module has no import path to this module; a `smoke_alarm` label creates at most an offer, never an `alarm`. Cloud: yes.
+
+- [ ] **REACT-MAP-01 (bot half): the emotion map drives the primitive and the react clip** (S, after EMO-MAP-01, Home ACT-03 amended).
+      Objective: `cue.py` maps the signal's label through the spec's map to the primitive on every reply; `moves/react.py` plays the plan's `react_move` when `react_allowed`, once per reply, never within 8 s of the last clip, never while held, muted, in an alarm, or on a refusal, consent ask or crisis line (the plan says which); the child allow-list is enforced on the robot too.
+      Acceptance (fail-first): a label outside the map renders `neutral`; two replies 3 s apart play one clip; a `sad` label never plays a clip; a child-band plan carrying an excluded clip is refused locally; with the optional moves pack absent every label renders its primitive and no clip. Exit: `bash scripts/check.sh`. Cloud: yes.
+
+- [ ] **ROBOT-DAEMON-CONF-01 (addendum)**: the drop-in keeps `Environment=MALLOC_ARENA_MAX=2` (the shipped unit's own line; upstream #1165); the installer pins the daemon at exactly `reachy-mini==1.11.0` and refuses a unit whose daemon reports another version until a Bot release moves the pin (D18); watch level `off` calls `POST /api/media/release` and a capture request calls `acquire` first (upstream #1277); a grep of the pinned wheel for `posthog` fails the install (upstream #1452). Cloud: yes.
+
+Removed from this file: GUEST-02 (rejected by the architect: it switched off the wake word, stop and the safety floor for a guest app and let a guest app open network egress beyond the hub, both forbidden; it returns only as a new design that keeps stop always available and the hub-only firewall).
+
+Unchanged and still open, dispatched as already written: EYES-02 to EYES-07 (rev2 verdict), MOVE-CARRY-01a/b/c and 02, S-KWS-RUNG1 (land the branch), SPEAK-02's `present` half, S-EXPR-02's sim rows, EXPR-05's live check, RM-04 and RM-05's live runs, MOVES-02's trigger, M-R2, M-R4, M-R5, FAKES-02 (mirrored DoA, landmark fixtures, a face fixture set).
+
+### Reachy design v2 supersede and obsolete rows
+
+| Item or text | Action | Reason |
+|---|---|---|
+| GUEST-01 (bot) | stays as filed, not superseded (GUEST-02 was rejected and removed) | revisit it with the guest-apps decision, since it still names a Hugging Face Space |
+| RM-03's `scripts/build-space.sh` and the Space listing (design section 10, open question 1) | delete the script; mark the question closed: no listing | no vendor store |
+| design section 10's PyPI install sentence and the daemon update row; the privacy page's PyPI row | replaced by ROBOT-WHEELHOUSE-01 and BODY-DAEMON-UPDATE-01 | zero-external |
+| ROBOT-TAILSCALE-01's hub auto-provisioning half | dropped (OWNER-ANSWERS 1) | a third-party account credential in the hub |
+| DESIGN-reachy-alive option A (wake word as yes) and its tier 0 step 6 | superseded by OFFER-01 and SAFETY-ALARM-01 | OWNER-ANSWERS 3 (spoken accept words) and DESIGN-V2 decision 2 (alarm audience) |
+| FACE-01's "opportunistic, capped, never continuous" clause; design section 4's amendment paragraph | amended by FACE-WATCH-01 | OWNER-ANSWERS 4 |
+| the "software camera-off" label | replaced by watch level `off` | OWNER-ANSWERS 4 |
+| M-R1's `robot` tier config; M-R6 | not pursued on this body (filed, never dispatched) | D20 |
+| `bot/docs/dev.md` section 8's "typed sources work with internet and no hub" for this body | scoped to the MaiPai build | the Reachy has no internet |
+| SYNTHESIS's SPEAK-SWAY-01 (daemon wobbler) | not adopted; D11 | one writer to the motors |
+| SYNTHESIS's EXPR-VOCAB-01 | realised as EMO-MAP-01 plus REACT-MAP-01 | same content, spec first |
+| the sim-only barge-in numbers | marked suspect; M-R3 is the evidence | the no-AEC `--sim` branch |
+| `hal-seam.md`'s "what's deliberately not built yet" | update: the dashboard exists; the limiter is S-EXPR-01R | stale |
 
 ## Voice loop
 
