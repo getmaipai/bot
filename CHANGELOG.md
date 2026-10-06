@@ -9,6 +9,13 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- BODY-05, the presence funnel's settle gate (Reachy Mini): the existing G9
+  funnel in `run_loop.py` now holds every state it shows for at least 0.5 s
+  (`SETTLE_GATE_S`, the legacy 45 ms flash test). Readers get the settled
+  state through `RunLoopState.shown`, `ConversationLoop.subscribe_funnel()`
+  and the reported `activity`; the loop itself still acts on the raw state at
+  once. No second state machine: `presence/funnel.py` is only the filter.
+
 - EYES-01, the indicator seam (Reachy Mini): `Indicator`, `Look`,
   `IndicatorSpec` and `NullIndicator` in the HAL seam, and a recording
   `FakeEyes`. The palette has no red, `blink` and `ack` are the only

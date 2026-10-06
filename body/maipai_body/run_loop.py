@@ -48,6 +48,7 @@ from maipai_body.presence.carry_reaction import (
     PresenceEntry,
     line_allowed,
 )
+from maipai_body.presence.funnel import SettleGate
 from maipai_body.presence.motion_state import MotionState, MotionStateMachine
 from maipai_body.presence.observations import read_presence
 from maipai_body.speech.capture import AudioCapture
@@ -65,14 +66,12 @@ from maipai_body.vision.recognize import recognize_face
 
 logger = logging.getLogger("maipai_body.run_loop")
 
-# BODY-05's own legacy flash test: no funnel state renders for less
-# than this before the next transition is allowed to visibly register -
-# a debounce against flicker, not a hard floor on how fast a real turn
-# can move (a state that would naturally last under 0.5s still enters
-# and exits on schedule; only the RENDER of a state shorter than this
-# is what the settle gate is about, per BODY-05's own wording, and the
-# funnel's own state TRACE - what a test reads back - always records
-# the real transition times regardless).
+# BODY-05's legacy flash test: the state SHOWN to readers (the eyes, the
+# mouth, the ring, the screen, the link) never changes sooner than this
+# after the previous shown change, so a 45 ms flash is held open to a full
+# half second instead. The loop itself acts on the raw state at once
+# (barge-in, tracking and the line rules must not lag); `RunLoopState.trace`
+# records the raw transitions, `shown_trace` what readers were given.
 SETTLE_GATE_S = 0.5
 
 # The array's own AEC (or the sim's software fallback) is what makes
@@ -139,9 +138,12 @@ class RunLoopState:
     same torn-read lesson G4's own `LinkState` already learned)."""
 
     funnel: FunnelState = FunnelState.IDLE
+    # What readers are shown: `funnel` after the settle gate (BODY-05).
+    shown: FunnelState = FunnelState.IDLE
     muted: bool = False
     tracking: bool = False
     trace: list[StateTransition] = field(default_factory=list)
+    shown_trace: list[StateTransition] = field(default_factory=list)
     face_verdict: FaceVerdict | None = None
     face_verdict_at: float | None = None
 
@@ -175,6 +177,8 @@ class ConversationLoop:
         teach_active: Callable[[], bool] | None = None,
         carry_reaction: Callable[[], CarryReaction] | None = None,
         presence_entries: Callable[[], Sequence[PresenceEntry] | None] | None = None,
+        settle_gate_s: float = SETTLE_GATE_S,
+        funnel_clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._client = client
         self._expression = expression_engine
@@ -225,6 +229,12 @@ class ConversationLoop:
         self._face_check_thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._state = RunLoopState()
+        # BODY-05: a filter over the one funnel, never a second machine. The
+        # timer lands a held change; every use is under `self._lock`.
+        self._funnel_clock = funnel_clock
+        self._settle = SettleGate(settle_gate_s, initial=FunnelState.IDLE)
+        self._settle_timer: threading.Timer | None = None
+        self._funnel_subscribers: list[Callable[[FunnelState], None]] = []
         self._cue_seq = 0
         # A turn was lost to the link and the line about it is still
         # owed. A plain bool, not a count: several lost turns in one
@@ -311,21 +321,82 @@ class ConversationLoop:
             # forever. `trace` still needs its own fresh list - the
             # one field a shallow copy would otherwise alias with the
             # live, still-mutating one.
-            return replace(self._state, trace=list(self._state.trace))
+            return replace(
+                self._state,
+                trace=list(self._state.trace),
+                shown_trace=list(self._state.shown_trace),
+            )
+
+    def subscribe_funnel(self, callback: Callable[[FunnelState], None]) -> None:
+        """Tell ``callback`` each time the SHOWN funnel state changes (after the
+        settle gate), on whichever thread made the change. This and
+        ``state.shown`` are the readers' whole view of the funnel."""
+        with self._lock:
+            self._funnel_subscribers.append(callback)
 
     def _enter(self, funnel: FunnelState) -> None:
+        now = self._funnel_clock()
         with self._lock:
             self._state.funnel = funnel
-            self._state.trace.append(StateTransition(state=funnel, at_monotonic=time.monotonic()))
+            self._state.trace.append(StateTransition(state=funnel, at_monotonic=now))
+            shown_changed = self._settle.offer(funnel, now)
+            subscribers = self._publish_shown_locked(now) if shown_changed else []
+            self._arm_settle_timer_locked(now)
         logger.info("funnel: %s", funnel)
+        self._tell_funnel_subscribers(subscribers)
         if self._on_change is not None:
             self._on_change()
+
+    def _publish_shown_locked(
+        self, now: float
+    ) -> list[tuple[Callable[[FunnelState], None], FunnelState]]:
+        shown = self._settle.shown
+        self._state.shown = shown
+        self._state.shown_trace.append(StateTransition(state=shown, at_monotonic=now))
+        return [(callback, shown) for callback in self._funnel_subscribers]
+
+    def _tell_funnel_subscribers(
+        self, calls: list[tuple[Callable[[FunnelState], None], FunnelState]]
+    ) -> None:
+        for callback, shown in calls:
+            try:
+                callback(shown)
+            except Exception:
+                logger.warning("funnel subscriber failed", exc_info=True)
+
+    def _arm_settle_timer_locked(self, now: float) -> None:
+        if self._settle_timer is not None:
+            self._settle_timer.cancel()
+            self._settle_timer = None
+        due = self._settle.due_in(now)
+        if due is None:
+            return
+        timer = threading.Timer(due, self._land_held_state)
+        timer.daemon = True
+        self._settle_timer = timer
+        timer.start()
+
+    def _land_held_state(self) -> None:
+        now = self._funnel_clock()
+        with self._lock:
+            landed = self._settle.flush(now)
+            calls = self._publish_shown_locked(now) if landed else []
+            self._arm_settle_timer_locked(now)
+        self._tell_funnel_subscribers(calls)
+        if landed and self._on_change is not None:
+            self._on_change()
+
+    def _cancel_settle_timer(self) -> None:
+        with self._lock:
+            if self._settle_timer is not None:
+                self._settle_timer.cancel()
+                self._settle_timer = None
 
     def snapshot(self) -> dict[str, object]:
         """Return the reportable funnel state without exposing live state."""
         with self._lock:
-            activity = self._state.funnel.value
-            idle = self._state.funnel == FunnelState.IDLE
+            activity = self._state.shown.value
+            idle = self._state.shown == FunnelState.IDLE
         if idle and self._offline is not None:
             phase = self._offline.machine.phase
             if phase is not LinkPhase.CONNECTED:
@@ -419,6 +490,7 @@ class ConversationLoop:
                 else:
                     self._run_turn(stop_event)
         finally:
+            self._cancel_settle_timer()
             self._capture.stop()
             presence_thread.join(timeout=2.0)
 

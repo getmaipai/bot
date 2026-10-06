@@ -225,13 +225,35 @@ The body track starts now; nothing here waits on the hub.
       disagreement stops the head in the deterministic test; the
       physical run's numbers in `docs/dev/measurements.md`. Out of scope:
       the primitives. Exit: `bash scripts/check.sh`.
-- [ ] **BODY-05: the presence funnel** (S). Objective: one state
+- [x] **BODY-05: the presence funnel** (S). Objective: one state
       (speaking, thinking, listening, idle; mic live as a separate fact)
       feeding the eyes, the mouth, the ring, the screen and the link,
       with the legacy event-order tests (the 0.5 s settle gate against
       the 45 ms flash). Pointers: `body/presence/`, the mirror's
       `robot/robot/presence/service.py`. Acceptance: the legacy trace
       replays without a flash. Exit: `bash scripts/check.sh`.
+      Built with EYES-02 (2026-10-06, cloud session, branch
+      `cloud/eyes-02-director`), on the existing G9 funnel and nowhere
+      else: `ConversationLoop` in `run_loop.py` is still the only place a
+      state is chosen, so there is no second state machine and no move.
+      `presence/funnel.py` adds only `SettleGate`, a pure filter with no
+      states of its own. `SETTLE_GATE_S` (0.5) is now enforced on what
+      readers are shown: `RunLoopState.shown` and `shown_trace`,
+      `ConversationLoop.subscribe_funnel()` and the `activity` of
+      `snapshot()` (so the link) carry the settled state; a change inside
+      the hold lands when the hold ends, the latest pending state wins and
+      an intermediate that never got its full hold is skipped, never
+      flashed. The loop acts on the raw state at once (barge-in, tracking,
+      the line rules) and `RunLoopState.trace` still records the real
+      transitions. This replaces G9's "settle gate defined but not
+      enforced" note. Mic live is the separate fact EYES-02's
+      `LiveCaptureTap` reports. Tests: `tests/test_presence_funnel.py`
+      (the gate, and a replay with no shown state under 0.5 s) and
+      `tests/test_run_loop_settle.py` (the loop). The legacy trace itself
+      was not available to this clone (`legacy-backups/` is not present),
+      so the replay uses a synthetic trace of the same shape (a 45 ms
+      flash, a fast thinking pass, a short speaking pop); replay the real
+      one when the backup is at hand.
 - [ ] **BODY-06: power and thermal supervision** (M). Objective: the
       admission budget for the resource governor, the pressure order
       (idle motion off, background off, one announcement, persist, safe
