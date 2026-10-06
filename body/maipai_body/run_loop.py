@@ -505,6 +505,9 @@ class ConversationLoop:
             self._cancel_settle_timer()
             self._capture.stop()
             presence_thread.join(timeout=2.0)
+            close_expression = getattr(self._expression, "close", None)
+            if close_expression is not None:
+                close_expression()
 
     def _poll_wake(self, stop_event: threading.Event):
         """Blocks (politely) until the wake word fires or `stop_event`

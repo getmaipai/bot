@@ -482,12 +482,20 @@ cue after `done`, a playback device with a deep buffer, a socket loss
 between the two processes, and a hub stamp that disagrees with the
 local clock.
 
-**Arbitration.** One controller in the body reads encoder feedback,
-expires targets and detects disagreement and stall. Priority: physical
-inhibit and reflex, then service and calibration restrictions, then
-consented tracking, then expression, then idle. Small compatible
-trajectories blend inside one limiter; a full-amplitude track plus an
-expression is never summed and clipped after. Loss of the controller,
+**Arbitration.** The Reachy expression worker is the sole 50 Hz
+`set_target` writer. Safety and service own their active axes first;
+gaze and expression share head yaw and pitch at 0.7/0.3, expression
+owns roll and antennas, and idle owns only otherwise unclaimed axes.
+Targets are combined before per-axis limits: yaw 1.0, pitch 0.7, roll
+0.2, body yaw 0.5 and antennas 2.0 rad/s; acceleration is 4 rad/s2
+(8 for antennas), `dt` is capped at 70 ms, the filter time constants
+are 65 ms and 120 ms while relaxing, then the profile clamp applies.
+Discrete entries use a distance-scaled blend (0.015 s per head magic-mm,
+0.005 s per antenna degree, 0.015 s per body degree; clamp 0.2 to
+1.5 s and skip under 0.15 s). These are UNMEASURED design defaults,
+dated 2026-10-06; M-R2 simulator and unit rows must replace them before
+calibration. A full-amplitude track plus expression is never summed and
+clipped after. Loss of the controller,
 the link or the model never leaves a trajectory running; whether the
 safe state is hold, controlled settle or release is an owned-build
 measurement (section 10), and until it is taken the default is a

@@ -26,6 +26,7 @@ class PrimitiveRenderer(Protocol):
         profile: BodyProfile,
         *,
         doa_angle_rad: float = 0.0,
+        real_time: bool = False,
     ) -> None: ...
 
 

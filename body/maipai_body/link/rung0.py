@@ -48,6 +48,7 @@ class Rung0Cues:
         may_drive: Callable[[], bool] = lambda: True,
         speaker=None,
         on_reconnect_spoken: Callable[[], None] | None = None,
+        muted: bool = False,
     ) -> None:
         # `render`, `may_drive` and `on_reconnect_spoken` may be handed over
         # later by the funnel (`attach`), which owns the engine and the head.
@@ -62,6 +63,7 @@ class Rung0Cues:
         self._may_drive = may_drive
         self._speaker = speaker
         self._on_reconnect_spoken = on_reconnect_spoken
+        self._muted = muted
         self._lock = threading.Lock()
         self._stage = "none"  # none, settled, away
         self._stir_pending = False
@@ -118,6 +120,11 @@ class Rung0Cues:
             return
         if snap.phase is LinkPhase.RECONNECTING:
             if stage == "none":
+                # A muted state cannot animate; settle is already the
+                # neutral pose, so preserve the no-write suppression path.
+                if bool(getattr(self, "_muted", False)):
+                    self._set_stage("settled")
+                    return
                 self._render("settle")
                 self._render("breathe")
                 self._set_stage("settled")

@@ -21,6 +21,7 @@ from maipai_body.bodies.reachy_mini.envelope import axis_bounds_rad
 from maipai_body.hal.seam import AntennaPositions, BodyProfile, HeadActuator, HeadPose
 
 from .envelope import REACHY_MINI_EXPRESSION_ENVELOPE, PrimitiveEnvelope
+from .motion_worker import MotionTarget
 from .renderers import register_renderer
 
 StepMethod = Literal["goto", "set_target", "hold"]
@@ -217,22 +218,49 @@ def build_steps(primitive: str, profile: BodyProfile, *, doa_angle_rad: float = 
 
 
 def render(
-    primitive: str, client: HeadActuator, profile: BodyProfile, *, doa_angle_rad: float = 0.0
+    primitive: str,
+    client: HeadActuator,
+    profile: BodyProfile,
+    *,
+    doa_angle_rad: float = 0.0,
+    real_time: bool = False,
+    initial_target: MotionTarget | None = None,
 ) -> None:
-    """Render one primitive on this profile, through the seam."""
-    for step in build_steps(primitive, profile, doa_angle_rad=doa_angle_rad):
-        if step.method == "hold":
-            client.hold()
-        elif step.method == "goto":
-            client.goto(
-                pose=step.pose,
-                antennas=step.antennas,
-                body_yaw=step.body_yaw,
-                duration_s=step.duration_s,
-                method="minjerk",
-            )
-        elif step.method == "set_target":
-            client.set_target(pose=step.pose, antennas=step.antennas, body_yaw=step.body_yaw)
+    """Render through the same bounded single-writer path as live cues."""
+    from .motion_worker import MotionLayer, MotionTarget, MotionWorker, entry_blend_seconds
+
+    worker = MotionWorker(client, profile, initial_target=initial_target)
+    steps = build_steps(primitive, profile, doa_angle_rad=doa_angle_rad)
+    if steps[0].method == "hold":
+        worker.stop()
+        return
+    sequence = []
+    previous = worker.last_target
+    for step in steps:
+        target = MotionTarget(
+            pose=step.pose or HeadPose(),
+            antennas=step.antennas or AntennaPositions(left=0.0, right=0.0),
+            body_yaw=step.body_yaw or 0.0,
+            owned_axes=frozenset(
+                (["head_pitch", "head_roll", "head_yaw"] if step.pose is not None else [])
+                + (["antenna_left", "antenna_right"] if step.antennas is not None else [])
+                + (["body_yaw"] if step.body_yaw is not None else [])
+            ),
+        )
+        sequence.append((target, entry_blend_seconds(previous, target)))
+        previous = target
+    worker.submit_sequence(MotionLayer.EXPRESSION, sequence)
+    worker.flush(real_time=real_time)
+    if primitive == "glance":
+        worker.clear_layer(MotionLayer.EXPRESSION)
+        worker.flush(real_time=real_time)
+        worker.set_layer(
+            MotionLayer.EXPRESSION,
+            pose=HeadPose() if steps[-1].pose is not None else None,
+            antennas=steps[-1].antennas,
+            duration_s=0.0,
+        )
+        worker.tick(worker._clock() + 0.02)
 
 
 register_renderer("reachy_mini", render)

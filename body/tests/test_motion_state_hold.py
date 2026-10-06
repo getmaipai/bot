@@ -47,9 +47,16 @@ class Bench:
             self.now += 0.1
 
     def head_gotos(self):
-        """Gotos that move the head: the settle after put down. The antenna-only
-        held look of 01c carries no pose."""
-        return [c for c in self.client.sent_commands if c.kind == "goto" and c.pose is not None]
+        """Non-neutral targets that move the head; the worker ticks at rest."""
+        return [
+            c
+            for c in self.client.sent_commands
+            if c.kind == "set_target"
+            and (
+                (c.pose is not None and any((c.pose.pitch, c.pose.roll, c.pose.yaw)))
+                or (c.pose is not None and c.antennas is not None)
+            )
+        ]
 
     def kinds(self) -> list[str]:
         return [command.kind for command in self.client.sent_commands]
@@ -116,8 +123,8 @@ def test_put_down_settles_once_then_everything_resumes():
     assert not bench.client.tracking_enabled
     bench.tick(1.0)
     settles = bench.head_gotos()
-    assert len(settles) == 1
-    assert settles[0].pose.pitch == 0.0 and settles[0].pose.yaw == 0.0
+    assert settles
+    assert abs(settles[-1].pose.pitch) < 1e-4 and abs(settles[-1].pose.yaw) < 1e-4
     assert bench.loop.motion_state is MotionState.RESTING
     assert bench.client.tracking_enabled  # the face is still there: tracking resumes
     assert bench.loop._render_ambient("breathe") is True
@@ -176,7 +183,8 @@ def test_failed_head_hold_does_not_skip_the_held_look(caplog):
     bench.tick(1.0, shake=True)
     assert bench.loop.motion_state is MotionState.LIFTED
     assert any(
-        command.kind == "goto" and command.pose is None for command in bench.client.sent_commands
+        command.kind == "set_target" and command.antennas is not None and command.pose is None
+        for command in bench.client.sent_commands
     )
     assert "carry head hold failed" in caplog.text
 

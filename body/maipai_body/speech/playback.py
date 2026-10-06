@@ -8,6 +8,7 @@ wall-clock timing.
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -32,6 +33,7 @@ class AudioPlayback:
         self._client = client
         self._playing = False
         self.ledger: list[PushedChunk] = []
+        self._ledger_lock = threading.RLock()
 
     def start(self) -> None:
         """Idempotent: safe to call once per reply even if already open.
@@ -44,13 +46,15 @@ class AudioPlayback:
         if not self._playing:
             self._client.start_playing()
             self._playing = True
-            self.ledger = []
+            with self._ledger_lock:
+                self.ledger = []
 
     def push(self, chunk: npt.NDArray[np.float32]) -> None:
         """Push one chunk, opening the stream first if it isn't already."""
         self.start()
         self._client.push_audio_sample(chunk)
-        self.ledger.append(PushedChunk(samples=chunk))
+        with self._ledger_lock:
+            self.ledger.append(PushedChunk(samples=chunk))
 
     def stop(self) -> None:
         """Close the output stream. The ledger survives until the next
@@ -73,3 +77,18 @@ class AudioPlayback:
         targets, so a caller doesn't need to reach into this class's
         private ``_client`` to ask the seam directly."""
         return self._client.get_output_audio_samplerate()
+
+    def recent_rms(self, now: float | None = None, window_s: float = 0.2) -> float:
+        """RMS of the actual recent output samples, for energy-modulated motion."""
+        stamp = time.monotonic() if now is None else now
+        with self._ledger_lock:
+            chunks = [
+                chunk.samples
+                for chunk in self.ledger
+                if 0.0 <= stamp - chunk.pushed_at_monotonic <= window_s
+            ]
+        if not chunks:
+            return 0.0
+        total = sum(float((chunk.astype("float64") ** 2).sum()) for chunk in chunks)
+        count = sum(chunk.size for chunk in chunks)
+        return (total / count) ** 0.5 if count else 0.0

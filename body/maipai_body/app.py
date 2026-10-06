@@ -341,7 +341,13 @@ def _build_conversation_loop(
     print_sync = PrintSync(gallery, hub_credentials, stop_event)
     loop = ConversationLoop(
         client=tap,
-        expression_engine=ExpressionEngine(tap, REACHY_MINI_PROFILE),
+        expression_engine=ExpressionEngine(
+            tap,
+            REACHY_MINI_PROFILE,
+            threaded=True,
+            speech_rms_provider=audio_playback.recent_rms,
+            state_feed_factory=lambda: tap.state_feed(frequency=50.0),
+        ),
         audio_capture=AudioCapture(tap),
         audio_playback=audio_playback,
         wake_scorer=WakeScorer(wake_engine, tap),

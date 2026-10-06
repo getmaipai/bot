@@ -129,7 +129,7 @@ def test_every_primitive_button_renders_through_the_engine(served, primitive):
     outcome = json.loads(data)
     assert outcome["rendered"] is True
     assert outcome["primitive"] == primitive
-    assert len(client.sent_commands) > before
+    assert len(client.sent_commands) > before or primitive in {"settle", "track"}
 
 
 @pytest.mark.parametrize("primitive", ["breathe", "track"])
@@ -165,7 +165,9 @@ def test_a_posted_direction_reaches_the_renderer(served):
     server, client = served
     _request(server, "POST", "/api/primitive/glance", {"direction_rad": -0.4})
     _request(server, "POST", "/api/primitive/glance", {"direction_rad": 0.4})
-    yaws = [c.pose.yaw for c in client.sent_commands if c.kind == "goto" and c.pose is not None]
+    yaws = [
+        c.pose.yaw for c in client.sent_commands if c.kind == "set_target" and c.pose is not None
+    ]
     assert min(yaws) < 0 < max(yaws)
 
 

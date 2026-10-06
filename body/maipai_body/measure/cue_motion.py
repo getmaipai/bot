@@ -19,6 +19,7 @@ import numpy as np
 import numpy.typing as npt
 
 from maipai_body.bodies.reachy_mini.envelope import axis_bounds_rad
+from maipai_body.expression.motion_worker import MotionTarget
 from maipai_body.expression.reachy_mini_renderer import build_steps  # registers the renderer
 from maipai_body.expression.renderers import renderer_for
 from maipai_body.hal.seam import AntennaPositions, BodyProfile, HeadActuator, HeadPose
@@ -132,7 +133,14 @@ def measure_primitive(
     sleep(pause_s)  # from a common resting pose, not wherever the last run ended
     precondition = PRECONDITIONS.get(primitive)
     if precondition is not None:
-        renderer_for(profile.id)(precondition, client, profile, doa_angle_rad=doa_angle_rad)
+        renderer_for(profile.id)(
+            precondition,
+            client,
+            profile,
+            doa_angle_rad=doa_angle_rad,
+            real_time=True,
+            initial_target=MotionTarget(),
+        )
         sleep(pause_s)
 
     stamped = StampingClient(client, clock)
@@ -142,7 +150,21 @@ def measure_primitive(
     baseline = recorder.samples[-1] if recorder.samples else None
 
     t_cue_ns = clock()
-    renderer_for(profile.id)(primitive, stamped, profile, doa_angle_rad=doa_angle_rad)
+    renderer_for(profile.id)(
+        primitive,
+        stamped,
+        profile,
+        doa_angle_rad=doa_angle_rad,
+        real_time=True,
+        initial_target=(
+            MotionTarget(
+                pose=HeadPose(pitch=baseline.pitch, roll=baseline.roll, yaw=baseline.yaw),
+                antennas=AntennaPositions(left=baseline.left, right=baseline.right),
+            )
+            if baseline is not None
+            else None
+        ),
+    )
     sleep(window_s)
     recorder.stop()
     thread.join(timeout=2.0)

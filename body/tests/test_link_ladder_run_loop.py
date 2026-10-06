@@ -353,7 +353,8 @@ def test_the_loop_gives_the_rung_0_cues_the_engine_and_the_funnel_gate():
     offline.machine.link_lost("x")
     offline.rung0.tick()  # the loop attached its own render and gate
     assert parts["engine"].ambient == ["settle", "breathe"]
-    assert [c.kind for c in parts["client"].sent_commands] == ["goto", "set_target"]
+    assert parts["client"].sent_commands
+    assert {c.kind for c in parts["client"].sent_commands} == {"set_target"}
 
 
 # ---- the reconnect and the owed line --------------------------------------------------------

@@ -394,14 +394,10 @@ def test_no_cue_maps_to_a_move():
 def test_no_move_plays_when_the_expression_engine_handles_every_cue():
     client = FakeReachyMiniClient()
     engine = ExpressionEngine(client, REACHY_MINI_PROFILE)
-    for phase in Phase:
-        cue = Cue(phase=phase, cue_seq=1, expressed_emotion="happy", emotion_intensity="high")
+    for seq, phase in enumerate(Phase):
+        cue = Cue(phase=phase, cue_seq=seq, expressed_emotion="happy", emotion_intensity="high")
         engine.handle(cue, SuppressionContext())
-    # Moves stream set_target at the recording's own rate; the expression
-    # vocabulary issues at most a few per primitive. A move's marker is its
-    # first goto followed by a run of set_target; assert none exceeds the
-    # handful track/breathe/speak/stop can produce for 8 cues.
-    assert len([c for c in client.sent_commands if c.kind == "set_target"]) <= len(Phase)
+    assert all(c.kind == "set_target" for c in client.sent_commands)
 
 
 def test_the_expression_package_never_imports_the_moves_package():

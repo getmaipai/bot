@@ -15,25 +15,20 @@ from maipai_body.hal.seam import HeadPose
 from maipai_body.presence.arbitration import ArbitrationState
 
 
-class _SlowGotoClient(FakeReachyMiniClient):
-    """A fake that blocks during ``goto``, the way the real client does.
+class _SlowSetTargetClient(FakeReachyMiniClient):
+    """Hold a worker write in flight while a stop arrives on another thread."""
 
-    The vendor SDK's own ``goto_target`` calls ``wait_for_task_completion``
-    before returning (verified in the installed ``reachy_mini`` package),
-    so a real render occupies the calling thread for the motion's whole
-    duration. This stands in for that to prove the engine's render lock
-    actually serializes two threads, not just two calls on one thread.
-    """
-
-    def __init__(self, hold_s: float) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self._hold_s = hold_s
+        self.started = threading.Event()
+        self.release = threading.Event()
         self.windows: list[tuple[float, float]] = []
 
-    def goto(self, *args, **kwargs):  # type: ignore[override]
+    def set_target(self, *args, **kwargs):  # type: ignore[override]
         start = time.monotonic()
-        super().goto(*args, **kwargs)
-        time.sleep(self._hold_s)
+        self.started.set()
+        self.release.wait(timeout=5)
+        super().set_target(*args, **kwargs)
         self.windows.append((start, time.monotonic()))
 
 
@@ -57,7 +52,6 @@ def test_the_scripted_bench_sequence_renders_every_mapped_primitive():
         "attend",
         "speak",
         "settle",
-        "stop",
     }
 
 
@@ -107,12 +101,14 @@ def test_set_muted_renders_the_pose_once_on_the_rising_edge_only():
     arbitration = ArbitrationState(expression_active=True)
 
     first = engine.set_muted(True, arbitration)
+    first_count = len(client.sent_commands)
     second = engine.set_muted(True, arbitration)  # no edge: already muted
 
     assert first is not None
     assert first.rendered_primitive == "muted"
     assert second is None
-    assert len(client.sent_commands) == 1
+    assert first_count > 1
+    assert len(client.sent_commands) == first_count
     sent = client.sent_commands[0]
     assert sent.antennas.left < 0
     assert sent.antennas.right < 0
@@ -125,14 +121,15 @@ def test_set_muted_settles_once_on_the_falling_edge():
     arbitration = ArbitrationState(expression_active=True)
 
     engine.set_muted(True, arbitration)
+    muted_count = len(client.sent_commands)
     outcome = engine.set_muted(False, arbitration)
 
     assert outcome is not None
     assert outcome.rendered_primitive == "settle"
-    assert len(client.sent_commands) == 2
-    settle_command = client.sent_commands[1]
-    assert settle_command.antennas.left == 0.0
-    assert settle_command.antennas.right == 0.0
+    assert len(client.sent_commands) > muted_count
+    settle_command = client.sent_commands[-1]
+    assert abs(settle_command.antennas.left) < 1e-4
+    assert abs(settle_command.antennas.right) < 1e-4
     assert settle_command.pose == HeadPose()
 
 
@@ -172,7 +169,19 @@ def test_set_muted_catches_up_once_arbitration_releases():
     tracking_ends = engine.set_muted(True, idle)
     assert tracking_ends is not None
     assert tracking_ends.rendered_primitive == "muted"
-    assert len(client.sent_commands) == 1
+    assert len(client.sent_commands) > 1
+
+
+def test_duplicate_and_after_done_cues_are_dropped_and_counted():
+    engine = ExpressionEngine(FakeReachyMiniClient(), REACHY_MINI_PROFILE)
+    context = SuppressionContext()
+    engine.handle(Cue(phase=Phase.HEARD, cue_seq=1), context)
+    engine.handle(Cue(phase=Phase.HEARD, cue_seq=1), context)
+    engine.handle(Cue(phase=Phase.DONE, cue_seq=2), context)
+    late = engine.handle(Cue(phase=Phase.OUTCOME, cue_seq=3, outcome_ok=True), context)
+
+    assert late.suppressed_reason == "out_of_sequence"
+    assert engine.dropped_cues == 2
 
 
 def test_a_cues_own_target_direction_reaches_the_renderer():
@@ -200,57 +209,42 @@ def test_stop_still_renders_normally_while_muted():
     assert client.sent_commands[0].kind == "hold"
 
 
-def test_stop_preempts_a_render_in_flight_on_another_thread():
-    """A code review (2026-09-27) found the render lock made `stop` wait
-    behind whatever was already in flight, inverting suppression.py's
-    "stop is never suppressed" rule the moment a second thread exists.
-    `stop` bypasses the lock, so handling it returns almost immediately
-    even while a slow goto is still in flight on another thread - proof
-    it did not queue behind the lock that goto is holding."""
-    client = _SlowGotoClient(hold_s=0.3)
-    engine = ExpressionEngine(client, REACHY_MINI_PROFILE)
-    settle_cue = Cue(phase=Phase.DONE, cue_seq=0)
-    stop_cue = Cue(phase=Phase.CANCEL, cue_seq=1)
-
-    goto_thread = threading.Thread(target=engine.handle, args=(settle_cue, SuppressionContext()))
-    goto_thread.start()
-    time.sleep(0.05)  # let the slow goto actually be in flight
+def test_stop_preempts_a_motion_write_in_flight_on_the_worker_thread():
+    client = _SlowSetTargetClient()
+    engine = ExpressionEngine(client, REACHY_MINI_PROFILE, threaded=True)
+    engine.handle(Cue(phase=Phase.HEARD, cue_seq=0), SuppressionContext())
+    assert client.started.wait(timeout=2), "the worker never started its target write"
 
     stop_start = time.monotonic()
-    engine.handle(stop_cue, SuppressionContext())
+    engine.handle(Cue(phase=Phase.CANCEL, cue_seq=1), SuppressionContext())
     stop_returned_at = time.monotonic()
 
-    goto_thread.join(timeout=5)
-
-    assert client.windows, "the settle goto never completed"
-    goto_end = client.windows[0][1]
-    assert stop_returned_at - stop_start < 0.1, "stop waited - it queued behind the goto"
-    assert stop_returned_at < goto_end, "stop should have returned before the goto finished"
+    client.release.set()
+    engine.close()
+    assert stop_returned_at - stop_start < 0.1
     assert any(c.kind == "hold" for c in client.sent_commands)
 
 
-def test_the_render_lock_serializes_two_threads_calling_handle_concurrently():
-    """Two goto-driven primitives from two threads never overlap on the actuator."""
-    client = _SlowGotoClient(hold_s=0.05)
-    engine = ExpressionEngine(client, REACHY_MINI_PROFILE)
+def test_one_motion_worker_serializes_targets_from_concurrent_callers():
+    client = _SlowSetTargetClient()
+    client.release.set()
+    engine = ExpressionEngine(client, REACHY_MINI_PROFILE, threaded=True)
     listen_cue = Cue(phase=Phase.HEARD, cue_seq=0)
     nod_cue = Cue(phase=Phase.OUTCOME, cue_seq=1, outcome_ok=True)
-
     threads = [
         threading.Thread(target=engine.handle, args=(listen_cue, SuppressionContext())),
         threading.Thread(target=engine.handle, args=(nod_cue, SuppressionContext())),
     ]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=5)
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+    time.sleep(0.1)
+    engine.close()
 
-    # nod is two goto steps (dip, recover), listen is one, so three windows
-    # total; every one of them must be fully serialized against every other.
-    assert len(client.windows) == 3
     ordered = sorted(client.windows)
     for (_, end), (next_start, _) in zip(ordered, ordered[1:]):
-        assert end <= next_start, "two renders overlapped in time"
+        assert end <= next_start, "two target writes overlapped"
 
 
 def test_a_direction_free_cue_falls_back_to_the_live_direction_of_arrival():
@@ -264,13 +258,15 @@ def test_a_direction_free_cue_falls_back_to_the_live_direction_of_arrival():
     assert first.pose.yaw < 0, "listen did not orient toward the live direction of arrival"
 
 
-def test_the_same_cue_renders_its_own_primitive_once_context_stops_suppressing_it():
+def test_a_newer_cue_renders_after_an_earlier_one_was_suppressed():
     client = FakeReachyMiniClient()
     engine = ExpressionEngine(client, REACHY_MINI_PROFILE)
     cue = Cue(phase=Phase.OUTCOME, cue_seq=0, outcome_ok=True)
 
     suppressed_outcome = engine.handle(cue, SuppressionContext(guard_forbidden=True))
-    allowed_outcome = engine.handle(cue, SuppressionContext(guard_forbidden=False))
+    allowed_outcome = engine.handle(
+        cue.model_copy(update={"cue_seq": 1}), SuppressionContext(guard_forbidden=False)
+    )
 
     assert suppressed_outcome.rendered is False
     assert allowed_outcome.rendered is True

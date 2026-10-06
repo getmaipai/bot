@@ -63,6 +63,7 @@ header (the scripts write all three). Never a hostname, never a transcript.
 | Row | Run | Time | Reads as |
 |---|---|---|---|
 | M-R2 | `measure_mr2_cue_motion.py --mode unit --repeats 30 --record`, then `--hold hand --skip-latency --record` | 30 min, then 10 min with a person | p50 and p95 cue to first state-feed delta per primitive, split at the first command; amplitude and peak velocity against the declared limits; stall verdict per axis and fraction, free head first, then held |
+| S-EXPR-01R tilt during track (sim) | Run the deterministic layered-worker fixture with gaze at yaw 0.9 rad, then apply tilt roll 0.4 rad/yaw -0.4 rad for 0.5 s; save every 50 Hz target | 2 min | Per tick: gaze share, expression share, profile bounds, rate and acceleration; confirm no mode-switch snap. Constants remain UNMEASURED until M-R2 unit rows. |
 | M-R5 | `measure_mr5_link.py --mode unit --trials 10 --record`, then the Wi-Fi cycle (below) | 20 min, then 10 min | cancel latency, pose still, reconnect p50 and p95, the one line once; the real radio's time back to the hub |
 | M-R1 | `measure_mr1_budget.py --config daemon`, then `pod`, then `robot` (each on a fresh boot) | 3 hours | RSS, CPU, temperature and throttle flags per configuration; the robot-tier decision |
 | M-R3 | `measure_mr3_wake_doa.py` parts 1 to 5 | 3 hours, most of it the false-accept listen | gates from `dev.md` section 11 |
