@@ -2152,7 +2152,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       Objective: `AssetSync` on the channel's `asset_changed` and at boot pulls the manifest and any missing or changed file (sha256 verified), places YuNet in the HF cache layout the SDK reads, places the clip bundle and, only when the optional moves pack is installed, its moves (never from the base pin list); `ensure_*` functions take the hub source only; a grep test fails on any `http://` or `https://` literal in `maipai_body/` outside `link/` and the dashboard's loopback bind.
       Acceptance (fail-first): with networking monkeypatched to refuse every host but the stand-in hub, a fresh cache builds the conversation loop (wake front end, phrase, SFace, YuNet) from the hub alone; a manifest entry whose bytes fail the sha256 is refused and reported, never used; `FiveLandmarkDetector()` constructs with `HF_HUB_OFFLINE=1` and the pre-filled cache and raises a clear error without it; the grep test. Exit: `bash scripts/check.sh`. Cloud: yes.
 
-- [ ] **ROBOT-WHEELHOUSE-01: the release carries a wheelhouse; the install never reaches PyPI** (S, 2026-10-05).
+- [x] **ROBOT-WHEELHOUSE-01: the release carries a wheelhouse; the install never reaches PyPI** (S, 2026-10-05; landed 2026-10-06).
       Governs: scripts/build-wheelhouse.sh (new), scripts/prepare-bot-release.sh, scripts/install-reachy.sh, body/tests/test_release_*.py.
       Amends: G12 (the aarch64 proof becomes the wheelhouse build), RM-08's bot half.
       Reuse check: `pip download --platform manylinux2014_aarch64 --python-version 3.12 --only-binary=:all:` on the dev Mac; `pip install --no-index --find-links`; no custom resolver.

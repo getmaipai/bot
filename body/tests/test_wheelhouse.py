@@ -50,7 +50,10 @@ def test_install_dry_run_is_offline_and_installs_only_from_staged_wheelhouse(tmp
     assert "sherpa_onnx" in plan
     assert "pypi" not in plan
     assert "--index-url" not in plan
-    assert not re.search(r"pip install(?:\\ | )+[a-z][a-z0-9_-]+(?:$|\n)", plan)
+    assert not re.search(r"pip install\s+[a-z][a-z0-9_-]+(?:$|\s)", plan)
+    install_lines = [line for line in plan.splitlines() if "pip\\ install" in line]
+    assert len(install_lines) == 2
+    assert all("--no-index" in line and "--find-links" in line for line in install_lines)
 
 
 def test_release_preparer_invokes_wheelhouse_builder_by_default():
@@ -69,6 +72,18 @@ def test_builder_refuses_to_create_a_partial_archive(tmp_path):
     )
     assert result.returncode != 0
     assert "release wheel" in result.stderr.lower()
+
+
+def test_builder_requires_onxxruntime_sherpa_and_reachy_wheels_for_target():
+    builder = (SCRIPTS / "build-wheelhouse.sh").read_text()
+    assert 'ONNX=("$WHEELS"/onnxruntime-1.30.0-*aarch64*.whl)' in builder
+    assert (
+        'SHERPA=("$WHEELS"/sherpa_onnx-*aarch64*.whl "$WHEELS"/sherpa-onnx-*aarch64*.whl)'
+    ) in builder
+    assert 'REACHY=("$WHEELS"/reachy_mini-1.11.0-*.whl)' in builder
+    assert '"${#ONNX[@]}" -ne 1' in builder
+    assert '"${#SHERPA[@]}" -lt 1' in builder
+    assert '"${#REACHY[@]}" -ne 1' in builder
 
 
 def _install_env(tmp_path: Path):
