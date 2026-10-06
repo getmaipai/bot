@@ -109,6 +109,25 @@ def test_asset_sync_refuses_bad_checksum_and_does_not_install_file(tmp_path):
     assert not (tmp_path / "model.onnx.part").exists()
 
 
+def test_asset_sync_uses_verified_required_cache_when_hub_is_offline(tmp_path):
+    body = b"cached wake frontend"
+    entry = _entry("openwakeword-melspectrogram-v0_5_1", "melspectrogram.onnx", body)
+    spec_path = _pin_file(tmp_path, _spec_entry(entry))
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / entry["file"]).write_bytes(body)
+
+    class NoNetwork:
+        def get(self, *args, **kwargs):
+            raise AssertionError("offline startup must not contact a hub")
+
+    sync = AssetSync("http://hub.test", "", session=NoNetwork(), spec_path=spec_path)
+
+    result = sync.sync(cache)
+
+    assert result[entry["id"]].read_bytes() == body
+
+
 def test_asset_sync_rejects_path_traversal(tmp_path):
     entry = _entry("model-a", "../outside.onnx", b"x")
     session = Session([entry], {"model-a": b"x"})

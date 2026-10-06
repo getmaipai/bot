@@ -14,15 +14,12 @@ sockets, so the real clients run against it unmodified:
 - ``PUT /api/devices/me/state``, every frame kept in ``state_frames``;
 - ``GET /api/biometric-prints/sync`` (``prints``) for ``PrintSync``;
 - ``GET /api/devices/me/hub-endpoints`` (``endpoints``);
-- a mute command channel, ``GET /api/devices/me/commands?after=N``, only
-  with ``mute_channel=True``.
+- the authenticated device-command WebSocket at
+  ``/api/devices/me/events`` when ``command_channel=True``.
 
-Not verified against the hub (``home`` is a sibling repo this stand-in
-was written without): the ``plan`` event body, the ``hub-endpoints``
-response shape and the whole command channel, whose real transport is
-still undecided (ROBOT-MUTE-01, a settings key or a device-command
-channel). They are the shapes the body's design notes name, labelled
-here so no test mistakes them for the hub's contract. Addresses are
+The command channel mirrors Home's authenticated route, replay header,
+heartbeat and command acknowledgement. The ``plan`` event body and the
+``hub-endpoints`` response remain stand-in shapes. Addresses are
 RFC 5737 documentation addresses and ``example.com`` names, never real
 ones. Set ``require_auth=True`` to make the authenticated routes
 answer 401 without the session cookie.
@@ -107,6 +104,7 @@ class StandInHub:
         require_auth: bool = False,
         approve_after_polls: int = 0,
         mute_channel: bool = False,
+        command_channel: bool = False,
     ) -> None:
         self.reply_text = reply_text
         self.stt_text = stt_text
@@ -116,6 +114,7 @@ class StandInHub:
         self.require_auth = require_auth
         self.approve_after_polls = approve_after_polls
         self.mute_channel = mute_channel
+        self.command_channel = command_channel
         self.device_token = "device-token-bench"
         self.session_cookie = "session-bench"
         self.paired_requests: list[dict] = []
@@ -129,6 +128,10 @@ class StandInHub:
             {"url": "https://hub.tailnet.example.com", "kind": "overlay", "priority": 60},
         ]
         self._commands: list[dict] = []
+        self._device_commands: list[dict] = []
+        self._device_command_history: dict[str, dict] = {}
+        self.command_acks: list[dict] = []
+        self.command_handshakes: list[dict[str, str | None]] = []
         self._polls: dict[str, int] = {}
         self._in_flight: set[str] = set()
         self._cancel_flags: set[str] = set()
@@ -286,7 +289,7 @@ class StandInHub:
         threading.Thread(target=self._http.serve_forever, daemon=True).start()
         self.http_url = f"http://127.0.0.1:{self._http.server_port}"
 
-        self._ws = serve(self._serve_stt, "127.0.0.1", 0)
+        self._ws = serve(self._serve_ws, "127.0.0.1", 0)
         threading.Thread(target=self._ws.serve_forever, daemon=True).start()
         self.stt_url = f"http://127.0.0.1:{self._ws.socket.getsockname()[1]}"
 
@@ -342,6 +345,26 @@ class StandInHub:
             raise RuntimeError("the command channel is off: construct with mute_channel=True")
         with self._lock:
             self._commands.append({"seq": len(self._commands) + 1, "type": "mute", "muted": muted})
+
+    def push_command(self, event_id: str, kind: str, payload: dict | None = None) -> None:
+        if not self.command_channel:
+            raise RuntimeError("construct with command_channel=True")
+        command = {
+            "type": "device-command",
+            "id": event_id,
+            "kind": kind,
+            "payload": payload or {},
+            "issued_at": "2026-10-06T12:00:00Z",
+            "expires_at": "2026-10-07T12:00:00Z",
+            "hlc": "1:0:abcdef",
+        }
+        self._device_command_history[event_id] = command
+        self._device_commands.append(command)
+
+    def replay_command(self, event_id: str) -> None:
+        command = self._device_command_history.get(event_id)
+        if command is not None:
+            self._device_commands.append(dict(command))
 
     # -- internals --
 
@@ -483,5 +506,71 @@ class StandInHub:
             time.sleep(0.05)
             ws.send(json.dumps({"t": "final", "v": self.stt_text}))
             time.sleep(0.2)  # let the client's own audio sends land before closing
+        finally:
+            self._untrack(ws.socket)
+
+    def _serve_ws(self, ws) -> None:
+        if urlparse(ws.request.path).path == "/api/devices/me/events":
+            self._serve_commands(ws)
+        else:
+            self._serve_stt(ws)
+
+    def _serve_commands(self, ws) -> None:
+        self._track(ws.socket)
+        try:
+            headers = ws.request.headers
+            self.command_handshakes.append(
+                {
+                    "path": ws.request.path,
+                    "cookie": headers.get("Cookie"),
+                    "last_event_id": headers.get("Last-Event-ID"),
+                }
+            )
+            if not self.command_channel or (
+                self.require_auth
+                and f"session={self.session_cookie}" not in (headers.get("Cookie") or "")
+            ):
+                ws.close(code=1008, reason="unauthorized or unavailable")
+                return
+            if self._down is not None:
+                if self._down == "blackhole":
+                    self._released.wait()
+                else:
+                    _reset(ws.socket)
+                    return
+            for command in tuple(self._device_commands):
+                ws.send(json.dumps(command))
+            while not self._released.is_set() or self._down is None:
+                if self._down == "reset":
+                    _reset(ws.socket)
+                    return
+                try:
+                    raw = ws.recv(timeout=0.2)
+                except TimeoutError:
+                    continue
+                except Exception:
+                    return
+                if not isinstance(raw, str):
+                    continue
+                try:
+                    message = json.loads(raw)
+                except ValueError:
+                    continue
+                if message.get("type") == "ack":
+                    self.command_acks.append(message)
+                    self._device_commands = [
+                        item for item in self._device_commands if item["id"] != message.get("id")
+                    ]
+                elif message.get("type") == "heartbeat":
+                    ws.send(
+                        json.dumps(
+                            {
+                                "type": "heartbeat_ack",
+                                "hub_time": "2026-10-06T12:00:00Z",
+                                "device_time": message.get("device_time"),
+                                "drift_ms": 0,
+                            }
+                        )
+                    )
         finally:
             self._untrack(ws.socket)

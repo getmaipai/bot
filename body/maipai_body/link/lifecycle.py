@@ -153,6 +153,11 @@ class LinkLifecycle:
         if self._observer is not None:
             self._observer.attempt(endpoint.base_url)
 
+    def channel_lost(self, reason: str) -> None:
+        """Treat a device-command channel drop as a lost hub link."""
+        if self._observer is not None:
+            self._observer.redeem_failed(reason)
+
     def _redeem_existing(self) -> bool:
         """Re-redeem the persisted pairing (walking the address book when
         asked to) and tell the observer what happened. Serialized: the

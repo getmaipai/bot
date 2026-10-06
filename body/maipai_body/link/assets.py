@@ -32,6 +32,13 @@ SPEC_ASSETS_PATH = (
 )
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _CHUNK_BYTES = 1 << 16
+_CONVERSATION_ASSETS = {
+    "openwakeword-melspectrogram-v0_5_1",
+    "openwakeword-embedding-v0_5_1",
+    "hey-maipai-v2",
+    "sface-2021dec",
+    "yunet-2026may",
+}
 
 
 class AssetSyncError(RuntimeError):
@@ -241,6 +248,20 @@ class AssetSync:
 
     def sync(self, cache_dir: Path) -> dict[str, Path]:
         """Pull all present base pins, excluding separately installed moves."""
+        if not self.session_cookie:
+            cached: dict[str, Path] = {}
+            for asset_id in _CONVERSATION_ASSETS.intersection(self.spec):
+                asset = self.spec[asset_id]
+                path = cache_dir / asset.file
+                if not path.is_file() or self._sha256(path) != asset.sha256:
+                    raise AssetSyncError(
+                        f"hub is offline and required asset {asset_id} is not cached"
+                    )
+                cached[asset_id] = path
+                if asset_id == "yunet-2026may":
+                    prepare_yunet_cache(path)
+            configure_asset_fetcher(self.ensure)
+            return cached
         manifest = self._load_manifest()
         synced: dict[str, Path] = {}
         for asset in self.spec.values():

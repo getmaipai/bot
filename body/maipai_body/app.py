@@ -324,7 +324,8 @@ def _build_conversation_loop(
     """
     from maipai_body.link.assets import AssetSync
 
-    AssetSync(base_url, session_cookie).sync(cache_dir)
+    asset_sync = [AssetSync(base_url, session_cookie)]
+    asset_sync[0].sync(cache_dir)
     hub_credentials = _hub_credentials_reader(link, base_url)
     # From here every consumer gets the tap, never the bare client: it is how
     # the green live cue knows when the voice is leaving for the hub.
@@ -369,6 +370,44 @@ def _build_conversation_loop(
     )
     loop.subscribe_view(director.on_view)
     threading.Thread(target=print_sync.run, name="face-print-sync", daemon=True).start()
+
+    from maipai_body.link.channel import CommandChannel
+
+    def set_muted(payload: dict) -> dict:
+        muted = payload.get("muted")
+        if not isinstance(muted, bool):
+            raise ValueError("mute command requires a boolean muted field")
+        loop.set_muted(muted)
+        return {"muted": muted}
+
+    def refresh_assets(_payload: dict) -> None:
+        cookie, current_url = hub_credentials()
+        refreshed = AssetSync(current_url, cookie)
+        refreshed.on_asset_changed(cache_dir)
+        asset_sync[0] = refreshed
+
+    def command_credentials() -> tuple[str, str]:
+        cookie, current_url = hub_credentials()
+        return current_url, cookie
+
+    command_channel = CommandChannel(
+        base_url,
+        session_cookie,
+        credentials=command_credentials,
+        time_handler=getattr(link.hub_client, "sync_time", None),
+        on_drop=link.channel_lost,
+        handlers={
+            "mute": lambda _payload: set_muted({"muted": True}),
+            "unmute": lambda _payload: set_muted({"muted": False}),
+            "asset_changed": refresh_assets,
+        },
+    )
+    threading.Thread(
+        target=command_channel.run,
+        args=(stop_event,),
+        name="robot-command-channel",
+        daemon=True,
+    ).start()
     return loop
 
 
