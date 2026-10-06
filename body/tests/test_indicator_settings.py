@@ -20,8 +20,8 @@ EXPECTED_KEYS = {
     "robot.indicator.enabled",
     "robot.indicator.brightness",
     "robot.indicator.night_brightness",
-    "robot.indicator.night_start",
-    "robot.indicator.night_end",
+    "robot.indicator.night_from",
+    "robot.indicator.night_to",
     "robot.indicator.sleep_eyes",
     "robot.indicator.alarm",
 }
@@ -81,7 +81,7 @@ def test_out_of_range_or_malformed_values_fall_back_to_the_default():
     bad = {
         "robot.indicator.brightness": 9,
         "robot.indicator.night_brightness": "bright",
-        "robot.indicator.night_start": "25:99",
+        "robot.indicator.night_from": "25:99",
         "robot.indicator.sleep_eyes": "strobe",
         "robot.indicator.enabled": "yes",
     }

@@ -115,7 +115,7 @@ def _lowest_night(presence: Sequence[PresenceEntry] | None) -> bool:
 
 def level(request: LookRequest) -> float:
     settings = request.settings
-    if not is_night(request.minute, settings.night_start, settings.night_end):
+    if not is_night(request.minute, settings.night_from, settings.night_to):
         return settings.brightness
     night = settings.night_brightness
     return night * LOWEST_NIGHT_FACTOR if _lowest_night(request.presence) else night
@@ -152,7 +152,7 @@ def resolve(request: LookRequest) -> Look | None:
     if request.muted:
         return _row(LookKey.MUTED, LOOKS[LookKey.MUTED][1] * base)
     if request.funnel is FunnelState.IDLE and is_night(
-        request.minute, settings.night_start, settings.night_end
+        request.minute, settings.night_from, settings.night_to
     ):
         if settings.sleep_eyes == "off":
             return None

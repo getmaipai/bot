@@ -270,11 +270,11 @@ def _attach_eyes(
 ) -> tuple[LiveCaptureTap, EyesDirector]:
     """EYES-02: the one tap every mic open and frame read goes through, and the
     director that turns its facts and the funnel's shown state into looks.
-    Settings and presence are the director's defaults until their transports
-    exist (the hello and the presence feed are not built in the bot)."""
+    Settings and age-band presence have no bot-side transport yet, so the
+    tested providers deliberately return defaults and unknown presence."""
     indicator = _start_eyes()
     tap = LiveCaptureTap(client)
-    director = EyesDirector(indicator)
+    director = EyesDirector(indicator, settings=_eyes_settings, presence=_eyes_presence)
     tap.subscribe(director.on_capture)
 
     def close_when_stopped() -> None:
@@ -286,6 +286,18 @@ def _attach_eyes(
 
     threading.Thread(target=close_when_stopped, name="eyes-close", daemon=True).start()
     return tap, director
+
+
+def _eyes_settings():
+    """Until the hello settings transport exists, use declared defaults."""
+    from maipai_body.indicator.settings import IndicatorSettings
+
+    return IndicatorSettings()
+
+
+def _eyes_presence():
+    """Age-band presence is supplied by Home; unknown is the safe interim value."""
+    return None
 
 
 def _build_conversation_loop(

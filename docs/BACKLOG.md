@@ -2037,17 +2037,15 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       get the tap from the wiring (`vision/capture.py` has no production
       caller yet). Settings: exactly seven robot-only keys,
       `robot.indicator.` plus `enabled`, `brightness`, `night_brightness`,
-      `night_start`, `night_end`, `sleep_eyes` and `alarm`, each with
+      `night_from`, `night_to`, `sleep_eyes` and `alarm`, each with
       `label`, `lives_in` (the robot device page, "Devices, this robot",
       shared with `robot.motion.carry_reaction`), `scope: device`,
       `honoured_by: [bot]` and `needs` set to `eyes` on Reachy or
       `light_ring` on the build; `sleep_eyes` declares `off` and `dim` in
       `range`; `robot.indicator.enabled` false never turns off the live or
-      camera cue (tested). The quiet-hours grep, repeated (quiet hours,
-      night, bedtime, do not disturb over `docs/`, `body/` and `scripts/`),
-      found no key to reuse, only the mirror's note that breathing is gated
-      in quiet hours (`docs/dev.md`), so the night window is `night_start`
-      and `night_end`. `profile_for_eyes()` adds `eyes` to the profile only
+      camera cue (tested). `night_from` and `night_to` are temporary robot-only night-window
+      keys. Retire them if Home provides a shared quiet-hours setting.
+      `profile_for_eyes()` adds `eyes` to the profile only
       while the Eyes report connected; the static profile never claims it.
       Settings values and the presence feed are the director's defaults
       until the `hello` transport and an age-band feed exist (neither is in
@@ -2068,7 +2066,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       (commons and Home), the age-band presence feed (Home), the
       `light_ring` driver on the build (the same keys already declare
       `needs: [light_ring]`), and a quiet-hours key if Home defines one
-      (then `night_start` and `night_end` are dropped). Live lines: not run,
+      (then `night_from` and `night_to` are dropped). Live lines: not run,
       sandbox cannot run the daemon and no unit; rows in
       `docs/dev/measurements.md`.
 

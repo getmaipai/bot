@@ -12,10 +12,9 @@ UNVERIFIED against spec-v0.1.74's ``settings-key.schema.json``, which this
 clone cannot reach (``tests/test_indicator_settings.py`` validates against
 it when ``MAIPAI_SPEC_SETTINGS_KEY_SCHEMA`` points at the file).
 
-Quiet hours: the grep (quiet hours, night, bedtime, do not disturb) over
-the docs, ``body/`` and the scripts found no existing key to reuse, so the
-night window is ``night_start`` and ``night_end`` here. If commons or Home
-name one, these two are the ones to drop.
+Quiet hours are owned by Home and this bot has no settings transport yet.
+The robot-only time keys are ``night_from`` and ``night_to`` pending that
+transport; retire them if Home later supplies a shared quiet-hours setting.
 """
 
 from __future__ import annotations
@@ -36,8 +35,8 @@ SLEEP_EYES_OPTIONS = ["off", "dim"]
 KEY_ENABLED = "robot.indicator.enabled"
 KEY_BRIGHTNESS = "robot.indicator.brightness"
 KEY_NIGHT_BRIGHTNESS = "robot.indicator.night_brightness"
-KEY_NIGHT_START = "robot.indicator.night_start"
-KEY_NIGHT_END = "robot.indicator.night_end"
+KEY_NIGHT_FROM = "robot.indicator.night_from"
+KEY_NIGHT_TO = "robot.indicator.night_to"
 KEY_SLEEP_EYES = "robot.indicator.sleep_eyes"
 KEY_ALARM = "robot.indicator.alarm"
 
@@ -47,8 +46,8 @@ class IndicatorSettings:
     enabled: bool = True
     brightness: float = looks.DAY_LEVEL_DEFAULT
     night_brightness: float = looks.NIGHT_LEVEL_DEFAULT
-    night_start: int = 21 * 60  # minute of the local day
-    night_end: int = 7 * 60
+    night_from: int = 21 * 60  # minute of the local day
+    night_to: int = 7 * 60
     sleep_eyes: str = "dim"
     alarm: bool = True
 
@@ -81,8 +80,8 @@ def parse_settings(values: Mapping[str, object]) -> IndicatorSettings:
         night_brightness=_parse_level(
             values.get(KEY_NIGHT_BRIGHTNESS), looks.NIGHT_LEVEL_RANGE, d.night_brightness
         ),
-        night_start=_parse_time(values.get(KEY_NIGHT_START), d.night_start),
-        night_end=_parse_time(values.get(KEY_NIGHT_END), d.night_end),
+        night_from=_parse_time(values.get(KEY_NIGHT_FROM), d.night_from),
+        night_to=_parse_time(values.get(KEY_NIGHT_TO), d.night_to),
         sleep_eyes=sleep if sleep in SLEEP_EYES_OPTIONS else d.sleep_eyes,
         alarm=alarm if isinstance(alarm, bool) else d.alarm,
     )
@@ -114,8 +113,8 @@ def _specs() -> list[dict[str, Any]]:
             "Eye brightness at night",
             list(looks.NIGHT_LEVEL_RANGE),
         ),
-        _spec(KEY_NIGHT_START, "time", _time_text(d.night_start), "Night starts at"),
-        _spec(KEY_NIGHT_END, "time", _time_text(d.night_end), "Night ends at"),
+        _spec(KEY_NIGHT_FROM, "time", _time_text(d.night_from), "Night starts at"),
+        _spec(KEY_NIGHT_TO, "time", _time_text(d.night_to), "Night ends at"),
         _spec(
             KEY_SLEEP_EYES,
             "select",

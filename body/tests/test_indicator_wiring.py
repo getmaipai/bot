@@ -11,6 +11,7 @@ import maipai_body.app as app_module
 from maipai_body.bodies.reachy_mini.fake import FakeEyes, FakeReachyMiniClient
 from maipai_body.hal.seam import NullIndicator, Palette
 from maipai_body.indicator.live import LiveCaptureTap
+from maipai_body.indicator.settings import IndicatorSettings
 from maipai_body.presence.funnel import FunnelState, FunnelView
 
 
@@ -83,6 +84,15 @@ def test_the_funnel_view_reaches_the_director_and_the_eyes():
     _, _, seen = _build(eyes)
     seen["view_callback"](FunnelView(shown=FunnelState.LISTENING))
     assert eyes.current_look is not None and eyes.current_look.colour is Palette.BLUE
+
+
+def test_director_app_wiring_explicitly_uses_settings_and_presence_stubs():
+    _, _, seen = _build(FakeEyes())
+    director = seen["view_callback"].__self__
+    assert director._settings is app_module._eyes_settings
+    assert director._presence is app_module._eyes_presence
+    assert app_module._eyes_settings() == IndicatorSettings()
+    assert app_module._eyes_presence() is None
 
 
 def test_the_stt_scope_drives_the_green_live_cue_through_the_tap():
