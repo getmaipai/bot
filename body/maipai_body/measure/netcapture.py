@@ -337,42 +337,34 @@ ALLOWED: tuple[AllowedRule, ...] = (
     AllowedRule(
         "hub",
         "hub",
-        "Your MaiPai Home: what you say after the wake word, the robot's state and what it sees",
-        "Your hub, on your own network",
+        "Your MaiPai Home",
+        "The hub's address on your own network",
         "During a conversation and while the robot is on",
-    ),
-    AllowedRule(
-        "update-check",
-        "internet",
-        "A software update check",
-        "`pypi.org` and `files.pythonhosted.org`",
-        "Only when a person clicks it on Home's Updates page, never by itself",
     ),
     AllowedRule(
         "dns",
         "local",
-        "Looking up an address by name",
+        "Looking up an address by name (DNS)",
         "Your router or local name server",
         "Whenever the robot needs an address",
     ),
     AllowedRule(
         "mdns",
         "local",
-        "Finding your hub and letting it find the robot",
-        "Your own network only, never past your router",
+        "Finding your hub on your own network (mDNS)",
+        "Multicast on your local network",
         "While the robot is on",
     ),
     AllowedRule(
         "dhcp",
         "local",
-        "Asking your router for an address",
+        "Asking your router for an address (DHCP)",
         "Your router",
         "When the robot joins your network",
     ),
 )
 ALLOWED_BY_ID = {rule.id: rule for rule in ALLOWED}
 
-_PYPI_NAMES = {"pypi.org", "files.pythonhosted.org"}
 _MDNS = {"224.0.0.251", "ff02::fb"}
 
 
@@ -421,8 +413,6 @@ def _is_private(address: str) -> bool:
 def _rule_for(group: Group, hub: HubTarget) -> str | None:
     if group.port == hub.port and (hub.host == group.host or hub.host in group.addresses):
         return "hub"
-    if group.proto == "tcp" and group.port == 443 and group.host in _PYPI_NAMES:
-        return "update-check"
     local = all(_is_private(a) for a in group.addresses)
     if group.port == 53 and group.proto in ("udp", "tcp") and local:
         return "dns"

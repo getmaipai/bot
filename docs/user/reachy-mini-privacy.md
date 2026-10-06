@@ -28,10 +28,10 @@ about either. The two that matter most:
 
 | What | Where it goes | When it happens | How to stop it |
 |---|---|---|---|
-| Remote access (so you or Pollen's own conversation app could reach the robot from outside your house) | `pollen-robotics-reachy-mini-central.hf.space`, a Pollen-run address on Hugging Face | Only if a Hugging Face account is signed in on the machine running the robot software | Never sign in to Hugging Face on the robot. Or start the software with `--no-media`, which turns off all of the robot's network media features at once. |
-| The video/voice connection itself, once remote access is on | Cloudflare's `turn.cloudflare.com` servers, used to get audio and video through home networks and firewalls | Every time the software starts, as setup for the remote access above | Same as above: no Hugging Face sign-in, or `--no-media`. |
+| Remote access (so you or Pollen's own conversation app could reach the robot from outside your house) | `pollen-robotics-reachy-mini-central.hf.space`, a Pollen-run address on Hugging Face | MaiPai's install sets `HF_HUB_OFFLINE=1`, removes saved Hugging Face tokens and disables TURN in the daemon config | The firewall allows only the hub and local network services. |
+| The video/voice connection itself, once remote access is on | Cloudflare's `turn.cloudflare.com` servers, used to get audio and video through home networks and firewalls | Disabled by `turn_enabled: false`; read back during install | The firewall drops all unlisted destinations. |
 | Browsing for other apps to install | `huggingface.co`'s own app-listing page | Only when someone actually opens the "browse apps" screen | Don't open it. MaiPai's own software never does. |
-| Checking for new recorded moves (the built-in dances and expressions) | Hugging Face's dataset hosting | Automatically every 24 hours by default | Start the software with `--no-preload-datasets`, or `--dataset-update-interval 0`. |
+| Checking for new recorded moves (the built-in dances and expressions) | Hugging Face's dataset hosting | Disabled by `--no-preload-datasets` and `--dataset-update-interval 0` | These flags are set in the daemon's systemd drop-in. |
 | Your computer's own microphone | Nowhere by itself - this is a local fallback, not a network connection | Whenever the software can't find real Reachy Mini audio hardware | Nothing to turn off; nothing reads the microphone unless another feature explicitly asks it to. Worth knowing about, not something to panic over. |
 
 ## What leaves the robot once MaiPai is on it
@@ -47,11 +47,10 @@ These rows are the design's allowed list. No capture has been taken yet: the uni
 
 | What | Where it goes | When it happens | Leaves your home |
 |---|---|---|---|
-| Your MaiPai Home: what you say after the wake word, the robot's state and what it sees | Your hub, on your own network | During a conversation and while the robot is on | No |
-| A software update check | `pypi.org` and `files.pythonhosted.org` | Only when a person clicks it on Home's Updates page, never by itself | Only on a click |
-| Looking up an address by name | Your router or local name server | Whenever the robot needs an address | No |
-| Finding your hub and letting it find the robot | Your own network only, never past your router | While the robot is on | No |
-| Asking your router for an address | Your router | When the robot joins your network | No |
+| Your MaiPai Home | The hub's address on your own network | During a conversation and while the robot is on | No |
+| Looking up an address by name (DNS) | Your router or local name server | Whenever the robot needs an address | No |
+| Finding your hub on your own network (mDNS) | Multicast on your local network | While the robot is on | No |
+| Asking your router for an address (DHCP) | Your router | When the robot joins your network | No |
 <!-- egress-table:end -->
 
 ## What MaiPai does about this for you

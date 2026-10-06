@@ -85,7 +85,7 @@ _FACE_MODEL_ID = "sface-2021dec"
 # only when custom_app_url is set. Port picked from the design-resolver's
 # own worked example (2026-09-28) of what a parent would type - no
 # stronger convention exists yet across the Reachy Mini app ecosystem.
-SETTINGS_APP_URL = "http://0.0.0.0:8042"
+SETTINGS_APP_URL = "http://127.0.0.1:8042"
 
 
 def _app_version() -> str | None:

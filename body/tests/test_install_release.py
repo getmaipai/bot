@@ -88,7 +88,12 @@ def _uv_sync_stub(tmp_path):
     stub = bin_dir / "uv"
     stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{calls}"\nexit 99\n')
     stub.chmod(0o755)
-    return {"PATH": f"{bin_dir}:/usr/bin:/bin"}, calls
+    return {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "MAIPAI_REACHY_HUB_ADDRESS": "192.168.1.10",
+        "MAIPAI_REACHY_ROUTER_ADDRESS": "192.168.1.1",
+        "MAIPAI_REACHY_SUBNET": "192.168.1.0/24",
+    }, calls
 
 
 def _stub_bin(tmp_path, unit_user):
@@ -189,3 +194,50 @@ def test_pyserial_is_declared_directly_and_the_installer_never_ships_vendor_eyes
             assert "pip install reachy_eyes" not in text
             assert "reachy-eyes " not in text
     assert "pyserial" in (ROOT / "NOTICE").read_text().lower()
+
+
+def test_daemon_install_dry_run_uses_hardened_offline_plan(tmp_path):
+    env, sync_calls = _uv_sync_stub(tmp_path)
+    env.update(
+        MAIPAI_REACHY_HUB_ADDRESS="192.168.1.10",
+        MAIPAI_REACHY_ROUTER_ADDRESS="192.168.1.1",
+        MAIPAI_REACHY_SUBNET="192.168.1.0/24",
+    )
+    result = subprocess.run(
+        [str(SCRIPTS / "install-reachy.sh"), "--dry-run", "example-host", "/tmp/future.whl"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert not sync_calls.exists()
+    plan = result.stdout.lower()
+    for required in (
+        "--dataset-update-interval 0",
+        "--no-preload-datasets",
+        "--fastapi-host 127.0.0.1",
+        "hf_hub_offline=1",
+        "malloc_arena_max=2",
+        "nftables",
+        "systemd-timesyncd",
+        "apt-daily.timer",
+        "apt-daily-upgrade.timer",
+        "delete /api/hf-auth/token",
+        "reachy-mini==1.11.0",
+        "127.0.0.1:8042",
+    ):
+        assert required in plan
+    assert "--no-media" not in plan
+    assert "pypi" not in plan
+
+
+def test_daemon_hardening_assets_encode_hub_only_egress_and_loopback_settings():
+    conf = SCRIPTS / "robot-conf"
+    assert (conf / "configure.sh").is_file()
+    nft = (conf / "maipai.nft").read_text()
+    assert "policy drop" in nft
+    assert "224.0.0.251" in nft
+    assert "dhcp" in nft.lower()
+    assert "tailnet" in nft.lower()
+    app = (ROOT / "body/maipai_body/app.py").read_text()
+    assert 'SETTINGS_APP_URL = "http://127.0.0.1:8042"' in app

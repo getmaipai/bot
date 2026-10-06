@@ -100,20 +100,22 @@ def test_names_come_from_dns_answers_and_tls_sni_in_the_same_capture():
     assert hosts == {"files.pythonhosted.org", "tracker.example.com"}
 
 
-def test_the_sample_session_is_labelled_against_the_allowed_list():
+def test_the_sample_session_rejects_pypi_and_labels_only_four_allowed_rows():
     rows = _rows(sample_session())
-    by_rule = {r.rule: r for r in rows}
-    assert set(by_rule) == {"hub", "update-check", "dns", "mdns", "dhcp"}
-    assert all(r.listed for r in rows)
-    assert nc.unlisted(rows) == []
-    assert by_rule["hub"].port == 8443 and by_rule["hub"].flows == 1
+    listed = {r.rule: r for r in rows if r.listed}
+    assert set(listed) == {"hub", "dns", "mdns", "dhcp"}
+    assert {r.host for r in nc.unlisted(rows)} == {"pypi.org"}
+    assert listed["hub"].port == 8443 and listed["hub"].flows == 1
 
 
 def test_an_unlisted_endpoint_fails_the_check():
     frames = sample_session() + [tcp_frame(ROBOT, 50009, STRAY_IP, 443)]
     rows = _rows(frames)
     bad = nc.unlisted(rows)
-    assert [(r.host, r.port) for r in bad] == [(STRAY_IP, 443)]
+    assert {(r.host, r.port) for r in bad} == {
+        ("pypi.org", 443),
+        (STRAY_IP, 443),
+    }
     assert not nc.passes(rows)
 
 
@@ -155,7 +157,7 @@ def test_the_page_block_comes_from_the_generator_and_a_capture_narrows_it():
         assert rule.what in expected
     observed = nc.render_page_block(_rows([tcp_frame(ROBOT, 50001, HUB, 8443)]), source="a capture")
     assert nc.ALLOWED_BY_ID["hub"].what in observed
-    assert nc.ALLOWED_BY_ID["update-check"].what not in observed
+    assert "pypi.org" not in observed
 
 
 def test_the_committed_privacy_page_matches_the_generator():
@@ -268,13 +270,13 @@ def _script(*args: str) -> subprocess.CompletedProcess:
     )
 
 
-def test_script_prints_the_table_for_a_sample_pcap_and_exits_zero(tmp_path):
+def test_script_prints_the_table_and_rejects_the_sample_pypi_egress(tmp_path):
     path = tmp_path / "sample.pcap"
     path.write_bytes(pcap(sample_session()))
     result = _script("--pcap", str(path), "--robot-ip", ROBOT, "--hub", f"{HUB}:8443")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1, result.stderr
     assert "| What | Where it goes |" in result.stdout
-    assert "pypi.org" in result.stdout and "result: pass" in result.stdout
+    assert "pypi.org" in result.stdout and "result: FAIL" in result.stdout
     assert "192.0.2." not in result.stdout
 
 
