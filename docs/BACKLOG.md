@@ -2833,3 +2833,7 @@ All after `spec/link/` and hub v0.3.
 Complete: the 83 verdicts are in [`dev.md`](dev.md) under "Review
 queue". Seven "Redesign" rows wait on the owner's family-use verdict
 (`dev.md`, "Open questions", item 11).
+
+## Row-Bot backlog addition (2026-10-06)
+
+- [ ] **MEDS-01: robot delivery for private medicine reminders** (M, after the catalog `PKG-MEDS-01`, ROBOT-NOTIFY-01 and the keyword set). Objective: deliver a tracker reminder to the robot through `deliver_on` and require a spoken confirmation; escalate according to the reminder package policy without speaking medicine details on the shared robot. Acceptance: a teen reminder stays private to that teen and is never visible to an admin; a child reminder is created and managed by a parent; the robot announces only “something is waiting” for a private reminder; no reminder is marked complete without confirmation. Reuse check: the existing offer and notification command paths. Privacy and age: no health content on a shared surface. Exit: `bash scripts/check.sh`.
