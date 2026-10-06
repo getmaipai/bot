@@ -235,6 +235,36 @@ def test_daemon_install_dry_run_uses_hardened_offline_plan(tmp_path):
         assert required in plan
     assert "--no-media" not in plan
     assert "pypi" not in plan
+    assert plan.count("daemon pin: reachy-mini==1.11.0") == 1
+    assert plan.count("daemon config: turn_enabled=false") == 1
+    assert plan.count("delete /api/hf-auth/token") == 1
+    assert plan.count("firewall: nftables hub-only egress") == 1
+    assert plan.count("hub-only ssh") == 1
+    assert plan.count("masked timers:") == 1
+    assert plan.count("settings app: http://127.0.0.1:8042") == 1
+
+
+def test_daemon_drop_in_sets_offline_mode_and_all_required_flags():
+    configure = (SCRIPTS / "robot-conf/configure.sh").read_text()
+    assert (
+        "reachy-mini-daemon --dataset-update-interval 0 --no-preload-datasets "
+        "--fastapi-host 127.0.0.1"
+    ) in configure
+    assert "Environment=HF_HUB_OFFLINE=1" in configure
+    assert (
+        "UnsetEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy"
+    ) in configure
+    assert 'MAIPAI_TAILNET_ENABLED" = 1' in configure
+    assert (
+        "systemctl mask --now systemd-timesyncd.service apt-daily.timer apt-daily-upgrade.timer"
+    ) in configure
+
+
+def test_token_removal_precedes_daemon_restart_in_installer():
+    installer = (SCRIPTS / "install-reachy.sh").read_text()
+    token_delete = installer.index("DELETE http://127.0.0.1:$DAEMON_PORT/api/hf-auth/token")
+    daemon_restart = installer.index('"== restarting reachy-mini-daemon"')
+    assert token_delete < daemon_restart
 
 
 def test_daemon_hardening_assets_encode_hub_only_egress_and_loopback_settings():

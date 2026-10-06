@@ -2136,7 +2136,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       sandbox cannot run the daemon and no unit; rows in
       `docs/dev/measurements.md`.
 
-- [ ] **ROBOT-DAEMON-CONF-01: the daemon configured off, the robot hardened** (M, Reachy Mini only, 2026-10-05; Reachy design v2 D2, REVIEW section 6).
+- [x] **ROBOT-DAEMON-CONF-01: the daemon configured off, the robot hardened** (M, Reachy Mini only, 2026-10-05; landed 2026-10-06; Reachy design v2 D2, REVIEW section 6).
       Governs: scripts/install-reachy.sh, scripts/robot-conf/ (new: the systemd drop-in, the daemon config fragment, the nftables ruleset, the timer masks), body/maipai_body/app.py (SETTINGS_APP_URL), body/tests/test_install_*.py, docs/user/reachy-mini-privacy.md, docs/dev/design-reachy-mini-2026-09-27.md section 8 and 10.
       Amends: design section 8 (the outbound table gains the TURN credential thread and the 24 h dataset check, each with its off switch) and section 10 (no PyPI, no Space); RM-07's allowed list; RM-03 (the install gains the configuration step).
       Supersedes: the privacy page's "how to stop it" rows that name `--no-media` (it also disables the local media path we need) and the PyPI update row.
