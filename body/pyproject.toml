@@ -24,21 +24,14 @@ dependencies = [
     # own code, so pyserial is declared directly rather than leaning on
     # reachy-mini's transitive pin (3.5 today, BSD-3, see NOTICE).
     "pyserial>=3.5,<4",
-    # AGENTS.md names maipai-spec, pinned at the same tag Home pins
-    # (spec-v0.1.73), as this body's dependency once it consumes spec
-    # shapes. Not pinned yet: commons/spec/pyproject.toml has no
-    # [build-system] table, so `pip`/`uv` fall back to setuptools'
-    # legacy flat-layout autodiscovery over the whole spec/ workspace
-    # and refuse to build ("Multiple top-level packages discovered":
-    # ui, llm, gen, vocab, voice, stack, safety, errors, records,
-    # schemas, settings, fixtures, emulators, streaming, diagnostics,
-    # interpreters) -- nobody has made this git-installable pattern
-    # work yet. RM-01 needs no spec shapes (the HAL seam's own pydantic
-    # models are self-contained; household-record shapes are RT-00
-    # onward, which AGENTS.md already says this repo waits on), so this
-    # profile does not block on it. Add the pin back once commons/spec
-    # ships real packaging metadata (a commons issue, not this repo's
-    # to fix unilaterally).
+    # Shared spec source pin: spec-v0.1.76, the same tag Home pins. The
+    # gate exposes ../commons-tags/spec-spec-v0.1.76/spec as
+    # MAIPAI_SPEC_DIR for schema, vocabulary and fixture checks. This is a
+    # source/worktree pin, not an installed Python dependency:
+    # commons/spec/pyproject.toml still lacks [build-system], so pip/uv's
+    # setuptools fallback fails flat-layout autodiscovery across spec/.
+    # Do not turn this into a git-installed dependency until commons ships
+    # packaging metadata.
 ]
 
 [project.entry-points."reachy_mini_apps"]

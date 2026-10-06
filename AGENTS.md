@@ -17,16 +17,16 @@ CLAUDE.md (source:
 Fresh rebuild on the platform design, started 2026-09-03: see
 [docs/dev.md](docs/dev.md) for the design record and
 [docs/BACKLOG.md](docs/BACKLOG.md) for what's built and what's missing.
-The shared record shapes live in `getmaipai/commons`'s `spec/` workspace
-(tagged `spec-v0.1.73` as of this writing, the tag Home pins; it adds
-`reconnecting` and `sleeping` to `robot.state.activity`); this
-repo's Python body does not pin `maipai-spec` yet, since
-`commons/spec/pyproject.toml` has no `[build-system]` table and a
-git-installed build fails on setuptools' flat-layout autodiscovery
-across the whole spec workspace (a comment in `body/pyproject.toml`
-names the exact error). Nothing in `body/` needs spec shapes before the
-runtime work in `docs/BACKLOG.md` starts, so this is not yet a blocker;
-add the pin back once `commons/spec` ships real packaging metadata. The
+The shared record shapes live in `getmaipai/commons`'s `spec/` workspace.
+Bot pins the spec workspace at `spec-v0.1.76` through the sibling
+`../commons-tags/spec-spec-v0.1.76/spec` checkout. The Python body reads
+versioned schemas, vocabularies and fixtures from that pinned source; it
+does not install `maipai-spec` as a Python distribution because
+`commons/spec/pyproject.toml` still has no `[build-system]` table and a
+git-installed build fails on setuptools' flat-layout autodiscovery across
+the whole spec workspace. The gate sets `MAIPAI_SPEC_DIR` to this exact
+source path so schema and fixture checks cannot silently use a different
+version. The
 pre-rebuild
 robot (bench-proven on Pi 5 hardware: wake word, sherpa-onnx speech stack,
 Hailo-10H model, ~90 skills) is preserved locally as

@@ -7,11 +7,16 @@ cd "$(dirname "$0")/.."
 DOCS_ONLY=0; if [ "${1:-}" = "--docs" ]; then DOCS_ONLY=1; fi
 
 if [ "$DOCS_ONLY" = 0 ] && [ -d body ]; then
+  SPEC_DIR="${MAIPAI_SPEC_DIR:-../commons-tags/spec-spec-v0.1.76/spec}"
+  if [ ! -f "$SPEC_DIR/vocab/capabilities.json" ]; then
+    echo "@maipai/spec spec-v0.1.76 is missing at $SPEC_DIR (set MAIPAI_SPEC_DIR to its spec/ directory)"
+    exit 1
+  fi
   echo "== body: ruff"
   (cd body && uv run ruff check . && uv run ruff format --check .)
 
   echo "== body: pytest"
-  (cd body && uv run pytest -q)
+  (cd body && MAIPAI_SPEC_DIR="$(cd ".." && cd "$SPEC_DIR" && pwd)" uv run --extra voice pytest -q)
 fi
 
 if [ "$DOCS_ONLY" = 0 ] && [ -d runtime ]; then
