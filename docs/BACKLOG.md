@@ -279,6 +279,10 @@ The body track starts now; nothing here waits on the hub.
       the bench both show the state flip within one tick. Exit: `bash
       scripts/check.sh`.
 
+## StackChan body (ordered 2026-10-06)
+
+- [ ] **BODY-STACKCHAN-01: second robot body, M5Stack StackChan (Kawaii co-created open-source AI desktop robot)** (owner ordered one on 2026-10-06; product page: https://shop.m5stack.com/products/stackchan-kawaii-co-created-open-source-ai-desktop-robot). Not built yet. It is an ESP32-class desktop robot, so unlike the Reachy Mini it cannot run the bot stack on the body: we need custom firmware, custom code and any electronics work (names to settle on arrival): firmware that pairs with the hub or a nearby bot host, speaks the shared spec record shapes, drives its servos, screen face and mic/speaker, and a body profile under the one-body-layer rule ("a profile per body"). Starting point (owner, 2026-10-09): https://github.com/rebelthor/warble is the base the integration begins from; read it first, check its licence against AGPL-3.0, and review and rebuild what is used (principle 8), downloading rather than vendoring. Steps once it arrives: (1) record the unit's model, firmware and pinout from the box and the vendor's open-source repo (licence-checked, downloaded not vendored); (2) capability list into the body-capability vocabulary; (3) a design note: what runs on the body versus the host; (4) firmware bring-up slice; (5) the Eyes/expression mapping onto its screen. Waits behind the Reachy Mini work and the mobile design; the owner has said hardware beyond the Eyes is his call, so every parts or hardware change goes to him as a form.
+
 ## Reachy Mini body (2026-09-27)
 
 The second supported body: the bodies design
