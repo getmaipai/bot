@@ -1,0 +1,15 @@
+diff --git a/firmware/main/Kconfig.projbuild b/firmware/main/Kconfig.projbuild
+--- a/firmware/main/Kconfig.projbuild
++++ b/firmware/main/Kconfig.projbuild
+@@ -7,4 +7,11 @@ config STACKCHAN_PERSISTENT_WEBSOCKET
+         Open the Xiaozhi websocket at startup and reconnect after disconnects.
+         When disabled, the audio channel opens only for listening sessions.
+ 
++config STACKCHAN_CA_PEM
++    string "Additional CA certificate PEM file"
++    default ""
++    help
++        Optional build-time path to a PEM CA certificate appended to the
++        built-in ESP-TLS certificate bundle. Leave empty to use built-in roots.
++
+ config STACKCHAN_SERVER_URL
