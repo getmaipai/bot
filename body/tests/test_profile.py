@@ -71,7 +71,7 @@ def test_tooling_and_runtime_share_one_commons_spec_pin():
     consumers = (
         Path(__file__).parents[1] / "maipai_body" / "robot" / "api.py",
         Path(__file__).parents[1] / "maipai_body" / "link" / "assets.py",
-        Path(__file__).parents[1].parent / "scripts" / "check.sh",
+        Path(__file__).parents[1].parent / "scripts" / "spec-dir.sh",
         Path(__file__).parents[1].parent / "scripts" / "prepare-bot-release.sh",
     )
     for consumer in consumers:
