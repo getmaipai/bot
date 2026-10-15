@@ -94,7 +94,14 @@ class _Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path in ASSETS:
             name, content_type = ASSETS[path]
-            self._send(HTTPStatus.OK, (STATIC_DIR / name).read_bytes(), content_type)
+            content = (STATIC_DIR / name).read_bytes()
+            if path == "/":
+                content = content.replace(
+                    b"<main>",
+                    b'<nav><a href="/pairing">StackChan pairing</a></nav><main>',
+                    1,
+                )
+            self._send(HTTPStatus.OK, content, content_type)
         elif path == "/favicon.ico":
             self.send_response(HTTPStatus.NO_CONTENT)
             self.send_header("Content-Length", "0")
@@ -124,6 +131,8 @@ class _Handler(BaseHTTPRequestHandler):
                     for item in self.server.pairing_store.pending()
                 ],
             )
+        elif path == "/pairing":
+            self._send(HTTPStatus.OK, _pairing_page(), "text/html; charset=utf-8")
         elif path == "/events":
             self._stream()
         else:
@@ -146,6 +155,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if path in {
                 "/api/stackchan/pairings/approve",
+                "/api/stackchan/pairings/refuse",
                 "/api/stackchan/pairings/revoke",
             }:
                 if not self._local_admin():
@@ -187,6 +197,24 @@ class _Handler(BaseHTTPRequestHandler):
                             "client_id": client_id,
                             "token_file": str(token_file),
                         },
+                    )
+                if path.endswith("/refuse"):
+                    client_id = body.get("client_id")
+                    if not isinstance(client_id, str) or not client_id:
+                        return self._error(HTTPStatus.BAD_REQUEST, "A client_id is required.")
+                    with self.server.pairing_store._lock:
+                        with self.server.pairing_store._file_lock():
+                            self.server.pairing_store._refresh()
+                            removed = (
+                                self.server.pairing_store._pending.pop((device_id, client_id), None)
+                                is not None
+                            )
+                            self.server.pairing_store._save()
+                    if not removed:
+                        return self._error(HTTPStatus.NOT_FOUND, "No matching pending request.")
+                    return self._json(
+                        HTTPStatus.OK,
+                        {"device_id": device_id, "client_id": client_id, "refused": True},
                     )
                 return self._json(
                     HTTPStatus.OK,
@@ -250,6 +278,42 @@ class _Server(ThreadingHTTPServer):
         if name == "_dashboard":
             raise AttributeError(name)
         return getattr(self._dashboard, name)
+
+
+def _pairing_page() -> bytes:
+    page = [
+        "<!doctype html><html lang='en'><meta charset='utf-8'>",
+        "<meta name='viewport' content='width=device-width'>",
+        "<title>StackChan pairing</title><h1>StackChan pairing</h1>",
+        "<p>Requests from this computer only. Approval saves a private token file.</p>",
+        "<table><thead><tr><th>Device-Id</th><th>Client-Id</th><th>First seen</th>",
+        "<th>Action</th></tr></thead><tbody id='rows'></tbody></table>",
+        "<p id='status' role='status'></p><script>",
+        "async function load(){",
+        "const r=await fetch('/api/stackchan/pairings/pending');",
+        "if(!r.ok){document.querySelector('#status').textContent=",
+        "'Open this page on the Bot computer.';return}",
+        "const rows=await r.json(),body=document.querySelector('#rows');",
+        "body.replaceChildren();for(const item of rows){",
+        "const tr=document.createElement('tr');",
+        "for(const value of [item.device_id,item.client_id,",
+        "new Date(item.requested_at*1000).toLocaleString()]){",
+        "const td=document.createElement('td');td.textContent=value;tr.append(td)}",
+        "const td=document.createElement('td');",
+        "for(const [label,action] of [['Approve','approve'],['Refuse','refuse']]){",
+        "const b=document.createElement('button');b.textContent=label;",
+        "b.onclick=async()=>{const response=await fetch(",
+        "'/api/stackchan/pairings/'+action,{method:'POST',",
+        "headers:{'Content-Type':'application/json'},",
+        "body:JSON.stringify({device_id:item.device_id,client_id:item.client_id})});",
+        "const data=await response.json();",
+        "document.querySelector('#status').textContent=response.ok?",
+        "(action==='approve'?'Approved. Private token file: '+data.token_file:",
+        "'Request refused.'):data.error;load()};td.append(b)}",
+        "tr.append(td);body.append(tr)}}load();setInterval(load,3000);",
+        "</script></html>",
+    ]
+    return "\n".join(page).encode()
 
 
 class DashboardServer:
