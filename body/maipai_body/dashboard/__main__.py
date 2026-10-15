@@ -25,6 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE as profile
+    from maipai_body.bodies.stackchan.xiaozhi.pairing import PairingStore, default_pairing_path
 
     if args.fake:
         from maipai_body.bodies.reachy_mini.fake import FakeReachyMiniClient
@@ -35,7 +36,13 @@ def main(argv: list[str] | None = None) -> int:
 
         client = ReachyMiniClient(profile, host=args.daemon_host, port=args.daemon_port)
 
-    server = DashboardServer(client, profile, host=args.host, port=args.port)
+    server = DashboardServer(
+        client,
+        profile,
+        host=args.host,
+        port=args.port,
+        pairing_store=PairingStore(default_pairing_path()),
+    )
     server.start()
     print(f"dashboard for {profile.id} on http://{server.host}:{server.port}/", flush=True)
     done = threading.Event()

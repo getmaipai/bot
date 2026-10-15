@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
@@ -208,11 +209,14 @@ class StackChanRobotAdapter:
         self.robot = create_stackchan_robot(client)
 
     async def get_head_angles(self) -> Mapping[str, int]:
-        return self.client.get_head_angles()
+        return await asyncio.to_thread(self.client.get_head_angles)
 
     async def set_head_angles(
         self, yaw: int | None, pitch: int | None, speed: int = HEAD_COMMAND_SPEED
     ) -> object:
+        return await asyncio.to_thread(self._set_head_angles, yaw, pitch, speed)
+
+    def _set_head_angles(self, yaw: int | None, pitch: int | None, speed: int) -> object:
         lease = self.robot.lease.acquire("person", "xiaozhi-service")
         try:
             target = {
@@ -225,11 +229,14 @@ class StackChanRobotAdapter:
             self.robot.lease.release(lease.holder)
 
     async def set_led_color(self, red: int, green: int, blue: int) -> object:
+        return await asyncio.to_thread(self._set_led_color, red, green, blue)
+
+    def _set_led_color(self, red: int, green: int, blue: int) -> object:
         updates = [{"index": index, "rgb": [red, green, blue]} for index in range(LED_COUNT)]
         return self.robot.leds.many(updates)
 
     async def set_volume(self, volume: int) -> object:
-        return self.robot.audio.speaker.volume(volume)
+        return await asyncio.to_thread(self.robot.audio.speaker.volume, volume)
 
 
 __all__ = ["StackChanRobotAdapter", "StackChanDeviceClient", "create_stackchan_robot"]

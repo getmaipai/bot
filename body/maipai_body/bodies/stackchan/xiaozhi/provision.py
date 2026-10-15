@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import getpass
 import json
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -35,22 +38,24 @@ def generate_image(
         raise ValueError(
             "WebSocket URL must start with ws:// or wss://. Use the bot host's LAN address."
         )
-    if not token or any(not value for value in (version, ota_url)):
-        raise ValueError(
-            "Token, firmware version, and OTA URL are required. Supply all values and retry."
-        )
+    if not token or not version:
+        raise ValueError("Token and firmware version are required. Supply both values and retry.")
     generator_path = generator or _tool("nvs_partition_gen.py")
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="stackchan-nvs-") as temp_dir:
         temp = Path(temp_dir)
         csv_path = temp / "provision.csv"
-        csv_path.write_text(
-            "key,type,encoding,value\n"
-            f"url,data,string,{websocket_url}\n"
-            f"token,data,string,{token}\n"
-            f"version,data,string,{version}\n"
-            f"ota_url,data,string,{ota_url}\n"
-        )
+        with csv_path.open("w", newline="") as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerows(
+                [
+                    ["key", "type", "encoding", "value"],
+                    ["url", "data", "string", websocket_url],
+                    ["token", "data", "string", token],
+                    ["version", "data", "string", version],
+                    ["ota_url", "data", "string", ota_url],
+                ]
+            )
         result = subprocess.run(
             [
                 sys.executable,
@@ -74,6 +79,7 @@ def generate_image(
             "NVS image has the wrong size. Check the partition size and generator output, "
             "then retry."
         )
+    output.chmod(0o600)
     return output
 
 
@@ -97,31 +103,61 @@ def main(argv: list[str] | None = None) -> int:
         "--url", required=True, help="LAN WebSocket URL, for example ws://192.0.2.10:8765"
     )
     parser.add_argument(
-        "--token", required=True, help="Per-device token from administrator approval"
+        "--token-file",
+        type=Path,
+        help="Read the one-time per-device token from a file instead of the hidden prompt",
     )
     parser.add_argument("--version", required=True, help="Server protocol version")
-    parser.add_argument("--ota-url", required=True, help="LAN OTA check URL")
+    parser.add_argument(
+        "--ota-url",
+        default="",
+        help="Optional LAN OTA check URL; leave empty while firmware OTA checks are disabled",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--size", type=lambda value: int(value, 0), default=0x4000)
     parser.add_argument("--generator", help="Path to ESP-IDF nvs_partition_gen.py")
-    parser.add_argument(
-        "--write-port", help="Optional USB serial port; writes only when explicitly supplied"
-    )
+    parser.add_argument("--write", action="store_true", help="Write the NVS image over USB")
+    parser.add_argument("--port", help="USB serial port, required with --write")
     parser.add_argument("--esptool", help="Path to esptool.py")
     args = parser.parse_args(argv)
     try:
+        if args.write and not args.port:
+            raise ValueError("--write needs --port. Add the USB serial port and retry.")
+        if not args.write and args.port:
+            raise ValueError("--port only works with --write. Add --write to write over USB.")
+        if args.token_file:
+            if not args.token_file.is_file():
+                raise ValueError(
+                    "Token file is missing. Use the private file path from the pairing approval "
+                    "response and retry."
+                )
+            if stat.S_IMODE(args.token_file.stat().st_mode) & 0o077:
+                raise ValueError(
+                    "Token file can be read by other users. Restrict it to your account and retry."
+                )
+            token = args.token_file.read_text().strip()
+        else:
+            token = getpass.getpass("One-time StackChan token: ")
         image = generate_image(
             args.output,
             websocket_url=args.url,
-            token=args.token,
+            token=token,
             version=args.version,
             ota_url=args.ota_url,
             partition_size=args.size,
             generator=args.generator,
         )
+        if args.token_file:
+            args.token_file.unlink()
         print(json.dumps({"image": str(image), "bytes": image.stat().st_size}))
-        if args.write_port:
-            write_image(image, port=args.write_port, esptool=args.esptool)
+        print("Steps: 1. Keep the robot connected by its USB-C data port.")
+        print("2. Back up the existing flash before changing partitions.")
+        if args.write:
+            write_image(image, port=args.port, esptool=args.esptool)
+            print(f"3. Wrote the NVS image at 0x9000 on {args.port}.")
+        else:
+            print(f"3. Image is ready at {image}; no USB write was requested.")
+        print("4. Reboot the robot and approve its Device-Id in the Bot pairing API.")
         return 0
     except (RuntimeError, ValueError) as exc:
         parser.error(str(exc))

@@ -9,6 +9,8 @@
 
 <p align="center">Documentation</p>
 
+[StackChan setup](docs/user/stackchan-setup.md) · [StackChan service for developers](docs/dev/stackchan-service.md)
+
 It sees, hears, talks, thinks, moves, self-charges, and guards your home
 in sentry mode. It recognizes each person by face and voice, keeps its own
 memories of people, facts, and experiences, and learns and evolves with

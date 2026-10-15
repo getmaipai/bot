@@ -20,10 +20,17 @@ from maipai_body.app import (
     _app_version,
     _hub_credentials_reader,
     _sigint_handler,
+    _stackchan_selected,
     run_paired_body,
 )
 from maipai_body.bodies.reachy_mini.fake import FakeReachyMiniClient
 from maipai_body.link.store import HubPairing
+
+
+def test_stackchan_service_selection_is_off_unless_body_is_stackchan():
+    assert not _stackchan_selected({})
+    assert not _stackchan_selected({"MAIPAI_BODY": "reachy_mini"})
+    assert _stackchan_selected({"MAIPAI_BODY": "StackChan"})
 
 
 @dataclass

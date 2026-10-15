@@ -20,6 +20,7 @@ thread, which is moot since the process is exiting.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.metadata
 import logging
 import math
@@ -74,6 +75,43 @@ from maipai_body.vision.gallery import FaceGallery
 from maipai_body.vision.models import SFACE
 
 logger = logging.getLogger("maipai_body.app")
+
+
+def _stackchan_selected(environ: Mapping[str, str] | None = None) -> bool:
+    """Whether this Bot process is configured to serve a StackChan body."""
+    environ = os.environ if environ is None else environ
+    return environ.get("MAIPAI_BODY", "reachy_mini").strip().lower() == "stackchan"
+
+
+async def _serve_stackchan(stop_event: threading.Event, host: str, port: int) -> None:
+    from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
+    from maipai_body.bodies.stackchan.xiaozhi.pairing import (
+        PairingStore,
+        default_pairing_path,
+    )
+    from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient, XiaozhiServer
+
+    server = XiaozhiServer(PairingStore(default_pairing_path()), robot=None)
+    server.robot = StackChanRobotAdapter(XiaozhiDeviceClient(server))
+    await server.start(host, port)
+    logger.info("StackChan xiaozhi service listening on %s:%s", host, port)
+    try:
+        await asyncio.to_thread(stop_event.wait)
+    finally:
+        await server.close()
+
+
+def _run_stackchan_service(stop_event: threading.Event) -> None:
+    host = os.environ.get("MAIPAI_XIAOZHI_HOST", "0.0.0.0")
+    try:
+        port = int(os.environ.get("MAIPAI_XIAOZHI_PORT", "8765"))
+        asyncio.run(_serve_stackchan(stop_event, host, port))
+    except ValueError as exc:
+        raise ValueError(
+            "MAIPAI_XIAOZHI_PORT must be a TCP port number. "
+            "Set it to a free port and restart the bot."
+        ) from exc
+
 
 # FACE-01's own model_id convention (home's lib/biometricPrints.ts's
 # KNOWN_MODELS uses the identical string, matching on purpose - a
@@ -638,6 +676,12 @@ class MaiPaiBody(ReachyMiniApp):
         real conversation loop for the rest of the process's life."""
         previous_handler = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, _sigint_handler(stop_event))
+        if _stackchan_selected():
+            try:
+                _run_stackchan_service(stop_event)
+            finally:
+                signal.signal(signal.SIGINT, previous_handler)
+            return
         link_thread = threading.Thread(
             target=self.link.run, args=(stop_event,), name="hub-link", daemon=True
         )

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,7 +16,7 @@ from websockets.asyncio.server import serve
 from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
 from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
 from maipai_body.bodies.stackchan.xiaozhi.pairing import PairingStore
-from maipai_body.bodies.stackchan.xiaozhi.provision import generate_image, write_image
+from maipai_body.bodies.stackchan.xiaozhi.provision import generate_image, main, write_image
 from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiServer
 
 
@@ -180,11 +182,31 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
         ) as ws:
             with self.assertRaises(Exception) as caught:
                 await ws.recv()
-            self.assertIn("approve this Device-Id", str(caught.exception))
+            self.assertIn("approve this Device-Id in the dashboard", str(caught.exception))
         self.assertEqual(self.pairing.pending()[0].device_id, "02:00:00:00:00:02")
 
     async def test_pairing_token_is_bound_to_client_id(self) -> None:
         self.assertFalse(self.pairing.authorize("02:00:00:00:00:01", "other-client", self.token))
+
+    async def test_separate_pairing_stores_refresh_shared_pending_approval_and_revocation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pairing.json"
+            service = PairingStore(path)
+            dashboard = PairingStore(path)
+            device_id = "02:00:00:00:00:42"
+            client_id = "shared-client"
+
+            request = service.request(device_id, client_id)
+            self.assertEqual(dashboard.pending(), (request,))
+            token_path = dashboard.approve_to_file(device_id)
+            token = token_path.read_text(encoding="utf-8").strip()
+            self.assertTrue(service.authorize(device_id, client_id, token))
+
+            self.assertTrue(dashboard.revoke(device_id))
+            self.assertFalse(service.authorize(device_id, client_id, token))
+            token_path.unlink()
 
     async def test_pairing_persists_only_token_digest(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -250,6 +272,60 @@ class ProvisioningTests(unittest.TestCase):
                 write_image(output, port="/dev/fake-usb", esptool="esptool.py")
             self.assertIn("write_flash", called[0])
             self.assertIn("/dev/fake-usb", called[0])
+
+    def test_cli_generates_private_image_and_consumes_one_time_token_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            generator = root / "generator.py"
+            generator.write_text(
+                "import pathlib, sys\n"
+                "pathlib.Path(sys.argv[3]).write_bytes(b'x' * int(sys.argv[4], 0))\n"
+            )
+            token_file = root / "approved.token"
+            token_file.write_text("one-time-token\n")
+            token_file.chmod(0o600)
+            output = root / "nvs.bin"
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                result = main(
+                    [
+                        "--url",
+                        "ws://192.0.2.10:8765",
+                        "--token-file",
+                        str(token_file),
+                        "--version",
+                        "1",
+                        "--ota-url",
+                        "http://192.0.2.10:8765/ota",
+                        "--output",
+                        str(output),
+                        "--size",
+                        "4096",
+                        "--generator",
+                        str(generator),
+                    ]
+                )
+            self.assertEqual(result, 0)
+            self.assertFalse(token_file.exists())
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            self.assertIn("no USB write was requested", stdout.getvalue())
+
+    def test_cli_requires_explicit_write_and_a_port(self) -> None:
+        with self.assertRaises(SystemExit) as raised:
+            main(
+                [
+                    "--url",
+                    "ws://192.0.2.10:8765",
+                    "--version",
+                    "1",
+                    "--ota-url",
+                    "http://192.0.2.10:8765/ota",
+                    "--output",
+                    "unused.bin",
+                    "--write",
+                ]
+            )
+        self.assertEqual(raised.exception.code, 2)
 
 
 if __name__ == "__main__":

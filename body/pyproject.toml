@@ -37,6 +37,9 @@ dependencies = [
 [project.entry-points."reachy_mini_apps"]
 maipai_bot = "maipai_body.app:MaiPaiBody"
 
+[project.scripts]
+stackchan-provision = "maipai_body.bodies.stackchan.xiaozhi.provision:main"
+
 # G12 (docs/dev/reachy-mini-gap-audit-2026-09-27.md): the bare
 # `reachy-mini` dependency above never pulls the simulator (mujoco is a
 # multi-hundred-MB extra with its own native deps, useless on the robot

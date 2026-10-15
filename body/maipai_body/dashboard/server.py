@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from maipai_body import expression as _expression  # noqa: F401  (registers every body's renderer)
+from maipai_body.bodies.stackchan.xiaozhi.pairing import PairingStore
 from maipai_body.expression.cue import Cue, Phase
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.primitives import PRIMITIVE_NAMES
@@ -83,6 +84,10 @@ class _Handler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         return origin is None or urlsplit(origin).netloc == host
 
+    def _local_admin(self) -> bool:
+        """Pairing approval is a local administrator action, never a LAN API."""
+        return self.client_address[0] in {"127.0.0.1", "::1"}
+
     # -- routes --
 
     def do_GET(self) -> None:  # noqa: N802
@@ -100,6 +105,24 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(
                 HTTPStatus.OK,
                 {"body": self.server.profile.id, "primitives": list(PRIMITIVE_NAMES)},
+            )
+        elif path == "/api/stackchan/pairings/pending":
+            if not self._local_admin():
+                return self._error(
+                    HTTPStatus.FORBIDDEN,
+                    "Pairing requests are available only from this computer. "
+                    "Open the bot dashboard locally.",
+                )
+            self._json(
+                HTTPStatus.OK,
+                [
+                    {
+                        "device_id": item.device_id,
+                        "client_id": item.client_id,
+                        "requested_at": item.requested_at,
+                    }
+                    for item in self.server.pairing_store.pending()
+                ],
             )
         elif path == "/events":
             self._stream()
@@ -121,6 +144,46 @@ class _Handler(BaseHTTPRequestHandler):
 
         path = urlsplit(self.path).path
         try:
+            if path in {
+                "/api/stackchan/pairings/approve",
+                "/api/stackchan/pairings/revoke",
+            }:
+                if not self._local_admin():
+                    return self._error(
+                        HTTPStatus.FORBIDDEN,
+                        "Pairing changes are available only from this computer. "
+                        "Open the bot dashboard locally.",
+                    )
+                device_id = body.get("device_id")
+                if not isinstance(device_id, str) or not device_id:
+                    return self._error(
+                        HTTPStatus.BAD_REQUEST,
+                        "A device_id is required. Copy the Device-Id from the pending pairing "
+                        "list and retry.",
+                    )
+                if path.endswith("/approve"):
+                    try:
+                        token_file = self.server.pairing_store.approve_to_file(device_id)
+                    except KeyError as error:
+                        return self._error(HTTPStatus.NOT_FOUND, str(error))
+                    except OSError:
+                        return self._error(
+                            HTTPStatus.INTERNAL_SERVER_ERROR,
+                            "The private token file could not be saved. Check the Bot data "
+                            "directory permissions, then have the device reconnect and approve "
+                            "it again.",
+                        )
+                    return self._json(
+                        HTTPStatus.OK,
+                        {"device_id": device_id, "token_file": str(token_file)},
+                    )
+                return self._json(
+                    HTTPStatus.OK,
+                    {
+                        "device_id": device_id,
+                        "revoked": self.server.pairing_store.revoke(device_id),
+                    },
+                )
             if path == "/api/muted":
                 muted = body.get("muted")
                 if not isinstance(muted, bool):
@@ -194,9 +257,11 @@ class DashboardServer:
         host: str = "127.0.0.1",
         port: int = 8050,
         state_hz: float = 10.0,
+        pairing_store: PairingStore | None = None,
     ) -> None:
         self.client = client
         self.profile = profile
+        self.pairing_store = pairing_store or PairingStore()
         self.engine = ExpressionEngine(client, profile)
         # The dashboard is the expression driver here: tracking and service
         # are not its to claim, so only the expression flag is ever set.

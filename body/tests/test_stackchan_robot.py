@@ -8,6 +8,7 @@ import pytest
 
 from maipai_body.bodies.stackchan import STACKCHAN_PROFILE, StackChanRobotAdapter
 from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
+from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient
 from maipai_body.hal.errors import BodyLost, EstopEngaged, NotSupported
 from maipai_body.hal.seam import HeadPose
 from maipai_body.robot import Robot, load_robot_api
@@ -87,3 +88,22 @@ def test_lost_link_latches_estop_and_sends_no_more_head_angles():
     with pytest.raises(EstopEngaged):
         robot.head.goto(pose=HeadPose(pitch=math.radians(45)))
     assert not any(call.name == "self.robot.set_head_angles" for call in device.calls)
+
+
+def test_unconfirmed_xiaozhi_head_command_latches_estop():
+    class NoReplyServer:
+        def call_device_tool(self, name, arguments, *, timeout):
+            raise TimeoutError("device reply timed out")
+
+        def cancel_device_calls(self, name):
+            return None
+
+    robot = StackChanRobotAdapter(XiaozhiDeviceClient(NoReplyServer())).robot
+    robot.lease.acquire("person", "test")
+
+    with pytest.raises(BodyLost, match="did not confirm"):
+        robot.head.goto(pose=HeadPose(pitch=math.radians(45)))
+
+    assert robot.estop.engaged is True
+    with pytest.raises(EstopEngaged):
+        robot.head.goto(pose=HeadPose(pitch=math.radians(45)))
