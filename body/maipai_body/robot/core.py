@@ -366,7 +366,14 @@ class RobotPart:
         if name in self._contract.verbs:
             return partial(self._robot._invoke_part, self._contract.id, name)
         if name in self._contract.state:
+            if self._contract.id == "estop" and name == "engaged":
+                return self._robot.estop_engaged
+            if self._contract.id == "lease" and name == "holder":
+                return self._robot.lease_holder
             return self._robot._read_part_state(self._contract, name)
+        prefix = f"{name}."
+        if any(verb.startswith(prefix) for verb in self._contract.verbs):
+            return RobotFacet(self, name)
         raise AttributeError(f"robot part '{self._contract.id}' has no attribute {name!r}")
 
     def stream(self, *args: Any, **kwargs: Any) -> Iterator[Any]:
@@ -374,3 +381,23 @@ class RobotPart:
         if "stream" not in self._contract.verbs:
             raise AttributeError(f"robot part '{self._contract.id}' has no stream verb")
         return self._robot._invoke_part(self._contract.id, "stream", *args, **kwargs)
+
+
+class RobotFacet:
+    """One nested vocabulary prefix, such as ``audio.speaker``."""
+
+    def __init__(self, part: RobotPart, prefix: str) -> None:
+        self._part = part
+        self._prefix = prefix
+
+    def __getattr__(self, name: str) -> Any:
+        verb = f"{self._prefix}.{name}"
+        if verb in self._part._contract.verbs:
+            return partial(
+                self._part._robot._invoke_part,
+                self._part._contract.id,
+                verb,
+            )
+        raise AttributeError(
+            f"robot part '{self._part._contract.id}' has no attribute '{self._prefix}.{name}'"
+        )

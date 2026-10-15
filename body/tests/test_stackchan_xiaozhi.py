@@ -11,26 +11,11 @@ from unittest.mock import patch
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 
+from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
+from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
 from maipai_body.bodies.stackchan.xiaozhi.pairing import PairingStore
 from maipai_body.bodies.stackchan.xiaozhi.provision import generate_image, write_image
 from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiServer
-
-
-class FakeRobot:
-    def __init__(self) -> None:
-        self.calls: list[tuple[object, ...]] = []
-
-    async def set_head_angles(self, yaw: int | None, pitch: int | None, speed: int = 150) -> object:
-        self.calls.append(("head", yaw, pitch, speed))
-        return True
-
-    async def set_led_color(self, red: int, green: int, blue: int) -> object:
-        self.calls.append(("led", red, green, blue))
-        return True
-
-    async def set_volume(self, volume: int) -> object:
-        self.calls.append(("volume", volume))
-        return True
 
 
 class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
@@ -38,7 +23,8 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
         self.pairing = PairingStore()
         self.pairing.request("02:00:00:00:00:01", "fake-client")
         self.token = self.pairing.approve("02:00:00:00:00:01")
-        self.robot = FakeRobot()
+        self.stackchan_client = FakeStackChanDeviceClient()
+        self.robot = StackChanRobotAdapter(self.stackchan_client)
         self.audio: list[tuple[str, bytes]] = []
 
         async def on_audio(session: str, frame: bytes) -> None:
@@ -137,7 +123,49 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
             )
             called = json.loads(await ws.recv())
             self.assertFalse(called["payload"]["result"]["isError"])
-            self.assertIn(("head", 12, 40, 150), self.robot.calls)
+            self.assertEqual(self.stackchan_client.calls[-1].name, "self.robot.set_head_angles")
+            self.assertEqual(
+                self.stackchan_client.calls[-1].arguments,
+                {"yaw": 12, "pitch": 40, "speed": 150},
+            )
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "mcp",
+                        "payload": {
+                            "jsonrpc": "2.0",
+                            "method": "tools/call",
+                            "params": {
+                                "name": "self.robot.set_led_color",
+                                "arguments": {"red": 12, "green": 24, "blue": 36},
+                            },
+                            "id": 4,
+                        },
+                    }
+                )
+            )
+            led_result = json.loads(await ws.recv())
+            self.assertFalse(led_result["payload"]["result"]["isError"])
+            self.assertEqual(self.stackchan_client.led_color, (12, 24, 36))
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "mcp",
+                        "payload": {
+                            "jsonrpc": "2.0",
+                            "method": "tools/call",
+                            "params": {
+                                "name": "self.audio_speaker.set_volume",
+                                "arguments": {"volume": 60},
+                            },
+                            "id": 5,
+                        },
+                    }
+                )
+            )
+            volume_result = json.loads(await ws.recv())
+            self.assertFalse(volume_result["payload"]["result"]["isError"])
+            self.assertEqual(self.stackchan_client.volume, 60)
             await self.app.send_audio("02:00:00:00:00:01", [b"opus-frame-1", b"opus-frame-2"])
             self.assertEqual(json.loads(await ws.recv())["state"], "start")
             self.assertEqual(await ws.recv(), b"opus-frame-1")

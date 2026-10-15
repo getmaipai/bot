@@ -89,6 +89,8 @@ Settled by Jesse, 2026-10-14:
 1. Custom firmware build first; the stock firmware is not run against our server.
 2. Step one is voice and tools only (xiaozhi side); the avatar channel and camera stream come in step two.
 
+Settled by Jesse, 2026-10-15: StackChan estop is a software latch that rejects new motion and cancels host-queued targets. The firmware releases servo torque when idle but offers no remote torque cut; the physical stop is the power switch or unplugging the robot.
+
 Open: which unit measurements to run first once it arrives (section 5 lists them).
 
 ## 8. Prior art and official docs (added after a second research pass)
