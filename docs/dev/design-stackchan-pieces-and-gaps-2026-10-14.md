@@ -118,7 +118,7 @@ Back up the whole flash before the first write. Partitions: 16 MB, two 4.94 MB O
 - J. The three SNTP hosts are hardcoded in `hal_network.cpp` with no config. Patch to our server, or drop SNTP and use the OTA `server_time` plus the on-board RTC.
 - K. Every stock boot posts the MAC, UUID, serial and chip info to the third-party OTA host. Block at the router until the patch is in.
 - L. A battery read can abort the firmware: `Axp2101::IsCharging` calls `ESP_ERROR_CHECK` on an I2C timeout (reproduced on one K151 build). Any battery polling we add must be wrapped.
-- M. Licence: upstream `m5stack/StackChan` declares no repo-level licence; subfolders carry their own LICENSE files. Decide the stance before copying code (AGPL policy, `docs/LICENSING.md`). Until then: read, do not copy.
+- M. Licence (corrected): `m5stack/StackChan` has no root LICENSE file, but `firmware/` and `server/` carry MIT licences and MIT file headers, so code from them may be reused with the notice kept. `app/` and `remote/` not checked beyond `remote/code/LICENSE`. Not a blocker.
 - N. Version drift: xiaozhi `main` has `notify`, `glyph_push` and newer MCP; M5 pins v2.2.4.
 - O. Internal RAM is tight (about 35 KB free in the i41 build); TLS failed there when LVGL held internal RAM. `wss://` on our build is unmeasured.
 - P. Private-CA verification needs a valid clock. The RTC is unset on a new unit, so first boot needs plain `ws://`, `server_time`, or a build-time epoch.
@@ -127,7 +127,7 @@ Back up the whole flash before the first write. Partitions: 16 MB, two 4.94 MB O
 ### Other projects worth reading
 
 `a237821375/stackchan-xiaozhi` (MIT: servo protection, barge-in notes), `alexeyzel/chan-home-assistant` (ESPHome on the unit),
-`andymai/stackchan-kai` (clean-slate Rust, LAN-only; long-horizon alternative), `dr-funchal/stackchan-kids` (states upstream has no licence).
+`andymai/stackchan-kai` (clean-slate Rust, LAN-only; long-horizon alternative), `dr-funchal/stackchan-kids` (MIT on its own changes).
 Reddit, Hackaday and forum coverage returned nothing usable; non-GitHub community sources are not covered.
 
 ## Sources

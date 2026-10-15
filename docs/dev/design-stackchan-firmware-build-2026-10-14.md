@@ -9,13 +9,17 @@ Decided by Jesse, 2026-10-14: custom firmware first; step one is voice and tools
 One reproducible build that produces a firmware image which, from first boot, contacts only our bot service on the home network:
 no M5Stack server, no third-party OTA host, no public NTP, no registry or MQTT host. Anyone can rebuild it and get the same checksum.
 
-## 2. The licence rule shapes the recipe
+## 2. Licence and why the recipe fetches instead of vendoring
 
-Upstream `m5stack/StackChan` has no repo-level licence (gap M), so this repo never contains M5 code. The recipe is a script plus a
-small set of patch files and config, all ours. The script fetches upstream at a pinned commit, verifies it, applies our patches and
-builds. This also satisfies "download, don't vendor". Patches that are derived from MIT work (kisaragi's persistent-channel patch,
-the i41 OTA-check switch) keep their upstream notices in the patch header. A patch is ours only if we wrote it; copying a hunk
-from a project is allowed only where that project's own licence permits it.
+Corrected after Jesse's check: `m5stack/StackChan` is open source. It has no root LICENSE file, but `firmware/LICENSE` and
+`server/LICENSE` are MIT (M5Stack, 2026), the firmware files carry MIT SPDX headers, and `remote/code/` has its own LICENSE.
+The firmware pulls in xiaozhi-esp32 (MIT) and some BLE sample code under Unlicense OR CC0. MIT is compatible with our AGPL-3.0:
+we may copy and patch with the copyright and permission notice kept.
+
+The recipe still fetches upstream at a pinned commit and applies patch files, for a different reason: "download, don't vendor"
+(dependencies come by lockfile and checksum, not copied in) and a small, reviewable diff against a moving upstream. Patch files that
+derive from MIT work keep the source's notice in their header. Run the licence check (`docs/LICENSING.md`) once on the final
+dependency list, including the `remote/` and `app/` folders if we ever use them (their licences were not read).
 
 ## 3. Layout in the bot repo
 
@@ -96,7 +100,7 @@ A build is not accepted until these pass, on a captured trace from the unit on a
 - RAM headroom with TLS and AEC on (gap O); decides whether patch 8 is viable.
 - Whether the v2.2.4 base has `notify`, `alert` and `glyph_push` (gap N).
 - AEC enabled in M5's build, and its quality (gap B).
-- Licence stance on copying any M5 hunk (gap M): Jesse's call, not needed while patches are ours.
+- `app/` (Flutter) and `remote/` licences, if we ever use them: not read.
 
 ## 10. Order of work
 
