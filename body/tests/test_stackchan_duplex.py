@@ -1,0 +1,201 @@
+"""Duplex, barge-in and wake-mode behavior for the StackChan turn bridge."""
+
+import asyncio
+import threading
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+from maipai_body.bodies.stackchan.turn import StackChanAudioPlayback, StackChanTurnBridge
+
+
+class Clock:
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, duration):
+        self.sleeps.append(duration)
+        self.now += duration
+
+    async def async_sleep(self, duration):
+        self.sleep(duration)
+
+
+class Server:
+    def __init__(self, loop=None):
+        self._loop = loop
+        self.sent = []
+        self.stops = []
+        self.gate = None
+
+    async def send_audio(self, device, frames, **kwargs):
+        self.sent.extend(frames)
+        if self.gate:
+            await self.gate.wait()
+
+    async def stop_audio(self, device):
+        self.stops.append(device)
+
+
+class Capture:
+    def __init__(self):
+        self.closed = False
+        self.aborted = False
+
+    def close(self):
+        self.closed = True
+
+    def abort(self):
+        self.aborted = True
+
+    def feed_opus(self, frame):
+        pass
+
+
+class Playback:
+    def __init__(self, server, device):
+        self.server, self.device = server, device
+        self.flushed = False
+
+    def flush(self, *, send_stop=True):
+        from concurrent.futures import Future
+
+        self.flushed = True
+        if send_stop:
+            asyncio.run_coroutine_threadsafe(self.server.stop_audio(self.device), self.server._loop)
+        future = Future()
+        future.set_result(None)
+        return future
+
+
+class Link:
+    hub_client = SimpleNamespace(session_cookie="cookie", active_base_url="http://192.0.2.10")
+    pairing_store = SimpleNamespace(load=lambda: SimpleNamespace(base_url="http://192.0.2.10"))
+
+
+class Offline:
+    pass
+
+
+def test_playback_uses_five_frame_prebuffer_wall_clock_and_drain(monkeypatch):
+    clock = Clock()
+    sent = []
+
+    async def send_audio(device, frames, **kwargs):
+        sent.extend(frames)
+
+    async def stop_audio(device):
+        sent.append("stop")
+
+    server = SimpleNamespace(_loop=None, send_audio=send_audio, stop_audio=stop_audio)
+    server._loop = asyncio.new_event_loop()
+    worker = threading.Thread(target=server._loop.run_forever, daemon=True)
+    worker.start()
+    playback = StackChanAudioPlayback(
+        server, "device", clock=clock.monotonic, sleeper=clock.sleep, async_sleep=clock.async_sleep
+    )
+    playback._frames = [bytes([i]) for i in range(7)]
+    playback._samples = np.zeros(0, dtype=np.float32)
+    playback.stop_playing()
+    assert len(sent) == 7
+    assert clock.sleeps == pytest.approx([0.06, 0.06])
+    playback.end()
+    assert sent[-1] == "stop"
+    assert clock.sleeps == pytest.approx([0.06, 0.06, 0.42])
+    server._loop.call_soon_threadsafe(server._loop.stop)
+    worker.join(timeout=1)
+    server._loop.close()
+
+
+def test_uplink_during_speech_requires_aec_and_guard(monkeypatch):
+    bridge = StackChanTurnBridge(Server(), Link(), Offline(), clock=lambda: 10.0)
+    capture = Capture()
+    bridge._captures["s"] = capture
+    bridge._states["s"] = "speaking"
+    bridge._aec["s"] = False
+    bridge._speech_ended["s"] = 10.0
+    asyncio.run(bridge.on_audio("s", b"ignored"))
+    assert bridge._uplink_dropped == 1
+    bridge._aec["s"] = True
+    asyncio.run(bridge.on_audio("s", b"live"))
+    assert bridge._uplink_live == 1
+    bridge._states["s"] = "listening"
+    bridge._speech_ended["s"] = 9.0
+    asyncio.run(bridge.on_audio("s", b"guarded"))
+    assert bridge._uplink_dropped == 1
+
+
+def test_abort_cancels_reply_clears_frames_stops_once_and_records_latency(monkeypatch):
+    loop = asyncio.new_event_loop()
+    server = Server(loop)
+    instant = [4.0]
+    bridge = StackChanTurnBridge(server, Link(), Offline(), clock=lambda: instant[0])
+    playback = Playback(server, "device")
+    capture = Capture()
+    bridge._playbacks["s"] = playback
+    bridge._captures["s"] = capture
+    bridge._speaking_since["s"] = 3.5
+    bridge.abort("s")
+    loop.run_until_complete(asyncio.sleep(0))
+    assert capture.aborted and playback.flushed
+    assert server.stops == ["device"]
+    assert bridge.latency_counters["abort_to_silence_ms"] == 0
+    loop.close()
+
+
+@pytest.mark.parametrize("mode", ["auto", "manual", "realtime"])
+def test_listen_modes_start_and_stop_a_capture(mode):
+    loop = asyncio.new_event_loop()
+    bridge = StackChanTurnBridge(Server(loop), Link(), Offline())
+    bridge._run = lambda *args: asyncio.sleep(0)
+    loop.run_until_complete(bridge.listen("s", "device", "start", mode=mode))
+    assert bridge._states["s"] == "listening"
+    capture = bridge._captures["s"]
+    loop.run_until_complete(bridge.listen("s", "device", "stop", mode=mode))
+    assert capture._closed.is_set()
+    loop.run_until_complete(asyncio.sleep(0))
+    loop.close()
+
+
+def test_barge_in_replaces_capture_without_starting_second_turn():
+    loop = asyncio.new_event_loop()
+    bridge = StackChanTurnBridge(Server(loop), Link(), Offline(), clock=lambda: 1.0)
+    bridge._run = lambda *args: asyncio.sleep(0)
+    loop.run_until_complete(bridge.listen("s", "device", "start", mode="auto"))
+    old = bridge._captures["s"]
+    bridge._states["s"] = "speaking"
+    bridge._aec["s"] = True
+    loop.run_until_complete(bridge.listen("s", "device", "start", mode="realtime"))
+    assert old._aborted.is_set()
+    assert bridge._states["s"] == "listening"
+    assert len(bridge._tasks) == 1
+    loop.run_until_complete(asyncio.sleep(0))
+    loop.close()
+
+
+def test_abort_during_encode_does_not_send_pending_frames(monkeypatch):
+    sent = []
+
+    async def send_audio(device, frames, **kwargs):
+        sent.extend(frames)
+
+    async def stop_audio(device):
+        sent.append("stop")
+
+    loop = asyncio.new_event_loop()
+    server = SimpleNamespace(_loop=loop, send_audio=send_audio, stop_audio=stop_audio)
+    playback = StackChanAudioPlayback(server, "device")
+    playback.push_audio_sample(np.zeros(1440 * 8, dtype=np.float32))
+    playback._cancel_event = threading.Event()
+    playback._cancel_event.set()
+    playback.stop_playing()
+    assert not sent
+    playback.flush()
+    loop.run_until_complete(asyncio.sleep(0))
+    assert sent == ["stop"]
+    loop.close()

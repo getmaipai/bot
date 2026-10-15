@@ -7,6 +7,7 @@ import logging
 import queue
 import re
 import threading
+import time
 
 import av
 import numpy as np
@@ -91,7 +92,15 @@ class StackChanAudioCapture:
 class StackChanAudioPlayback(AudioPlayback):
     """AudioPlayback protocol encoder to authenticated XiaozhiServer.send_audio."""
 
-    def __init__(self, server, device_id: str) -> None:
+    def __init__(
+        self,
+        server,
+        device_id: str,
+        *,
+        clock=time.monotonic,
+        sleeper=time.sleep,
+        async_sleep=asyncio.sleep,
+    ) -> None:
         self._server = server
         self._device_id = device_id
         self._encoder = self._new_encoder()
@@ -99,6 +108,9 @@ class StackChanAudioPlayback(AudioPlayback):
         self._frames: list[bytes] = []
         self._lock = threading.RLock()
         self._sentence_start = True
+        self._clock, self._sleep, self._async_sleep = clock, sleeper, async_sleep
+        self._cancel_event: threading.Event | None = None
+        self._aborted = threading.Event()
         super().__init__(self)
 
     def get_output_audio_samplerate(self) -> int:
@@ -160,32 +172,54 @@ class StackChanAudioPlayback(AudioPlayback):
             frames, self._frames = self._frames, []
             self._samples = np.zeros(0, dtype=np.float32)
             self._encoder = self._new_encoder()
-        if frames:
-            asyncio.run_coroutine_threadsafe(
-                self._server.send_audio(
+        if (
+            frames
+            and not self._aborted.is_set()
+            and not (self._cancel_event is not None and self._cancel_event.is_set())
+        ):
+
+            async def paced_send():
+                if self._aborted.is_set() or (self._cancel_event and self._cancel_event.is_set()):
+                    return
+                await self._server.send_audio(
                     self._device_id,
-                    frames,
+                    frames[:5],
                     sentence_start=True,
                     start=self._sentence_start,
                     stop=False,
-                ),
-                self._server._loop,
-            ).result(timeout=30)
+                )
+                deadline = self._clock()
+                for frame in frames[5:]:
+                    if self._cancel_event is not None and self._cancel_event.is_set():
+                        break
+                    deadline += 0.06
+                    await self._async_sleep(max(0.0, deadline - self._clock()))
+                    if self._cancel_event is not None and self._cancel_event.is_set():
+                        break
+                    await self._server.send_audio(
+                        self._device_id, [frame], sentence_start=False, start=False, stop=False
+                    )
+
+            asyncio.run_coroutine_threadsafe(paced_send(), self._server._loop).result(timeout=30)
             self._sentence_start = False
 
     def end(self) -> None:
+        self._sleep(0.42)
         asyncio.run_coroutine_threadsafe(
             self._server.stop_audio(self._device_id), self._server._loop
         ).result(timeout=5)
 
-    def flush(self) -> None:
+    def flush(self, *, send_stop: bool = True) -> None:
+        self._aborted.set()
         with self._lock:
             self._samples = np.zeros(0, dtype=np.float32)
             self._frames.clear()
             self._encoder = self._new_encoder()
-        asyncio.run_coroutine_threadsafe(
-            self._server.stop_audio(self._device_id), self._server._loop
-        )
+        if send_stop:
+            return asyncio.run_coroutine_threadsafe(
+                self._server.stop_audio(self._device_id), self._server._loop
+            )
+        return None
 
 
 class StackChanTurnBridge:
@@ -201,8 +235,10 @@ class StackChanTurnBridge:
         tts_factory=TtsPlaybackClient,
         person_attribution=None,
         expression_sink=None,
+        clock=time.monotonic,
     ) -> None:
         self.server, self.link, self.offline = server, link, offline
+        self._clock = clock
         self.cache_dir = cache_dir
         self.stt_factory, self.turn_factory, self.tts_factory = (
             stt_factory,
@@ -212,6 +248,17 @@ class StackChanTurnBridge:
         self.person_attribution = person_attribution or (lambda: None)
         self.expression_sink = expression_sink
         self._captures: dict[str, StackChanAudioCapture] = {}
+        self._states: dict[str, str] = {}
+        self._aec: dict[str, bool] = {}
+        self._speech_ended: dict[str, float] = {}
+        self._speaking_since: dict[str, float] = {}
+        self._uplink_live = 0
+        self._uplink_dropped = 0
+        self._first_audio_ms: float | None = None
+        self._abort_to_silence_ms: float | None = None
+        self._abort_started: dict[str, float] = {}
+        self._capture_started: dict[str, float] = {}
+        self._modes: dict[str, str] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._playbacks: dict[str, StackChanAudioPlayback] = {}
         self._cancel_events: dict[str, threading.Event] = {}
@@ -219,17 +266,36 @@ class StackChanTurnBridge:
 
     async def on_audio(self, session_id: str, data: bytes) -> None:
         capture = self._captures.get(session_id)
+        now = self._clock()
+        if self._states.get(session_id) == "speaking":
+            if not self._aec.get(session_id, False):
+                self._uplink_dropped += 1
+                return
+            self._uplink_live += 1
+        elif now - self._speech_ended.get(session_id, float("-inf")) < 0.18:
+            self._uplink_dropped += 1
+            return
         if capture is not None:
+            started = self._capture_started.get(session_id, now)
+            if self._first_audio_ms is None:
+                self._first_audio_ms = max(0.0, (now - started) * 1000)
             try:
                 capture.feed_opus(data)
             except Exception:
                 LOG.exception("StackChan Opus input could not be decoded")
 
-    async def listen(self, session_id: str, device_id: str, state: str) -> None:
+    async def listen(
+        self, session_id: str, device_id: str, state: str, *, mode="auto", aec=None
+    ) -> None:
+        if aec is not None:
+            self._aec[session_id] = bool(aec)
         if state in {"start", "detect"}:
-            self.abort(session_id)
+            self._cancel_turn(session_id, send_stop=True)
             capture = StackChanAudioCapture()
             self._captures[session_id] = capture
+            self._states[session_id] = "listening"
+            self._modes[session_id] = mode if mode in {"auto", "manual", "realtime"} else "auto"
+            self._capture_started[session_id] = self._clock()
             task = asyncio.create_task(self._run(session_id, device_id, capture))
             self._tasks[session_id] = task
         elif state == "stop":
@@ -240,6 +306,9 @@ class StackChanTurnBridge:
             self.abort(session_id)
 
     def abort(self, session_id: str) -> None:
+        self._cancel_turn(session_id, send_stop=True)
+
+    def _cancel_turn(self, session_id: str, *, send_stop: bool) -> None:
         capture = self._captures.pop(session_id, None)
         if capture:
             capture.abort()
@@ -248,12 +317,34 @@ class StackChanTurnBridge:
             cancel.set()
         playback = self._playbacks.get(session_id)
         if playback:
-            playback.flush()
+            stopped_at = self._clock()
+            try:
+                stop_future = playback.flush(send_stop=send_stop)
+            except TypeError:
+                stop_future = playback.flush()
+            if send_stop and stop_future is not None:
+                stop_future.add_done_callback(
+                    lambda _future: setattr(
+                        self, "_abort_to_silence_ms", max(0.0, (self._clock() - stopped_at) * 1000)
+                    )
+                )
+            elif send_stop:
+                self._abort_to_silence_ms = 0.0
         task = self._tasks.pop(session_id, None)
         if task:
             task.cancel()
+        self._states[session_id] = "idle"
+        self._speaking_since.pop(session_id, None)
+        self._speech_ended[session_id] = self._clock()
         self._settled_sessions.add(session_id)
         self._emit_expression("settle")
+
+    @property
+    def latency_counters(self) -> dict[str, float | None]:
+        return {
+            "abort_to_silence_ms": self._abort_to_silence_ms,
+            "first_audio_ms": self._first_audio_ms,
+        }
 
     def _emit_expression(self, state: str, *, mood: str | None = None) -> None:
         if self.expression_sink is None:
@@ -286,10 +377,14 @@ class StackChanTurnBridge:
         return {"person": person_id, "basis": basis, "level": level}
 
     async def _run(self, session_id: str, device_id: str, capture: StackChanAudioCapture) -> None:
-        playback = StackChanAudioPlayback(self.server, device_id)
+        try:
+            playback = StackChanAudioPlayback(self.server, device_id, clock=self._clock)
+        except TypeError:
+            playback = StackChanAudioPlayback(self.server, device_id)
         self._playbacks[session_id] = playback
         cancel_event = threading.Event()
         self._cancel_events[session_id] = cancel_event
+        playback._cancel_event = cancel_event
         self._emit_expression("listening")
         self._settled_sessions.discard(session_id)
         try:
@@ -326,10 +421,14 @@ class StackChanTurnBridge:
                     if asyncio.current_task().cancelling():
                         return
                     self._emit_expression("speaking")
+                    self._states[session_id] = "speaking"
+                    self._speaking_since[session_id] = self._clock()
                     await asyncio.to_thread(tts.speak, sentence, stop_event=cancel_event)
                     if cancel_event.is_set():
                         return
                     playback.stop()
+                    self._states[session_id] = "listening"
+                    self._speech_ended[session_id] = self._clock()
                 await asyncio.to_thread(playback.end)
             else:
                 await asyncio.to_thread(self._speak_plain_error, playback, base, cookie)
@@ -344,6 +443,7 @@ class StackChanTurnBridge:
         finally:
             if session_id not in self._settled_sessions:
                 self._emit_expression("settle")
+            self._states[session_id] = "idle"
             self._settled_sessions.discard(session_id)
             self._captures.pop(session_id, None)
             self._tasks.pop(session_id, None)

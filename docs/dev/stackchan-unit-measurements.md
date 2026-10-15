@@ -89,3 +89,17 @@ that the device only contacts the host.
 
 The checklist is ready for the unit; no camera watch or hardware verification
 has been performed.
+
+## Duplex and speech latency rows
+
+Record these rows for each paired unit and firmware build. Keep `source` as `simulator` for fake-peer runs and use `paired-unit` only for a physical StackChan trial.
+
+| Measurement | Procedure | Result fields |
+|---|---|---|
+| Abort to silence | Play a multi-frame reply, issue abort at a recorded frame boundary, repeat 10 times | `abort_to_silence_ms` median and maximum; pending frames after abort (must be 0) |
+| First audio | Start capture, send the first uplink frame, repeat 10 times | `first_audio_ms` median and maximum |
+| AEC duplex | Record device hello `features.aec`; while speaking, send uplink at low, normal and high volume | AEC advertised, live uplink frames, dropped frames, audible echo |
+| Mute guard | With AEC false, send uplink during speech and at 100, 180 and 250 ms after stop | frames accepted/dropped at each offset |
+| Turn handoff | Exercise auto, manual and realtime listening, then barge in and complete two back-to-back turns | mode, capture count, completed turn count, reply count (one per turn) |
+
+Hardware has not arrived; these rows define the measurement procedure and contain no unit results.
