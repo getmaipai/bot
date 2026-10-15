@@ -23,7 +23,7 @@ fi
 STAGE="dist/bot-release/$TAG"
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
-SPEC_DIR="${MAIPAI_SPEC_DIR:-../commons-tags/spec-spec-v0.1.76/spec}"
+SPEC_DIR="${MAIPAI_SPEC_DIR:-../commons-tags/spec-spec-v0.1.141/spec}"
 SPEC_ASSETS="$SPEC_DIR/assets/robot-assets.json"
 PACKAGE_ASSETS="body/maipai_body/robot-assets.json"
 if [ ! -f "$SPEC_ASSETS" ]; then

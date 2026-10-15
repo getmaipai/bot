@@ -24,8 +24,8 @@ dependencies = [
     # own code, so pyserial is declared directly rather than leaning on
     # reachy-mini's transitive pin (3.5 today, BSD-3, see NOTICE).
     "pyserial>=3.5,<4",
-    # Shared spec source pin: spec-v0.1.76, the same tag Home pins. The
-    # gate exposes ../commons-tags/spec-spec-v0.1.76/spec as
+    # Shared spec source pin: spec-v0.1.141. The gate exposes
+    # ../commons-tags/spec-spec-v0.1.141/spec as
     # MAIPAI_SPEC_DIR for schema, vocabulary and fixture checks. This is a
     # source/worktree pin, not an installed Python dependency:
     # commons/spec/pyproject.toml still lacks [build-system], so pip/uv's

@@ -37,7 +37,7 @@ class AxisLimit(BaseModel):
     """
 
     name: str
-    unit: Literal["rad", "deg", "m"]
+    unit: Literal["rad", "deg", "m", "rad/s", "m/s"]
     min: float
     max: float
     source: str

@@ -29,4 +29,40 @@ class OutOfEnvelope(Exception):
 
 
 class NotSupported(Exception):
-    """The profile does not declare the capability a caller asked for."""
+    """The profile does not declare a capability a caller asked for.
+
+    ``part``, ``capability``, ``message`` and ``fix`` match the shared
+    ``NotSupported`` shape in spec ``vocab/robot-api.json``. Positional
+    ``message`` remains accepted for existing seam callers.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        part: str = "",
+        capability: str = "",
+        fix: str = "",
+    ) -> None:
+        self.part = part
+        self.capability = capability
+        self.message = message
+        self.fix = fix
+        detail = f"{message} Fix: {fix}" if fix else message
+        super().__init__(detail)
+
+
+class NotPermitted(Exception):
+    """A command was refused because its caller does not hold the robot lease."""
+
+
+class EstopEngaged(Exception):
+    """Motion is refused while the emergency stop is engaged."""
+
+
+class Busy(Exception):
+    """A command cannot interrupt a timed operation already in progress."""
+
+
+class DeadlineExpired(Exception):
+    """A continuous command's deadline has passed; the body must stop."""

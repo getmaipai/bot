@@ -7,6 +7,10 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+### Changed
+
+- Pin the body checks and release asset lookup to the robot API vocabulary in `spec-v0.1.141`.
+
 ### Added
 
 - EYES-02, the Eyes director (Reachy Mini): one look table (`indicator/looks.py`,

@@ -19,7 +19,7 @@ _PACKAGED_SPEC_ASSETS = Path(__file__).resolve().parent.parent / "robot-assets.j
 _SPEC_CANDIDATES = (
     Path(__file__).resolve().parents[3].parent
     / "commons-tags"
-    / "spec-spec-v0.1.76"
+    / "spec-spec-v0.1.141"
     / "spec"
     / "assets"
     / "robot-assets.json",

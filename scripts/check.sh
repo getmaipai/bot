@@ -7,9 +7,9 @@ cd "$(dirname "$0")/.."
 DOCS_ONLY=0; if [ "${1:-}" = "--docs" ]; then DOCS_ONLY=1; fi
 
 if [ "$DOCS_ONLY" = 0 ] && [ -d body ]; then
-  SPEC_DIR="${MAIPAI_SPEC_DIR:-../commons-tags/spec-spec-v0.1.76/spec}"
+  SPEC_DIR="${MAIPAI_SPEC_DIR:-../commons-tags/spec-spec-v0.1.141/spec}"
   if [ ! -f "$SPEC_DIR/vocab/capabilities.json" ]; then
-    echo "@maipai/spec spec-v0.1.76 is missing at $SPEC_DIR (set MAIPAI_SPEC_DIR to its spec/ directory)"
+    echo "@maipai/spec spec-v0.1.141 is missing at $SPEC_DIR (set MAIPAI_SPEC_DIR to its spec/ directory)"
     exit 1
   fi
   echo "== body: ruff"

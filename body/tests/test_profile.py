@@ -71,7 +71,7 @@ def _device_model():
 
 
 def _fixture(name: str) -> dict:
-    assert SPEC_DIR.is_dir(), "the check gate must set MAIPAI_SPEC_DIR to spec-v0.1.76"
+    assert SPEC_DIR.is_dir(), "the check gate must set MAIPAI_SPEC_DIR to spec-v0.1.141"
     return json.loads((SPEC_FIXTURES / name).read_text())
 
 
