@@ -82,6 +82,8 @@ class FakeStackChanDeviceClient:
 
     def take_photo(self) -> bytes | None:
         self._require_link()
+        if self.led_color != (168, 0, 0):
+            raise AssertionError("camera capture refused because its indicator is off")
         self.calls.append(FakeToolCall("camera.take_photo", {}))
         return self.photo
 

@@ -16,4 +16,6 @@ Importing this package registers every body's own renderer
 up by profile id without hardcoding a single body's module.
 """
 
+from maipai_body.bodies.stackchan import renderer as _stackchan_renderer  # noqa: F401
+
 from . import reachy_mini_renderer as _reachy_mini_renderer  # noqa: F401  (registers "reachy_mini")

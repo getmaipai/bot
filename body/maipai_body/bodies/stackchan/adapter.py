@@ -44,14 +44,13 @@ class _HeadAdapter:
     def __init__(self, client: StackChanDeviceClient, profile: BodyProfile) -> None:
         self.client = client
         self.profile = profile
+        self.expression_device: _ExpressionDevice | None = None
 
     def command(self, verb: str, *args: Any, **kwargs: Any) -> object:
         if verb == "hold":
             self.client.cancel_pending()
             angles = self.client.get_head_angles()
-            self.client.set_head_angles(
-                angles["yaw"], angles["pitch"], round(self.profile.axis("head_speed").max)
-            )
+            self.client.set_head_angles(angles["yaw"], angles["pitch"], HEAD_COMMAND_SPEED)
             return True
         if verb == "disable":
             raise NotSupported(
@@ -242,6 +241,30 @@ class _CameraAdapter:
         self.robot.leds.many([{"index": index, "rgb": [0, 0, 0]} for index in range(LED_COUNT)])
 
 
+class _ExpressionDevice:
+    """Renderer side-channel bound to the same profile-checked Robot parts."""
+
+    def __init__(self, robot: Robot, client: StackChanDeviceClient) -> None:
+        self.robot = robot
+        self.client = client
+
+    def goto(self, *, pose: HeadPose, duration_s: float = 0.2) -> object:
+        return self.robot.head.set(pose=pose, duration_s=duration_s)
+
+    def hold(self) -> object:
+        return self.robot.head.hold()
+
+    def send_avatar_frame(self, frame: bytes) -> None:
+        self.client.send_avatar_frame(frame)
+
+    def set_expression_led(self, color: tuple[int, int, int], *, count: int) -> object:
+        if count != LED_COUNT:
+            raise ValueError("StackChan expression LED update must include the full ring")
+        return self.robot.leds.many(
+            [{"index": index, "rgb": list(color)} for index in range(count)]
+        )
+
+
 class _UnsupportedSensorAdapter:
     """Expose a sensor part while directing callers to the unit-arrival kit."""
 
@@ -286,6 +309,9 @@ def create_stackchan_robot(
         load_robot_api(),
     )
     robot._drivers["camera"] = _CameraAdapter(client, robot)
+    expression_device = _ExpressionDevice(robot, client)
+    robot._drivers["head"].expression_device = expression_device
+    robot._drivers["expression"] = expression_device
 
     fix = "Run the StackChan unit measurement kit on a paired unit, then add a verified adapter."
     robot._unsupported_fixes = {part: fix for part in ("battery", "touch", "imu")}
@@ -298,6 +324,7 @@ class StackChanRobotAdapter:
     def __init__(self, client: StackChanDeviceClient) -> None:
         self.client = client
         self.robot = create_stackchan_robot(client)
+        self.expression = self.robot._driver("expression")
 
     async def get_head_angles(self) -> Mapping[str, int]:
         return await asyncio.to_thread(self.client.get_head_angles)
@@ -327,6 +354,9 @@ class StackChanRobotAdapter:
 
     async def take_photo(self) -> bytes | None:
         return await asyncio.to_thread(self.robot.camera.frame)
+
+    def send_avatar_frame(self, frame: bytes) -> object:
+        return self.client.send_avatar_frame(frame)
 
     async def stream_camera(self, enabled: bool = True) -> object:
         return await asyncio.to_thread(self.robot.camera.stream, enabled=enabled)

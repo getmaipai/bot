@@ -23,6 +23,7 @@ from .cue import Cue, Phase, map_cue_to_primitive
 from .motion_worker import MotionLayer, MotionTarget, MotionWorker, entry_blend_seconds
 from .primitives import HELD_STATE, MUTED_STATE, PRIMITIVE_NAMES
 from .reachy_mini_renderer import build_steps
+from .renderers import renderer_for
 from .suppression import SuppressionContext, suppression_reason
 
 
@@ -75,6 +76,8 @@ class ExpressionEngine:
             initial_target=initial_target,
             state_feed_factory=state_feed_factory,
         )
+        self._renderer = renderer_for(profile.id)
+        self._expression_device = getattr(client, "expression_device", None)
         self._muted = False
         self._last_cue_seq = -1
         self._turn_terminal = False
@@ -180,6 +183,21 @@ class ExpressionEngine:
 
     def _render_named(self, primitive: str, direction: float) -> None:
         """Queue targets on the expression layer; stop bypasses blending."""
+        if self._profile.id == "stackchan":
+            if primitive == "stop":
+                if self._expression_device is not None:
+                    self._expression_device.hold()
+                else:
+                    self._client.hold()
+            else:
+                expression_device = self._expression_device
+                if expression_device is None:
+                    self._renderer(primitive, self._client, self._profile, doa_angle_rad=direction)
+                else:
+                    self._renderer(
+                        primitive, expression_device, self._profile, doa_angle_rad=direction
+                    )
+            return
         if primitive == "stop":
             self._worker.stop()
             return
@@ -209,6 +227,15 @@ class ExpressionEngine:
                     duration_s=0.0,
                 )
                 self._worker.tick(self._worker._clock() + 0.02)
+
+    def render_turn_state(self, state: str, *, mood: str | None = None) -> None:
+        """Render StackChan's closed face cue for a turn state, when supported."""
+        if self._profile.id != "stackchan":
+            return
+        from maipai_body.bodies.stackchan.renderer import render_cue
+
+        device = self._expression_device or self._client
+        render_cue(state, device, mood=mood)
 
     def render_ambient(self, primitive: str, context: SuppressionContext) -> ExpressionOutcome:
         """Render a body-state primitive through the worker."""

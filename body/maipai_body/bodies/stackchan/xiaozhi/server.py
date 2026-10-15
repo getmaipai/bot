@@ -63,17 +63,12 @@ class XiaozhiDeviceClient:
         return self._call("self.audio_speaker.set_volume", {"volume": volume})
 
     def take_photo(self) -> bytes | None:
-        try:
-            return asyncio.run_coroutine_threadsafe(
-                self.server.take_photo(), self.server._loop
-            ).result(timeout=self.timeout + 1)
-        except Exception as exc:
-            raise BodyLost("StackChan photo capture failed. Reconnect it and retry.") from exc
+        return self._call("self.camera.take_photo", {"question": "Describe what you see."})
 
     def send_avatar_frame(self, frame: bytes) -> object:
         try:
             return asyncio.run_coroutine_threadsafe(
-                self.server.send_avatar_frame(frame), self.server._loop
+                self.server.send_expression_frame(frame), self.server._loop
             ).result(timeout=self.timeout)
         except Exception as exc:
             raise BodyLost(
@@ -177,6 +172,7 @@ class XiaozhiServer:
         self._photos: dict[str, bytes] = {}
         self._photo_waiters: dict[str, asyncio.Future[bytes]] = {}
         self._camera_streaming: set[str] = set()
+        self._avatar_frame_sender: Callable[[str, bytes], Awaitable[None]] | None = None
         self._server: Any = None
         self._sessions: dict[str, ServerConnection] = {}
         self._session_ids: dict[str, str] = {}
@@ -554,6 +550,17 @@ class XiaozhiServer:
         enabled = decoded.payload != b"\x00"
         await self.stream_camera(enabled)
 
+    async def send_expression_frame(self, frame: bytes) -> None:
+        if self._avatar_frame_sender is None:
+            raise ConnectionError(
+                "StackChan avatar channel is unavailable. Connect the avatar service and retry."
+            )
+        if len(self._sessions) != 1:
+            raise ConnectionError(
+                "Select one authenticated StackChan before sending an expression."
+            )
+        await self._avatar_frame_sender(next(iter(self._sessions)), frame)
+
     async def _stop_camera(self, device_id: str) -> None:
         self._camera_streaming.discard(device_id)
         camera_disconnected = getattr(self.robot, "camera_disconnected", None)
@@ -663,6 +670,15 @@ class XiaozhiServer:
         device_id, websocket = next(iter(self._sessions.items()))
         if not self._session_authorized(device_id):
             raise PermissionError("StackChan pairing is revoked. Approve and provision it again.")
+        if name == "self.camera.take_photo":
+            if self.robot is None:
+                raise NotSupported(
+                    "StackChan camera has no Robot indicator adapter; configure the body Robot "
+                    "first."
+                )
+            return asyncio.run_coroutine_threadsafe(
+                self.robot.take_photo(device_id), self._loop
+            ).result(timeout=timeout + 1)
         # StackChan firmware parses MCP request ids as numeric JSON-RPC ids.
         request_id = next(self._next_device_request_id)
         request_key = str(request_id)

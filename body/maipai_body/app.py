@@ -114,6 +114,7 @@ async def _serve_stackchan_channels(
     key_path = os.environ.get("MAIPAI_XIAOZHI_TLS_KEY")
     tls_context = server_ssl_context(cert_path, key_path)
     voice.robot = StackChanRobotAdapter(XiaozhiDeviceClient(voice))
+    voice._avatar_frame_sender = avatar.send_frame
     await voice.start(host, xiaozhi_port, ssl=tls_context)
     try:
         await avatar.start(avatar_host, avatar_port, ssl=tls_context)

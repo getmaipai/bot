@@ -162,6 +162,14 @@ class AvatarServer:
             raise PermissionError("StackChan pairing was revoked.")
         await websocket.send(control_avatar(expression, eyes=eyes, mouth=mouth))
 
+    async def send_frame(self, device_id: str, frame: bytes) -> None:
+        websocket = self._sessions.get(device_id)
+        if websocket is None:
+            raise ConnectionError(
+                "StackChan avatar channel is not connected. Reconnect the device and retry."
+            )
+        await websocket.send(frame)
+
 
 def _bearer(value: str) -> str | None:
     return value[7:] if value.startswith("Bearer ") else None
