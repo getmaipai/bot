@@ -30,6 +30,7 @@ class StackChanVisionBridge:
         temp_dir: Path | None = None,
         consent_for_print: Callable[[str], bool] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        frame_provider: Callable[[float], bytes | None] | None = None,
     ) -> None:
         self.robot = robot
         self.detector = detector
@@ -39,8 +40,61 @@ class StackChanVisionBridge:
         self.temp_dir = temp_dir
         self.consent_for_print = consent_for_print or (lambda _: False)
         self.clock = clock
+        self.frame_provider = frame_provider
         self._timer: threading.Timer | None = None
         self._lock = threading.Lock()
+
+    def track_stream_frame(self, *, deadline_s: float = 0.4) -> FaceTrackTarget:
+        """Track from the latest streamed frame, discarding one past its deadline."""
+        if not 0 < deadline_s <= 1.0:
+            raise ValueError("tracking deadline must be over 0 and at most 1 second")
+        started = self.clock()
+        getter = self.frame_provider or getattr(self.robot.camera, "stream_frame", None)
+        if getter is None:
+            getter = getattr(self.robot, "camera_stream_frame", None)
+        if getter is None:
+            getter = self.robot._driver("camera").stream_frame
+        if getter is None:
+            return FaceTrackTarget(detected=False)
+        frame_bytes = getter(deadline_s)
+        if not frame_bytes or self.clock() - started > deadline_s:
+            return FaceTrackTarget(detected=False)
+        try:
+            frame = self.decode(frame_bytes)
+            if self.clock() - started > deadline_s:
+                return FaceTrackTarget(detected=False)
+            faces = self.detector.detect(frame)
+            if not faces or self.clock() - started > deadline_s:
+                return FaceTrackTarget(detected=False)
+            x, y, width, height = faces[0].bbox
+            frame_h, frame_w = frame.shape[:2]
+            target = FaceTrackTarget(
+                detected=True,
+                x=float((x + width / 2) / frame_w),
+                y=float((y + height / 2) / frame_h),
+            )
+            self._cancel_timer()
+            pose = HeadPose(yaw=float((target.x - 0.5) * 0.35), pitch=float((0.5 - target.y) * 0.2))
+            holder = "stackchan-vision"
+            if self.robot.lease_holder != holder:
+                self.robot.lease.acquire(priority="expression", holder=holder)
+            try:
+                self.robot.head.goto(pose=pose, duration_s=deadline_s)
+            except Exception:
+                self.robot.lease.release(holder=holder)
+                raise
+            timer = threading.Timer(deadline_s, self._hold_head)
+            timer.daemon = True
+            with self._lock:
+                self._timer = timer
+            timer.start()
+            return target
+        finally:
+            del frame_bytes
+            driver = self.robot._driver("camera") if hasattr(self.robot, "_driver") else None
+            done = getattr(driver, "stream_frame_done", None)
+            if callable(done):
+                done()
 
     def set_print_consent(self, authorize: Callable[[str], bool]) -> None:
         """Install the print-store authorization check for child/teen profiles."""

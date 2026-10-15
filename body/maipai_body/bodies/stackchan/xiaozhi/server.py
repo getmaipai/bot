@@ -288,6 +288,11 @@ class XiaozhiServer:
         self._sessions[device_id] = websocket
         self._session_ids[device_id] = session_id
         self._session_credentials[device_id] = (client_id, token or "")
+        bind_camera = getattr(self.robot, "bind_avatar_camera", None)
+        if callable(bind_camera) and self._avatar_frame_sender is not None:
+            avatar_server = getattr(self._avatar_frame_sender, "__self__", None)
+            if avatar_server is not None:
+                bind_camera(avatar_server, device_id)
         self._session_ready.set()
         hello_received = False
         try:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import time
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
@@ -199,6 +200,9 @@ class _CameraAdapter:
     def __init__(self, client: StackChanDeviceClient, robot: Robot) -> None:
         self.client = client
         self.robot = robot
+        self.avatar_server: Any = None
+        self.device_id: str | None = None
+        self._stream_indicator_active = False
 
     def command(self, verb: str, *args: Any, **kwargs: Any) -> object:
         if verb == "frame":
@@ -209,6 +213,33 @@ class _CameraAdapter:
                 return self.client.take_photo()
             finally:
                 self._light_off()
+        if verb == "stream_frame":
+            deadline = args[0] if args else kwargs.get("deadline_s", 0.4)
+            if kwargs.keys() - {"deadline_s"} or args and kwargs:
+                raise TypeError("camera.stream_frame accepts one deadline in seconds")
+            if not isinstance(deadline, (int, float)) or not 0 < deadline <= 1.0:
+                raise ValueError("camera stream frame deadline must be over 0 and at most 1 second")
+            if self.avatar_server is None:
+                return None
+            if self.device_id is None:
+                return None
+            started = time.monotonic()
+            self._light_on()
+            self._stream_indicator_active = True
+            try:
+                device_id = self.device_id
+                if device_id not in self.avatar_server._camera_frames:
+                    self.avatar_server.wait_camera_device_frame(device_id, timeout=float(deadline))
+                frame = self.avatar_server.pop_camera_frame(
+                    device_id, max_age_s=min(float(deadline), 0.5)
+                )
+                if frame is None or time.monotonic() - started > deadline:
+                    return None
+                return frame
+            except BaseException:
+                self._light_off()
+                self._stream_indicator_active = False
+                raise
         if verb != "stream":
             raise AttributeError(verb)
         enabled = kwargs.get("enabled", args[0] if args else True)
@@ -231,7 +262,19 @@ class _CameraAdapter:
         finally:
             self._light_off()
 
+    def stream_frame(self, deadline_s: float) -> bytes | None:
+        return self.command("stream_frame", deadline_s)
+
+    def stream_frame_done(self) -> None:
+        if self._stream_indicator_active:
+            self._light_off()
+            self._stream_indicator_active = False
+
     def disconnected(self) -> None:
+        if self.avatar_server is not None and self.device_id is not None:
+            self.avatar_server.clear_camera_frame(self.device_id)
+        if self._stream_indicator_active:
+            self._stream_indicator_active = False
         self._light_off()
 
     def _light_on(self) -> None:
@@ -404,6 +447,15 @@ class StackChanRobotAdapter:
 
     def camera_disconnected(self) -> None:
         self.robot._driver("camera").disconnected()
+
+    def bind_avatar_camera(self, avatar_server: Any, device_id: str | None) -> None:
+        """Connect the authenticated avatar buffer to the Robot camera part."""
+        camera = self.robot._driver("camera")
+        camera.avatar_server = avatar_server
+        camera.device_id = device_id
+
+    def camera_stream_frame(self, deadline_s: float) -> bytes | None:
+        return self.robot._driver("camera").stream_frame(deadline_s)
 
 
 __all__ = ["StackChanRobotAdapter", "StackChanDeviceClient", "create_stackchan_robot"]

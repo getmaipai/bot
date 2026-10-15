@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
+import time
 import uuid
 from typing import Any
 
@@ -17,6 +19,8 @@ from .codec import MAX_FRAME_SIZE, decode_frame, encode_frame
 LOG = logging.getLogger(__name__)
 CONTROL_AVATAR = 0x03
 CONTROL_MOTION = 0x04
+CAMERA_FRAME = 0x01
+MAX_CAMERA_FRAME_SIZE = 2 * 1024 * 1024
 HELLO_TIMEOUT_S = 10.0
 MAX_HELLO_SIZE = 4096
 
@@ -64,6 +68,12 @@ class AvatarServer:
         self.estop_engaged = False
         self._server: Any = None
         self._sessions: dict[str, ServerConnection] = {}
+        self.on_camera_frame: Any = None
+        self._camera_frames: dict[str, tuple[bytes, float]] = {}
+        self._camera_events: dict[str, asyncio.Event] = {}
+        self._camera_disconnects: dict[str, asyncio.Event] = {}
+        self._camera_ready = threading.Condition()
+        self.camera_frame_count = 0
 
     async def start(self, host: str = "127.0.0.1", port: int = 8766, **kwargs: Any) -> None:
         self._server = await serve(
@@ -136,6 +146,22 @@ class AvatarServer:
                     return
                 if frame.kind == CONTROL_MOTION and self.estop_engaged:
                     LOG.warning("blocked avatar motion frame while software estop is engaged")
+                elif frame.kind == CAMERA_FRAME:
+                    if not _valid_jpeg(frame.payload):
+                        LOG.warning("discarded malformed StackChan camera frame")
+                        continue
+                    self._camera_frames[device_id] = (frame.payload, time.monotonic())
+                    self.camera_frame_count = len(self._camera_frames)
+                    with self._camera_ready:
+                        self._camera_ready.notify_all()
+                    self._camera_events.setdefault(device_id, asyncio.Event()).set()
+                    if self.on_camera_frame is not None:
+                        try:
+                            result = self.on_camera_frame(device_id, frame.payload)
+                            if asyncio.iscoroutine(result):
+                                await result
+                        except Exception:
+                            LOG.debug("camera frame callback failed", exc_info=True)
         except ConnectionClosed:
             pass
         except Exception:
@@ -143,6 +169,49 @@ class AvatarServer:
         finally:
             if self._sessions.get(device_id) is websocket:
                 self._sessions.pop(device_id, None)
+                self.clear_camera_frame(device_id)
+                self._camera_disconnects.setdefault(device_id, asyncio.Event()).set()
+                event = self._camera_events.get(device_id)
+                if event is not None:
+                    event.clear()
+
+    async def wait_for_camera_frame(self, device_id: str) -> None:
+        event = self._camera_events.setdefault(device_id, asyncio.Event())
+        if device_id not in self._camera_frames:
+            await asyncio.wait_for(event.wait(), 1.0)
+
+    async def wait_for_camera_disconnect(self, device_id: str) -> None:
+        event = self._camera_disconnects.setdefault(device_id, asyncio.Event())
+        if device_id in self._sessions:
+            await asyncio.wait_for(event.wait(), 1.0)
+
+    def pop_camera_frame(self, device_id: str, *, max_age_s: float = 0.5) -> bytes | None:
+        item = self._camera_frames.pop(device_id, None)
+        self.camera_frame_count = len(self._camera_frames)
+        if item is None or time.monotonic() - item[1] > max_age_s:
+            return None
+        return item[0]
+
+    def clear_camera_frame(self, device_id: str) -> None:
+        """Drop the buffered JPEG for one device, including at disconnect."""
+        self._camera_frames.pop(device_id, None)
+        self.camera_frame_count = len(self._camera_frames)
+        event = self._camera_events.get(device_id)
+        if event is not None:
+            event.clear()
+        with self._camera_ready:
+            self._camera_ready.notify_all()
+
+    def wait_camera_device_frame(self, device_id: str, *, timeout: float) -> bool:
+        """Wait from a worker thread for one authenticated device's frame."""
+        deadline = time.monotonic() + timeout
+        with self._camera_ready:
+            while device_id not in self._camera_frames:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._camera_ready.wait(remaining)
+            return True
 
     async def _close_stale(self, websocket: ServerConnection) -> None:
         await websocket.close(1012, "A replacement avatar session connected.")
@@ -173,3 +242,11 @@ class AvatarServer:
 
 def _bearer(value: str) -> str | None:
     return value[7:] if value.startswith("Bearer ") else None
+
+
+def _valid_jpeg(payload: bytes) -> bool:
+    return (
+        4 <= len(payload) <= MAX_CAMERA_FRAME_SIZE
+        and payload.startswith(b"\xff\xd8")
+        and payload.endswith(b"\xff\xd9")
+    )

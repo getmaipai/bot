@@ -12,6 +12,7 @@ from maipai_body.bodies.stackchan.avatar.codec import decode_frame, encode_frame
 from maipai_body.bodies.stackchan.avatar.server import AvatarServer
 from maipai_body.bodies.stackchan.xiaozhi.pairing import PairingStore
 from tests.stackchan_sim.avatar_peer import AvatarPeer
+from tests.stackchan_sim.camera_sender import jpeg_frame
 
 
 class StackChanAvatarTests(unittest.IsolatedAsyncioTestCase):
@@ -94,6 +95,34 @@ class StackChanAvatarTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await peer.close()
             await healthy.close()
+
+    async def test_camera_jpeg_frames_are_published_latest_wins_and_disconnect_clears(self):
+        peer = self.peer()
+        seen = []
+        self.app.on_camera_frame = lambda device, data: seen.append((device, data))
+        await peer.connect()
+        try:
+            await peer.send_camera_frame(jpeg_frame(b"first"))
+            await peer.send_camera_frame(jpeg_frame(b"second"))
+            await self.app.wait_for_camera_frame(self.device_id)
+            self.assertEqual(seen[-1], (self.device_id, jpeg_frame(b"second")))
+            self.assertEqual(self.app.camera_frame_count, 1)
+        finally:
+            await peer.close()
+        await self.app.wait_for_camera_disconnect(self.device_id)
+        self.assertIsNone(self.app.pop_camera_frame(self.device_id))
+
+    async def test_malformed_camera_payload_does_not_close_session(self):
+        peer = self.peer()
+        await peer.connect()
+        try:
+            await peer.send_camera_frame(b"not-jpeg")
+            await peer.send_camera_frame(jpeg_frame(b"valid"))
+            await self.app.wait_for_camera_frame(self.device_id)
+            self.assertEqual(self.app.pop_camera_frame(self.device_id), jpeg_frame(b"valid"))
+            self.assertIsNotNone(self.app._sessions.get(self.device_id))
+        finally:
+            await peer.close()
 
     def test_frame_codec_rejects_truncated_and_mismatched_frames(self):
         self.assertEqual(decode_frame(encode_frame(3, b"{}")).payload, b"{}")

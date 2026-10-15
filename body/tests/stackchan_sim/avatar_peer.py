@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import struct
 
 from websockets.asyncio.client import connect
 
@@ -35,6 +36,10 @@ class AvatarPeer:
         frame = await self.websocket.recv()
         assert isinstance(frame, bytes)
         return frame
+
+    async def send_camera_frame(self, jpeg: bytes) -> None:
+        assert self.websocket is not None
+        await self.websocket.send(bytes((0x01,)) + struct.pack(">I", len(jpeg)) + jpeg)
 
     async def close(self) -> None:
         if self.websocket is not None:
