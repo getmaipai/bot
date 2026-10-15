@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from websockets.asyncio.server import ServerConnection, serve
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 from .pairing import PairingStore
 
@@ -42,12 +43,14 @@ class XiaozhiServer:
         *,
         version: str = "1",
         server_name: str = "MaiPai Bot",
+        idle_timeout: float = 30.0,
     ) -> None:
         self.pairing = pairing
         self.robot = robot
         self.audio_handler = audio_handler
         self.version = version
         self.server_name = server_name
+        self.idle_timeout = idle_timeout
         self._server: Any = None
         self._sessions: dict[str, ServerConnection] = {}
         self._speaking: set[str] = set()
@@ -107,8 +110,25 @@ class XiaozhiServer:
             return
         self._sessions[device_id] = websocket
         self._session_ready.set()
+        hello_received = False
         try:
-            async for message in websocket:
+            while True:
+                try:
+                    if hello_received:
+                        message = await websocket.recv()
+                    else:
+                        message = await asyncio.wait_for(
+                            websocket.recv(), timeout=self.idle_timeout
+                        )
+                except TimeoutError:
+                    await websocket.close(
+                        code=1001,
+                        reason=(
+                            "No xiaozhi frame arrived before the idle timeout. Send a hello "
+                            "frame, then reconnect."
+                        ),
+                    )
+                    break
                 if isinstance(message, bytes):
                     if self.audio_handler:
                         await self.audio_handler(session_id, message)
@@ -125,6 +145,16 @@ class XiaozhiServer:
                     continue
                 kind = data.get("type")
                 if kind == "hello":
+                    if hello_received:
+                        await self._send_error(
+                            websocket,
+                            session_id,
+                            -32600,
+                            "Repeated hello frame for this session. Continue using the active "
+                            "session, or reconnect the device to start a new one.",
+                        )
+                        continue
+                    hello_received = True
                     await websocket.send(
                         json.dumps(
                             {
@@ -158,9 +188,20 @@ class XiaozhiServer:
                         -32600,
                         "Unsupported message type. Send hello, listen, abort, or mcp.",
                     )
-        except Exception as exc:  # connection errors are expected during device disconnects
-            if exc.__class__.__name__ not in {"ConnectionClosedOK", "ConnectionClosedError"}:
-                LOG.info("StackChan session ended: %s", type(exc).__name__)
+        except ConnectionClosedError as exc:
+            if any(close is not None and close.code == 1009 for close in (exc.rcvd, exc.sent)):
+                LOG.warning(
+                    "StackChan sent a frame larger than 1 MiB. Send smaller frames and reconnect."
+                )
+            else:
+                LOG.info(
+                    "StackChan connection closed during a session. Reconnect the device and "
+                    "retry the turn."
+                )
+        except ConnectionClosedOK:
+            LOG.info("StackChan session closed. Reconnect the device to start another turn.")
+        except Exception as exc:
+            LOG.info("StackChan session ended: %s", type(exc).__name__)
         finally:
             if self._sessions.get(device_id) is websocket:
                 self._sessions.pop(device_id, None)

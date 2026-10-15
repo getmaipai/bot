@@ -98,6 +98,13 @@ A build is not accepted until these pass, on a captured trace from the unit on a
    DHCP and DNS. DNS queries are listed and each name is justified.
 3. Router rule: block the vendor hosts as defence in depth. The test is run once with the block off to prove the firmware itself behaves.
 
+For a captured destination-host list, run `scripts/stackchan-no-third-party.sh --hosts destinations.txt --hub 192.0.2.10 --router 192.0.2.1`.
+The list has one numeric IPv4 or IPv6 destination per line; `#` starts a comment. The checker allows the supplied hub and router
+addresses, Tailscale's IPv4 and IPv6 ranges, mDNS multicast, and DHCP broadcast destinations. For a pcap or pcapng, use
+`--pcap capture.pcapng` with the same `--hub` and `--router` options; this mode needs `tshark` from Wireshark. The check compares
+destination IPs only. Keep the full packet trace for reviewing ports and DNS names, then justify each DNS name as above. An empty
+capture, invalid address, unreadable file, or destination outside the allowlist fails with a next step.
+
 ## 8. Flash, backup and restore (from the upstream docs and the i41 fork)
 
 1. Dump the whole 16 MB flash first and keep it (`esptool` read). Restore writes it back at 0x0.

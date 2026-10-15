@@ -1,0 +1,8 @@
+# Sanitized sample from a local-only StackChan capture.
+192.0.2.10
+192.0.2.1
+100.64.0.8
+224.0.0.251
+255.255.255.255
+ff02::fb
+ff02::1:2
