@@ -1,0 +1,12 @@
+# Intent: give local firmware a distinct project and version identity.
+# Upstream: firmware/CMakeLists.txt, PROJECT_VER and project().
+diff --git a/firmware/CMakeLists.txt b/firmware/CMakeLists.txt
+index 1733075..3ad6095 100644
+--- a/firmware/CMakeLists.txt
++++ b/firmware/CMakeLists.txt
+@@ -5 +5 @@ cmake_minimum_required(VERSION 3.16)
+-set(PROJECT_VER "1.5.1")
++set(PROJECT_VER "1.5.1-maipai.1")
+@@ -23 +23 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+-project(stack-chan)
++project(maipai-stackchan)

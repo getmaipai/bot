@@ -1,0 +1,25 @@
+# Intent: make SNTP host configurable and disabled by default to prevent public time calls.
+# Upstream: firmware/main/Kconfig.projbuild and hal/hal_network.cpp, Hal::startSntp.
+diff --git a/firmware/main/Kconfig.projbuild b/firmware/main/Kconfig.projbuild
+index 77c5544..fb9fbcc 100644
+--- a/firmware/main/Kconfig.projbuild
++++ b/firmware/main/Kconfig.projbuild
+@@ -17,0 +18,6 @@ config STACKCHAN_XIAOZHI_OTA_CHECK
++config STACKCHAN_NTP_SERVER
++    string "Optional NTP server"
++    default ""
++    help
++        Leave empty to avoid contacting a public time server. The home hub or router supplies time.
++
+diff --git a/firmware/main/hal/hal_network.cpp b/firmware/main/hal/hal_network.cpp
+index 1a96ada..0904738 100644
+--- a/firmware/main/hal/hal_network.cpp
++++ b/firmware/main/hal/hal_network.cpp
+@@ -37,3 +37,4 @@ void Hal::startSntp()
+-        esp_sntp_setservername(0, "pool.ntp.org");
+-        esp_sntp_setservername(1, "time.google.com");
+-        esp_sntp_setservername(2, "cn.pool.ntp.org");
++        const char* ntp_server = CONFIG_STACKCHAN_NTP_SERVER;
++        if (ntp_server[0] != '\0') {
++            esp_sntp_setservername(0, const_cast<char*>(ntp_server));
++        }

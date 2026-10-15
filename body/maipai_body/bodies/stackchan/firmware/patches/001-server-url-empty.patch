@@ -1,0 +1,9 @@
+# Intent: leave the M5 avatar server unset unless a local installer configures it.
+# Upstream: firmware/main/Kconfig.projbuild, CONFIG_STACKCHAN_SERVER_URL.
+diff --git a/firmware/main/Kconfig.projbuild b/firmware/main/Kconfig.projbuild
+index 89592a0..7fe64e4 100644
+--- a/firmware/main/Kconfig.projbuild
++++ b/firmware/main/Kconfig.projbuild
+@@ -5 +5 @@ config STACKCHAN_SERVER_URL
+-    default "http://47.113.125.164:12800"
++    default ""

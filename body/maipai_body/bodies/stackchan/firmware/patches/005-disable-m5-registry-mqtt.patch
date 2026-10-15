@@ -1,0 +1,22 @@
+# Intent: stop starting M5 EzData registry and MQTT, and remove its service URL from the device UI.
+# Upstream: firmware/main/hal/hal_ezdata.cpp, Hal::startEzDataService; apps/app_ezdata/view/view.h.
+diff --git a/firmware/main/apps/app_ezdata/view/view.h b/firmware/main/apps/app_ezdata/view/view.h
+index d5980b7..8ea9efb 100644
+--- a/firmware/main/apps/app_ezdata/view/view.h
++++ b/firmware/main/apps/app_ezdata/view/view.h
+@@ -56 +56 @@ public:
+-        _msg_url->setText("https://my.m5stack.com/ezdata2");
++        _msg_url->setText("EzData is disabled in this local firmware.");
+diff --git a/firmware/main/hal/hal_ezdata.cpp b/firmware/main/hal/hal_ezdata.cpp
+index 4f1e60d..11893fe 100644
+--- a/firmware/main/hal/hal_ezdata.cpp
++++ b/firmware/main/hal/hal_ezdata.cpp
+@@ -459,6 +459,2 @@ void Hal::startEzDataService(std::function<void(std::string_view)> onStartLog)
+-    mclog::tagInfo(_tag, "start ezdata service");
+-
+-    startNetwork(onStartLog);
+-
+-    onStartLog("Connecting to\nserver...");
+-    mooncake::GetMooncake().extensionManager()->createAbility(std::make_unique<EzdataWorker>());
++    (void)onStartLog;
++    mclog::tagInfo(_tag, "M5 registry and MQTT service disabled in local firmware");

@@ -1,0 +1,40 @@
+[stackchan]
+repository = "https://github.com/m5stack/StackChan.git"
+commit = "1b5765599fba8aaad1811d9a79358ccc7051f5f3"
+repos_json_sha256 = "3c64af4d007d23d34802ecd725241f1373c93baa02c65a039c9768dcfa0d3641"
+firmware_version = "1.5.1-maipai.1"
+
+[toolchain]
+esp_idf = "5.5.4"
+export_script = "~/esp/esp-idf/export.sh"
+
+[dependencies.mooncake]
+path = "components/mooncake"
+ref = "v2.3.3"
+commit = "572a7e488641f1c3f22e85d65c27f095ecf27d12"
+
+[dependencies.mooncake_log]
+path = "components/mooncake_log"
+ref = "v1.5.0"
+commit = "554d55cd8c6e551b911b99cad274a46929f05bae"
+
+[dependencies.smooth_ui_toolkit]
+path = "components/smooth_ui_toolkit"
+ref = "v2.12.0"
+commit = "2a18ff5d3fd6b402339d0f4f3c2834f574e3cb05"
+
+[dependencies.xiaozhi_esp32]
+path = "xiaozhi-esp32"
+ref = "v2.2.4"
+commit = "e77dedb1309153bb63fed285772962c920c97dd4"
+m5_patch = "firmware/patches/xiaozhi-esp32.patch"
+
+[dependencies.arduinojson]
+path = "components/ArduinoJson"
+ref = "v7.4.2"
+commit = "733bc4ee82630c88c0a619a883cd3a206efae977"
+
+[dependencies.esp_now]
+path = "components/esp-now"
+ref = "c33383de97f3ed2fc52117f5ef04f71990432e5d"
+commit = "c33383de97f3ed2fc52117f5ef04f71990432e5d"

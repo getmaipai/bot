@@ -1,0 +1,39 @@
+# Intent: skip xiaozhi OTA and activation, use the already provisioned NVS websocket settings.
+# Upstream: firmware/main/Kconfig.projbuild and firmware/xiaozhi-esp32/main/application.cc.
+diff --git a/firmware/main/Kconfig.projbuild b/firmware/main/Kconfig.projbuild
+index 7fe64e4..77c5544 100644
+--- a/firmware/main/Kconfig.projbuild
++++ b/firmware/main/Kconfig.projbuild
+@@ -11,0 +12,6 @@ config STACKCHAN_SERVER_URL
++config STACKCHAN_XIAOZHI_OTA_CHECK
++    bool "Check xiaozhi OTA and activation service"
++    default n
++    help
++        Enable third-party OTA checks. Keep disabled when websocket settings are provisioned in NVS.
++
+diff --git a/firmware/xiaozhi-esp32/main/Kconfig.projbuild b/firmware/xiaozhi-esp32/main/Kconfig.projbuild
+index b4119fc..3235a6c 100644
+--- a/firmware/xiaozhi-esp32/main/Kconfig.projbuild
++++ b/firmware/xiaozhi-esp32/main/Kconfig.projbuild
+@@ -5 +5 @@ config OTA_URL
+-    default "https://api.tenclass.net/xiaozhi/ota/"
++    default ""
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index 3b6f07e..c45ee47 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -327 +327,2 @@ void Application::ActivationTask() {
+-    // Check for new assets version
++    // Vendor OTA and asset checks are disabled for the locally provisioned StackChan build.
++#if CONFIG_STACKCHAN_XIAOZHI_OTA_CHECK
+@@ -329,2 +329,0 @@ void Application::ActivationTask() {
+-
+-    // Check for new firmware version
+@@ -331,0 +331 @@ void Application::ActivationTask() {
++#endif
+@@ -479,0 +480 @@ void Application::InitializeProtocol() {
++#if CONFIG_STACKCHAN_XIAOZHI_OTA_CHECK
+@@ -487,0 +489,3 @@ void Application::InitializeProtocol() {
++#else
++    protocol_ = std::make_unique<WebsocketProtocol>();
++#endif
