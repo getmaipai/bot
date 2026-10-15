@@ -13,8 +13,6 @@ from maipai_body.robot import Robot, load_robot_api
 
 from .profile import (
     HEAD_COMMAND_SPEED,
-    HEAD_SPEED_MAX,
-    HEAD_SPEED_MIN,
     LED_CHANNEL_MAX,
     LED_COUNT,
     STACKCHAN_PROFILE,
@@ -80,8 +78,8 @@ class _HeadAdapter:
 
         requested_speed = kwargs.get("speed", HEAD_COMMAND_SPEED)
         if not isinstance(requested_speed, (int, float)):
-            raise TypeError("head speed must be numeric; use a value from 100 to 1000")
-        speed = min(max(round(requested_speed), HEAD_SPEED_MIN), HEAD_COMMAND_SPEED)
+            raise TypeError("head speed must be numeric; use a value from 100 to 150")
+        speed = round(requested_speed)
         result = self.client.set_head_angles(applied_yaw, applied_pitch, speed)
         if isinstance(result, Mapping):
             return dict(result)
@@ -217,16 +215,12 @@ class StackChanRobotAdapter:
         return await asyncio.to_thread(self._set_head_angles, yaw, pitch, speed)
 
     def _set_head_angles(self, yaw: int | None, pitch: int | None, speed: int) -> object:
-        lease = self.robot.lease.acquire("person", "xiaozhi-service")
-        try:
-            target = {
-                "yaw": math.radians(yaw) if yaw is not None else None,
-                "pitch": math.radians(pitch) if pitch is not None else None,
-                "speed": min(max(speed, HEAD_SPEED_MIN), HEAD_SPEED_MAX),
-            }
-            return self.robot.head.set(**target)
-        finally:
-            self.robot.lease.release(lease.holder)
+        target = {
+            "yaw": math.radians(yaw) if yaw is not None else None,
+            "pitch": math.radians(pitch) if pitch is not None else None,
+            "speed": speed,
+        }
+        return self.robot.head.set(**target)
 
     async def set_led_color(self, red: int, green: int, blue: int) -> object:
         return await asyncio.to_thread(self._set_led_color, red, green, blue)

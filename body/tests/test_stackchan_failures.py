@@ -20,11 +20,11 @@ class StackChanFailureShapeTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.pairing = PairingStore()
         self.device_id = "02:00:00:00:00:20"
-        self.client_id = "failure-shapes"
+        self.client_id = "00000000-0000-4000-8000-000000000020"
         self.pairing.request(self.device_id, self.client_id)
         self.token = self.pairing.approve(self.device_id)
         self.health_id = "02:00:00:00:00:21"
-        self.health_client = "health-check"
+        self.health_client = "00000000-0000-4000-8000-000000000021"
         self.pairing.request(self.health_id, self.health_client)
         self.health_token = self.pairing.approve(self.health_id)
         robot = StackChanRobotAdapter(FakeStackChanDeviceClient())
@@ -57,7 +57,9 @@ class StackChanFailureShapeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_unapproved_device_gets_next_step_and_service_stays_up(self) -> None:
         async with await self.open_device(
-            device_id="02:00:00:00:00:22", client_id="unapproved", token="unused"
+            device_id="02:00:00:00:00:22",
+            client_id="00000000-0000-4000-8000-000000000022",
+            token="unused",
         ) as websocket:
             with self.assertRaises(ConnectionClosed) as caught:
                 await websocket.recv()
@@ -117,9 +119,15 @@ class StackChanFailureShapeTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(self.service.idle_timeout * 2)
             await self.service.send_audio(self.device_id, [b"recorded-server-frame"])
 
-            self.assertEqual(json.loads(await websocket.recv()), {"type": "tts", "state": "start"})
+            start = json.loads(await websocket.recv())
+            self.assertEqual(start["type"], "tts")
+            self.assertEqual(start["state"], "start")
+            self.assertEqual(start["session_id"], hello["session_id"])
             self.assertEqual(await websocket.recv(), b"recorded-server-frame")
-            self.assertEqual(json.loads(await websocket.recv()), {"type": "tts", "state": "stop"})
+            stop = json.loads(await websocket.recv())
+            self.assertEqual(stop["type"], "tts")
+            self.assertEqual(stop["state"], "stop")
+            self.assertEqual(stop["session_id"], hello["session_id"])
 
             await websocket.send(
                 json.dumps(

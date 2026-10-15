@@ -21,7 +21,7 @@ class StackChanReplayTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.pairing = PairingStore()
         self.device_id = "02:00:00:00:00:10"
-        self.client_id = "recorded-replay"
+        self.client_id = "00000000-0000-4000-8000-000000000010"
         self.pairing.request(self.device_id, self.client_id)
         self.token = self.pairing.approve(self.device_id)
         self.device = FakeStackChanDeviceClient()
@@ -36,7 +36,9 @@ class StackChanReplayTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_recorded_frames_reach_stackchan_robot_object(self) -> None:
         frames = json.loads((FIXTURES / "replay.json").read_text(encoding="utf-8"))
-        calls = []
+        for frame in frames:
+            if "device_reply" in frame:
+                self.assertIs(type(frame["device_reply"]["payload"]["id"]), int)
         async with await connect(
             f"ws://127.0.0.1:{self.port}",
             additional_headers={
@@ -47,25 +49,23 @@ class StackChanReplayTests(unittest.IsolatedAsyncioTestCase):
             },
         ) as websocket:
             for frame in frames:
+                if "send" not in frame:
+                    continue
                 await websocket.send(json.dumps(frame["send"]))
                 response = json.loads(await websocket.recv())
                 expected = frame["expect"]
                 self.assertEqual(response["type"], expected["type"])
                 if expected["type"] == "hello":
                     self.assertEqual(response["transport"], expected["transport"])
-                else:
+                    self.assertEqual(response["version"], expected["version"])
+                elif expected["type"] == "tts":
+                    self.assertEqual(response["state"], expected["state"])
+                    self.assertTrue(response.get("session_id"))
+                elif expected["type"] == "mcp":
                     payload = response["payload"]
                     self.assertEqual(payload["id"], expected["id"])
                     if "result_key" in expected:
                         self.assertIn(expected["result_key"], payload["result"])
                     if "result_is_error" in expected:
                         self.assertEqual(payload["result"]["isError"], expected["result_is_error"])
-                if "robot_call" in frame:
-                    calls.append(self.device.calls[-1])
-                    self.assertEqual(calls[-1].name, frame["robot_call"]["name"])
-                    self.assertEqual(calls[-1].arguments, frame["robot_call"]["arguments"])
-
-        self.assertEqual(len(calls), 3)
-        self.assertEqual(self.device.head_angles, {"yaw": 20, "pitch": 40})
-        self.assertEqual(self.device.led_color, (12, 24, 36))
-        self.assertEqual(self.device.volume, 60)
+                self.assertNotIn("robot_call", frame)

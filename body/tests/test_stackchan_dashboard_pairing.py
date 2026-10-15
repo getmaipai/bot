@@ -53,7 +53,7 @@ class StackChanDashboardPairingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_refusal_approval_hello_audio_and_revoke(self) -> None:
         device_id = "02:00:00:00:00:17"
-        headers = {"Device-Id": device_id, "Client-Id": "fixture-client"}
+        headers = {"Device-Id": device_id, "Client-Id": "00000000-0000-4000-8000-000000000017"}
         async with connect(
             f"ws://127.0.0.1:{self.websocket_port}", additional_headers=headers
         ) as ws:
@@ -89,7 +89,9 @@ class StackChanDashboardPairingTests(unittest.IsolatedAsyncioTestCase):
             f"ws://127.0.0.1:{self.websocket_port}", additional_headers=auth_headers
         ) as ws:
             await ws.send(json.dumps({"type": "hello"}))
-            self.assertEqual(json.loads(await ws.recv())["type"], "hello")
+            hello = json.loads(await ws.recv())
+            self.assertEqual(hello["type"], "hello")
+            self.assertEqual(hello["version"], 1)
 
             async def send_head_motion() -> object:
                 def goto() -> object:
@@ -140,9 +142,6 @@ class StackChanDashboardPairingTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(Exception):
                 await ws.recv()
 
-        self.assertTrue(
-            any(tool["name"] == "self.robot.set_head_angles" for tool in self.xiaozhi.tools())
-        )
         token_file.unlink()
 
 

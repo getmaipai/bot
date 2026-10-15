@@ -15,11 +15,12 @@ from typing import Any, Protocol
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
-from maipai_body.hal.errors import BodyLost
+from maipai_body.hal.errors import BodyLost, EstopEngaged
 
 from .pairing import PairingStore
 
 LOG = logging.getLogger(__name__)
+MAX_EARLY_DEVICE_REPLIES = 32
 
 
 class XiaozhiDeviceClient:
@@ -51,6 +52,10 @@ class XiaozhiDeviceClient:
                     "speed": speed,
                 },
             )
+        except concurrent.futures.CancelledError as exc:
+            raise EstopEngaged(
+                "head move was cancelled by the software stop; release it before moving again"
+            ) from exc
         except (ConnectionError, TimeoutError) as exc:
             raise BodyLost(
                 "StackChan did not confirm the head command. Reconnect it before moving again."
@@ -105,12 +110,14 @@ class XiaozhiServer:
         self.idle_timeout = idle_timeout
         self._server: Any = None
         self._sessions: dict[str, ServerConnection] = {}
+        self._session_ids: dict[str, str] = {}
         self._session_credentials: dict[str, tuple[str, str]] = {}
-        self._pending_device_calls: dict[str, concurrent.futures.Future[object]] = {}
-        self._pending_device_names: dict[str, str] = {}
-        self._pending_device_ids: dict[str, str] = {}
+        self._pending_device_calls: dict[str, tuple[asyncio.Future[object], str, str]] = {}
+        self._early_device_replies: dict[str, dict[str, Any]] = {}
+        self._device_call_deadlines: dict[str, float] = {}
         self._next_device_request_id = itertools.count(1)
         self._speaking: set[str] = set()
+        self._source_requests: dict[str, list[float]] = {}
         self._session_ready = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -135,6 +142,16 @@ class XiaozhiServer:
         token = auth[7:] if auth.startswith("Bearer ") else None
         if not self.pairing.authorize(device_id, client_id, token):
             try:
+                source = websocket.remote_address[0] if websocket.remote_address else "unknown"
+                if not self._allow_pairing_request(source):
+                    await websocket.close(
+                        code=1013,
+                        reason=(
+                            "Too many pairing requests from this address. Wait 10 minutes "
+                            "and retry."
+                        ),
+                    )
+                    return
                 self.pairing.request(device_id, client_id)
             except ValueError:
                 await websocket.close(
@@ -160,16 +177,11 @@ class XiaozhiServer:
             return
 
         session_id = uuid.uuid4().hex
-        if self._sessions.get(device_id) is not None:
-            await websocket.close(
-                code=1008,
-                reason=(
-                    "This Device-Id already has an active session. Close the other "
-                    "connection, then reconnect."
-                ),
-            )
-            return
+        stale = self._sessions.get(device_id)
+        if stale is not None:
+            await stale.close(code=1012, reason="Superseded by a reconnect from this Device-Id.")
         self._sessions[device_id] = websocket
+        self._session_ids[device_id] = session_id
         self._session_credentials[device_id] = (client_id, token or "")
         self._session_ready.set()
         hello_received = False
@@ -230,6 +242,7 @@ class XiaozhiServer:
                         json.dumps(
                             {
                                 "type": "hello",
+                                "version": 1,
                                 "transport": "websocket",
                                 "session_id": session_id,
                                 "audio_params": {
@@ -278,11 +291,15 @@ class XiaozhiServer:
             if self._sessions.get(device_id) is websocket:
                 self._sessions.pop(device_id, None)
                 self._session_credentials.pop(device_id, None)
+                self._session_ids.pop(device_id, None)
+                self._early_device_replies.clear()
             if not self._sessions:
                 self._session_ready.clear()
             self._speaking.discard(device_id)
-            for request_id, future in list(self._pending_device_calls.items()):
-                if self._pending_device_ids.get(request_id) != device_id:
+            for request_id, (future, _name, pending_device_id) in list(
+                self._pending_device_calls.items()
+            ):
+                if pending_device_id != device_id:
                     continue
                 if not future.done():
                     future.set_exception(
@@ -291,188 +308,53 @@ class XiaozhiServer:
                         )
                     )
                 self._pending_device_calls.pop(request_id, None)
-                self._pending_device_names.pop(request_id, None)
-                self._pending_device_ids.pop(request_id, None)
 
     async def _mcp(self, ws: ServerConnection, session_id: str, payload: dict[str, Any]) -> None:
-        method = payload.get("method")
         request_id = payload.get("id")
         if "result" in payload or "error" in payload:
-            request_key = str(request_id)
-            pending = self._pending_device_calls.pop(request_key, None)
-            self._pending_device_ids.pop(request_key, None)
-            if pending is not None and not pending.done():
-                if "error" in payload:
-                    error = payload.get("error") or {}
-                    message = error.get("message", "device returned an error")
-                    pending.set_exception(RuntimeError(f"StackChan tool call failed: {message}"))
-                else:
-                    result = payload.get("result")
-                    if isinstance(result, dict) and result.get("isError"):
-                        pending.set_exception(
-                            RuntimeError(
-                                "StackChan reported a tool error. Check the device and retry."
-                            )
-                        )
-                    else:
-                        content = result.get("content", []) if isinstance(result, dict) else []
-                        value: object = True
-                        if content and isinstance(content[0], dict):
-                            try:
-                                value = json.loads(content[0].get("text", "true"))
-                            except (TypeError, json.JSONDecodeError):
-                                value = content[0].get("text")
-                        pending.set_result(value)
-            return
-        try:
-            if method == "initialize":
-                result: object = {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {"name": self.server_name, "version": self.version},
-                }
-            elif method == "tools/list":
-                result = {"tools": self.tools(), "nextCursor": ""}
-            elif method == "tools/call":
-                params = payload.get("params", {})
-                result = await self._call_tool(
-                    params.get("name", ""), params.get("arguments") or {}
-                )
-            elif method == "ping":
-                result = {}
-            else:
-                await self._mcp_error(
-                    ws,
-                    session_id,
-                    request_id,
-                    -32601,
-                    "Unknown MCP method. Use initialize, tools/list, or tools/call.",
-                )
+            if type(request_id) is not int:
+                LOG.warning("StackChan sent an MCP reply without a numeric id; ignoring it.")
                 return
+            request_key = str(request_id)
+            call = self._pending_device_calls.pop(request_key, None)
+            pending = call[0] if call is not None else None
+            if pending is None:
+                self._prune_early_device_replies()
+                deadline = self._device_call_deadlines.get(request_key)
+                if deadline is None or deadline <= time.monotonic():
+                    return
+                self._early_device_replies[request_key] = payload
+                while len(self._early_device_replies) > MAX_EARLY_DEVICE_REPLIES:
+                    self._early_device_replies.pop(next(iter(self._early_device_replies)))
+                return
+            if pending is not None:
+                self._resolve_device_reply(pending, payload)
+            return
+        if payload.get("method") == "ping" and "id" in payload:
             await self._json(
                 ws,
                 session_id,
                 "mcp",
-                {"payload": {"jsonrpc": "2.0", "id": request_id, "result": result}},
-            )
-        except (ValueError, TypeError, KeyError) as exc:
-            await self._mcp_error(ws, session_id, request_id, -32602, str(exc))
-        except Exception:
-            LOG.exception("StackChan tool call failed")
-            await self._mcp_error(
-                ws,
-                session_id,
-                request_id,
-                -32603,
-                "The robot command failed. Check the body connection and retry.",
+                {"payload": {"jsonrpc": "2.0", "id": request_id, "result": {}}},
             )
 
-    @staticmethod
-    def _tools() -> list[dict[str, Any]]:
-        return [
-            {
-                "name": "self.robot.get_head_angles",
-                "description": "Read current head angles.",
-                "inputSchema": {"type": "object", "properties": {}},
-            },
-            {
-                "name": "self.robot.set_head_angles",
-                "description": "Move head; yaw -128..128, pitch 5..85, speed 100..1000.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "yaw": {"type": "integer", "minimum": -128, "maximum": 128},
-                        "pitch": {"type": "integer", "minimum": 5, "maximum": 85},
-                        "speed": {"type": "integer", "minimum": 100, "maximum": 1000},
-                    },
-                    "additionalProperties": False,
-                },
-            },
-            {
-                "name": "self.robot.set_led_color",
-                "description": "Set the robot's internal LEDs, 0..168 per channel.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "red": {"type": "integer", "minimum": 0, "maximum": 168},
-                        "green": {"type": "integer", "minimum": 0, "maximum": 168},
-                        "blue": {"type": "integer", "minimum": 0, "maximum": 168},
-                    },
-                    "required": ["red", "green", "blue"],
-                    "additionalProperties": False,
-                },
-            },
-            {
-                "name": "self.audio_speaker.set_volume",
-                "description": "Set speaker volume, 0..100.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"volume": {"type": "integer", "minimum": 0, "maximum": 100}},
-                    "required": ["volume"],
-                    "additionalProperties": False,
-                },
-            },
-        ]
+    def _prune_early_device_replies(self) -> None:
+        now = time.monotonic()
+        for request_key in list(self._early_device_replies):
+            deadline = self._device_call_deadlines.get(request_key)
+            if deadline is None or deadline <= now:
+                self._early_device_replies.pop(request_key, None)
 
-    def tools(self) -> list[dict[str, Any]]:
-        """Expose robot controls only when this process has a body adapter."""
-        return self._tools() if self.robot is not None else []
-
-    async def _call_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
-        if self.robot is None:
-            raise ValueError(
-                "Robot commands are unavailable until a body adapter is connected. "
-                "Connect a supported body adapter and retry."
-            )
-        if name == "self.robot.get_head_angles":
-            getter = getattr(self.robot, "get_head_angles", None)
-            if getter is None:
-                raise ValueError(
-                    "Robot adapter cannot read head angles. Connect a supported profile "
-                    "adapter and retry."
-                )
-            value = getter()
-            if asyncio.iscoroutine(value):
-                value = await value
-        if name == "self.robot.set_head_angles":
-            yaw = args.get("yaw")
-            pitch = args.get("pitch")
-            speed = args.get("speed", 150)
-            if yaw is not None and (type(yaw) is not int or not -128 <= yaw <= 128):
-                raise ValueError(
-                    "Yaw must be an integer from -128 to 128. Correct the value and retry."
-                )
-            if pitch is not None and (type(pitch) is not int or not 5 <= pitch <= 85):
-                raise ValueError(
-                    "Pitch must be an integer from 5 to 85. Correct the value and retry."
-                )
-            if type(speed) is not int or not 100 <= speed <= 1000:
-                raise ValueError(
-                    "Speed must be an integer from 100 to 1000. Correct the value and retry."
-                )
-            value = await self.robot.set_head_angles(yaw, pitch, speed)
-        elif name == "self.robot.set_led_color":
-            rgb = [args.get(k) for k in ("red", "green", "blue")]
-            if any(type(v) is not int or not 0 <= v <= 168 for v in rgb):
-                raise ValueError(
-                    "LED channels must be integers from 0 to 168. Correct the colors and retry."
-                )
-            value = await self.robot.set_led_color(*rgb)
-        elif name == "self.audio_speaker.set_volume":
-            volume = args.get("volume")
-            if type(volume) is not int or not 0 <= volume <= 100:
-                raise ValueError(
-                    "Volume must be an integer from 0 to 100. Correct the value and retry."
-                )
-            value = await self.robot.set_volume(volume)
-        else:
-            raise ValueError(
-                f"Unknown StackChan tool {name!r}. Call tools/list to see supported tools."
-            )
-        return {
-            "content": [{"type": "text", "text": json.dumps(value if value is not None else True)}],
-            "isError": False,
-        }
+    def _allow_pairing_request(self, source: str) -> bool:
+        now = time.monotonic()
+        recent = [stamp for stamp in self._source_requests.get(source, []) if now - stamp < 600]
+        self._source_requests[source] = recent
+        if len(recent) >= 8:
+            self._source_requests[source] = recent
+            return False
+        recent.append(now)
+        self._source_requests[source] = recent
+        return True
 
     async def _json(
         self,
@@ -492,24 +374,8 @@ class XiaozhiServer:
     ) -> None:
         await self._json(ws, session_id, "error", {"code": code, "message": message})
 
-    async def _mcp_error(
-        self, ws: ServerConnection, session_id: str, request_id: object, code: int, message: str
-    ) -> None:
-        await self._json(
-            ws,
-            session_id,
-            "mcp",
-            {
-                "payload": {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {"code": code, "message": message},
-                }
-            },
-        )
-
     async def send_audio(self, device_id: str, frames: list[bytes]) -> None:
-        """Send already encoded 24 kHz Opus frames; codec and pacing belong upstream."""
+        """Send encoded 24 kHz Opus frames; codec and pacing belong upstream."""
         websocket = self._sessions.get(device_id)
         if self._sessions.get(device_id) is not websocket or not self._session_authorized(
             device_id
@@ -519,7 +385,7 @@ class XiaozhiServer:
                 "reconnect before sending audio."
             )
         self._speaking.add(device_id)
-        await websocket.send(json.dumps({"type": "tts", "state": "start"}))
+        await self._json(websocket, self._session_ids[device_id], "tts", {"state": "start"})
         try:
             for frame in frames:
                 if device_id not in self._speaking:
@@ -528,7 +394,7 @@ class XiaozhiServer:
                 await asyncio.sleep(0.06)
         finally:
             self._speaking.discard(device_id)
-            await websocket.send(json.dumps({"type": "tts", "state": "stop"}))
+            await self._json(websocket, self._session_ids[device_id], "tts", {"state": "stop"})
 
     def call_device_tool(
         self, name: str, arguments: dict[str, object], *, timeout: float = 5.0
@@ -547,36 +413,98 @@ class XiaozhiServer:
         # StackChan firmware parses MCP request ids as numeric JSON-RPC ids.
         request_id = next(self._next_device_request_id)
         request_key = str(request_id)
-        future: concurrent.futures.Future[object] = concurrent.futures.Future()
-        self._pending_device_calls[request_key] = future
-        self._pending_device_names[request_key] = name
-        self._pending_device_ids[request_key] = device_id
+        if self._loop is None:
+            raise ConnectionError(
+                "StackChan service is not running. Start the Bot body service and retry."
+            )
         deadline = time.monotonic() + timeout
+        self._device_call_deadlines[request_key] = deadline
         try:
-            if self._loop is None:
-                raise ConnectionError(
-                    "StackChan service is not running. Start the Bot body service and retry."
-                )
+            asyncio.run_coroutine_threadsafe(
+                self._register_device_reply(request_key, device_id, name), self._loop
+            ).result(timeout=max(0, deadline - time.monotonic()))
             asyncio.run_coroutine_threadsafe(
                 self._send_device_tool(device_id, websocket, request_id, name, arguments),
                 self._loop,
             ).result(timeout=max(0, deadline - time.monotonic()))
-            return future.result(timeout=max(0, deadline - time.monotonic()))
+            return asyncio.run_coroutine_threadsafe(
+                self._await_device_reply(request_key, device_id, name, timeout), self._loop
+            ).result(timeout=max(0, deadline - time.monotonic()))
+        except concurrent.futures.CancelledError as exc:
+            raise EstopEngaged(
+                "head move was cancelled by the software stop; release it before moving again"
+            ) from exc
         except concurrent.futures.TimeoutError as exc:
             raise TimeoutError(
                 f"StackChan did not answer {name} within {timeout:g} seconds. "
                 "Check its connection and retry."
             ) from exc
         finally:
-            self._pending_device_calls.pop(request_key, None)
-            self._pending_device_names.pop(request_key, None)
-            self._pending_device_ids.pop(request_key, None)
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._discard_pending(request_key), self._loop
+                ).result(timeout=1)
+            except (concurrent.futures.TimeoutError, RuntimeError):
+                pass
 
     def cancel_device_calls(self, name: str) -> None:
-        for request_id, future in list(self._pending_device_calls.items()):
-            # Motion calls are the only request type the software stop may cancel.
-            # The request id metadata is encoded in the pending map below.
-            if self._pending_device_names.get(request_id) == name and not future.done():
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._cancel_device_calls, name)
+
+    async def _await_device_reply(
+        self, request_key: str, device_id: str, name: str, timeout: float
+    ) -> object:
+        future = self._pending_device_calls[request_key][0]
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            self._pending_device_calls.pop(request_key, None)
+            self._device_call_deadlines.pop(request_key, None)
+            self._early_device_replies.pop(request_key, None)
+
+    async def _discard_pending(self, request_key: str) -> None:
+        self._pending_device_calls.pop(request_key, None)
+        self._device_call_deadlines.pop(request_key, None)
+        self._early_device_replies.pop(request_key, None)
+
+    async def _register_device_reply(self, request_key: str, device_id: str, name: str) -> None:
+        future = asyncio.get_running_loop().create_future()
+        self._pending_device_calls[request_key] = (future, name, device_id)
+        early = self._early_device_replies.pop(request_key, None)
+        deadline = self._device_call_deadlines.get(request_key)
+        if early is not None and deadline is not None and deadline > time.monotonic():
+            self._resolve_device_reply(future, early)
+
+    @staticmethod
+    def _resolve_device_reply(future: asyncio.Future[object], payload: dict[str, Any]) -> None:
+        if future.done():
+            return
+        if "error" in payload:
+            error = payload.get("error") or {}
+            future.set_exception(
+                RuntimeError(str(error.get("message", "device returned an error")))
+            )
+            return
+        try:
+            future.set_result(XiaozhiServer._device_result(payload.get("result")))
+        except RuntimeError as exc:
+            future.set_exception(exc)
+
+    @staticmethod
+    def _device_result(result: object) -> object:
+        if isinstance(result, dict) and result.get("isError"):
+            raise RuntimeError("StackChan reported a tool error. Check the device and retry.")
+        content = result.get("content", []) if isinstance(result, dict) else []
+        if content and isinstance(content[0], dict):
+            try:
+                return json.loads(content[0].get("text", "true"))
+            except (TypeError, json.JSONDecodeError):
+                return content[0].get("text")
+        return True
+
+    def _cancel_device_calls(self, name: str) -> None:
+        for future, pending_name, _device_id in self._pending_device_calls.values():
+            if pending_name == name and not future.done():
                 future.cancel()
 
     async def _send_device_tool(

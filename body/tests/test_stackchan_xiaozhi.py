@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import ast
+import asyncio
+import concurrent.futures
 import io
 import json
 import subprocess
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -19,13 +22,14 @@ from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
 from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
 from maipai_body.bodies.stackchan.xiaozhi.pairing import PairingStore
 from maipai_body.bodies.stackchan.xiaozhi.provision import generate_image, main, write_image
-from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiServer
+from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient, XiaozhiServer
 
 
 class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.pairing = PairingStore()
-        self.pairing.request("02:00:00:00:00:01", "fake-client")
+        self.client_id = "00000000-0000-4000-8000-000000000001"
+        self.pairing.request("02:00:00:00:00:01", self.client_id)
         self.token = self.pairing.approve("02:00:00:00:00:01")
         self.stackchan_client = FakeStackChanDeviceClient()
         self.robot = StackChanRobotAdapter(self.stackchan_client)
@@ -47,7 +51,7 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
             f"ws://127.0.0.1:{self.port}",
             additional_headers={
                 "Device-Id": "02:00:00:00:00:01",
-                "Client-Id": "fake-client",
+                "Client-Id": self.client_id,
                 "Protocol-Version": "1",
                 "Authorization": f"Bearer {self.token}",
             },
@@ -73,114 +77,88 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
             )
             hello = json.loads(await ws.recv())
             self.assertEqual(hello["transport"], "websocket")
+            self.assertEqual(hello["version"], 1)
             self.assertEqual(hello["audio_params"]["sample_rate"], 24000)
             await ws.send(b"fake-opus-uplink")
             await ws.send(json.dumps({"type": "listen", "state": "start", "mode": "manual"}))
             await ws.send(json.dumps({"type": "abort", "reason": "wake_word_detected"}))
             stopped = json.loads(await ws.recv())
             self.assertEqual(stopped["type"], "tts")
-            await ws.send(
-                json.dumps(
-                    {
-                        "type": "mcp",
-                        "payload": {
-                            "jsonrpc": "2.0",
-                            "method": "initialize",
-                            "params": {},
-                            "id": 1,
-                        },
-                    }
-                )
-            )
-            initialized = json.loads(await ws.recv())
-            self.assertEqual(initialized["payload"]["id"], 1)
-            await ws.send(
-                json.dumps(
-                    {
-                        "type": "mcp",
-                        "payload": {
-                            "jsonrpc": "2.0",
-                            "method": "tools/list",
-                            "params": {"cursor": ""},
-                            "id": 2,
-                        },
-                    }
-                )
-            )
-            tools = json.loads(await ws.recv())["payload"]["result"]["tools"]
-            self.assertTrue(any(tool["name"] == "self.robot.set_head_angles" for tool in tools))
-            await ws.send(
-                json.dumps(
-                    {
-                        "type": "mcp",
-                        "payload": {
-                            "jsonrpc": "2.0",
-                            "method": "tools/call",
-                            "params": {
-                                "name": "self.robot.set_head_angles",
-                                "arguments": {"yaw": 12, "pitch": 40},
-                            },
-                            "id": 3,
-                        },
-                    }
-                )
-            )
-            called = json.loads(await ws.recv())
-            self.assertFalse(called["payload"]["result"]["isError"])
-            self.assertEqual(self.stackchan_client.calls[-1].name, "self.robot.set_head_angles")
-            self.assertEqual(
-                self.stackchan_client.calls[-1].arguments,
-                {"yaw": 12, "pitch": 40, "speed": 150},
-            )
-            await ws.send(
-                json.dumps(
-                    {
-                        "type": "mcp",
-                        "payload": {
-                            "jsonrpc": "2.0",
-                            "method": "tools/call",
-                            "params": {
-                                "name": "self.robot.set_led_color",
-                                "arguments": {"red": 12, "green": 24, "blue": 36},
-                            },
-                            "id": 4,
-                        },
-                    }
-                )
-            )
-            led_result = json.loads(await ws.recv())
-            self.assertFalse(led_result["payload"]["result"]["isError"])
-            self.assertEqual(self.stackchan_client.led_color, (12, 24, 36))
-            await ws.send(
-                json.dumps(
-                    {
-                        "type": "mcp",
-                        "payload": {
-                            "jsonrpc": "2.0",
-                            "method": "tools/call",
-                            "params": {
-                                "name": "self.audio_speaker.set_volume",
-                                "arguments": {"volume": 60},
-                            },
-                            "id": 5,
-                        },
-                    }
-                )
-            )
-            volume_result = json.loads(await ws.recv())
-            self.assertFalse(volume_result["payload"]["result"]["isError"])
-            self.assertEqual(self.stackchan_client.volume, 60)
             await self.app.send_audio("02:00:00:00:00:01", [b"opus-frame-1", b"opus-frame-2"])
-            self.assertEqual(json.loads(await ws.recv())["state"], "start")
+            start = json.loads(await ws.recv())
+            self.assertEqual(start["state"], "start")
+            self.assertIn("session_id", start)
             self.assertEqual(await ws.recv(), b"opus-frame-1")
             self.assertEqual(await ws.recv(), b"opus-frame-2")
             self.assertEqual(json.loads(await ws.recv())["state"], "stop")
         self.assertEqual(self.audio[0][1], b"fake-opus-uplink")
 
+    async def test_early_device_replies_keep_only_the_newest_32_inflight_calls(self) -> None:
+        deadline = time.monotonic() + 10
+        for request_id in range(1, 41):
+            key = str(request_id)
+            self.app._device_call_deadlines[key] = deadline
+            await self.app._mcp(
+                None,
+                "session",
+                {"jsonrpc": "2.0", "id": request_id, "result": {"value": request_id}},
+            )
+
+        self.assertEqual(len(self.app._early_device_replies), 32)
+        self.assertNotIn("8", self.app._early_device_replies)
+        self.assertIn("9", self.app._early_device_replies)
+        self.assertIn("40", self.app._early_device_replies)
+
+    async def test_expired_and_late_device_replies_are_discarded(self) -> None:
+        self.app._device_call_deadlines["10"] = time.monotonic() - 1
+        self.app._early_device_replies["10"] = {"result": {"stale": True}}
+        self.app._device_call_deadlines["11"] = time.monotonic() + 10
+        future = asyncio.get_running_loop().create_future()
+        self.app._pending_device_calls["11"] = (future, "tool", "02:00:00:00:00:01")
+
+        await self.app._mcp(
+            None,
+            "session",
+            {"jsonrpc": "2.0", "id": 12, "result": {"unasked": True}},
+        )
+        self.assertNotIn("10", self.app._early_device_replies)
+        self.assertNotIn("12", self.app._early_device_replies)
+
+        with self.assertRaises(TimeoutError):
+            await self.app._await_device_reply("11", "02:00:00:00:00:01", "tool", timeout=0.001)
+        await self.app._mcp(
+            None,
+            "session",
+            {"jsonrpc": "2.0", "id": 11, "result": {"late": True}},
+        )
+        self.assertNotIn("11", self.app._early_device_replies)
+
+    async def test_reconnect_replaces_the_active_session_for_same_device_id(self) -> None:
+        first = await self.device()
+        await first.send(json.dumps({"type": "hello", "version": 1}))
+        first_hello = json.loads(await first.recv())
+        second = await self.device()
+        try:
+            await asyncio.wait_for(first.wait_closed(), timeout=1)
+            self.assertEqual(first.close_code, 1012)
+            await second.send(json.dumps({"type": "hello", "version": 1}))
+            replacement = json.loads(await second.recv())
+            self.assertEqual(replacement["type"], "hello")
+            self.assertEqual(replacement["version"], 1)
+            self.assertNotEqual(first_hello["session_id"], replacement["session_id"])
+            self.assertEqual(len(self.app._sessions), 1)
+            self.assertEqual(self.app._session_ids["02:00:00:00:00:01"], replacement["session_id"])
+        finally:
+            await second.close()
+            await first.close()
+
     async def test_unknown_device_is_refused_and_queued_for_approval(self) -> None:
         async with connect(
             f"ws://127.0.0.1:{self.port}",
-            additional_headers={"Device-Id": "02:00:00:00:00:02", "Client-Id": "new-client"},
+            additional_headers={
+                "Device-Id": "02:00:00:00:00:02",
+                "Client-Id": "00000000-0000-4000-8000-000000000002",
+            },
         ) as ws:
             with self.assertRaises(Exception) as caught:
                 await ws.recv()
@@ -188,7 +166,11 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.pairing.pending()[0].device_id, "02:00:00:00:00:02")
 
     async def test_pairing_token_is_bound_to_client_id(self) -> None:
-        self.assertFalse(self.pairing.authorize("02:00:00:00:00:01", "other-client", self.token))
+        self.assertFalse(
+            self.pairing.authorize(
+                "02:00:00:00:00:01", "00000000-0000-4000-8000-000000000002", self.token
+            )
+        )
 
     async def test_separate_pairing_stores_refresh_shared_pending_approval_and_revocation(
         self,
@@ -198,7 +180,7 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
             service = PairingStore(path)
             dashboard = PairingStore(path)
             device_id = "02:00:00:00:00:42"
-            client_id = "shared-client"
+            client_id = "00000000-0000-4000-8000-000000000042"
 
             request = service.request(device_id, client_id)
             self.assertEqual(dashboard.pending(), (request,))
@@ -214,35 +196,63 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "pairing.json"
             store = PairingStore(path)
-            store.request("02:00:00:00:00:03", "persisted-client")
+            client_id = "00000000-0000-4000-8000-000000000003"
+            store.request("02:00:00:00:00:03", client_id)
             token = store.approve("02:00:00:00:00:03")
             loaded = PairingStore(path)
-            self.assertTrue(loaded.authorize("02:00:00:00:00:03", "persisted-client", token))
+            self.assertTrue(loaded.authorize("02:00:00:00:00:03", client_id, token))
             self.assertNotIn(token, path.read_text())
 
-    async def test_tool_call_rejects_out_of_range_values(self) -> None:
-        async with await self.device() as ws:
-            await ws.send(json.dumps({"type": "hello", "version": 1}))
-            await ws.recv()
-            await ws.send(
-                json.dumps(
-                    {
-                        "type": "mcp",
-                        "payload": {
-                            "jsonrpc": "2.0",
-                            "method": "tools/call",
-                            "params": {
-                                "name": "self.robot.set_head_angles",
-                                "arguments": {"yaw": 999},
-                            },
-                            "id": 9,
-                        },
-                    }
+    async def test_corrupt_pairing_file_fails_closed_without_crashing_authorize(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "pairing.json"
+            path.write_text("{broken", encoding="utf-8")
+            with self.assertLogs(
+                "maipai_body.bodies.stackchan.xiaozhi.pairing", level="ERROR"
+            ) as logs:
+                store = PairingStore(path)
+                self.assertFalse(
+                    store.authorize(
+                        "02:00:00:00:00:03",
+                        "00000000-0000-4000-8000-000000000003",
+                        "token",
+                    )
                 )
-            )
-            response = json.loads(await ws.recv())["payload"]
-            self.assertEqual(response["error"]["code"], -32602)
-            self.assertIn("Yaw must be an integer", response["error"]["message"])
+            self.assertIn("Move it aside and reapprove devices", logs.output[0])
+
+    async def test_pending_pairings_are_bounded_and_expire_after_ten_minutes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            store = PairingStore(Path(temp) / "pairing.json")
+            for index in range(8):
+                store.request(
+                    f"02:00:00:00:01:{index:02x}",
+                    f"00000000-0000-4000-8000-{index:012x}",
+                )
+            with self.assertRaisesRegex(ValueError, "pending pairing list is full"):
+                store.request("02:00:00:00:02:00", "00000000-0000-4000-8000-000000000100")
+            import maipai_body.bodies.stackchan.xiaozhi.pairing as pairing_module
+
+            with patch.object(pairing_module.time, "time", return_value=2_000_000_000):
+                self.assertEqual(store.pending(), ())
+
+    async def test_unauthenticated_pairing_requests_are_rate_limited_per_source(self) -> None:
+        for _ in range(8):
+            self.assertTrue(self.app._allow_pairing_request("192.0.2.8"))
+        self.assertFalse(self.app._allow_pairing_request("192.0.2.8"))
+        self.assertTrue(self.app._allow_pairing_request("192.0.2.9"))
+
+    async def test_cancelled_device_call_surfaces_estop_engaged(self) -> None:
+        from maipai_body.hal.errors import EstopEngaged
+
+        class CallServer:
+            def call_device_tool(self, *_args, **_kwargs):
+                raise concurrent.futures.CancelledError()
+
+            def cancel_device_calls(self, _name):
+                return None
+
+        with self.assertRaises(EstopEngaged):
+            XiaozhiDeviceClient(CallServer()).set_head_angles(1, 2, 150)
 
 
 class ProvisioningTests(unittest.TestCase):

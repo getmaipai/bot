@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from collections.abc import Iterator, Mapping
@@ -22,6 +23,7 @@ from maipai_body.hal.seam import BodyProfile, HeadPose
 from .api import PartContract, RobotApi, load_robot_api
 
 _PRIORITY = {"safety": 0, "person": 1, "expression": 2, "idle": 3}
+LOG = logging.getLogger(__name__)
 _LEASED_MOTION = {
     "head": frozenset({"set", "goto"}),
     "appendages": frozenset({"set", "goto"}),
@@ -67,6 +69,7 @@ class Robot:
         self._parts: dict[str, RobotPart] = {}
         self._lease: Lease | None = None
         self._estop_engaged = False
+        self._last_safe_stop: tuple[str, ...] = ()
 
     @property
     def capabilities(self) -> frozenset[str]:
@@ -80,6 +83,11 @@ class Robot:
     @property
     def estop_engaged(self) -> bool:
         return self._estop_engaged
+
+    @property
+    def last_safe_stop(self) -> tuple[str, ...]:
+        """Names of supported safety-stop commands that failed most recently."""
+        return self._last_safe_stop
 
     def __getattr__(self, name: str) -> Any:
         if name in self._api.whole_robot_verbs:
@@ -255,17 +263,25 @@ class Robot:
         return result if result is not None else True
 
     def _safe_stop(self, *, include_estop: bool = False) -> None:
-        commands = [("base", "stop"), ("head", "hold"), ("head", "disable")]
+        commands = [("base", "stop"), ("head", "hold")]
         if include_estop:
             commands.insert(0, ("estop", "engage"))
+        failed: list[str] = []
         for part, verb in commands:
             contract = self._api.parts.get(part)
             if contract is None or part not in self._drivers or verb not in contract.verbs:
                 continue
             try:
                 self._dispatch(part, verb)
-            except Exception:
+            except Exception as exc:
+                failed.append(f"{part}.{verb}")
+                if isinstance(exc, NotSupported):
+                    detail = exc.fix
+                else:
+                    detail = str(exc) or type(exc).__name__
+                LOG.warning("Robot safe-stop command %s.%s failed: %s", part, verb, detail)
                 continue
+        self._last_safe_stop = tuple(failed)
 
     def _check_deadline(self, args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> None:
         deadline = kwargs.get("deadline", args[3] if len(args) > 3 else None)
@@ -300,10 +316,10 @@ class Robot:
             cooked_args[0] = self._clamp_pose(part, cooked_args[0])
 
         if part == "head":
-            for field in ("pitch", "roll", "yaw"):
+            for field in ("pitch", "roll", "yaw", "speed"):
                 if field in cooked_kwargs:
                     cooked_kwargs[field] = self._clamp_axis(
-                        f"head_{field}", cooked_kwargs[field], radians=True
+                        f"head_{field}", cooked_kwargs[field], radians=field != "speed"
                     )
         elif part == "appendages" and "angle" in cooked_kwargs:
             name = str(cooked_kwargs.get("name", ""))

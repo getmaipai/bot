@@ -1,52 +1,16 @@
 [
   {
     "send": {"type": "hello", "version": 1},
-    "expect": {"type": "hello", "transport": "websocket"}
+    "expect": {"type": "hello", "transport": "websocket", "version": 1}
   },
   {
-    "send": {
+    "device_reply": {
       "type": "mcp",
-      "payload": {"jsonrpc": "2.0", "method": "initialize", "params": {}, "id": "init"}
-    },
-    "expect": {"type": "mcp", "id": "init", "result_key": "serverInfo"}
+      "payload": {"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": "true"}]}}
+    }
   },
   {
-    "send": {
-      "type": "mcp",
-      "payload": {
-        "jsonrpc": "2.0",
-        "method": "tools/call",
-        "params": {"name": "self.robot.set_head_angles", "arguments": {"yaw": 20, "pitch": 40}},
-        "id": "head"
-      }
-    },
-    "expect": {"type": "mcp", "id": "head", "result_is_error": false},
-    "robot_call": {"name": "self.robot.set_head_angles", "arguments": {"yaw": 20, "pitch": 40, "speed": 150}}
-  },
-  {
-    "send": {
-      "type": "mcp",
-      "payload": {
-        "jsonrpc": "2.0",
-        "method": "tools/call",
-        "params": {"name": "self.robot.set_led_color", "arguments": {"red": 12, "green": 24, "blue": 36}},
-        "id": "leds"
-      }
-    },
-    "expect": {"type": "mcp", "id": "leds", "result_is_error": false},
-    "robot_call": {"name": "self.robot.set_led_color", "arguments": {"red": 12, "green": 24, "blue": 36}}
-  },
-  {
-    "send": {
-      "type": "mcp",
-      "payload": {
-        "jsonrpc": "2.0",
-        "method": "tools/call",
-        "params": {"name": "self.audio_speaker.set_volume", "arguments": {"volume": 60}},
-        "id": "volume"
-      }
-    },
-    "expect": {"type": "mcp", "id": "volume", "result_is_error": false},
-    "robot_call": {"name": "self.audio_speaker.set_volume", "arguments": {"volume": 60}}
+    "send": {"type": "listen", "state": "start", "mode": "realtime"},
+    "expect": {"type": "tts", "state": "start"}
   }
 ]

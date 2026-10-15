@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from maipai_body.spec_pin import SPEC_CHECKOUT
 
@@ -85,19 +84,3 @@ def default_spec_dir() -> Path:
 
 def load_robot_api(spec_dir: Path | None = None) -> RobotApi:
     return RobotApi.from_spec_dir(spec_dir or default_spec_dir())
-
-
-def contract_from_mapping(raw: dict[str, Any]) -> RobotApi:
-    """Build a RobotApi from already-loaded vocabulary data for callers with a custom source."""
-    parts = {
-        item["id"]: PartContract(
-            id=item["id"],
-            capabilities=tuple(item["capabilities"]),
-            capability_mode=item.get("capability_mode", "all"),
-            verbs=frozenset(item["verbs"]),
-            state=frozenset(item.get("state", [])),
-        )
-        for item in raw.get("parts", [])
-    }
-    error = next(item for item in raw["errors"] if item["id"] == "NotSupported")
-    return RobotApi(frozenset(raw["whole_robot_verbs"]), parts, tuple(error["shape"]["required"]))
