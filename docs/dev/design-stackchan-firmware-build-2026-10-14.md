@@ -191,6 +191,32 @@ Read from the upstream tree; nothing built.
   (or a local ESP-IDF 5.5.4 install) on whichever machine does builds. Which machine builds is open; it is a Codex-lane job
   per the build-and-run rule, not something to run from the coordinator session.
 
+## 13. First build result (2026-10-14, this MacBook)
+
+An unmodified build of `m5stack/StackChan` at `1b57655`, with the six dependencies from `repos.json` and M5's own xiaozhi patch applied
+(hard-fail on any patch error), completed with ESP-IDF v5.5.4 in one run (2491 build steps). Build script and log:
+`data-scratch/stackchan-build/` (git-ignored). Image sizes and SHA256 of the unmodified build, to compare later builds against:
+
+| File | Bytes | SHA256 |
+|---|---|---|
+| `stack-chan.bin` | 3786944 | `218484e6d3a7af99e68e26c6400267eec26b4d12459fe75412920a7e9798c86b` |
+| `generated_assets.bin` | 2298029 | `2b6fa2d4c2c630c692380e27a46c0e7d46b57bfd7a3c5cf94b0a6fa2ed29637e` |
+| `ota_data_initial.bin` | 8192 | `7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f` |
+
+Whether a second build gives the same hashes (reproducibility) is not yet tested: build twice and compare before relying on these.
+
+Baseline host list: strings in the unmodified `stack-chan.bin` that name outside hosts. This is the list the patches must clear and the
+first "accepted" list for the bump job's diff:
+
+- `api.tenclass.net/xiaozhi/ota/` (third-party OTA host)
+- `47.113.125.164:12800` (M5Stack server)
+- `ezdata2.m5stack.com`, `my.m5stack.com/ezdata2`, `uiflow2.m5stack.com` (M5 registry and MQTT)
+- `time.google.com`, `cn.pool.ntp.org` (and `pool.ntp.org` per source) (time)
+- Strings that are text only, not connections, per the research: `apps.apple.com` and `play.google.com` app links, a `feishu.cn` wiki link
+  (new to us, shown as help text in source; confirm it is never fetched), `192.168.4.1` (the unit's own setup access point).
+
+The static check passes a build only when every entry above is gone or shown, by the trace, never to be contacted.
+
 ## Sources
 
 `design-stackchan-pieces-and-gaps-2026-10-14.md` section 8; m5stack/StackChan README and Kconfig; xiaozhi-esp32 docs (websocket, custom board);
