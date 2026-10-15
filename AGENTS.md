@@ -10,6 +10,27 @@ second body, a connected one whose turns the hub runs, designed in
 `docs/dev/design-reachy-mini-2026-09-27.md`. A body is a profile under
 `body/bodies/` behind one HAL seam, never a fork of anything above it.
 
+MaiPai Bot is the framework every robot plugs into, the way the Stack is
+the framework for local AI: a headless service that Home pairs with and
+uses through one clean, vendor-neutral interface. The details of talking
+to a particular robot (StackChan, Reachy Mini, a future wheeled or legged
+build) never leave that robot's profile.
+
+The interface is a single robot object with parts (head, antennas,
+speaker, camera, battery, and later legs, wheels or treads) and
+whole-robot verbs (`power_on`, `shutdown`, `look_at`, `speak`, and later
+`forward`, `reverse`). Each profile translates a verb into its own steps:
+one robot may shut down with one command, another with several, and
+callers cannot tell. The interface is the union of what every integrated
+robot can do and grows as robots are added (a robot with 30 features plus
+one with 20, 10 of them new, gives an interface of 40). Before adding a
+feature, check whether an existing verb fits and align to it; add a new
+verb only when none does, named for the capability and never for the
+robot. A robot without a capability declares so and the call raises
+`NotSupported`. Nothing above the interface checks which robot is
+installed. DRAFT 2026-10-14, pending architect review; the combined API
+is being researched in `docs/dev/design-robot-api-2026-10-14.md`.
+
 Org standards apply and are auto-loaded from the parent directory
 CLAUDE.md (source:
 [getmaipai/.github](https://github.com/getmaipai/.github)).

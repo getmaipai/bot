@@ -7,6 +7,16 @@ a vendor's name. `docs/dev.md` and
 `docs/dev/design-reachy-mini-2026-09-27.md` are the design record (the
 why and the history); this page is the how, kept current as bodies land.
 
+## The idea in one paragraph
+
+The seam is meant to read as one robot object with parts and
+whole-robot verbs, the union of everything every integrated robot can
+do, growing as robots are added and aligned to shared verbs (a universal
+`shutdown` may be one command on one body and several steps on another).
+See the matching paragraph in `AGENTS.md`. Today the seam is a set of
+separate protocols; restructuring it into one object is tracked by the
+robot API design (DRAFT 2026-10-14).
+
 ## The promise
 
 Nothing above the seam may learn a vendor's name. A body is a profile
