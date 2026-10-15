@@ -21,7 +21,7 @@ from maipai_body.hal.seam import HeadPose
 from maipai_body.robot import Robot, load_robot_api
 
 
-def test_stackchan_profile_declares_available_parts_without_advertising_camera():
+def test_stackchan_profile_declares_available_parts_including_camera():
     assert STACKCHAN_PROFILE.id == "stackchan"
     assert {"head_pan_tilt", "lease", "estop", "light_ring", "speaker"} <= set(
         STACKCHAN_PROFILE.capabilities
@@ -33,7 +33,7 @@ def test_stackchan_profile_declares_available_parts_without_advertising_camera()
         "battery_readout",
         "mic",
     }
-    assert "camera" not in STACKCHAN_PROFILE.capabilities
+    assert "camera" in STACKCHAN_PROFILE.capabilities
     assert STACKCHAN_PROFILE.axis("head_yaw").min == -128
     assert STACKCHAN_PROFILE.axis("head_yaw").max == 128
     assert STACKCHAN_PROFILE.axis("head_pitch").min == 5
@@ -46,7 +46,7 @@ def test_every_stackchan_declared_capability_resolves_to_a_driver():
     robot = StackChanRobotAdapter(FakeStackChanDeviceClient()).robot
     assert robot.lease is not None
     assert robot.estop is not None
-    for part_id in {"head", "leds", "audio"}:
+    for part_id in {"head", "leds", "audio", "camera"}:
         assert robot._driver(part_id) is not None
 
 
@@ -77,7 +77,10 @@ def test_stackchan_service_adapter_requires_callers_lease_across_sequence():
 
 
 def test_missing_camera_raises_not_supported_with_a_fix():
-    robot = Robot(STACKCHAN_PROFILE, {}, api=load_robot_api())
+    profile = STACKCHAN_PROFILE.model_copy(
+        update={"capabilities": [cap for cap in STACKCHAN_PROFILE.capabilities if cap != "camera"]}
+    )
+    robot = Robot(profile, {}, api=load_robot_api())
 
     with pytest.raises(NotSupported) as raised:
         _ = robot.camera
@@ -148,6 +151,44 @@ def test_stackchan_estop_safe_stop_uses_supported_head_hold_verb():
     robot.emergency_stop()
     assert robot.last_safe_stop == ()
     assert device.cancelled_motion_batches >= 1
+
+
+def test_camera_photo_and_stream_indicator_turn_on_and_off_on_success_and_failure():
+    from maipai_body.bodies.stackchan.avatar_frames import AvatarCommand, decode_frame
+
+    device = FakeStackChanDeviceClient()
+    device.photo = b"\xff\xd8sample"
+    robot = StackChanRobotAdapter(device).robot
+    assert robot.camera.frame() == device.photo
+    assert [call.arguments for call in device.calls if call.name == "self.robot.set_led_color"][
+        -2:
+    ] == [
+        {"red": 168, "green": 0, "blue": 0},
+        {"red": 0, "green": 0, "blue": 0},
+    ]
+    robot.camera.stream()
+    assert decode_frame(device.avatar_frames[-1]).command == AvatarCommand.START_CAMERA_STREAM
+    assert device.led_color == (168, 0, 0)
+    robot.camera.stream(enabled=False)
+    assert decode_frame(device.avatar_frames[-1]).payload == b"\x00"
+    assert device.led_color == (0, 0, 0)
+
+    robot.camera.stream()
+    robot._driver("camera").disconnected()
+    assert device.led_color == (0, 0, 0)
+
+    device.connected = False
+    with pytest.raises(BodyLost):
+        robot.camera.frame()
+    assert device.led_color == (0, 0, 0)
+
+
+def test_camera_stream_is_refused_while_estopped():
+    device = FakeStackChanDeviceClient()
+    robot = StackChanRobotAdapter(device).robot
+    robot.emergency_stop()
+    with pytest.raises(EstopEngaged, match="camera stream refused"):
+        robot.camera.stream()
     assert [call.name for call in device.calls] == [
         "self.robot.get_head_angles",
         "self.robot.set_head_angles",

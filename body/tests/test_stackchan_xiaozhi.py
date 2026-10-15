@@ -15,6 +15,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from aiohttp import ClientSession, FormData, web
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 
@@ -38,13 +39,25 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
         async def on_audio(session: str, frame: bytes) -> None:
             self.audio.append((session, frame))
 
-        self.app = XiaozhiServer(self.pairing, self.robot, on_audio)
+        self.app = XiaozhiServer(
+            self.pairing, self.robot, on_audio, vision_host="127.0.0.1", vision_port=8766
+        )
         self.server = await serve(self.app.handle, "127.0.0.1", 0)
         self.port = self.server.sockets[0].getsockname()[1]
+        app = web.Application(client_max_size=self.app.max_photo_bytes)
+        app.router.add_post("/vision/{device_id}", self.app._receive_photo)
+        self.app._vision_runner = web.AppRunner(app)
+        await self.app._vision_runner.setup()
+        site = web.TCPSite(self.app._vision_runner, "127.0.0.1", self.app.vision_port)
+        await site.start()
+        self.app._vision_site = site
+        self.vision_port = self.app.vision_port
 
     async def asyncTearDown(self) -> None:
         self.server.close()
         await self.server.wait_closed()
+        if self.app._vision_runner is not None:
+            await self.app._vision_runner.cleanup()
 
     async def device(self):
         return await connect(
@@ -92,6 +105,53 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await ws.recv(), b"opus-frame-2")
             self.assertEqual(json.loads(await ws.recv())["state"], "stop")
         self.assertEqual(self.audio[0][1], b"fake-opus-uplink")
+
+    async def test_initialize_advertises_authenticated_vision_url_and_token(self) -> None:
+        from unittest.mock import AsyncMock
+
+        ws = type("Socket", (), {"send": AsyncMock()})()
+        self.app._sessions["02:00:00:00:00:01"] = ws
+        self.app._session_credentials["02:00:00:00:00:01"] = (self.client_id, self.token)
+        await self.app._mcp(ws, "session", {"id": 42, "method": "initialize"})
+        payload = json.loads(ws.send.await_args.args[0])["payload"]["result"]
+        self.assertEqual(payload["capabilities"]["vision"]["token"], self.token)
+        self.assertEqual(
+            payload["capabilities"]["vision"]["url"],
+            f"http://127.0.0.1:{self.vision_port}/vision/02:00:00:00:00:01",
+        )
+
+    async def test_photo_upload_is_token_checked_bounded_and_memory_only(self) -> None:
+
+        self.app._session_credentials["02:00:00:00:00:01"] = (self.client_id, self.token)
+        url = f"http://127.0.0.1:{self.vision_port}/vision/02:00:00:00:00:01"
+        async with ClientSession() as client:
+            form = FormData()
+            form.add_field(
+                "image", b"\xff\xd8photo", filename="frame.jpg", content_type="image/jpeg"
+            )
+            accepted = await client.post(
+                url, data=form, headers={"Authorization": f"Bearer {self.token}"}
+            )
+            self.assertEqual(accepted.status, 200)
+            self.assertEqual(self.app._photos.pop("02:00:00:00:00:01"), b"\xff\xd8photo")
+
+            form = FormData()
+            form.add_field(
+                "image", b"\xff\xd8photo", filename="frame.jpg", content_type="image/jpeg"
+            )
+            rejected = await client.post(url, data=form, headers={"Authorization": "Bearer wrong"})
+            self.assertEqual(rejected.status, 403)
+
+            self.app.max_photo_bytes = 32
+            form = FormData()
+            form.add_field(
+                "image", b"\xff\xd8" + b"x" * 40, filename="large.jpg", content_type="image/jpeg"
+            )
+            oversized = await client.post(
+                url, data=form, headers={"Authorization": f"Bearer {self.token}"}
+            )
+            self.assertEqual(oversized.status, 413)
+            self.assertNotIn("02:00:00:00:00:01", self.app._photos)
 
     async def test_early_device_replies_keep_only_the_newest_32_inflight_calls(self) -> None:
         deadline = time.monotonic() + 10

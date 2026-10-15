@@ -24,6 +24,8 @@ class FakeStackChanDeviceClient:
         self.calls: list[FakeToolCall] = []
         self.pending_motion: list[object] = []
         self.cancelled_motion_batches = 0
+        self.photo: bytes | None = None
+        self.avatar_frames: list[bytes] = []
 
     def get_head_angles(self) -> dict[str, int]:
         self._require_link()
@@ -60,6 +62,15 @@ class FakeStackChanDeviceClient:
         """Drop only host-side queued targets; this does not cut servo torque."""
         self.pending_motion.clear()
         self.cancelled_motion_batches += 1
+
+    def take_photo(self) -> bytes | None:
+        self._require_link()
+        self.calls.append(FakeToolCall("camera.take_photo", {}))
+        return self.photo
+
+    def send_avatar_frame(self, frame: bytes) -> None:
+        self._require_link()
+        self.avatar_frames.append(frame)
 
     def _require_link(self) -> None:
         if not self.connected:

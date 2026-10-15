@@ -20,6 +20,7 @@ STACKCHAN_PROFILE = BodyProfile(
         "head_pan_tilt",
         "light_ring",
         "speaker",
+        "camera",
     ],
     axes=[
         AxisLimit(name="head_yaw", unit="deg", min=-128, max=128, source=_SOURCE, date=_DATE),

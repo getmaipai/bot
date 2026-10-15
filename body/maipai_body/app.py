@@ -91,7 +91,18 @@ async def _serve_stackchan(stop_event: threading.Event, host: str, port: int) ->
     )
     from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient, XiaozhiServer
 
-    server = XiaozhiServer(PairingStore(default_pairing_path()), robot=None)
+    vision_host = os.environ.get("MAIPAI_VISION_HOST", host)
+    try:
+        vision_port = int(os.environ.get("MAIPAI_VISION_PORT", "8766"))
+    except ValueError as exc:
+        raise ValueError("MAIPAI_VISION_PORT must be a TCP port number.") from exc
+    server = XiaozhiServer(
+        PairingStore(default_pairing_path()),
+        robot=None,
+        vision_host=vision_host,
+        vision_port=vision_port,
+        advertised_vision_url=os.environ.get("MAIPAI_VISION_URL"),
+    )
     server.robot = StackChanRobotAdapter(XiaozhiDeviceClient(server))
     await server.start(host, port)
     logger.info("StackChan xiaozhi service listening on %s:%s", host, port)

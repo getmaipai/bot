@@ -11,6 +11,7 @@ from maipai_body.hal.errors import NotSupported
 from maipai_body.hal.seam import BodyProfile, HeadPose
 from maipai_body.robot import Robot, load_robot_api
 
+from .avatar_frames import start_camera_stream, stop_camera_stream
 from .profile import (
     HEAD_COMMAND_SPEED,
     LED_CHANNEL_MAX,
@@ -31,6 +32,10 @@ class StackChanDeviceClient(Protocol):
     def set_volume(self, volume: int) -> object: ...
 
     def cancel_pending(self) -> None: ...
+
+    def take_photo(self) -> bytes | None: ...
+
+    def send_avatar_frame(self, frame: bytes) -> object: ...
 
 
 class _HeadAdapter:
@@ -185,13 +190,63 @@ class _SoftwareEstopAdapter:
         raise AttributeError(verb)
 
 
+class _CameraAdapter:
+    """Camera commands through Robot; the translator owns stream starts."""
+
+    def __init__(self, client: StackChanDeviceClient, robot: Robot) -> None:
+        self.client = client
+        self.robot = robot
+
+    def command(self, verb: str, *args: Any, **kwargs: Any) -> object:
+        if verb == "frame":
+            if args or kwargs:
+                raise TypeError("camera.frame takes no arguments")
+            self._light_on()
+            try:
+                return self.client.take_photo()
+            finally:
+                self._light_off()
+        if verb != "stream":
+            raise AttributeError(verb)
+        enabled = kwargs.get("enabled", args[0] if args else True)
+        if type(enabled) is not bool:
+            raise TypeError("camera.stream enabled must be a boolean")
+        from maipai_body.hal.errors import EstopEngaged
+
+        if enabled and self.robot.estop.engaged:
+            raise EstopEngaged("camera stream refused while the emergency stop is engaged")
+        if enabled:
+            self._light_on()
+            try:
+                self.client.send_avatar_frame(start_camera_stream())
+                return True
+            except Exception:
+                self._light_off()
+                raise
+        try:
+            return self.client.send_avatar_frame(stop_camera_stream())
+        finally:
+            self._light_off()
+
+    def disconnected(self) -> None:
+        self._light_off()
+
+    def _light_on(self) -> None:
+        self.robot.leds.many(
+            [{"index": index, "rgb": [LED_CHANNEL_MAX, 0, 0]} for index in range(LED_COUNT)]
+        )
+
+    def _light_off(self) -> None:
+        self.robot.leds.many([{"index": index, "rgb": [0, 0, 0]} for index in range(LED_COUNT)])
+
+
 def create_stackchan_robot(
     client: StackChanDeviceClient,
     *,
     profile: BodyProfile = STACKCHAN_PROFILE,
 ) -> Robot:
     """Build the shared robot object with StackChan's supported tool adapters."""
-    return Robot(
+    robot = Robot(
         profile,
         {
             "head": _HeadAdapter(client, profile),
@@ -201,6 +256,8 @@ def create_stackchan_robot(
         },
         load_robot_api(),
     )
+    robot._drivers["camera"] = _CameraAdapter(client, robot)
+    return robot
 
 
 class StackChanRobotAdapter:
@@ -235,6 +292,15 @@ class StackChanRobotAdapter:
 
     async def set_volume(self, volume: int) -> object:
         return await asyncio.to_thread(self.robot.audio.speaker.volume, volume)
+
+    async def take_photo(self) -> bytes | None:
+        return await asyncio.to_thread(self.robot.camera.frame)
+
+    async def stream_camera(self, enabled: bool = True) -> object:
+        return await asyncio.to_thread(self.robot.camera.stream, enabled=enabled)
+
+    def camera_disconnected(self) -> None:
+        self.robot._driver("camera").disconnected()
 
 
 __all__ = ["StackChanRobotAdapter", "StackChanDeviceClient", "create_stackchan_robot"]

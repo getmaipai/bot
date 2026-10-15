@@ -6,6 +6,12 @@ The firmware recipe enables its persistent WebSocket by default; `--ca-file <pem
 
 The protocol implementation is in `body/maipai_body/bodies/stackchan/xiaozhi/`. `XiaozhiServer` checks the device and client identifiers with `PairingStore` before accepting a session, replies to hello, and passes binary audio frames to its async audio callback. The current app wiring does not yet connect that callback to the Home conversation loop.
 
+## Camera
+
+The xiaozhi service also listens for on-demand photos on port `8766` by default. MCP `initialize` advertises `capabilities.vision` with a per-device URL and the paired bearer token. The device posts a multipart JPEG in an `image`, `file`, or `photo` field to that URL, using `Authorization: Bearer <token>`. The receiver caps the full upload at 2 MiB, keeps the latest photo only in process memory, and never writes or forwards the bytes. Set `MAIPAI_VISION_HOST`, `MAIPAI_VISION_PORT`, and `MAIPAI_VISION_URL` for a LAN reachable listener and advertised base URL; use a trusted LAN because the current transport is cleartext. If `MAIPAI_VISION_URL` is a base URL, append the device route `/vision/<Device-Id>`.
+
+All camera captures and avatar stream starts go through the StackChan translator's Robot `camera` part. It lights the full RGB ring red before capture or stream start and clears it after a photo, on stream stop, command error, disconnect, or service shutdown. The avatar frame codec is isolated in `body/maipai_body/bodies/stackchan/avatar_frames.py`; the small handler hook is `XiaozhiServer.send_avatar_frame(bytes)`. StartCameraStream uses command `0x05`; an empty payload starts and `00` stops. Stream start is rejected while software estop is engaged.
+
 ## Pairing API
 
 The local Bot dashboard exposes:

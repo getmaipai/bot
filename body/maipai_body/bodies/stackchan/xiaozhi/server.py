@@ -12,9 +12,11 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
+from aiohttp import web
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
+from maipai_body.bodies.stackchan.avatar_frames import AvatarCommand, decode_frame
 from maipai_body.hal.errors import BodyLost, EstopEngaged, NotSupported, OutOfEnvelope
 
 from .pairing import PairingStore
@@ -58,6 +60,24 @@ class XiaozhiDeviceClient:
 
     def set_volume(self, volume: int) -> object:
         return self._call("self.audio_speaker.set_volume", {"volume": volume})
+
+    def take_photo(self) -> bytes | None:
+        try:
+            return asyncio.run_coroutine_threadsafe(
+                self.server.take_photo(), self.server._loop
+            ).result(timeout=self.timeout + 1)
+        except Exception as exc:
+            raise BodyLost("StackChan photo capture failed. Reconnect it and retry.") from exc
+
+    def send_avatar_frame(self, frame: bytes) -> object:
+        try:
+            return asyncio.run_coroutine_threadsafe(
+                self.server.send_avatar_frame(frame), self.server._loop
+            ).result(timeout=self.timeout)
+        except Exception as exc:
+            raise BodyLost(
+                "StackChan camera stream command failed. Reconnect it and retry."
+            ) from exc
 
     def cancel_pending(self) -> None:
         self.server.cancel_device_calls("self.robot.set_head_angles")
@@ -136,6 +156,10 @@ class XiaozhiServer:
         version: str = "1",
         server_name: str = "MaiPai Bot",
         idle_timeout: float = 30.0,
+        vision_host: str = "127.0.0.1",
+        vision_port: int = 8766,
+        max_photo_bytes: int = 2 * 1024 * 1024,
+        advertised_vision_url: str | None = None,
     ) -> None:
         self.pairing = pairing
         self.robot = robot
@@ -143,6 +167,15 @@ class XiaozhiServer:
         self.version = version
         self.server_name = server_name
         self.idle_timeout = idle_timeout
+        self.vision_host = vision_host
+        self.vision_port = vision_port
+        self.max_photo_bytes = max_photo_bytes
+        self.advertised_vision_url = advertised_vision_url
+        self._vision_runner: web.AppRunner | None = None
+        self._vision_site: web.TCPSite | None = None
+        self._photos: dict[str, bytes] = {}
+        self._photo_waiters: dict[str, asyncio.Future[bytes]] = {}
+        self._camera_streaming: set[str] = set()
         self._server: Any = None
         self._sessions: dict[str, ServerConnection] = {}
         self._session_ids: dict[str, str] = {}
@@ -161,8 +194,19 @@ class XiaozhiServer:
         self._server = await serve(
             self.handle, host, port, max_size=2**20, ping_interval=20, ping_timeout=20
         )
+        app = web.Application(client_max_size=self.max_photo_bytes)
+        app.router.add_post("/vision/{device_id}", self._receive_photo)
+        self._vision_runner = web.AppRunner(app)
+        await self._vision_runner.setup()
+        self._vision_site = web.TCPSite(self._vision_runner, self.vision_host, self.vision_port)
+        await self._vision_site.start()
 
     async def close(self) -> None:
+        for device_id in tuple(self._camera_streaming):
+            await self._stop_camera(device_id)
+        if self._vision_runner is not None:
+            await self._vision_runner.cleanup()
+            self._vision_runner = None
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
@@ -250,7 +294,9 @@ class XiaozhiServer:
                     )
                     break
                 if isinstance(message, bytes):
-                    if self.audio_handler:
+                    if device_id in self._camera_streaming:
+                        self._photos[device_id] = message
+                    elif self.audio_handler:
                         await self.audio_handler(session_id, message)
                     continue
                 try:
@@ -325,6 +371,14 @@ class XiaozhiServer:
         except Exception as exc:
             LOG.info("StackChan session ended: %s", type(exc).__name__)
         finally:
+            if device_id in self._camera_streaming:
+                await self._stop_camera(device_id)
+            camera_disconnected = getattr(self.robot, "camera_disconnected", None)
+            if callable(camera_disconnected):
+                try:
+                    await asyncio.to_thread(camera_disconnected)
+                except Exception:
+                    LOG.warning("Could not clear StackChan camera indicator on disconnect")
             if self._sessions.get(device_id) is websocket:
                 self._sessions.pop(device_id, None)
                 self._session_credentials.pop(device_id, None)
@@ -374,6 +428,130 @@ class XiaozhiServer:
                 "mcp",
                 {"payload": {"jsonrpc": "2.0", "id": request_id, "result": {}}},
             )
+
+        elif payload.get("method") == "initialize" and "id" in payload:
+            device_id = next((key for key, active in self._sessions.items() if active is ws), None)
+            if device_id is None:
+                return
+            token = self._session_credentials[device_id][1]
+            url = self._vision_url(device_id)
+            await self._json(
+                ws,
+                session_id,
+                "mcp",
+                {
+                    "payload": {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {
+                                "tools": {"listChanged": False},
+                                "vision": {"url": url, "token": token},
+                            },
+                            "serverInfo": {"name": self.server_name, "version": self.version},
+                        },
+                    }
+                },
+            )
+
+    def _vision_url(self, device_id: str) -> str:
+        if self.advertised_vision_url:
+            base = self.advertised_vision_url.rstrip("/")
+            return base if "/vision/" in base else f"{base}/vision/{device_id}"
+        host = self.vision_host
+        if host in {"0.0.0.0", "::"}:
+            host = "127.0.0.1"
+        return f"http://{host}:{self.vision_port}/vision/{device_id}"
+
+    async def _receive_photo(self, request: web.Request) -> web.Response:
+        device_id = request.match_info["device_id"]
+        credentials = self._session_credentials.get(device_id)
+        auth = request.headers.get("Authorization", "")
+        token = auth[7:] if auth.startswith("Bearer ") else request.query.get("token")
+        if credentials is None or not self.pairing.authorize(device_id, *credentials):
+            raise web.HTTPUnauthorized()
+        if token is None or not self.pairing.authorize(device_id, credentials[0], token):
+            raise web.HTTPForbidden()
+        if request.content_length is not None and request.content_length > self.max_photo_bytes:
+            raise web.HTTPRequestEntityTooLarge(
+                max_size=self.max_photo_bytes, actual_size=request.content_length
+            )
+        if not request.content_type.startswith("multipart/"):
+            raise web.HTTPUnsupportedMediaType(text="Expected multipart JPEG upload")
+        reader = await request.multipart()
+        photo: bytes | None = None
+        total = 0
+        async for field in reader:
+            if field.name not in {"image", "file", "photo"}:
+                await field.release()
+                continue
+            chunks: list[bytes] = []
+            while chunk := await field.read_chunk(64 * 1024):
+                total += len(chunk)
+                if total > self.max_photo_bytes:
+                    raise web.HTTPRequestEntityTooLarge(
+                        max_size=self.max_photo_bytes, actual_size=total
+                    )
+                chunks.append(chunk)
+            photo = b"".join(chunks)
+        if photo is None or not photo.startswith(b"\xff\xd8"):
+            raise web.HTTPBadRequest(text="Multipart request must include a JPEG image field")
+        self._photos[device_id] = photo
+        waiter = self._photo_waiters.get(device_id)
+        if waiter is not None and not waiter.done():
+            waiter.set_result(photo)
+        return web.json_response({"accepted": True, "size": len(photo)})
+
+    async def take_photo(self, device_id: str | None = None) -> bytes | None:
+        if device_id is None:
+            if len(self._sessions) != 1:
+                raise ConnectionError("Select one authenticated StackChan before taking a photo")
+            device_id = next(iter(self._sessions))
+        self._photos.pop(device_id, None)
+        future = asyncio.get_running_loop().create_future()
+        self._photo_waiters[device_id] = future
+        try:
+            await asyncio.to_thread(
+                self.call_device_tool,
+                "self.camera.take_photo",
+                {"question": "Describe what you see."},
+            )
+            return await asyncio.wait_for(future, timeout=10)
+        finally:
+            self._photo_waiters.pop(device_id, None)
+            if not future.done():
+                future.cancel()
+
+    async def stream_camera(self, enabled: bool = True) -> object:
+        if len(self._sessions) != 1:
+            raise ConnectionError("Select one authenticated StackChan before streaming its camera")
+        device_id = next(iter(self._sessions))
+        if enabled:
+            if getattr(getattr(self.robot, "robot", None), "estop_engaged", False):
+                raise EstopEngaged("camera stream refused while the emergency stop is engaged")
+            self._camera_streaming.add(device_id)
+            return True
+        self._camera_streaming.discard(device_id)
+        return True
+
+    async def send_avatar_frame(self, frame: bytes) -> None:
+        decoded = decode_frame(frame)
+        if decoded.command != AvatarCommand.START_CAMERA_STREAM:
+            raise ValueError("unsupported avatar frame command")
+        enabled = decoded.payload != b"\x00"
+        await self.stream_camera(enabled)
+
+    async def _stop_camera(self, device_id: str) -> None:
+        self._camera_streaming.discard(device_id)
+        camera_disconnected = getattr(self.robot, "camera_disconnected", None)
+        if callable(camera_disconnected):
+            try:
+                result = camera_disconnected()
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:
+                LOG.warning("Could not clear StackChan camera indicator")
 
     def _prune_early_device_replies(self) -> None:
         now = time.monotonic()
