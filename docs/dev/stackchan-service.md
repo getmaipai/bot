@@ -57,3 +57,18 @@ Battery, touch and IMU remain `NotSupported` at the shared robot API because the
 `body/tests/test_stackchan_xiaozhi.py` exercises a fake device over a local WebSocket. The test covers pairing refusal, approval, hello, audio callback delivery and protocol tool handling without hardware. `body/tests/test_stackchan_avatar.py` uses the independent fake peer in `body/tests/stackchan_sim/`; it covers expression delivery, unpaired refusal, estop motion filtering, malformed-frame isolation, reconnect replacement and codec bounds. These are software fake-peer checks only; no hardware verification is claimed and no test writes to a physical serial port.
 
 `body/tests/test_stackchan_avatar.py` uses the independent fake peer in `body/tests/stackchan_sim/`. It covers expression-frame delivery, unpaired refusal, estop motion filtering, malformed-frame isolation, reconnect replacement and codec bounds. These are fake-device protocol checks only; hardware has not arrived, so no unit verification is claimed.
+
+## Host vision bridge
+
+`maipai_body.bodies.stackchan.vision_bridge.StackChanVisionBridge` consumes on-demand JPEG bytes from `robot.camera.frame()` in host memory. Anonymous tracking uses only the detector, returns a `FaceTrackTarget` without identity, and sends small head targets through the Robot API. The StackChan profile in `profile.py` clamps yaw and pitch. Each correction has a deadline; expiry calls `head.hold()`, and a missing face ends the prior correction. Call `close()` when the behavior stops.
+
+Recognition calls the shared `vision.recognize` pipeline and returns the gallery verdict (a tentative person id and confidence, or unknown). The caller must apply household child and teen floors before turn output. A face verdict only selects a turn person and never unlocks adult content. Child and teen print access requires an injected consent check from the print store; absent authorization refuses the operation. The bridge has no implicit upload path. `send_consented_hub_still` sends one JPEG only when passed the explicit still-consent authorization callback.
+
+Frames are decoded directly from bytes and are not written to disk. The measurement runner is `body/maipai_body/bodies/stackchan/measure/vision_run.py`; it reports match and false-accept rates at 0.5, 1.0 and 1.5 m in room and dim conditions for labeled fixtures. The committed frame is a generated geometric image with no person likeness, and its labels are marked placeholders, so the runner reports empty measurements until real labeled trials are supplied. No unit is attached and no range result is claimed.
+
+## Known gaps
+
+- The bridge is not wired into automatic turn attribution. A caller still has to invoke it and enforce the household's age and surface gates.
+- The firmware photo path is implemented; continuous avatar camera stream support does not yet deliver frames to the bridge.
+- The host-side synthetic test proves bounded correction and in-memory handling only. Match rate and false-accept rate remain unmeasured on a physical StackChan unit.
+- Print consent must be supplied by the household print-store integration; the bridge defaults to refusing child and teen recognition when that integration is absent.

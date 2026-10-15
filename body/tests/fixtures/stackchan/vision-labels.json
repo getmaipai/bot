@@ -1,0 +1,50 @@
+[
+  {
+    "distance_m": 0.5,
+    "light": "room",
+    "expected_person": null,
+    "predicted_person": null,
+    "frame": "vision-persona-free.npy",
+    "placeholder": true
+  },
+  {
+    "distance_m": 0.5,
+    "light": "dim",
+    "expected_person": null,
+    "predicted_person": null,
+    "frame": "vision-persona-free.npy",
+    "placeholder": true
+  },
+  {
+    "distance_m": 1.0,
+    "light": "room",
+    "expected_person": null,
+    "predicted_person": null,
+    "frame": "vision-persona-free.npy",
+    "placeholder": true
+  },
+  {
+    "distance_m": 1.0,
+    "light": "dim",
+    "expected_person": null,
+    "predicted_person": null,
+    "frame": "vision-persona-free.npy",
+    "placeholder": true
+  },
+  {
+    "distance_m": 1.5,
+    "light": "room",
+    "expected_person": null,
+    "predicted_person": null,
+    "frame": "vision-persona-free.npy",
+    "placeholder": true
+  },
+  {
+    "distance_m": 1.5,
+    "light": "dim",
+    "expected_person": null,
+    "predicted_person": null,
+    "frame": "vision-persona-free.npy",
+    "placeholder": true
+  }
+]
