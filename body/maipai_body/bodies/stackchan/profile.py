@@ -37,6 +37,8 @@ STACKCHAN_PROFILE = BodyProfile(
     sensors=[],
     physical_cuts=["power switch", "unplugging the robot"],
     speech_placement="pod",
+    leased_motion={"head": ["set", "goto"]},
+    safe_stop={"head": "hold"},
 )
 
 __all__ = [

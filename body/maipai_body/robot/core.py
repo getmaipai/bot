@@ -24,14 +24,6 @@ from .api import PartContract, RobotApi, load_robot_api
 
 _PRIORITY = {"safety": 0, "person": 1, "expression": 2, "idle": 3}
 LOG = logging.getLogger(__name__)
-_LEASED_MOTION = {
-    "head": frozenset({"set", "goto"}),
-    "appendages": frozenset({"set", "goto"}),
-    "base": frozenset({"drive", "goto", "turn"}),
-    "posture": frozenset({"stand", "sit", "lie"}),
-    "eyes": frozenset({"express"}),
-}
-_ACTUATOR_CAPABILITIES = frozenset({"head_6dof", "head_pan_tilt", "appendages", "base", "posture"})
 
 
 @dataclass(frozen=True)
@@ -58,7 +50,35 @@ class Robot:
         self._api = api or load_robot_api()
         self._drivers = dict(drivers)
         self._capabilities = frozenset(profile.capabilities)
-        if self._capabilities & _ACTUATOR_CAPABILITIES:
+        for part_id, verbs in profile.leased_motion.items():
+            contract = self._api.parts.get(part_id)
+            if contract is None or set(verbs) - contract.verbs:
+                raise ValueError(
+                    f"body profile '{profile.id}' declares invalid leased motion for {part_id!r}"
+                )
+        for part_id, verb in profile.safe_stop.items():
+            contract = self._api.parts.get(part_id)
+            if contract is None or verb not in contract.verbs:
+                raise ValueError(
+                    f"body profile '{profile.id}' declares invalid safe stop {part_id}.{verb}"
+                )
+        for axis_name in profile.axis_map.values():
+            try:
+                profile.axis(axis_name)
+            except KeyError as exc:
+                raise ValueError(
+                    f"body profile '{profile.id}' maps to missing axis {axis_name!r}"
+                ) from exc
+        has_leased_actuator = any(
+            part_id in self._api.parts
+            and any(
+                capability in self._capabilities
+                for capability in self._api.parts[part_id].capabilities
+            )
+            for part_id, verbs in profile.leased_motion.items()
+            if verbs
+        )
+        if has_leased_actuator:
             missing = {"lease", "estop"} - self._capabilities
             if missing:
                 names = ", ".join(sorted(missing))
@@ -173,7 +193,7 @@ class Robot:
             return result
         if part == "base" and verb == "drive":
             self._check_deadline(args, kwargs)
-        if verb in _LEASED_MOTION.get(part, ()):
+        if verb in self.profile.leased_motion.get(part, ()):
             if self._estop_engaged:
                 raise EstopEngaged(
                     f"robot part '{part}' is stopped; release the emergency stop first"
@@ -257,16 +277,17 @@ class Robot:
         try:
             result = self._dispatch("estop", "engage")
         except BodyLost:
-            self._safe_stop(include_estop=True)
+            self._safe_stop(include_estop=True, raise_body_lost=True)
             raise
-        self._safe_stop()
+        self._safe_stop(raise_body_lost=True)
         return result if result is not None else True
 
-    def _safe_stop(self, *, include_estop: bool = False) -> None:
-        commands = [("base", "stop"), ("head", "hold")]
+    def _safe_stop(self, *, include_estop: bool = False, raise_body_lost: bool = False) -> None:
+        commands = list(self.profile.safe_stop.items())
         if include_estop:
             commands.insert(0, ("estop", "engage"))
         failed: list[str] = []
+        body_lost: BodyLost | None = None
         for part, verb in commands:
             contract = self._api.parts.get(part)
             if contract is None or part not in self._drivers or verb not in contract.verbs:
@@ -275,6 +296,8 @@ class Robot:
                 self._dispatch(part, verb)
             except Exception as exc:
                 failed.append(f"{part}.{verb}")
+                if isinstance(exc, BodyLost) and body_lost is None:
+                    body_lost = exc
                 if isinstance(exc, NotSupported):
                     detail = exc.fix
                 else:
@@ -282,6 +305,8 @@ class Robot:
                 LOG.warning("Robot safe-stop command %s.%s failed: %s", part, verb, detail)
                 continue
         self._last_safe_stop = tuple(failed)
+        if raise_body_lost and body_lost is not None:
+            raise body_lost
 
     def _check_deadline(self, args: tuple[Any, ...], kwargs: Mapping[str, Any]) -> None:
         deadline = kwargs.get("deadline", args[3] if len(args) > 3 else None)
@@ -303,7 +328,7 @@ class Robot:
     def _clamp(
         self, part: str, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> tuple[tuple[Any, ...], dict[str, Any]]:
-        if part not in _LEASED_MOTION:
+        if not self.profile.leased_motion.get(part):
             return args, kwargs
         cooked_args = list(args)
         cooked_kwargs = dict(kwargs)
@@ -322,12 +347,12 @@ class Robot:
                         f"head_{field}", cooked_kwargs[field], radians=field != "speed"
                     )
         elif part == "appendages" and "angle" in cooked_kwargs:
-            name = str(cooked_kwargs.get("name", ""))
-            axis = f"antenna_{name}" if name in {"left", "right"} else name
+            name = str(cooked_kwargs.get("name", cooked_args[0] if cooked_args else ""))
+            axis = self.profile.axis_map.get(f"appendages.{name}", name)
             cooked_kwargs["angle"] = self._clamp_axis(axis, cooked_kwargs["angle"], radians=True)
         elif part == "appendages" and len(cooked_args) > 1:
             name = str(cooked_args[0])
-            axis = f"antenna_{name}" if name in {"left", "right"} else name
+            axis = self.profile.axis_map.get(f"appendages.{name}", name)
             cooked_args[1] = self._clamp_axis(axis, cooked_args[1], radians=True)
         elif part == "base":
             for field in ("vx", "vy", "wz"):

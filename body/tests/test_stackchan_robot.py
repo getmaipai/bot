@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import math
 
 import pytest
@@ -9,7 +10,13 @@ import pytest
 from maipai_body.bodies.stackchan import STACKCHAN_PROFILE, StackChanRobotAdapter
 from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
 from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient
-from maipai_body.hal.errors import BodyLost, EstopEngaged, NotPermitted, NotSupported
+from maipai_body.hal.errors import (
+    BodyLost,
+    EstopEngaged,
+    NotPermitted,
+    NotSupported,
+    OutOfEnvelope,
+)
 from maipai_body.hal.seam import HeadPose
 from maipai_body.robot import Robot, load_robot_api
 
@@ -91,10 +98,31 @@ def test_software_estop_latches_and_cancels_host_queued_targets():
     assert robot.estop.engaged is True
     assert device.pending_motion == []
     assert device.cancelled_motion_batches >= 1
+    assert [call.name for call in device.calls[-2:]] == [
+        "self.robot.get_head_angles",
+        "self.robot.set_head_angles",
+    ]
+    assert device.calls[-1].arguments == {"yaw": 0, "pitch": 45, "speed": 150}
+    command_count = len(device.calls)
     with pytest.raises(EstopEngaged, match="release the emergency stop"):
         robot.head.goto(pose=HeadPose(pitch=math.radians(45)))
-    assert not any(call.name == "self.robot.set_head_angles" for call in device.calls)
+    assert len(device.calls) == command_count
     assert robot.last_safe_stop == ()
+
+
+def test_estop_latches_and_reports_body_lost_if_current_angles_cannot_be_read():
+    class LostReadDevice(FakeStackChanDeviceClient):
+        def get_head_angles(self):
+            raise BodyLost("head-angle read failed")
+
+    robot = StackChanRobotAdapter(LostReadDevice()).robot
+
+    with pytest.raises(BodyLost, match="head-angle read failed"):
+        robot.emergency_stop()
+
+    assert robot.estop_engaged is True
+    assert robot.estop.engaged is True
+    assert robot.last_safe_stop == ("head.hold",)
 
 
 def test_lost_link_latches_estop_and_sends_no_more_head_angles():
@@ -120,7 +148,10 @@ def test_stackchan_estop_safe_stop_uses_supported_head_hold_verb():
     robot.emergency_stop()
     assert robot.last_safe_stop == ()
     assert device.cancelled_motion_batches >= 1
-    assert not any(call.name == "self.robot.set_head_angles" for call in device.calls)
+    assert [call.name for call in device.calls] == [
+        "self.robot.get_head_angles",
+        "self.robot.set_head_angles",
+    ]
 
 
 def test_unconfirmed_xiaozhi_head_command_latches_estop():
@@ -134,9 +165,44 @@ def test_unconfirmed_xiaozhi_head_command_latches_estop():
     robot = StackChanRobotAdapter(XiaozhiDeviceClient(NoReplyServer())).robot
     robot.lease.acquire("person", "test")
 
-    with pytest.raises(BodyLost, match="did not confirm"):
+    with pytest.raises(BodyLost, match="did not complete"):
         robot.head.goto(pose=HeadPose(pitch=math.radians(45)))
 
     assert robot.estop.engaged is True
     with pytest.raises(EstopEngaged):
         robot.head.goto(pose=HeadPose(pitch=math.radians(45)))
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (ConnectionError("link unavailable"), BodyLost),
+        (TimeoutError("reply expired"), BodyLost),
+        (concurrent.futures.CancelledError(), EstopEngaged),
+        (RuntimeError("target angle out of range"), OutOfEnvelope),
+        (RuntimeError("unsupported tool"), NotSupported),
+    ],
+)
+def test_every_device_tool_maps_failures_to_robot_seam_errors(error, expected):
+    class FailingServer:
+        def call_device_tool(self, _name, _arguments, *, timeout):
+            raise error
+
+        def cancel_device_calls(self, _name):
+            return None
+
+    device = XiaozhiDeviceClient(FailingServer())
+    with pytest.raises(expected):
+        device.set_volume(35)
+
+
+def test_invalid_device_head_angles_are_reported_as_body_lost():
+    class InvalidAnglesServer:
+        def call_device_tool(self, _name, _arguments, *, timeout):
+            return {"yaw": "0", "pitch": 45}
+
+        def cancel_device_calls(self, _name):
+            return None
+
+    with pytest.raises(BodyLost, match="invalid head angles"):
+        XiaozhiDeviceClient(InvalidAnglesServer()).get_head_angles()

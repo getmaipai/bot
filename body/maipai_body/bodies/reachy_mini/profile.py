@@ -114,6 +114,9 @@ REACHY_MINI_PROFILE = BodyProfile(
     sensors=["state_feed", "camera", "doa_array", "imu"],
     physical_cuts=[],
     speech_placement="pod",
+    leased_motion={"head": ["set", "goto"]},
+    safe_stop={"head": "hold"},
+    axis_map={"appendages.left": "antenna_left", "appendages.right": "antenna_right"},
 )
 
 

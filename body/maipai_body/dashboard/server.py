@@ -162,8 +162,15 @@ class _Handler(BaseHTTPRequestHandler):
                         "list and retry.",
                     )
                 if path.endswith("/approve"):
+                    client_id = body.get("client_id")
+                    if not isinstance(client_id, str) or not client_id:
+                        return self._error(
+                            HTTPStatus.BAD_REQUEST,
+                            "A client_id is required. Copy the Client-Id for this Device-Id from "
+                            "the pending pairing list, then retry.",
+                        )
                     try:
-                        token_file = self.server.pairing_store.approve_to_file(device_id)
+                        token_file = self.server.pairing_store.approve_to_file(device_id, client_id)
                     except KeyError as error:
                         return self._error(HTTPStatus.NOT_FOUND, str(error))
                     except OSError:
@@ -175,7 +182,11 @@ class _Handler(BaseHTTPRequestHandler):
                         )
                     return self._json(
                         HTTPStatus.OK,
-                        {"device_id": device_id, "token_file": str(token_file)},
+                        {
+                            "device_id": device_id,
+                            "client_id": client_id,
+                            "token_file": str(token_file),
+                        },
                     )
                 return self._json(
                     HTTPStatus.OK,

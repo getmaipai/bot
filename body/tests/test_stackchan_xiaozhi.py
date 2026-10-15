@@ -30,7 +30,7 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
         self.pairing = PairingStore()
         self.client_id = "00000000-0000-4000-8000-000000000001"
         self.pairing.request("02:00:00:00:00:01", self.client_id)
-        self.token = self.pairing.approve("02:00:00:00:00:01")
+        self.token = self.pairing.approve("02:00:00:00:00:01", self.client_id)
         self.stackchan_client = FakeStackChanDeviceClient()
         self.robot = StackChanRobotAdapter(self.stackchan_client)
         self.audio: list[tuple[str, bytes]] = []
@@ -137,20 +137,26 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
         first = await self.device()
         await first.send(json.dumps({"type": "hello", "version": 1}))
         first_hello = json.loads(await first.recv())
-        second = await self.device()
-        try:
-            await asyncio.wait_for(first.wait_closed(), timeout=1)
-            self.assertEqual(first.close_code, 1012)
-            await second.send(json.dumps({"type": "hello", "version": 1}))
-            replacement = json.loads(await second.recv())
-            self.assertEqual(replacement["type"], "hello")
-            self.assertEqual(replacement["version"], 1)
-            self.assertNotEqual(first_hello["session_id"], replacement["session_id"])
-            self.assertEqual(len(self.app._sessions), 1)
-            self.assertEqual(self.app._session_ids["02:00:00:00:00:01"], replacement["session_id"])
-        finally:
-            await second.close()
-            await first.close()
+
+        async def slow_stale_close(_stale) -> None:
+            await asyncio.sleep(0.4)
+
+        with patch.object(self.app, "_close_stale_session", new=slow_stale_close):
+            second = await self.device()
+            try:
+                await second.send(json.dumps({"type": "hello", "version": 1}))
+                replacement = json.loads(await asyncio.wait_for(second.recv(), timeout=0.2))
+                self.assertEqual(replacement["type"], "hello")
+                self.assertEqual(replacement["version"], 1)
+                self.assertNotEqual(first_hello["session_id"], replacement["session_id"])
+                self.assertEqual(len(self.app._sessions), 1)
+                self.assertEqual(
+                    self.app._session_ids["02:00:00:00:00:01"], replacement["session_id"]
+                )
+            finally:
+                await second.close()
+                await first.close()
+                await asyncio.sleep(0.41)
 
     async def test_unknown_device_is_refused_and_queued_for_approval(self) -> None:
         async with connect(
@@ -178,8 +184,44 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
         with patch("maipai_body.bodies.stackchan.xiaozhi.pairing.time.time", return_value=100.0):
             self.pairing.request(device_id, client_id)
         with patch("maipai_body.bodies.stackchan.xiaozhi.pairing.time.time", return_value=145.0):
-            self.pairing.approve(device_id)
+            self.pairing.approve(device_id, client_id)
         self.assertEqual(self.pairing._devices[device_id]["approved_at"], 145.0)
+
+    async def test_pending_pairing_approval_requires_the_matching_client_id(self) -> None:
+        device_id = "02:00:00:00:00:44"
+        planted_client = "00000000-0000-4000-8000-000000000044"
+        robot_client = "00000000-0000-4000-8000-000000000045"
+        self.pairing.request(device_id, planted_client)
+        self.pairing.request(device_id, robot_client)
+
+        self.assertEqual(
+            {(row.device_id, row.client_id) for row in self.pairing.pending()},
+            {(device_id, planted_client), (device_id, robot_client)},
+        )
+        with self.assertRaisesRegex(KeyError, "Device-Id and Client-Id"):
+            self.pairing.approve(device_id, "00000000-0000-4000-8000-000000000046")
+
+        token = self.pairing.approve(device_id, robot_client)
+        self.assertTrue(self.pairing.authorize(device_id, robot_client, token))
+        self.assertFalse(self.pairing.authorize(device_id, planted_client, token))
+
+    async def test_pairing_authorize_does_not_take_the_cross_process_write_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pairing.json"
+            store = PairingStore(path)
+            device_id = "02:00:00:00:00:46"
+            client_id = "00000000-0000-4000-8000-000000000046"
+            store.request(device_id, client_id)
+            token = store.approve(device_id, client_id)
+            import maipai_body.bodies.stackchan.xiaozhi.pairing as pairing_module
+
+            with patch.object(
+                pairing_module.fcntl,
+                "flock",
+                side_effect=AssertionError("read locked"),
+            ):
+                for _ in range(12):
+                    self.assertTrue(store.authorize(device_id, client_id, token))
 
     async def test_separate_pairing_stores_refresh_shared_pending_approval_and_revocation(
         self,
@@ -193,7 +235,7 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
 
             request = service.request(device_id, client_id)
             self.assertEqual(dashboard.pending(), (request,))
-            token_path = dashboard.approve_to_file(device_id)
+            token_path = dashboard.approve_to_file(device_id, client_id)
             token = token_path.read_text(encoding="utf-8").strip()
             self.assertTrue(service.authorize(device_id, client_id, token))
 
@@ -207,7 +249,7 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
             store = PairingStore(path)
             client_id = "00000000-0000-4000-8000-000000000003"
             store.request("02:00:00:00:00:03", client_id)
-            token = store.approve("02:00:00:00:00:03")
+            token = store.approve("02:00:00:00:00:03", client_id)
             loaded = PairingStore(path)
             self.assertTrue(loaded.authorize("02:00:00:00:00:03", client_id, token))
             self.assertNotIn(token, path.read_text())

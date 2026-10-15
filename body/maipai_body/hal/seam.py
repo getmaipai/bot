@@ -60,6 +60,9 @@ class BodyProfile(BaseModel):
     sensors: list[str]
     physical_cuts: list[str]
     speech_placement: Literal["pod", "robot"]
+    leased_motion: dict[str, list[str]] = Field(default_factory=dict)
+    safe_stop: dict[str, str] = Field(default_factory=dict)
+    axis_map: dict[str, str] = Field(default_factory=dict)
     # MOVE-CARRY-01: gravity compensation while the body is held. Off until a
     # unit row passes with the base tilted (docs/dev/measure-runbook.md);
     # UNVERIFIED today.

@@ -34,12 +34,17 @@ class StackChanDeviceClient(Protocol):
 
 
 class _HeadAdapter:
-    def __init__(self, client: StackChanDeviceClient) -> None:
+    def __init__(self, client: StackChanDeviceClient, profile: BodyProfile) -> None:
         self.client = client
+        self.profile = profile
 
     def command(self, verb: str, *args: Any, **kwargs: Any) -> object:
         if verb == "hold":
             self.client.cancel_pending()
+            angles = self.client.get_head_angles()
+            self.client.set_head_angles(
+                angles["yaw"], angles["pitch"], round(self.profile.axis("head_speed").max)
+            )
             return True
         if verb == "disable":
             raise NotSupported(
@@ -173,7 +178,6 @@ class _SoftwareEstopAdapter:
     def command(self, verb: str) -> bool:
         if verb == "engage":
             self.engaged = True
-            self.client.cancel_pending()
             return True
         if verb == "release":
             self.engaged = False
@@ -190,7 +194,7 @@ def create_stackchan_robot(
     return Robot(
         profile,
         {
-            "head": _HeadAdapter(client),
+            "head": _HeadAdapter(client, profile),
             "leds": _LedAdapter(client),
             "audio": _AudioAdapter(client),
             "estop": _SoftwareEstopAdapter(client),

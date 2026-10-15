@@ -69,13 +69,24 @@ class StackChanDashboardPairingTests(unittest.IsolatedAsyncioTestCase):
             None,
         )
         self.assertEqual(pending[0]["device_id"], device_id)
-        approved = await asyncio.to_thread(
-            _request,
+        self.assertEqual(pending[0]["client_id"], headers["Client-Id"])
+        missing_client_status, missing_client = await asyncio.to_thread(
+            _request_with_status,
             self.dashboard.port,
             "POST",
             "/api/stackchan/pairings/approve",
             {"device_id": device_id},
         )
+        self.assertEqual(missing_client_status, 400)
+        self.assertIn("client_id is required", missing_client["error"])
+        approved = await asyncio.to_thread(
+            _request,
+            self.dashboard.port,
+            "POST",
+            "/api/stackchan/pairings/approve",
+            {"device_id": device_id, "client_id": headers["Client-Id"]},
+        )
+        self.assertEqual(approved["client_id"], headers["Client-Id"])
         self.assertNotIn("token", approved)
         token_file = Path(approved["token_file"])
         self.assertEqual(token_file.stat().st_mode & 0o777, 0o600)
@@ -97,7 +108,7 @@ class StackChanDashboardPairingTests(unittest.IsolatedAsyncioTestCase):
                 def goto() -> object:
                     lease = self.body.robot.lease.acquire("person", "fixture")
                     try:
-                        return self.body.robot.head.goto(
+                        return self.body.robot.head.set(
                             pose=HeadPose(yaw=math.radians(12), pitch=math.radians(40))
                         )
                     finally:
@@ -146,6 +157,13 @@ class StackChanDashboardPairingTests(unittest.IsolatedAsyncioTestCase):
 
 
 def _request(port: int, method: str, path: str, body: dict | None) -> object:
+    status, result = _request_with_status(port, method, path, body)
+    if status != 200:
+        raise AssertionError(f"dashboard API returned {status}: {result}")
+    return result
+
+
+def _request_with_status(port: int, method: str, path: str, body: dict | None):
     connection = http.client.HTTPConnection("127.0.0.1", port)
     payload = json.dumps(body) if body is not None else None
     headers = {"Origin": f"http://127.0.0.1:{port}"}
@@ -153,8 +171,7 @@ def _request(port: int, method: str, path: str, body: dict | None) -> object:
         headers["Content-Type"] = "application/json"
     connection.request(method, path, payload, headers)
     response = connection.getresponse()
+    status = response.status
     result = json.loads(response.read())
     connection.close()
-    if response.status != 200:
-        raise AssertionError(f"dashboard API returned {response.status}: {result}")
-    return result
+    return status, result

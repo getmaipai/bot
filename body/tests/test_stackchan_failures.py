@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+import time
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
@@ -22,11 +25,11 @@ class StackChanFailureShapeTests(unittest.IsolatedAsyncioTestCase):
         self.device_id = "02:00:00:00:00:20"
         self.client_id = "00000000-0000-4000-8000-000000000020"
         self.pairing.request(self.device_id, self.client_id)
-        self.token = self.pairing.approve(self.device_id)
+        self.token = self.pairing.approve(self.device_id, self.client_id)
         self.health_id = "02:00:00:00:00:21"
         self.health_client = "00000000-0000-4000-8000-000000000021"
         self.pairing.request(self.health_id, self.health_client)
-        self.health_token = self.pairing.approve(self.health_id)
+        self.health_token = self.pairing.approve(self.health_id, self.health_client)
         robot = StackChanRobotAdapter(FakeStackChanDeviceClient())
         self.service = XiaozhiServer(self.pairing, robot, idle_timeout=0.05)
         self.server = await serve(self.service.handle, "127.0.0.1", 0, max_size=2**20)
@@ -68,6 +71,60 @@ class StackChanFailureShapeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("approve this Device-Id", reason)
         await self.assert_service_stays_up()
 
+    async def test_pending_device_retries_do_not_exhaust_the_unknown_source_limit(self) -> None:
+        device_id = "02:00:00:00:00:22"
+        client_id = "00000000-0000-4000-8000-000000000022"
+        for _ in range(10):
+            async with await self.open_device(
+                device_id=device_id, client_id=client_id, token="unused"
+            ) as websocket:
+                with self.assertRaises(ConnectionClosed) as caught:
+                    await websocket.recv()
+            self.assertEqual(caught.exception.rcvd.code, 1008)
+        self.assertEqual(len(self.service._source_requests["127.0.0.1"]), 1)
+        self.assertTrue(self.pairing.recognizes_device(device_id, client_id))
+
+    async def test_dead_stale_close_is_aborted_after_short_timeout(self) -> None:
+        class Transport:
+            aborted = False
+
+            def abort(self):
+                self.aborted = True
+
+        class StaleConnection:
+            transport = Transport()
+
+            async def close(self, **_kwargs):
+                await asyncio.Future()
+
+        stale = StaleConnection()
+        started = time.monotonic()
+        await XiaozhiServer._close_stale_session(stale)
+        self.assertLess(time.monotonic() - started, 0.5)
+        self.assertTrue(stale.transport.aborted)
+
+    async def test_worker_tool_call_registers_its_deadline_on_the_event_loop(self) -> None:
+        loop_thread = threading.get_ident()
+        write_threads = []
+
+        class TrackedDeadlines(dict):
+            def __setitem__(self, key, value):
+                write_threads.append(threading.get_ident())
+                super().__setitem__(key, value)
+
+        self.service._loop = asyncio.get_running_loop()
+        self.service._sessions["02:00:00:00:00:20"] = object()
+        self.service._device_call_deadlines = TrackedDeadlines()
+        with (
+            patch.object(self.service, "_session_authorized", return_value=True),
+            patch.object(self.service, "_send_device_tool", new=AsyncMock()),
+            patch.object(self.service, "_await_device_reply", new=AsyncMock(return_value="ok")),
+        ):
+            result = await asyncio.to_thread(self.service.call_device_tool, "tool", {}, timeout=1.0)
+        self.assertEqual(result, "ok")
+        self.assertTrue(write_threads)
+        self.assertEqual(set(write_threads), {loop_thread})
+
     async def test_bad_token_gets_pairing_instruction_and_service_stays_up(self) -> None:
         async with await self.open_device(token="wrong-token") as websocket:
             with self.assertRaises(ConnectionClosed) as caught:
@@ -76,6 +133,14 @@ class StackChanFailureShapeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Device is not approved", reason)
         self.assertIn("provision its token", reason)
         await self.assert_service_stays_up()
+
+    async def test_approved_device_retries_with_bad_token_skip_unknown_source_limit(self) -> None:
+        for _ in range(10):
+            async with await self.open_device(token="wrong-token") as websocket:
+                with self.assertRaises(ConnectionClosed) as caught:
+                    await websocket.recv()
+            self.assertEqual(caught.exception.rcvd.code, 1008)
+        self.assertNotIn("127.0.0.1", self.service._source_requests)
 
     async def test_malformed_json_gets_correction_and_service_stays_up(self) -> None:
         async with await self.open_device() as websocket:

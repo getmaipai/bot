@@ -15,7 +15,7 @@ from typing import Any, Protocol
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
-from maipai_body.hal.errors import BodyLost, EstopEngaged
+from maipai_body.hal.errors import BodyLost, EstopEngaged, NotSupported, OutOfEnvelope
 
 from .pairing import PairingStore
 
@@ -37,29 +37,21 @@ class XiaozhiDeviceClient:
             or type(result.get("yaw")) is not int
             or type(result.get("pitch")) is not int
         ):
-            raise ValueError(
-                "StackChan returned invalid head angles. Check firmware compatibility."
+            raise BodyLost(
+                "StackChan returned invalid head angles. Check firmware compatibility and "
+                "reconnect."
             )
         return result
 
     def set_head_angles(self, yaw: int | None, pitch: int | None, speed: int) -> object:
-        try:
-            return self._call(
-                "self.robot.set_head_angles",
-                {
-                    "yaw": yaw if yaw is not None else -9999,
-                    "pitch": pitch if pitch is not None else -9999,
-                    "speed": speed,
-                },
-            )
-        except concurrent.futures.CancelledError as exc:
-            raise EstopEngaged(
-                "head move was cancelled by the software stop; release it before moving again"
-            ) from exc
-        except (ConnectionError, TimeoutError) as exc:
-            raise BodyLost(
-                "StackChan did not confirm the head command. Reconnect it before moving again."
-            ) from exc
+        return self._call(
+            "self.robot.set_head_angles",
+            {
+                "yaw": yaw if yaw is not None else -9999,
+                "pitch": pitch if pitch is not None else -9999,
+                "speed": speed,
+            },
+        )
 
     def set_led_color(self, red: int, green: int, blue: int) -> object:
         return self._call("self.robot.set_led_color", {"red": red, "green": green, "blue": blue})
@@ -71,7 +63,50 @@ class XiaozhiDeviceClient:
         self.server.cancel_device_calls("self.robot.set_head_angles")
 
     def _call(self, name: str, arguments: dict[str, object]) -> object:
-        return self.server.call_device_tool(name, arguments, timeout=self.timeout)
+        try:
+            return self.server.call_device_tool(name, arguments, timeout=self.timeout)
+        except (BodyLost, EstopEngaged, NotSupported, OutOfEnvelope):
+            raise
+        except concurrent.futures.CancelledError as exc:
+            raise EstopEngaged(
+                "Robot command was cancelled by the software stop. Release it before retrying."
+            ) from exc
+        except RuntimeError as exc:
+            message = str(exc)
+            normalized = message.lower()
+            if any(
+                term in normalized for term in ("out of range", "outside the limit", "envelope")
+            ):
+                raise OutOfEnvelope(message) from exc
+            if any(term in normalized for term in ("not supported", "unsupported", "unknown tool")):
+                part, capability = self._tool_contract(name)
+                raise NotSupported(
+                    f"StackChan does not support {name}: {message}",
+                    part=part,
+                    capability=capability,
+                    fix="Use a command supported by this StackChan profile.",
+                ) from exc
+            raise BodyLost(
+                f"StackChan did not complete {name}. Check its connection and retry."
+            ) from exc
+        except (ConnectionError, TimeoutError, PermissionError, ValueError) as exc:
+            raise BodyLost(f"StackChan did not complete {name}. Reconnect it and retry.") from exc
+        except Exception as exc:
+            raise BodyLost(
+                f"StackChan did not complete {name}. Check its connection and retry."
+            ) from exc
+
+    @staticmethod
+    def _tool_contract(name: str) -> tuple[str, str]:
+        if name.startswith("self.robot.set_head_angles") or name.startswith(
+            "self.robot.get_head_angles"
+        ):
+            return "head", "head_pan_tilt"
+        if name.startswith("self.robot.set_led_color"):
+            return "leds", "light_ring"
+        if name.startswith("self.audio_speaker.set_volume"):
+            return "audio", "speaker"
+        return "", ""
 
 
 class RobotAdapter(Protocol):
@@ -143,7 +178,9 @@ class XiaozhiServer:
         if not self.pairing.authorize(device_id, client_id, token):
             try:
                 source = websocket.remote_address[0] if websocket.remote_address else "unknown"
-                if not self._allow_pairing_request(source):
+                if not self.pairing.recognizes_device(device_id, client_id) and not (
+                    self._allow_pairing_request(source)
+                ):
                     await websocket.close(
                         code=1013,
                         reason=(
@@ -179,7 +216,7 @@ class XiaozhiServer:
         session_id = uuid.uuid4().hex
         stale = self._sessions.get(device_id)
         if stale is not None:
-            await stale.close(code=1012, reason="Superseded by a reconnect from this Device-Id.")
+            asyncio.create_task(self._close_stale_session(stale))
         self._sessions[device_id] = websocket
         self._session_ids[device_id] = session_id
         self._session_credentials[device_id] = (client_id, token or "")
@@ -356,6 +393,23 @@ class XiaozhiServer:
         self._source_requests[source] = recent
         return True
 
+    @staticmethod
+    async def _close_stale_session(stale: ServerConnection) -> None:
+        try:
+            await asyncio.wait_for(
+                stale.close(
+                    code=1012,
+                    reason="Superseded by a reconnect from this Device-Id.",
+                ),
+                timeout=0.1,
+            )
+        except TimeoutError:
+            transport = getattr(stale, "transport", None)
+            if transport is not None:
+                transport.abort()
+        except Exception as exc:
+            LOG.debug("Could not close superseded StackChan session: %s", type(exc).__name__)
+
     async def _json(
         self,
         ws: ServerConnection,
@@ -427,10 +481,9 @@ class XiaozhiServer:
                 "StackChan service is not running. Start the Bot body service and retry."
             )
         deadline = time.monotonic() + timeout
-        self._device_call_deadlines[request_key] = deadline
         try:
             asyncio.run_coroutine_threadsafe(
-                self._register_device_reply(request_key, device_id, name), self._loop
+                self._register_device_reply(request_key, device_id, name, deadline), self._loop
             ).result(timeout=max(0, deadline - time.monotonic()))
             asyncio.run_coroutine_threadsafe(
                 self._send_device_tool(device_id, websocket, request_id, name, arguments),
@@ -476,7 +529,10 @@ class XiaozhiServer:
         self._device_call_deadlines.pop(request_key, None)
         self._early_device_replies.pop(request_key, None)
 
-    async def _register_device_reply(self, request_key: str, device_id: str, name: str) -> None:
+    async def _register_device_reply(
+        self, request_key: str, device_id: str, name: str, deadline: float
+    ) -> None:
+        self._device_call_deadlines[request_key] = deadline
         future = asyncio.get_running_loop().create_future()
         self._pending_device_calls[request_key] = (future, name, device_id)
         early = self._early_device_replies.pop(request_key, None)
@@ -502,7 +558,14 @@ class XiaozhiServer:
     @staticmethod
     def _device_result(result: object) -> object:
         if isinstance(result, dict) and result.get("isError"):
-            raise RuntimeError("StackChan reported a tool error. Check the device and retry.")
+            content = result.get("content", [])
+            details = [
+                item.get("text")
+                for item in content
+                if isinstance(item, dict) and isinstance(item.get("text"), str)
+            ]
+            message = "; ".join(details) or "StackChan reported a tool error."
+            raise RuntimeError(message)
         content = result.get("content", []) if isinstance(result, dict) else []
         if content and isinstance(content[0], dict):
             try:

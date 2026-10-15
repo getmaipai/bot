@@ -197,3 +197,48 @@ def test_vocabulary_profile_runs_without_a_vendor_specific_robot_assumption():
         _ = robot.camera
     assert raised.value.part == "camera"
     assert raised.value.capability == "camera"
+
+
+def test_motion_leases_axis_names_and_safe_stops_come_from_the_body_profile():
+    spec_dir = default_spec_dir()
+    profile = BodyProfile(
+        id="gripper_body",
+        capabilities=["appendages", "lease", "estop"],
+        axes=[
+            AxisLimit(
+                name="claw_joint",
+                unit="rad",
+                min=-0.2,
+                max=0.2,
+                source="test profile",
+                date="2026-10-15",
+            )
+        ],
+        channels=["gripper"],
+        sensors=[],
+        physical_cuts=[],
+        speech_placement="robot",
+        leased_motion={"appendages": ["set", "goto"]},
+        safe_stop={"appendages": "goto"},
+        axis_map={"appendages.claw": "claw_joint"},
+    )
+
+    class Recorder:
+        def __init__(self):
+            self.commands = []
+
+        def command(self, verb, *args, **kwargs):
+            self.commands.append((verb, args, kwargs))
+            return True
+
+    appendages = Recorder()
+    estop = Recorder()
+    robot = Robot(profile, {"appendages": appendages, "estop": estop}, load_robot_api(spec_dir))
+    with pytest.raises(NotPermitted, match="control lease"):
+        robot.appendages.set("claw", angle=0.1)
+    robot.lease.acquire("person", "remote")
+
+    robot.appendages.set("claw", angle=1.0)
+    assert appendages.commands[-1] == ("set", ("claw",), {"angle": 0.2})
+    robot.emergency_stop()
+    assert appendages.commands[-1] == ("goto", (), {})

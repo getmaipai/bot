@@ -30,4 +30,11 @@ FAKE_PROFILE = BodyProfile(
     sensors=["battery", "state_feed"],
     physical_cuts=[],
     speech_placement="robot",
+    leased_motion={
+        "head": ["set", "goto"],
+        "appendages": ["set", "goto"],
+        "base": ["drive", "goto", "turn"],
+    },
+    safe_stop={"base": "stop", "head": "hold"},
+    axis_map={"appendages.left": "antenna_left", "appendages.right": "antenna_right"},
 )

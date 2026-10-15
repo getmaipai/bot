@@ -40,7 +40,7 @@ class PairingStore:
         self.path = Path(path) if path else None
         self._lock = RLock()
         self._devices: dict[str, dict[str, str | float]] = {}
-        self._pending: dict[str, PairingRequest] = {}
+        self._pending: dict[tuple[str, str], PairingRequest] = {}
         self._file_signature: tuple[int, int] | None = None
         with self._lock:
             with self._file_lock():
@@ -73,13 +73,26 @@ class PairingStore:
         if not self._valid_id(device_id) or not token:
             return False
         with self._lock:
-            with self._file_lock():
-                self._refresh()
-                record = self._devices.get(device_id)
-                if not record or record.get("client_id") != client_id:
-                    return False
-                digest = hashlib.sha256(token.encode()).hexdigest()
-                return secrets.compare_digest(str(record.get("token_sha256", "")), digest)
+            self._refresh()
+            record = self._devices.get(device_id)
+            if not record or record.get("client_id") != client_id:
+                return False
+            digest = hashlib.sha256(token.encode()).hexdigest()
+            return secrets.compare_digest(str(record.get("token_sha256", "")), digest)
+
+    @staticmethod
+    def _pending_key(device_id: str, client_id: str) -> tuple[str, str]:
+        return device_id, client_id
+
+    def recognizes_device(self, device_id: str, client_id: str) -> bool:
+        """Whether this identity has an approved or pending pairing record."""
+        with self._lock:
+            self._refresh()
+            self._expire_pending()
+            record = self._devices.get(device_id)
+            return (record is not None and record.get("client_id") == client_id) or (
+                self._pending_key(device_id, client_id) in self._pending
+            )
 
     def request(self, device_id: str, client_id: str) -> PairingRequest:
         if not self._valid_id(device_id) or not self._valid_client_id(client_id):
@@ -94,26 +107,27 @@ class PairingStore:
                 req = PairingRequest(
                     device_id=device_id, client_id=client_id, requested_at=time.time()
                 )
-                if device_id not in self._pending and len(self._pending) >= PENDING_LIMIT:
+                key = self._pending_key(device_id, client_id)
+                if key not in self._pending and len(self._pending) >= PENDING_LIMIT:
                     raise ValueError(
                         "The pending pairing list is full. Approve or remove a pending device, "
                         "then reconnect."
                     )
-                self._pending[device_id] = req
+                self._pending[key] = req
                 self._save()
                 return req
 
-    def approve(self, device_id: str) -> str:
+    def approve(self, device_id: str, client_id: str) -> str:
         """Approve a pending device and return its one-time token."""
         with self._lock:
             with self._file_lock():
                 self._refresh()
                 self._expire_pending()
-                req = self._pending.pop(device_id, None)
+                req = self._pending.pop(self._pending_key(device_id, client_id), None)
                 if req is None:
                     raise KeyError(
-                        "No pending pairing request for this device. Ask it to reconnect, then "
-                        "approve it."
+                        "No pending request matches this Device-Id and Client-Id. Copy both values "
+                        "from the pending list, then approve again."
                     )
                 token = secrets.token_urlsafe(32)
                 self._devices[device_id] = {
@@ -124,9 +138,9 @@ class PairingStore:
                 self._save()
                 return token
 
-    def approve_to_file(self, device_id: str) -> Path:
+    def approve_to_file(self, device_id: str, client_id: str) -> Path:
         """Approve a device and place its one-time token in a private local file."""
-        token = self.approve(device_id)
+        token = self.approve(device_id, client_id)
         base = self.path.parent if self.path else Path.home() / ".local/share/maipai-bot"
         directory = base / "stackchan-tokens"
         path = directory / f"{secrets.token_hex(12)}.token"
@@ -147,32 +161,31 @@ class PairingStore:
             with self._file_lock():
                 self._refresh()
                 removed = self._devices.pop(device_id, None) is not None
-                self._pending.pop(device_id, None)
+                for key in [key for key in self._pending if key[0] == device_id]:
+                    self._pending.pop(key, None)
                 self._save()
                 return removed
 
     def pending(self) -> tuple[PairingRequest, ...]:
         with self._lock:
-            with self._file_lock():
-                self._refresh()
-                self._expire_pending()
-                return tuple(self._pending.values())
+            self._refresh()
+            self._expire_pending()
+            return tuple(self._pending.values())
 
     def allowed_device_ids(self) -> frozenset[str]:
         with self._lock:
-            with self._file_lock():
-                self._refresh()
-                return frozenset(self._devices)
+            self._refresh()
+            return frozenset(self._devices)
 
     def _expire_pending(self) -> None:
         now = time.time()
         expired = [
-            device_id
-            for device_id, request in self._pending.items()
+            key
+            for key, request in self._pending.items()
             if now - request.requested_at > PENDING_TTL
         ]
-        for device_id in expired:
-            self._pending.pop(device_id, None)
+        for key in expired:
+            self._pending.pop(key, None)
 
     def _refresh(self) -> None:
         if self.path is None:
@@ -194,12 +207,12 @@ class PairingStore:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
             devices = raw.get("devices", {})
             pending = {
-                device_id: PairingRequest(
+                self._pending_key(request["device_id"], request["client_id"]): PairingRequest(
                     device_id=request["device_id"],
                     client_id=request["client_id"],
                     requested_at=float(request["requested_at"]),
                 )
-                for device_id, request in raw.get("pending", {}).items()
+                for request in raw.get("pending", {}).values()
             }
             if not isinstance(devices, dict) or not isinstance(pending, dict):
                 raise TypeError("pairing data must contain device and pending objects")
@@ -226,7 +239,7 @@ class PairingStore:
         data = {
             "devices": self._devices,
             "pending": {
-                device_id: {
+                f"{request.device_id}|{request.client_id}": {
                     "device_id": request.device_id,
                     "client_id": request.client_id,
                     "requested_at": request.requested_at,

@@ -23,7 +23,7 @@ class StackChanReplayTests(unittest.IsolatedAsyncioTestCase):
         self.device_id = "02:00:00:00:00:10"
         self.client_id = "00000000-0000-4000-8000-000000000010"
         self.pairing.request(self.device_id, self.client_id)
-        self.token = self.pairing.approve(self.device_id)
+        self.token = self.pairing.approve(self.device_id, self.client_id)
         self.device = FakeStackChanDeviceClient()
         self.adapter = StackChanRobotAdapter(self.device)
         self.service = XiaozhiServer(self.pairing, self.adapter)
