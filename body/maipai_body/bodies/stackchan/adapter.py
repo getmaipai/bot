@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import math
 import time
+from collections import deque
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
@@ -41,6 +42,8 @@ class StackChanDeviceClient(Protocol):
     def measure_unit(self) -> Mapping[str, Any]: ...
 
     def get_battery_status(self) -> Mapping[str, Any]: ...
+
+    def push_action(self, action: str, arguments: Mapping[str, Any]) -> object: ...
 
 
 class _HeadAdapter:
@@ -162,10 +165,33 @@ class _LedAdapter:
 
 
 class _AudioAdapter:
-    def __init__(self, client: StackChanDeviceClient) -> None:
+    def __init__(self, client: StackChanDeviceClient, proactive_policy) -> None:
         self.client = client
+        self.policy = proactive_policy
 
     def command(self, verb: str, *args: Any, **kwargs: Any) -> object:
+        if verb == "speaker.speak":
+            text = kwargs.get("text", args[0] if args else None)
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("speaker.speak needs non-empty text")
+            if not self.policy("speak"):
+                raise NotSupported(
+                    "Proactive speech is denied by the active household policy",
+                    part="audio",
+                    capability="speaker",
+                    fix="Change the household quiet-hours or surface policy, then retry.",
+                )
+            return self.client.push_action("speak", {"text": text})
+        if verb == "listen_window":
+            duration = kwargs.get("duration_seconds", args[0] if args else None)
+            if not self.policy("listen_window"):
+                raise NotSupported(
+                    "Listen window is denied by the active household policy",
+                    part="audio",
+                    capability="speaker",
+                    fix="Change the household surface policy, then retry.",
+                )
+            return self.client.push_action("listen_window", {"duration_seconds": duration})
         if verb != "speaker.volume":
             raise NotSupported(
                 f"StackChan does not expose audio command '{verb}' through xiaozhi",
@@ -177,6 +203,33 @@ class _AudioAdapter:
         if type(volume) is not int or not 0 <= volume <= 100:
             raise ValueError("speaker volume must be an integer from 0 to 100")
         return self.client.set_volume(volume)
+
+
+class _PushAdapter:
+    def __init__(self, client: StackChanDeviceClient, proactive_policy, queue) -> None:
+        self.client, self.policy, self.queue = client, proactive_policy, queue
+
+    def command(self, verb: str, *args: Any, **kwargs: Any) -> object:
+        action = verb
+        arguments = dict(kwargs)
+        if args and verb == "create_reminder":
+            arguments.setdefault("message", args[0])
+        if not self.policy(action):
+            raise NotSupported(
+                f"StackChan {action} is denied by the active quiet-hours or surface policy",
+                part="audio" if action in {"speaker.speak", "listen_window"} else "alerts",
+                capability="speaker",
+                fix="Change the household quiet-hours or surface policy, then retry.",
+            )
+        try:
+            return self.client.push_action(action, arguments)
+        except BodyLost:
+            if action == "show":
+                self.client.set_led_color(168, 36, 0)
+                return self.client.push_action("speak", {"text": arguments.get("message", "Alert")})
+            if action in {"create_reminder", "stop_reminder"}:
+                self.queue.append((action, arguments))
+            raise
 
 
 class _SoftwareEstopAdapter:
@@ -369,18 +422,24 @@ def create_stackchan_robot(
     client: StackChanDeviceClient,
     *,
     profile: BodyProfile = STACKCHAN_PROFILE,
+    proactive_policy=lambda _action: False,
+    reminder_queue=None,
 ) -> Robot:
     """Build the shared robot object with StackChan's supported tool adapters."""
+    queue = reminder_queue if reminder_queue is not None else deque()
+    push = _PushAdapter(client, proactive_policy, queue)
     robot = Robot(
         profile,
         {
             "head": _HeadAdapter(client, profile),
             "leds": _LedAdapter(client),
-            "audio": _AudioAdapter(client),
+            "audio": _AudioAdapter(client, proactive_policy),
             "estop": _SoftwareEstopAdapter(client),
             "battery": _BatteryAdapter(client),
             "touch": _UnsupportedSensorAdapter("touch", "touch"),
             "imu": _UnsupportedSensorAdapter("imu", "imu"),
+            "alerts": push,
+            "reminders": push,
         },
         load_robot_api(),
     )
@@ -405,10 +464,22 @@ def create_stackchan_robot(
 class StackChanRobotAdapter:
     """The xiaozhi service's small robot interface backed by the shared Robot object."""
 
-    def __init__(self, client: StackChanDeviceClient) -> None:
+    def __init__(
+        self, client: StackChanDeviceClient, *, proactive_policy=lambda _action: False
+    ) -> None:
         self.client = client
-        self.robot = create_stackchan_robot(client)
+        self.queued_reminders = deque()
+        self.proactive_policy = proactive_policy
+        self.robot = create_stackchan_robot(
+            client, proactive_policy=proactive_policy, reminder_queue=self.queued_reminders
+        )
         self.expression = self.robot._driver("expression")
+
+    def flush_reminders(self) -> None:
+        while self.queued_reminders:
+            action, arguments = self.queued_reminders[0]
+            self.client.push_action(action, arguments)
+            self.queued_reminders.popleft()
 
     async def get_head_angles(self) -> Mapping[str, int]:
         return await asyncio.to_thread(self.client.get_head_angles)

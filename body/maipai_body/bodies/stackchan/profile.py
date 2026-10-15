@@ -66,7 +66,12 @@ STACKCHAN_PROFILE = BodyProfile(
     sensors=["battery"],
     physical_cuts=["power switch", "unplugging the robot"],
     speech_placement="pod",
-    leased_motion={"head": ["set", "goto"]},
+    leased_motion={
+        "head": ["set", "goto"],
+        "audio": ["speaker.speak", "listen_window"],
+        "alerts": ["show"],
+        "reminders": ["create_reminder", "get_reminders", "stop_reminder"],
+    },
     safe_stop={"head": "hold"},
 )
 

@@ -56,6 +56,20 @@ The avatar listener also carries a software estop latch for ControlMotion `0x04`
 The shared expression engine has a registered StackChan renderer and closed face cue tables for listening, thinking, speaking and reply mood. The app now wires those turn events and its idle/presence worker to the renderer after device authentication. It maps listen, glance, tilt, nod, perk, attend, settle and speak; breathe reports an explicit unsupported reason and idle therefore uses settle. Anonymous tracking is bounded to 400 ms corrections and runs only while no turn is active; it stops on service shutdown. Head moves use Robot commands, so profile clamping, lease checks and the estop latch remain in force. Face frames use the authenticated avatar channel. Patch 003 keeps the firmware xiaozhi WebSocket open between listening sessions and retries failed connections; patch 008 adds an optional CA bundle; patch 011 adds shared pairing identity to the avatar channel. The recipe options and CA input are documented in the [firmware guide](../../body/maipai_body/bodies/stackchan/firmware/README.md). Runtime checks use fake peers only; hardware verification remains pending.
 - StackChan setup has fake-peer and dry-run coverage only. Hardware has not arrived, so the backup read, flash commands, Wi-Fi onboarding and reboot have not been verified on a unit.
 
+### Idle server pushes
+
+The StackChan Robot adapter exposes `audio.speaker.speak`, `audio.listen_window`,
+`alerts.show`, and `reminders.create_reminder`, `get_reminders`, and
+`stop_reminder`. Push calls require the Robot control lease. Proactive speech,
+alerts, and listen windows also pass through an injected household policy
+callable; the default denies them and the caller receives `NotSupported` with a
+plain fix line. Reminder create and stop operations are retained in a host
+queue when a send fails and can be retried with `flush_reminders()` after
+reconnect. The device profile tries the xiaozhi alert operation and falls back
+to the face/LED/spoken presentation supported by its client. The pinned base
+tool inventory and reminder argument schema still need confirmation on a real
+unit. Fake-peer tests cover the host contract only; hardware has not arrived.
+
 Battery is now read through the firmware's read-only `self.battery.get_status` MCP tool, which returns `{ "percent": integer 0..100, "charging": boolean }`. Patch 009 makes failed AXP2101 I2C reads return a safe zero rather than aborting the firmware; a host timeout or malformed tool result maps to `BodyLost`. Touch and IMU remain `NotSupported` because the pinned translator exposes no read-only MCP tools for them. Source-derived chip and register notes are in [the sensor map](stackchan-sensor-map.md); unit measurements are tracked in [the unit-arrival runbook](stackchan-unit-measurements.md). The unit-arrival fixture recorder and host-only egress proof are implemented; real-unit protocol capture and packet-capture results remain pending because hardware has not arrived.
 
 ## Tests

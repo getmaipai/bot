@@ -77,6 +77,20 @@ class XiaozhiDeviceClient:
             )
         return result
 
+    def push_action(self, action: str, arguments: dict[str, object]) -> object:
+        names = {
+            "create_reminder": "self.robot.create_reminder",
+            "get_reminders": "self.robot.get_reminders",
+            "stop_reminder": "self.robot.stop_reminder",
+            "listen_window": "self.audio.listen",
+            "speak": "self.audio.notify",
+            "alert": "self.audio.alert",
+        }
+        name = names.get(action)
+        if name is None:
+            raise NotSupported(f"Unknown StackChan push action '{action}'")
+        return self._call(name, arguments)
+
     def take_photo(self) -> bytes | None:
         return self._call("self.camera.take_photo", {"question": "Describe what you see."})
 

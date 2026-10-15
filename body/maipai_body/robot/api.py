@@ -50,6 +50,31 @@ class RobotApi:
                 verbs=frozenset(item["verbs"]),
                 state=frozenset(item.get("state", [])),
             )
+        # Bot-local additions are kept here until commons publishes the next
+        # robot-api vocabulary revision.
+        additions = {
+            "audio": {"speaker.speak", "listen_window"},
+            "alerts": {"show"},
+            "reminders": {"create_reminder", "get_reminders", "stop_reminder"},
+        }
+        for part_id, verbs in additions.items():
+            if part_id in parts:
+                part = parts[part_id]
+                parts[part_id] = PartContract(
+                    id=part.id,
+                    capabilities=part.capabilities,
+                    capability_mode=part.capability_mode,
+                    verbs=part.verbs | verbs,
+                    state=part.state,
+                )
+            else:
+                parts[part_id] = PartContract(
+                    id=part_id,
+                    capabilities=("speaker",) if part_id == "alerts" else ("speaker",),
+                    capability_mode="any",
+                    verbs=frozenset(verbs),
+                    state=frozenset(),
+                )
         error = next(
             (item for item in raw.get("errors", []) if item.get("id") == "NotSupported"),
             None,

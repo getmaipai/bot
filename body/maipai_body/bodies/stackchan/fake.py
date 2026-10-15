@@ -28,6 +28,16 @@ class FakeStackChanDeviceClient:
         self.avatar_frames: list[bytes] = []
         self.battery_status: dict[str, object] = {"percent": 75, "charging": False}
         self.battery_error: Exception | None = None
+        self.push_actions: list[tuple[str, dict[str, object]]] = []
+        self.supported_push_actions = {
+            "speak",
+            "alert",
+            "create_reminder",
+            "get_reminders",
+            "stop_reminder",
+            "listen_window",
+        }
+        self.reminders: list[dict[str, object]] = []
 
         self.measurement_data = {
             "servo_limits_deg": {"yaw": [-128, 128], "pitch": [5, 85]},
@@ -87,6 +97,32 @@ class FakeStackChanDeviceClient:
         if self.battery_error is not None:
             raise self.battery_error
         return dict(self.battery_status)
+
+    def push_action(self, action: str, arguments) -> object:
+        self._require_link()
+        if action not in self.supported_push_actions:
+            if action == "alert":
+                self.calls.append(
+                    FakeToolCall(
+                        "self.robot.set_led_color",
+                        {"red": 168, "green": 36, "blue": 0},
+                    )
+                )
+                self.led_color = (168, 36, 0)
+                self.push_actions.append(("speak", {"text": arguments.get("message", "Alert")}))
+                return True
+            raise BodyLost(f"StackChan does not support {action}")
+        payload = dict(arguments)
+        self.push_actions.append((action, payload))
+        if action == "create_reminder":
+            self.reminders.append(payload)
+        elif action == "get_reminders":
+            return list(self.reminders)
+        elif action == "stop_reminder":
+            self.reminders = [
+                item for item in self.reminders if item.get("id") != payload.get("id")
+            ]
+        return True
 
     def cancel_pending(self) -> None:
         """Drop only host-side queued targets; this does not cut servo torque."""
