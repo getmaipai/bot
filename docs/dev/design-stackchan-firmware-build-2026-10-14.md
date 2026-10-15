@@ -195,7 +195,7 @@ Read from the upstream tree; nothing built.
 
 An unmodified build of `m5stack/StackChan` at `1b57655`, with the six dependencies from `repos.json` and M5's own xiaozhi patch applied
 (hard-fail on any patch error), completed with ESP-IDF v5.5.4 in one run (2491 build steps). Build script and log:
-`data-scratch/stackchan-build/` (git-ignored). Image sizes and SHA256 of the unmodified build, to compare later builds against:
+`~/esp/stackchan-build/` (outside the repo: the secrets scan reads the whole working tree and flagged an example key in upstream docs, a false positive). Image sizes and SHA256 of the unmodified build, to compare later builds against:
 
 | File | Bytes | SHA256 |
 |---|---|---|
