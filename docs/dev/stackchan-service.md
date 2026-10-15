@@ -44,6 +44,8 @@ The xiaozhi service exposes the shared Robot interface, but no Bot behavior send
 
 The Bot service is not wired to a Bot behavior that issues head commands. Patch 003 keeps the firmware WebSocket open between listening sessions and retries failed connections; patch 008 adds an optional CA bundle. The recipe options and CA input are documented in the [firmware guide](../../body/maipai_body/bodies/stackchan/firmware/README.md).
 
+Battery, touch and IMU remain `NotSupported` at the shared robot API because the pinned xiaozhi translator exposes no verified read path for them. Source-derived chip and register notes are in [the sensor map](stackchan-sensor-map.md); unit measurements are tracked in [the unit-arrival runbook](stackchan-unit-measurements.md). Patch 009 protects AXP2101 charging-state reads from an I2C timeout abort, but does not add battery reporting to the Bot API.
+
 ## Tests
 
 `body/tests/test_stackchan_xiaozhi.py` exercises a fake device over a local WebSocket. The test covers pairing refusal, approval, hello, audio callback delivery and protocol tool handling without hardware. No test writes to a physical serial port.

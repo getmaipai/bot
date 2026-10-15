@@ -144,7 +144,14 @@ class Robot:
             f"robot part '{contract.id}' is not present in body profile "
             f"'{self.profile.id}', which does not declare {expected}"
         )
-        fix = f"Use a body profile that declares {capability} before calling {contract.id}."
+        fix = getattr(
+            self,
+            "_unsupported_fixes",
+            {},
+        ).get(
+            contract.id,
+            f"Use a body profile that declares {capability} before calling {contract.id}.",
+        )
         raise NotSupported(message, part=contract.id, capability=capability, fix=fix)
 
     def _driver(self, part: str) -> object:

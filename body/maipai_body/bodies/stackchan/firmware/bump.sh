@@ -42,7 +42,7 @@ apply_patch() {
   echo "PATCH-OK: $patch_file"
 }
 failed=0
-for item in '001-server-url-empty.patch:root' '002-nvs-websocket-no-ota.patch:xiaozhi-esp32' '004-configurable-sntp-empty.patch:root' '005-disable-m5-registry-mqtt.patch:root' '007-unique-firmware-identity.patch:root'; do
+for item in '001-server-url-empty.patch:root' '002-nvs-websocket-no-ota.patch:xiaozhi-esp32' '004-configurable-sntp-empty.patch:root' '005-disable-m5-registry-mqtt.patch:root' '007-unique-firmware-identity.patch:root' '009-axp2101-charging-timeout.patch:xiaozhi-esp32'; do
   name=${item%%:*}; target=${item##*:}
   if [[ "$target" == root ]]; then target=$FW; else target=$FW/$target; fi
   apply_patch "$name" "$WORK/StackChan" || failed=1

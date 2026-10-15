@@ -27,6 +27,23 @@ class FakeStackChanDeviceClient:
         self.photo: bytes | None = None
         self.avatar_frames: list[bytes] = []
 
+        self.measurement_data = {
+            "servo_limits_deg": {"yaw": [-128, 128], "pitch": [5, 85]},
+            "camera": {"fps": 5.0, "latency_ms": 120.0},
+            "aec": {"enabled": True, "quality": "simulated"},
+            "battery": {"level_percent": 75, "charging": False},
+            "base_mcp_tools": [
+                "self.robot.get_head_angles",
+                "self.robot.set_head_angles",
+                "self.robot.set_led_color",
+                "self.audio_speaker.set_volume",
+            ],
+        }
+
+    def measure_unit(self):
+        """Return labeled fixture data for the offline unit-arrival kit."""
+        return dict(self.measurement_data)
+
     def get_head_angles(self) -> dict[str, int]:
         self._require_link()
         self.calls.append(FakeToolCall("self.robot.get_head_angles", {}))

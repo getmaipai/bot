@@ -37,6 +37,8 @@ class StackChanDeviceClient(Protocol):
 
     def send_avatar_frame(self, frame: bytes) -> object: ...
 
+    def measure_unit(self) -> Mapping[str, Any]: ...
+
 
 class _HeadAdapter:
     def __init__(self, client: StackChanDeviceClient, profile: BodyProfile) -> None:
@@ -240,6 +242,30 @@ class _CameraAdapter:
         self.robot.leds.many([{"index": index, "rgb": [0, 0, 0]} for index in range(LED_COUNT)])
 
 
+class _UnsupportedSensorAdapter:
+    """Expose a sensor part while directing callers to the unit-arrival kit."""
+
+    def __init__(self, part: str, capability: str) -> None:
+        self.part = part
+        self.capability = capability
+
+    def command(self, verb: str, *args: Any, **kwargs: Any) -> object:
+        del verb, args, kwargs
+        raise NotSupported(
+            f"StackChan {self.part} readings are not verified on a real unit",
+            part=self.part,
+            capability=self.capability,
+            fix=(
+                "Run the StackChan unit measurement kit on a paired unit, "
+                "then add a verified adapter."
+            ),
+        )
+
+    def read(self, field: str) -> object:
+        del field
+        return self.command("read")
+
+
 def create_stackchan_robot(
     client: StackChanDeviceClient,
     *,
@@ -253,10 +279,16 @@ def create_stackchan_robot(
             "leds": _LedAdapter(client),
             "audio": _AudioAdapter(client),
             "estop": _SoftwareEstopAdapter(client),
+            "battery": _UnsupportedSensorAdapter("battery", "battery_readout"),
+            "touch": _UnsupportedSensorAdapter("touch", "touch"),
+            "imu": _UnsupportedSensorAdapter("imu", "imu"),
         },
         load_robot_api(),
     )
     robot._drivers["camera"] = _CameraAdapter(client, robot)
+
+    fix = "Run the StackChan unit measurement kit on a paired unit, then add a verified adapter."
+    robot._unsupported_fixes = {part: fix for part in ("battery", "touch", "imu")}
     return robot
 
 

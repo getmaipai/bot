@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import concurrent.futures
 import math
+from pathlib import Path
 
 import pytest
 
 from maipai_body.bodies.stackchan import STACKCHAN_PROFILE, StackChanRobotAdapter
 from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
+from maipai_body.bodies.stackchan.measure import write_results
 from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient
 from maipai_body.hal.errors import (
     BodyLost,
@@ -64,6 +66,48 @@ def test_head_goto_clamps_in_radians_and_sends_the_applied_pose_at_bounded_speed
     assert device.calls[-1].name == "self.robot.set_head_angles"
     assert device.calls[-1].arguments == {"yaw": 128, "pitch": 5, "speed": 150}
     assert applied == {"yaw": 128, "pitch": 5, "speed": 150}
+
+
+def test_head_none_axes_keep_the_minus_9999_firmware_sentinel_out_of_range():
+    device = FakeStackChanDeviceClient()
+    adapter = StackChanRobotAdapter(device)
+    adapter.robot.lease.acquire("person", "sentinel-regression")
+
+    adapter._set_head_angles(-9999, 45, 150)
+
+    assert device.head_angles == {"yaw": -128, "pitch": 45}
+    assert device.calls[-1].arguments == {"yaw": -128, "pitch": 45, "speed": 150}
+
+
+@pytest.mark.parametrize(
+    ("part", "capability"),
+    [("battery", "battery_readout"), ("touch", "touch"), ("imu", "imu")],
+)
+def test_unverified_sensor_parts_are_not_supported_with_unit_arrival_action(part, capability):
+    robot = StackChanRobotAdapter(FakeStackChanDeviceClient()).robot
+
+    with pytest.raises(NotSupported) as raised:
+        getattr(robot, part).read()
+
+    assert raised.value.part == part
+    assert raised.value.capability == capability
+    assert "unit measurement kit" in raised.value.fix
+    assert "Fix:" in str(raised.value)
+
+
+def test_unit_arrival_kit_writes_simulator_results_as_unverified(tmp_path: Path):
+    device = FakeStackChanDeviceClient()
+    output = tmp_path / "run" / "measurements.json"
+
+    result = write_results(device, output, source="simulator")
+
+    saved = __import__("json").loads(output.read_text())
+    assert result["unit_verified"] is False
+    assert saved["measurements"]["servo_limits_deg"]["pitch"] == [5, 85]
+    assert saved["measurements"]["camera"]["fps"] == 5.0
+    assert saved["measurements"]["aec"]["quality"] == "simulated"
+    assert saved["measurements"]["battery"]["level_percent"] == 75
+    assert saved["measurements"]["base_mcp_tools"]
 
 
 def test_stackchan_service_adapter_requires_callers_lease_across_sequence():
