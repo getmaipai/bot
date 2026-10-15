@@ -32,7 +32,6 @@ def test_stackchan_profile_declares_available_parts_including_camera():
         "screen",
         "touch",
         "imu",
-        "battery_readout",
         "mic",
     }
     assert "camera" in STACKCHAN_PROFILE.capabilities
@@ -81,7 +80,7 @@ def test_head_none_axes_keep_the_minus_9999_firmware_sentinel_out_of_range():
 
 @pytest.mark.parametrize(
     ("part", "capability"),
-    [("battery", "battery_readout"), ("touch", "touch"), ("imu", "imu")],
+    [("touch", "touch"), ("imu", "imu")],
 )
 def test_unverified_sensor_parts_are_not_supported_with_unit_arrival_action(part, capability):
     robot = StackChanRobotAdapter(FakeStackChanDeviceClient()).robot
