@@ -60,6 +60,14 @@ Battery is now read through the firmware's read-only `self.battery.get_status` M
 
 ## Tests
 
+The STACKCHAN-30 failure, soak and privacy suite is software-only and uses the
+fake xiaozhi and avatar peers. It checks bounded camera buffering with 10,000
+frames, pairing refusal and revocation, token rotation, turn dependency errors,
+camera indicator bracketing, and a compressed one-day event schedule. These are
+host-side checks; no hardware has arrived and no hardware verification is
+claimed. Unit measurements remain pending in
+[`stackchan-unit-measurements.md`](stackchan-unit-measurements.md).
+
 `body/tests/test_stackchan_xiaozhi.py` exercises a fake device over a local WebSocket. The test covers pairing refusal, approval, hello, audio callback delivery and protocol tool handling without hardware. `body/tests/test_stackchan_avatar.py` uses the independent fake peer in `body/tests/stackchan_sim/`; it covers expression delivery, unpaired refusal, estop motion filtering, malformed-frame isolation, reconnect replacement and codec bounds. These are software fake-peer checks only; no hardware verification is claimed and no test writes to a physical serial port.
 
 `body/tests/test_stackchan_avatar.py` uses the independent fake peer in `body/tests/stackchan_sim/`. It covers expression-frame delivery, unpaired refusal, estop motion filtering, malformed-frame isolation, reconnect replacement and codec bounds. `body/tests/test_stackchan_sensors.py` checks battery tool results and the explicit touch and IMU gaps. These are fake-device protocol checks only; hardware has not arrived, so no unit verification is claimed.

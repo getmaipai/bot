@@ -4,6 +4,11 @@ Hardware has not arrived. This runbook is ready for a paired unit; current
 tests exercise the JSON path against simulator fixture data only. No result
 from `--sim` is a unit measurement.
 
+Software checks passing on 2026-10-15: the StackChan pytest selection and
+`scripts/check.sh --pre`, including Ruff, runtime typecheck, standards core,
+secret scan, PII wordlist, prose lint and licence check. These checks do not
+measure physical behavior.
+
 ## Before connecting the unit
 
 1. Put the robot and Bot host on a trusted isolated LAN. Use a documentation
