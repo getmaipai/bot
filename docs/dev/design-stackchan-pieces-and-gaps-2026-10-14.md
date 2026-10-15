@@ -91,6 +91,45 @@ Settled by Jesse, 2026-10-14:
 
 Open: which unit measurements to run first once it arrives (section 5 lists them).
 
+## 8. Prior art and official docs (added after a second research pass)
+
+Evidence is read from source and docs, not run. Full report: session scratchpad `gap-research/PRIOR-ART.md`.
+
+### Closes or narrows a gap
+
+| Gap | Finding | Use |
+|---|---|---|
+| H, zero tenclass contact | The `i41-eu/i41eu-StackChan` fork (branch `embody`) adds a build switch `STACKCHAN_XIAOZHI_OTA_CHECK`, default off, through a ~20 line patch to xiaozhi. Off means no call to the third-party OTA host. | Port the patch. |
+| H, no OTA call at all | xiaozhi reads `websocket` `url`, `token`, `version` from NVS when it opens the channel. A pre-seeded NVS (`nvs_partition_gen`) gives a full session without any OTA request. | Use. |
+| H, server address | M5 documents `CONFIG_STACKCHAN_SERVER_URL` and the override file `sdkconfig.defaults.local`. | Use. |
+| D, private-CA `wss://` | ESP-IDF 5.5.4 `CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE_PATH` adds our CA to the bundle at build time. The TLS layer already uses that bundle, so no code change. | Use, later step. |
+| B, duplex | One K151 build reports device-side AEC with continuous uplink working at 60% speaker volume, failing at 80%. The i41 fork uplinks the speaker reference channel, so server-side AEC is physically possible. Both are single-unit anecdotes. | Measure on our unit. |
+| F, camera | Measured about 5 fps at 320x240 and 2.3 fps at 640x480 over a WebSocket (i41 author). Upstream avatar stream is slower. | Target 5 fps, confirm. |
+| S5, sensors | i41 `HARDWARE.md` lists the drivers and registers: AXP2101 battery, INA226 current, BMI270 IMU, 3-zone touch, NFC, light and proximity, RTC. | Copy facts into our sensor map. |
+| A, idle announcements | xiaozhi `notify {audio_url}` plays while idle with no mic. Newer than M5's pinned v2.2.4. | Needs a base bump. |
+| Reproducible build | i41 `container.sh`, `release.sh`, `scan_secrets.py` and a pinned `espressif/idf:v5.5.4` image with SHA256SUMS. | Model for our recipe. |
+
+Build and flash, from the upstream README and the i41 fork: ESP-IDF v5.5.4 only (6.x fails), `python3 fetch_repos.py`, `idf.py build`,
+`idf.py -p <port> flash` on the head USB-C port; hold RST about 3 s until the green LED lights if it will not enter download mode.
+Back up the whole flash before the first write. Partitions: 16 MB, two 4.94 MB OTA slots, 4 MB assets at 0xA00000.
+
+### New gaps
+
+- J. The three SNTP hosts are hardcoded in `hal_network.cpp` with no config. Patch to our server, or drop SNTP and use the OTA `server_time` plus the on-board RTC.
+- K. Every stock boot posts the MAC, UUID, serial and chip info to the third-party OTA host. Block at the router until the patch is in.
+- L. A battery read can abort the firmware: `Axp2101::IsCharging` calls `ESP_ERROR_CHECK` on an I2C timeout (reproduced on one K151 build). Any battery polling we add must be wrapped.
+- M. Licence: upstream `m5stack/StackChan` declares no repo-level licence; subfolders carry their own LICENSE files. Decide the stance before copying code (AGPL policy, `docs/LICENSING.md`). Until then: read, do not copy.
+- N. Version drift: xiaozhi `main` has `notify`, `glyph_push` and newer MCP; M5 pins v2.2.4.
+- O. Internal RAM is tight (about 35 KB free in the i41 build); TLS failed there when LVGL held internal RAM. `wss://` on our build is unmeasured.
+- P. Private-CA verification needs a valid clock. The RTC is unset on a new unit, so first boot needs plain `ws://`, `server_time`, or a build-time epoch.
+- Q. The i41 "Embody" path skips xiaozhi entirely: raw 24 kHz PCM and sensor events over our own WebSocket. We chose xiaozhi first; revisit once the unit is measured, since it removes the OTA flow and gives the AEC reference.
+
+### Other projects worth reading
+
+`a237821375/stackchan-xiaozhi` (MIT: servo protection, barge-in notes), `alexeyzel/chan-home-assistant` (ESPHome on the unit),
+`andymai/stackchan-kai` (clean-slate Rust, LAN-only; long-horizon alternative), `dr-funchal/stackchan-kids` (states upstream has no licence).
+Reddit, Hackaday and forum coverage returned nothing usable; non-GitHub community sources are not covered.
+
 ## Sources
 
 COMMS.md and FIRMWARE.md research files (session scratchpad, not committed); m5stack/StackChan (MIT); 78/xiaozhi-esp32;
