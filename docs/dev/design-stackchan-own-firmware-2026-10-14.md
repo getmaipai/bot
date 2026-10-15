@@ -1,9 +1,10 @@
 # StackChan: our own firmware (2026-10-14)
 
-Status: DRAFT, design only. The unit has not arrived; nothing is built or flashed. Everything about the hardware below is read from
+Status: DRAFT, design only. **Not the chosen path (Jesse, 2026-10-14: modify as little as possible, add a thin layer on top).**
+The chosen path is the minimal-patch recipe plus the abstraction layer in `design-stackchan-firmware-build-2026-10-14.md`
+(its section 0). This note is kept as the long-term option if the patches ever stop being small. The unit has not arrived; nothing is built or flashed. Everything about the hardware below is read from
 source and other people's measurements, so each hardware claim is UNVERIFIED until the unit confirms it.
-Supersedes `design-stackchan-firmware-build-2026-10-14.md` as the recommended path; that recipe stays as the fallback if this
-cannot reach parity (section 8). Raised by Jesse: "can't you just make us a 100% custom".
+Written before that ruling; read it as the alternative, not the plan. Raised by Jesse: "can't you just make us a 100% custom".
 
 ## 1. Verdict
 

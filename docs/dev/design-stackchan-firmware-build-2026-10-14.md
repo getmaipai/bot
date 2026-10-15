@@ -4,6 +4,20 @@ Status: DRAFT, design only. Nothing built or flashed; the unit has not arrived. 
 Inputs: `design-stackchan-pieces-and-gaps-2026-10-14.md` (gaps A to Q, section 8) and the research behind it.
 Decided by Jesse, 2026-10-14: custom firmware first; step one is voice and tools (xiaozhi side) only.
 
+## 0. Chosen approach (Jesse, 2026-10-14)
+
+Modify the stock firmware as little as possible, then put a thin abstraction layer on top. Concretely:
+
+- **Firmware: only the small patches in section 5**, each one removing a vendor contact or fixing a defect. No new features, no
+  protocol change, no UI change. If a patch grows past a few dozen lines it is a signal to stop and reconsider.
+- **Abstraction layer: the bot service.** It speaks the stock xiaozhi protocol to the device (hello, Opus audio, MCP tools) and exposes
+  the robot object from `design-robot-api-2026-10-14.md` upward. The device never learns about MaiPai; Home never learns about xiaozhi.
+  All StackChan-specific knowledge lives in `bodies/stackchan/` (profile, client, fake).
+- **Why this holds up:** the firmware stays close to upstream, so M5 and xiaozhi updates merge with little work; the layer is the
+  only code we own long term. The alternative (a from-scratch firmware) is in `design-stackchan-own-firmware-2026-10-14.md`.
+
+The avatar channel stays unserved in step one, as already decided.
+
 ## 1. Goal
 
 One reproducible build that produces a firmware image which, from first boot, contacts only our bot service on the home network:
