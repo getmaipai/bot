@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -244,12 +246,14 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ProvisioningTests(unittest.TestCase):
-    def test_generates_expected_nvs_image_via_partition_generator(self) -> None:
+    def test_provisioning_image_uses_firmware_namespaces_and_integer_version(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             fake_generator = root / "generator.py"
             fake_generator.write_text(
-                "import pathlib, sys\n"
+                "import csv, pathlib, sys\n"
+                "rows = list(csv.reader(open(sys.argv[2], newline='')))\n"
+                "pathlib.Path(sys.argv[3] + '.csv').write_text(repr(rows))\n"
                 "pathlib.Path(sys.argv[3]).write_bytes(b'x' * int(sys.argv[4], 0))\n"
             )
             output = generate_image(
@@ -262,6 +266,11 @@ class ProvisioningTests(unittest.TestCase):
                 generator=str(fake_generator),
             )
             self.assertEqual(output.stat().st_size, 4096)
+            rows = ast.literal_eval(output.with_suffix(".bin.csv").read_text())
+            self.assertEqual(rows[1], ["websocket", "namespace", "", ""])
+            self.assertEqual(rows[4], ["version", "data", "i32", "1"])
+            self.assertEqual(rows[5], ["wifi", "namespace", "", ""])
+            self.assertEqual(rows[6], ["ota_url", "data", "string", "http://192.0.2.10:8765/ota"])
             called: list[list[str]] = []
 
             def fake_run(command, **kwargs):
@@ -273,7 +282,67 @@ class ProvisioningTests(unittest.TestCase):
             self.assertIn("write_flash", called[0])
             self.assertIn("/dev/fake-usb", called[0])
 
-    def test_cli_generates_private_image_and_consumes_one_time_token_file(self) -> None:
+    def test_provisioning_image_omits_empty_ota_namespace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fake_generator = root / "generator.py"
+            fake_generator.write_text(
+                "import csv, pathlib, sys\n"
+                "rows = list(csv.reader(open(sys.argv[2], newline='')))\n"
+                "pathlib.Path(sys.argv[3] + '.csv').write_text(repr(rows))\n"
+                "pathlib.Path(sys.argv[3]).write_bytes(b'x' * int(sys.argv[4], 0))\n"
+            )
+            output = generate_image(
+                root / "nvs.bin",
+                websocket_url="ws://192.0.2.10:8765",
+                token="unit-token",
+                version="1",
+                ota_url="",
+                partition_size=4096,
+                generator=str(fake_generator),
+            )
+            rows = ast.literal_eval(output.with_suffix(".bin.csv").read_text())
+            self.assertFalse(any(row[0] == "wifi" or row[0] == "ota_url" for row in rows[1:]))
+
+    def test_real_esp_idf_generator_writes_namespaced_values(self) -> None:
+        python_env = Path.home() / ".espressif/python_env/idf5.5_py3.12_env"
+        python = python_env / "bin/python"
+        generator = (
+            python_env
+            / "lib/python3.12/site-packages/esp_idf_nvs_partition_gen/nvs_partition_gen.py"
+        )
+        tool = Path.home() / "esp/esp-idf/components/nvs_flash/nvs_partition_tool/nvs_tool.py"
+        if not python.is_file() or not generator.is_file() or not tool.is_file():
+            self.skipTest("ESP-IDF NVS tools are unavailable; install ESP-IDF 5.5 tools and retry")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image = generate_image(
+                root / "nvs.bin",
+                websocket_url="ws://192.0.2.10:8765",
+                token="unit-token",
+                version="1",
+                ota_url="http://192.0.2.10:8765/ota",
+                generator=str(generator),
+            )
+            dump = (
+                subprocess.run(
+                    [str(python), str(tool), str(image), "--dump", "minimal"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                .stdout.replace("\x00", "")
+                .replace(" ", "")
+            )
+            for entry in (
+                "websocket:url=ws://192.0.2.10:8765",
+                "websocket:token=unit-token",
+                "websocket:version=1",
+                "wifi:ota_url=http://192.0.2.10:8765/ota",
+            ):
+                self.assertIn(entry, dump)
+
+    def test_cli_saves_private_no_write_image_then_consumes_one_time_token_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             generator = root / "generator.py"
@@ -308,7 +377,45 @@ class ProvisioningTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertFalse(token_file.exists())
             self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            self.assertTrue(output.is_file())
             self.assertIn("no USB write was requested", stdout.getvalue())
+
+    def test_cli_keeps_token_file_when_usb_write_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            generator = root / "generator.py"
+            generator.write_text(
+                "import pathlib, sys\n"
+                "pathlib.Path(sys.argv[3]).write_bytes(b'x' * int(sys.argv[4], 0))\n"
+            )
+            token_file = root / "approved.token"
+            token_file.write_text("one-time-token\n")
+            token_file.chmod(0o600)
+            with patch(
+                "maipai_body.bodies.stackchan.xiaozhi.provision.write_image",
+                side_effect=RuntimeError("USB NVS write failed on /dev/fake-usb."),
+            ):
+                with self.assertRaises(SystemExit):
+                    main(
+                        [
+                            "--url",
+                            "ws://192.0.2.10:8765",
+                            "--token-file",
+                            str(token_file),
+                            "--version",
+                            "1",
+                            "--output",
+                            str(root / "nvs.bin"),
+                            "--size",
+                            "4096",
+                            "--generator",
+                            str(generator),
+                            "--write",
+                            "--port",
+                            "/dev/fake-usb",
+                        ]
+                    )
+            self.assertTrue(token_file.exists())
 
     def test_cli_requires_explicit_write_and_a_port(self) -> None:
         with self.assertRaises(SystemExit) as raised:

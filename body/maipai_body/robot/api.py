@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from maipai_body.spec_pin import SPEC_CHECKOUT
+
 
 @dataclass(frozen=True)
 class PartContract:
@@ -78,7 +80,7 @@ def default_spec_dir() -> Path:
     configured = os.environ.get("MAIPAI_SPEC_DIR")
     if configured:
         return Path(configured)
-    return Path(__file__).resolve().parents[4] / "commons-tags" / "spec-spec-v0.1.141" / "spec"
+    return Path(__file__).resolve().parents[4] / SPEC_CHECKOUT
 
 
 def load_robot_api(spec_dir: Path | None = None) -> RobotApi:

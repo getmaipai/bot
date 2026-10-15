@@ -6,10 +6,17 @@ cd "$(dirname "$0")/.."
 
 DOCS_ONLY=0; if [ "${1:-}" = "--docs" ]; then DOCS_ONLY=1; fi
 
+if [ "$DOCS_ONLY" = 1 ]; then
+  echo "== scope: docs (explicit --docs scope)"
+else
+  echo "== scope: full (body/runtime repository checks and standards core)"
+fi
+
 if [ "$DOCS_ONLY" = 0 ] && [ -d body ]; then
-  SPEC_DIR="${MAIPAI_SPEC_DIR:-../commons-tags/spec-spec-v0.1.141/spec}"
+  SPEC_CHECKOUT="$(cd body && uv run python -c 'from maipai_body.spec_pin import SPEC_CHECKOUT; print(SPEC_CHECKOUT)')"
+  SPEC_DIR="${MAIPAI_SPEC_DIR:-../$SPEC_CHECKOUT}"
   if [ ! -f "$SPEC_DIR/vocab/capabilities.json" ]; then
-    echo "@maipai/spec spec-v0.1.141 is missing at $SPEC_DIR (set MAIPAI_SPEC_DIR to its spec/ directory)"
+    echo "@maipai/spec $SPEC_CHECKOUT is missing at $SPEC_DIR (set MAIPAI_SPEC_DIR to its spec/ directory)"
     exit 1
   fi
   echo "== body: ruff"

@@ -54,10 +54,33 @@ def test_profile_is_the_sole_source_of_limits():
 
 def test_capabilities_match_the_vocabulary_ids():
     """The profile declares only ids in the pinned shared vocabulary."""
+    from maipai_body.spec_pin import SPEC_VERSION
+
+    assert SPEC_DIR.is_dir(), f"the check gate must set MAIPAI_SPEC_DIR to {SPEC_VERSION}"
     capabilities = json.loads((SPEC_DIR / "vocab" / "capabilities.json").read_text())[
         "capabilities"
     ]
     assert set(REACHY_MINI_PROFILE.capabilities) <= set(capabilities)
+
+
+def test_tooling_and_runtime_share_one_commons_spec_pin():
+    """Every source-path consumer reads the package's single version pin."""
+    from maipai_body.spec_pin import SPEC_CHECKOUT, SPEC_VERSION
+
+    assert SPEC_CHECKOUT == f"commons-tags/spec-spec-{SPEC_VERSION}/spec"
+    consumers = (
+        Path(__file__).parents[1] / "maipai_body" / "robot" / "api.py",
+        Path(__file__).parents[1] / "maipai_body" / "link" / "assets.py",
+        Path(__file__).parents[1].parent / "scripts" / "check.sh",
+        Path(__file__).parents[1].parent / "scripts" / "prepare-bot-release.sh",
+    )
+    for consumer in consumers:
+        source = consumer.read_text()
+        assert "spec-spec-v0.1.141" not in source
+        if consumer.suffix == ".py":
+            assert "SPEC_CHECKOUT" in source
+        else:
+            assert "maipai_body.spec_pin" in source
 
 
 def _device_model():
@@ -71,7 +94,9 @@ def _device_model():
 
 
 def _fixture(name: str) -> dict:
-    assert SPEC_DIR.is_dir(), "the check gate must set MAIPAI_SPEC_DIR to spec-v0.1.141"
+    from maipai_body.spec_pin import SPEC_VERSION
+
+    assert SPEC_DIR.is_dir(), f"the check gate must set MAIPAI_SPEC_DIR to {SPEC_VERSION}"
     return json.loads((SPEC_FIXTURES / name).read_text())
 
 

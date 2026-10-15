@@ -13,16 +13,12 @@ from urllib.parse import urlparse
 import requests
 
 from maipai_body.model_assets import AssetUnavailable, PinnedAsset, configure_asset_fetcher
+from maipai_body.spec_pin import SPEC_CHECKOUT
 
 _SPEC_ROOT = os.environ.get("MAIPAI_SPEC_DIR")
 _PACKAGED_SPEC_ASSETS = Path(__file__).resolve().parent.parent / "robot-assets.json"
 _SPEC_CANDIDATES = (
-    Path(__file__).resolve().parents[3].parent
-    / "commons-tags"
-    / "spec-spec-v0.1.141"
-    / "spec"
-    / "assets"
-    / "robot-assets.json",
+    Path(__file__).resolve().parents[3].parent / SPEC_CHECKOUT / "assets" / "robot-assets.json",
     _PACKAGED_SPEC_ASSETS,
 )
 SPEC_ASSETS_PATH = (

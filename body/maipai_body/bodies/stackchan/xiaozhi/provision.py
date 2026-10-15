@@ -23,6 +23,16 @@ def _tool(name: str) -> str:
     return found
 
 
+def _tool_python(tool: str) -> str:
+    """Use the Python environment beside an ESP-IDF tool when available."""
+    tool_path = Path(tool).resolve()
+    for parent in tool_path.parents:
+        candidate = parent / "bin" / "python"
+        if candidate.is_file() and candidate != Path(sys.executable):
+            return str(candidate)
+    return sys.executable
+
+
 def generate_image(
     output: Path,
     *,
@@ -47,18 +57,19 @@ def generate_image(
         csv_path = temp / "provision.csv"
         with csv_path.open("w", newline="") as csv_file:
             writer = csv.writer(csv_file)
-            writer.writerows(
-                [
-                    ["key", "type", "encoding", "value"],
-                    ["url", "data", "string", websocket_url],
-                    ["token", "data", "string", token],
-                    ["version", "data", "string", version],
-                    ["ota_url", "data", "string", ota_url],
-                ]
-            )
+            rows = [
+                ["key", "type", "encoding", "value"],
+                ["websocket", "namespace", "", ""],
+                ["url", "data", "string", websocket_url],
+                ["token", "data", "string", token],
+                ["version", "data", "i32", version],
+            ]
+            if ota_url:
+                rows.extend([["wifi", "namespace", "", ""], ["ota_url", "data", "string", ota_url]])
+            writer.writerows(rows)
         result = subprocess.run(
             [
-                sys.executable,
+                _tool_python(generator_path),
                 generator_path,
                 "generate",
                 str(csv_path),
@@ -147,8 +158,6 @@ def main(argv: list[str] | None = None) -> int:
             partition_size=args.size,
             generator=args.generator,
         )
-        if args.token_file:
-            args.token_file.unlink()
         print(json.dumps({"image": str(image), "bytes": image.stat().st_size}))
         print("Steps: 1. Keep the robot connected by its USB-C data port.")
         print("2. Back up the existing flash before changing partitions.")
@@ -157,6 +166,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"3. Wrote the NVS image at 0x9000 on {args.port}.")
         else:
             print(f"3. Image is ready at {image}; no USB write was requested.")
+        if args.token_file:
+            args.token_file.unlink()
         print("4. Reboot the robot and approve its Device-Id in the Bot pairing API.")
         return 0
     except (RuntimeError, ValueError) as exc:

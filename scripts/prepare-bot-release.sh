@@ -23,7 +23,8 @@ fi
 STAGE="dist/bot-release/$TAG"
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
-SPEC_DIR="${MAIPAI_SPEC_DIR:-../commons-tags/spec-spec-v0.1.141/spec}"
+SPEC_CHECKOUT="$(cd body && uv run python -c 'from maipai_body.spec_pin import SPEC_CHECKOUT; print(SPEC_CHECKOUT)')"
+SPEC_DIR="${MAIPAI_SPEC_DIR:-../$SPEC_CHECKOUT}"
 SPEC_ASSETS="$SPEC_DIR/assets/robot-assets.json"
 PACKAGE_ASSETS="body/maipai_body/robot-assets.json"
 if [ ! -f "$SPEC_ASSETS" ]; then

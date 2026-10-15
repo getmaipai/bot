@@ -2,6 +2,7 @@
 repository = "https://github.com/m5stack/StackChan.git"
 commit = "1b5765599fba8aaad1811d9a79358ccc7051f5f3"
 repos_json_sha256 = "3c64af4d007d23d34802ecd725241f1373c93baa02c65a039c9768dcfa0d3641"
+dependencies_lock_sha256 = "403a9f58f18ba6e2d2cfbfdbf2c6a23ec5ab3ba8e10f3bbdc806f677e2518016"
 firmware_version = "1.5.1-maipai.1"
 
 [toolchain]
