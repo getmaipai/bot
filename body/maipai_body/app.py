@@ -39,6 +39,7 @@ from maipai_body.bodies.reachy_mini.client import ReachyMiniClient
 from maipai_body.bodies.reachy_mini.eyes_client import EyesClient
 from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
 from maipai_body.expression.engine import ExpressionEngine
+from maipai_body.expression.suppression import SuppressionContext
 from maipai_body.hal.errors import BodyLost
 from maipai_body.hal.seam import AntennaPositions, HeadActuator, HeadPose, Indicator, NullIndicator
 from maipai_body.indicator.director import EyesDirector
@@ -80,7 +81,131 @@ logger = logging.getLogger("maipai_body.app")
 def _stackchan_selected(environ: Mapping[str, str] | None = None) -> bool:
     """Whether this Bot process is configured to serve a StackChan body."""
     environ = os.environ if environ is None else environ
-    return environ.get("MAIPAI_BODY", "reachy_mini").strip().lower() == "stackchan"
+    return environ.get("MAIPAI_BODY", "reachy_mini").strip().lower() in {"stackchan", "fake"}
+
+
+class StackChanBehavior:
+    """Shared expression and bounded anonymous tracking for an attached StackChan."""
+
+    def __init__(self, robot, *, vision_bridge=None, idle_interval_s: float = 8.0) -> None:
+        from maipai_body.bodies.stackchan.profile import STACKCHAN_PROFILE
+        from maipai_body.expression.engine import ExpressionEngine
+
+        self.robot = robot
+        self._holder = "stackchan-runtime"
+        self._lock = threading.RLock()
+        self._active = threading.Event()
+        self._closed = threading.Event()
+        self._presence_stop: threading.Event | None = None
+        self._presence_thread: threading.Thread | None = None
+        self._vision = vision_bridge
+        self._idle_interval_s = idle_interval_s
+        self._last_idle = 0.0
+        self._expression = ExpressionEngine(robot._driver("head"), STACKCHAN_PROFILE)
+
+    @property
+    def presence_thread_alive(self) -> bool:
+        return self._presence_thread is not None and self._presence_thread.is_alive()
+
+    def _with_lease(self, callback):
+        with self._lock:
+            holder = self.robot.lease_holder
+            if holder is None:
+                self.robot.lease.acquire(priority="expression", holder=self._holder)
+            elif holder != self._holder:
+                return False
+            try:
+                callback()
+            finally:
+                if self.robot.lease_holder == self._holder:
+                    self.robot.lease.release(holder=self._holder)
+            return True
+
+    def render_primitive(self, primitive: str) -> bool:
+        return self._with_lease(
+            lambda: self._expression.render_ambient(primitive, SuppressionContext())
+        )
+
+    def render_turn_state(self, state: str, *, mood: str | None = None) -> None:
+        self._active.set()
+        primitive = {
+            "listening": "glance",
+            "thinking": "attend",
+            "speaking": "speak",
+        }.get(state)
+
+        def render() -> None:
+            if state == "settle":
+                self._expression.render_ambient("settle", SuppressionContext())
+                return
+            self._expression.render_turn_state(state, mood=mood)
+            if primitive is not None:
+                self._expression.render_ambient(primitive, SuppressionContext())
+            elif state == "reply_mood":
+                self._expression.render_turn_state("reply_mood", mood=mood)
+
+        try:
+            self._with_lease(render)
+        finally:
+            if state == "settle":
+                self._active.clear()
+
+    def start_presence(self, stop_event: threading.Event) -> None:
+        if self._presence_thread is not None:
+            return
+        self._presence_stop = threading.Event()
+        try:
+            self.robot.camera.stream(enabled=True)
+        except Exception:
+            logger.warning("StackChan camera stream could not start", exc_info=True)
+        self._presence_thread = threading.Thread(
+            target=self._presence_loop,
+            args=(stop_event, self._presence_stop),
+            name="stackchan-presence",
+            daemon=True,
+        )
+        self._presence_thread.start()
+
+    def _presence_loop(self, stop_event: threading.Event, local_stop: threading.Event) -> None:
+        while not stop_event.is_set() and not local_stop.wait(0.2):
+            if self._closed.is_set():
+                return
+            now = time.monotonic()
+            if not self._active.is_set() and now - self._last_idle >= self._idle_interval_s:
+                self._last_idle = now
+                try:
+                    self.render_primitive("settle")
+                except Exception:
+                    logger.warning("StackChan idle expression failed", exc_info=True)
+            if self._vision is not None and not self._active.is_set():
+                try:
+                    target = self._vision.track_stream_frame(deadline_s=0.4)
+                    if target.detected:
+                        self.render_primitive("attend")
+                except Exception:
+                    logger.warning("StackChan anonymous tracking failed", exc_info=True)
+
+    def stop_presence(self) -> None:
+        if self._presence_stop is not None:
+            self._presence_stop.set()
+        if self._presence_thread is not None:
+            self._presence_thread.join(timeout=2.0)
+            self._presence_thread = None
+        try:
+            self.robot.camera.stream(enabled=False)
+        except Exception:
+            logger.debug("StackChan camera stream already stopped", exc_info=True)
+
+    def close(self) -> None:
+        self._closed.set()
+        self.stop_presence()
+        close = getattr(self._vision, "close", None)
+        if callable(close):
+            close()
+        self._expression.close()
+        holder = self.robot.lease_holder
+        if holder is not None:
+            self.robot.lease.release(holder=holder)
 
 
 async def _serve_stackchan_channels(
@@ -112,16 +237,35 @@ async def _serve_stackchan_channels(
         vision_port=vision_port,
         advertised_vision_url=os.environ.get("MAIPAI_VISION_URL"),
     )
-    if link is not None and offline is not None:
-        bridge = StackChanTurnBridge(voice, link, offline, cache_dir=_default_models_cache_dir())
-        voice.audio_handler = bridge.on_audio
-        voice.turn_handler = bridge.listen
     avatar = AvatarServer(pairing)
     cert_path = os.environ.get("MAIPAI_XIAOZHI_TLS_CERT")
     key_path = os.environ.get("MAIPAI_XIAOZHI_TLS_KEY")
     tls_context = server_ssl_context(cert_path, key_path)
     voice.robot = StackChanRobotAdapter(XiaozhiDeviceClient(voice))
     voice._avatar_frame_sender = avatar.send_frame
+    vision = None
+    try:
+        from maipai_body.bodies.stackchan.vision_bridge import StackChanVisionBridge
+
+        vision = StackChanVisionBridge(
+            voice.robot.robot,
+            detector=FiveLandmarkDetector(),
+            embedder=None,
+            gallery=None,
+        )
+    except Exception:
+        logger.warning("StackChan anonymous tracking is unavailable", exc_info=True)
+    behavior = StackChanBehavior(voice.robot.robot, vision_bridge=vision)
+    if link is not None and offline is not None:
+        bridge = StackChanTurnBridge(
+            voice,
+            link,
+            offline,
+            cache_dir=_default_models_cache_dir(),
+            expression_sink=behavior.render_turn_state,
+        )
+        voice.audio_handler = bridge.on_audio
+        voice.turn_handler = bridge.listen
     await voice.start(host, xiaozhi_port, ssl=tls_context)
     try:
         await avatar.start(avatar_host, avatar_port, ssl=tls_context)
@@ -135,8 +279,13 @@ async def _serve_stackchan_channels(
             avatar_host,
             avatar_port,
         )
+        while not stop_event.is_set() and not voice._session_ready.is_set():
+            await asyncio.sleep(0.1)
+        if voice._session_ready.is_set() and not stop_event.is_set():
+            behavior.start_presence(stop_event)
         await asyncio.to_thread(stop_event.wait)
     finally:
+        behavior.close()
         await avatar.close()
         await voice.close()
 
