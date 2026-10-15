@@ -37,6 +37,46 @@ See [docs/dev.md](docs/dev.md) for the design record and
 [docs/BACKLOG.md](docs/BACKLOG.md) for what's built and what's missing. `scripts/check.sh` runs the pinned `@maipai/standards`
 core; it needs a sibling checkout of `getmaipai/.github`.
 
+### StackChan firmware toolchain (macOS, Apple silicon)
+
+Building the StackChan firmware (design: [docs/dev/design-stackchan-firmware-build-2026-10-14.md](docs/dev/design-stackchan-firmware-build-2026-10-14.md))
+needs ESP-IDF 5.5.4. ESP-IDF 6.x does not build M5's tree. This machine uses a local install, not Docker. Tested 2026-10-14 on macOS 27, arm64;
+a stock `hello_world` built for the ESP32-S3 with it.
+
+Install, one command per line:
+
+```bash
+brew install ninja ccache dfu-util python@3.12 cmake
+```
+
+```bash
+mkdir -p ~/esp
+```
+
+```bash
+git clone --depth 1 --branch v5.5.4 --recursive --shallow-submodules https://github.com/espressif/esp-idf.git ~/esp/esp-idf
+```
+
+```bash
+PATH="/opt/homebrew/opt/python@3.12/libexec/bin:$PATH" ~/esp/esp-idf/install.sh esp32s3
+```
+
+Python 3.12 is used on purpose: the system Python is 3.14, newer than ESP-IDF 5.5 supports. The install is about 0.7 GB of source
+plus 3.9 GB of tools in `~/.espressif`.
+
+Use it in each new shell (the install does not change your shell profile):
+
+```bash
+export PATH="/opt/homebrew/opt/python@3.12/libexec/bin:$PATH"
+```
+
+```bash
+. ~/esp/esp-idf/export.sh
+```
+
+Check: `idf.py --version` prints `ESP-IDF v5.5.4`. Flashing a unit later needs the head USB-C port; see the build design note, section 8.
+To remove it all: delete `~/esp` and `~/.espressif`.
+
 ---
 
 MaiPai is open-source software for personal, self-hosted, non-commercial
