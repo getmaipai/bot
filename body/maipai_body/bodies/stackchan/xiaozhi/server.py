@@ -121,7 +121,7 @@ class XiaozhiServer:
         self._session_ready = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
 
-    async def start(self, host: str = "0.0.0.0", port: int = 8765) -> None:
+    async def start(self, host: str = "127.0.0.1", port: int = 8765) -> None:
         self._loop = asyncio.get_running_loop()
         self._server = await serve(
             self.handle, host, port, max_size=2**20, ping_interval=20, ping_timeout=20
@@ -386,12 +386,21 @@ class XiaozhiServer:
             )
         self._speaking.add(device_id)
         await self._json(websocket, self._session_ids[device_id], "tts", {"state": "start"})
+        interval = 0.06
+        prebuffer = 3
+        deadline = time.monotonic()
         try:
-            for frame in frames:
+            for index, frame in enumerate(frames):
                 if device_id not in self._speaking:
                     break
+                if index >= prebuffer:
+                    deadline = (
+                        time.monotonic() + interval if index == prebuffer else deadline + interval
+                    )
+                    await asyncio.sleep(max(0.0, deadline - time.monotonic()))
+                    if device_id not in self._speaking:
+                        break
                 await websocket.send(frame)
-                await asyncio.sleep(0.06)
         finally:
             self._speaking.discard(device_id)
             await self._json(websocket, self._session_ids[device_id], "tts", {"state": "stop"})

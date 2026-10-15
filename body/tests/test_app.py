@@ -33,6 +33,25 @@ def test_stackchan_service_selection_is_off_unless_body_is_stackchan():
     assert _stackchan_selected({"MAIPAI_BODY": "StackChan"})
 
 
+def test_stackchan_service_binds_loopback_by_default_and_honors_host_override(monkeypatch):
+    import maipai_body.app as app_module
+
+    started = []
+
+    async def fake_serve(stop_event, host, port):
+        started.append((host, port))
+        stop_event.set()
+
+    monkeypatch.setattr(app_module, "_serve_stackchan", fake_serve)
+    monkeypatch.delenv("MAIPAI_XIAOZHI_HOST", raising=False)
+    monkeypatch.delenv("MAIPAI_XIAOZHI_PORT", raising=False)
+    app_module._run_stackchan_service(threading.Event())
+    monkeypatch.setenv("MAIPAI_XIAOZHI_HOST", "192.0.2.12")
+    app_module._run_stackchan_service(threading.Event())
+
+    assert started == [("127.0.0.1", 8765), ("192.0.2.12", 8765)]
+
+
 @dataclass
 class _FakeLinkState:
     paired: bool

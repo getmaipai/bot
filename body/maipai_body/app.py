@@ -102,7 +102,7 @@ async def _serve_stackchan(stop_event: threading.Event, host: str, port: int) ->
 
 
 def _run_stackchan_service(stop_event: threading.Event) -> None:
-    host = os.environ.get("MAIPAI_XIAOZHI_HOST", "0.0.0.0")
+    host = os.environ.get("MAIPAI_XIAOZHI_HOST", "127.0.0.1")
     try:
         port = int(os.environ.get("MAIPAI_XIAOZHI_PORT", "8765"))
         asyncio.run(_serve_stackchan(stop_event, host, port))

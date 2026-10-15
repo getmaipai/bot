@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -14,8 +15,9 @@ from maipai_body.hal.errors import (
     NotPermitted,
     NotSupported,
 )
-from maipai_body.hal.seam import HeadPose
-from maipai_body.robot import RobotStateFrame
+from maipai_body.hal.seam import AxisLimit, BodyProfile, HeadPose
+from maipai_body.robot import Robot, RobotStateFrame
+from maipai_body.robot.api import default_spec_dir, load_robot_api
 
 
 def test_robot_parts_are_exposed_only_when_the_profile_declares_the_capability():
@@ -144,3 +146,54 @@ def test_whole_robot_lifecycle_verbs_translate_to_the_declared_power_part():
         ("power", "wake"),
         ("power", "shutdown"),
     ]
+
+
+def test_vocabulary_profile_runs_without_a_vendor_specific_robot_assumption():
+    spec_dir = default_spec_dir()
+    vocab = json.loads((spec_dir / "vocab" / "capabilities.json").read_text())
+    api = load_robot_api(spec_dir)
+    capabilities = set(vocab["capabilities"])
+    selected = {"head_6dof", "appendages", "lease", "estop"}
+    assert selected <= capabilities
+    profile = BodyProfile(
+        id="six_axis_mobile_body",
+        capabilities=sorted(selected),
+        axes=[
+            AxisLimit(
+                name=name,
+                unit="rad",
+                min=-0.5,
+                max=0.5,
+                source="test profile",
+                date="2026-10-15",
+            )
+            for name in ("head_pitch", "head_roll", "head_yaw", "antenna_left", "antenna_right")
+        ],
+        channels=["head", "appendages"],
+        sensors=[],
+        physical_cuts=[],
+        speech_placement="robot",
+    )
+
+    class Driver:
+        def __init__(self, part: str):
+            self.part = part
+            self.commands = []
+
+        def command(self, verb: str, *args, **kwargs):
+            self.commands.append((verb, args, kwargs))
+            return True
+
+    drivers = {part: Driver(part) for part in ("head", "appendages", "lease", "estop")}
+    robot = Robot(profile, drivers, api)
+    assert robot.capabilities == frozenset(selected)
+    lease = robot.lease.acquire("person", "remote")
+    assert lease.holder == "remote"
+    robot.head.set(pose=HeadPose(pitch=0.2, roll=-0.1, yaw=0.3))
+    robot.appendages.set("left", 0.4)
+    assert robot.emergency_stop() is True
+    assert robot.estop_engaged is True
+    with pytest.raises(NotSupported) as raised:
+        _ = robot.camera
+    assert raised.value.part == "camera"
+    assert raised.value.capability == "camera"

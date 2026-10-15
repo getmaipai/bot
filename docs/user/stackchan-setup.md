@@ -6,7 +6,7 @@
 - A Bot host on the same home network
 - A Bot administrator who can use the local setup tools
 
-The first firmware flash and backup need a computer with ESP-IDF 5.5.4. Keep the robot on your home network while you set it up. The current `ws://` connection sends the token, audio, and control frames without encryption. Use a trusted home network and bind the Bot service to its LAN address. The firmware does not yet have the CA certificate patch needed for secure `wss://` connections to a self-signed Bot certificate.
+The first firmware flash and backup need a computer with ESP-IDF 5.5.4. Keep the robot on your home network while you set it up. The current `ws://` connection sends the token, audio, and control frames without encryption. Configure `MAIPAI_XIAOZHI_HOST` with the Bot host's LAN address so the robot can connect; without it, the service listens only on the Bot host itself. The firmware does not yet have the CA certificate patch needed for secure `wss://` connections to a self-signed Bot certificate.
 
 ## Set it up
 

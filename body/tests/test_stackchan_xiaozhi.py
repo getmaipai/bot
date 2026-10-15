@@ -172,6 +172,15 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_approved_at_records_approval_time_not_request_time(self) -> None:
+        device_id = "02:00:00:00:00:43"
+        client_id = "00000000-0000-4000-8000-000000000043"
+        with patch("maipai_body.bodies.stackchan.xiaozhi.pairing.time.time", return_value=100.0):
+            self.pairing.request(device_id, client_id)
+        with patch("maipai_body.bodies.stackchan.xiaozhi.pairing.time.time", return_value=145.0):
+            self.pairing.approve(device_id)
+        self.assertEqual(self.pairing._devices[device_id]["approved_at"], 145.0)
+
     async def test_separate_pairing_stores_refresh_shared_pending_approval_and_revocation(
         self,
     ) -> None:
@@ -202,6 +211,44 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
             loaded = PairingStore(path)
             self.assertTrue(loaded.authorize("02:00:00:00:00:03", client_id, token))
             self.assertNotIn(token, path.read_text())
+
+    async def test_audio_prebuffers_then_paces_from_monotonic_deadlines(self) -> None:
+        now = [10.0]
+        sent: list[tuple[bytes, float]] = []
+
+        class WebSocket:
+            async def send(self, payload):
+                if not isinstance(payload, bytes):
+                    return
+                sent.append((payload, now[0]))
+                now[0] += 0.025
+
+        websocket = WebSocket()
+        device_id = "02:00:00:00:00:01"
+        self.app._sessions[device_id] = websocket
+        self.app._session_ids[device_id] = "session"
+        self.app._session_credentials[device_id] = (self.client_id, self.token)
+
+        async def advance_sleep(delay: float) -> None:
+            now[0] += delay
+
+        with (
+            patch(
+                "maipai_body.bodies.stackchan.xiaozhi.server.time.monotonic",
+                side_effect=lambda: now[0],
+            ),
+            patch(
+                "maipai_body.bodies.stackchan.xiaozhi.server.asyncio.sleep",
+                side_effect=advance_sleep,
+            ),
+        ):
+            await self.app.send_audio(device_id, [f"frame-{i}".encode() for i in range(7)])
+
+        self.assertEqual([frame for frame, _ in sent], [f"frame-{i}".encode() for i in range(7)])
+        stamps = [stamp for _, stamp in sent]
+        self.assertEqual([round(stamps[i + 1] - stamps[i], 3) for i in range(2)], [0.025, 0.025])
+        self.assertAlmostEqual(stamps[3] - stamps[2], 0.085)
+        self.assertAlmostEqual(stamps[6] - stamps[5], 0.06)
 
     async def test_corrupt_pairing_file_fails_closed_without_crashing_authorize(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
