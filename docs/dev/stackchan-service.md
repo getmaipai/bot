@@ -48,7 +48,7 @@ The avatar listener also carries a software estop latch for ControlMotion `0x04`
 
 ## Known gaps
 
-The shared expression engine has a registered StackChan renderer and closed face cue tables for listening, thinking, speaking and reply mood. It maps listen, glance, tilt, nod, perk, attend, settle and speak; breathe and track report explicit unsupported reasons. Head moves use Robot commands, so profile clamping, lease checks and the estop latch remain in force. Face frames use the authenticated avatar channel. App-level automatic turn-state wiring remains open until the Hub audio callback is connected; this brief does not alter that audio path. Patch 003 keeps the firmware xiaozhi WebSocket open between listening sessions and retries failed connections; patch 008 adds an optional CA bundle; patch 011 adds shared pairing identity to the avatar channel. The recipe options and CA input are documented in the [firmware guide](../../body/maipai_body/bodies/stackchan/firmware/README.md).
+The shared expression engine has a registered StackChan renderer and closed face cue tables for listening, thinking, speaking and reply mood. It maps listen, glance, tilt, nod, perk, attend, settle and speak; breathe and track report explicit unsupported reasons. Head moves use Robot commands, so profile clamping, lease checks and the estop latch remain in force. Face frames use the authenticated avatar channel. Patch 003 keeps the firmware xiaozhi WebSocket open between listening sessions and retries failed connections; patch 008 adds an optional CA bundle; patch 011 adds shared pairing identity to the avatar channel. The recipe options and CA input are documented in the [firmware guide](../../body/maipai_body/bodies/stackchan/firmware/README.md).
 
 Battery, touch and IMU remain `NotSupported` at the shared robot API because the pinned xiaozhi translator exposes no verified read path for them. Source-derived chip and register notes are in [the sensor map](stackchan-sensor-map.md); unit measurements are tracked in [the unit-arrival runbook](stackchan-unit-measurements.md). Patch 009 protects AXP2101 charging-state reads from an I2C timeout abort, but does not add battery reporting to the Bot API.
 
@@ -68,7 +68,16 @@ Frames are decoded directly from bytes and are not written to disk. The measurem
 
 ## Known gaps
 
-- The bridge is not wired into automatic turn attribution. A caller still has to invoke it and enforce the household's age and surface gates.
+- StackChan voice does not yet receive person attribution or expression turn-state events. The shared Home turn route still applies age and surface gates.
+- Opus duration and buffering have only been checked in software; device timing, acoustic echo behavior and abort latency remain unmeasured on hardware.
 - The firmware photo path is implemented; continuous avatar camera stream support does not yet deliver frames to the bridge.
 - The host-side synthetic test proves bounded correction and in-memory handling only. Match rate and false-accept rate remain unmeasured on a physical StackChan unit.
 - Print consent must be supplied by the household print-store integration; the bridge defaults to refusing child and teen recognition when that integration is absent.
+
+## Voice turns
+
+The xiaozhi `listen` callback starts one `StackChanTurnBridge` capture per authenticated device session. Incoming binary frames are decoded with PyAV's bundled Opus codec and resampled to mono 16 kHz float32 blocks for the existing `SttStreamClient`. The final transcript goes to the existing turn route; the completed reply is split at sentence punctuation and sent sentence by sentence through `TtsPlaybackClient`. PyAV is pinned by `body/pyproject.toml` and `body/uv.lock` (`av>=14,<17`); its wheels bundle FFmpeg and libopus, so deployment does not depend on a system libopus installation.
+
+StackChan playback resamples the existing TTS PCM to 24 kHz, encodes 60 ms mono Opus frames, and sends them only through the authenticated `XiaozhiServer.send_audio` session. Abort clears pending encoded frames, cancels the active task and sends `tts stop`. The bridge reads the active hub URL and current session cookie from the shared `LinkLifecycle` at each turn. Hub authentication or connection loss uses the verified offline `line.unreachable` clips. A recognition or turn error attempts the plain spoken line “I couldn't understand that. Please try again.” through the hub TTS path, with the offline line as fallback.
+
+The StackChan voice-turn tests use local fake peers and documentation-only addresses. Hardware has not arrived, so these checks do not claim hardware verification.

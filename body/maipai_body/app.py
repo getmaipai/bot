@@ -89,9 +89,12 @@ async def _serve_stackchan_channels(
     xiaozhi_port: int,
     avatar_host: str,
     avatar_port: int,
+    link: LinkLifecycle | None = None,
+    offline: OfflineRungs | None = None,
 ) -> None:
     from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
     from maipai_body.bodies.stackchan.avatar.server import AvatarServer
+    from maipai_body.bodies.stackchan.turn import StackChanTurnBridge
     from maipai_body.bodies.stackchan.xiaozhi.pairing import PairingStore, default_pairing_path
     from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient, XiaozhiServer
     from maipai_body.bodies.stackchan.xiaozhi.tls import server_ssl_context
@@ -109,6 +112,10 @@ async def _serve_stackchan_channels(
         vision_port=vision_port,
         advertised_vision_url=os.environ.get("MAIPAI_VISION_URL"),
     )
+    if link is not None and offline is not None:
+        bridge = StackChanTurnBridge(voice, link, offline, cache_dir=_default_models_cache_dir())
+        voice.audio_handler = bridge.on_audio
+        voice.turn_handler = bridge.listen
     avatar = AvatarServer(pairing)
     cert_path = os.environ.get("MAIPAI_XIAOZHI_TLS_CERT")
     key_path = os.environ.get("MAIPAI_XIAOZHI_TLS_KEY")
@@ -134,7 +141,11 @@ async def _serve_stackchan_channels(
         await voice.close()
 
 
-def _run_stackchan_service(stop_event: threading.Event) -> None:
+def _run_stackchan_service(
+    stop_event: threading.Event,
+    link: LinkLifecycle | None = None,
+    offline: OfflineRungs | None = None,
+) -> None:
     host = os.environ.get("MAIPAI_XIAOZHI_HOST", "127.0.0.1")
     try:
         xiaozhi_port = int(os.environ.get("MAIPAI_XIAOZHI_PORT", "8765"))
@@ -142,9 +153,16 @@ def _run_stackchan_service(stop_event: threading.Event) -> None:
         if "MAIPAI_XIAOZHI_HOST" in os.environ and "MAIPAI_STACKCHAN_AVATAR_HOST" not in os.environ:
             avatar_host = host
         avatar_port = int(os.environ.get("MAIPAI_STACKCHAN_AVATAR_PORT", "8766"))
-        asyncio.run(
-            _serve_stackchan_channels(stop_event, host, xiaozhi_port, avatar_host, avatar_port)
-        )
+        if link is None or offline is None:
+            asyncio.run(
+                _serve_stackchan_channels(stop_event, host, xiaozhi_port, avatar_host, avatar_port)
+            )
+        else:
+            asyncio.run(
+                _serve_stackchan_channels(
+                    stop_event, host, xiaozhi_port, avatar_host, avatar_port, link, offline
+                )
+            )
     except ValueError as exc:
         raise ValueError(
             "StackChan listener ports must be TCP port numbers. "
@@ -716,9 +734,21 @@ class MaiPaiBody(ReachyMiniApp):
         previous_handler = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, _sigint_handler(stop_event))
         if _stackchan_selected():
+            link_thread = threading.Thread(
+                target=self.link.run, args=(stop_event,), name="hub-link", daemon=True
+            )
+            link_thread.start()
+            supervisor_thread = threading.Thread(
+                target=self._stack.supervisor.run,
+                args=(stop_event,),
+                name="link-supervisor",
+                daemon=True,
+            )
+            supervisor_thread.start()
             try:
-                _run_stackchan_service(stop_event)
+                _run_stackchan_service(stop_event, self.link, self._stack.offline)
             finally:
+                link_thread.join(timeout=5.0)
                 signal.signal(signal.SIGINT, previous_handler)
             return
         link_thread = threading.Thread(

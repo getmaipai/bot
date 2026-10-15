@@ -32,6 +32,7 @@ dependencies = [
     # setuptools fallback fails flat-layout autodiscovery across spec/.
     # Do not turn this into a git-installed dependency until commons ships
     # packaging metadata.
+    "av>=14,<17",
 ]
 
 [project.entry-points."reachy_mini_apps"]

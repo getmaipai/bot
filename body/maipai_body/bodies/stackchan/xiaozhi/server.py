@@ -160,6 +160,7 @@ class XiaozhiServer:
         self.pairing = pairing
         self.robot = robot
         self.audio_handler = audio_handler
+        self.turn_handler: Callable[[str, str, str], Awaitable[None]] | None = None
         self.version = version
         self.server_name = server_name
         self.idle_timeout = idle_timeout
@@ -347,6 +348,8 @@ class XiaozhiServer:
                     )
                 elif kind == "listen":
                     state = data.get("state")
+                    if state in {"start", "detect", "stop"} and self.turn_handler is not None:
+                        await self.turn_handler(session_id, device_id, state)
                     if state in {"start", "detect"}:
                         if data.get("mode") == "realtime":
                             await self._json(websocket, session_id, "tts", {"state": "start"})
@@ -354,6 +357,8 @@ class XiaozhiServer:
                         await self._json(websocket, session_id, "tts", {"state": "stop"})
                 elif kind == "abort":
                     self._speaking.discard(device_id)
+                    if self.turn_handler is not None:
+                        await self.turn_handler(session_id, device_id, "abort")
                     await self._json(websocket, session_id, "tts", {"state": "stop"})
                 elif kind == "mcp":
                     await self._mcp(websocket, session_id, data.get("payload", {}))
@@ -379,6 +384,11 @@ class XiaozhiServer:
         except Exception as exc:
             LOG.info("StackChan session ended: %s", type(exc).__name__)
         finally:
+            if self.turn_handler is not None:
+                try:
+                    await self.turn_handler(session_id, device_id, "abort")
+                except Exception:
+                    LOG.warning("Could not cancel the StackChan voice turn on disconnect")
             if device_id in self._camera_streaming:
                 await self._stop_camera(device_id)
             camera_disconnected = getattr(self.robot, "camera_disconnected", None)
@@ -625,7 +635,15 @@ class XiaozhiServer:
     ) -> None:
         await self._json(ws, session_id, "error", {"code": code, "message": message})
 
-    async def send_audio(self, device_id: str, frames: list[bytes]) -> None:
+    async def send_audio(
+        self,
+        device_id: str,
+        frames: list[bytes],
+        *,
+        sentence_start: bool = False,
+        start: bool = True,
+        stop: bool = True,
+    ) -> None:
         """Send encoded 24 kHz Opus frames; codec and pacing belong upstream."""
         websocket = self._sessions.get(device_id)
         if self._sessions.get(device_id) is not websocket or not self._session_authorized(
@@ -635,8 +653,13 @@ class XiaozhiServer:
                 "No authenticated active session exists for this Device-Id. Pair it and "
                 "reconnect before sending audio."
             )
-        self._speaking.add(device_id)
-        await self._json(websocket, self._session_ids[device_id], "tts", {"state": "start"})
+        if start:
+            self._speaking.add(device_id)
+            await self._json(websocket, self._session_ids[device_id], "tts", {"state": "start"})
+        if sentence_start:
+            await self._json(
+                websocket, self._session_ids[device_id], "tts", {"state": "sentence_start"}
+            )
         interval = 0.06
         prebuffer = 3
         deadline = time.monotonic()
@@ -653,7 +676,15 @@ class XiaozhiServer:
                         break
                 await websocket.send(frame)
         finally:
-            self._speaking.discard(device_id)
+            if stop:
+                self._speaking.discard(device_id)
+                await self._json(websocket, self._session_ids[device_id], "tts", {"state": "stop"})
+
+    async def stop_audio(self, device_id: str) -> None:
+        """Stop a current reply promptly; the sender observes this before its next frame."""
+        self._speaking.discard(device_id)
+        websocket = self._sessions.get(device_id)
+        if websocket is not None and self._session_authorized(device_id):
             await self._json(websocket, self._session_ids[device_id], "tts", {"state": "stop"})
 
     def call_device_tool(
