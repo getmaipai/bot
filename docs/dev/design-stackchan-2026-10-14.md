@@ -4,6 +4,11 @@ Status: DRAFT, research only. Not reviewed by the architect, not committed, not 
 Backlog item it serves: BODY-STACKCHAN-01 (`docs/BACKLOG.md`, "StackChan body"). Nothing here is built.
 Hardware has not arrived, so every row marked UNVERIFIED must be settled on the unit.
 
+**Correction (later the same day):** the "stock firmware" assumption in section 3 and 5.2a is wrong. The stock build contacts vendor hosts
+(an M5Stack server by IP, a third-party xiaozhi OTA host, public NTP) and runs a second protocol, the `/stackChan/ws` avatar channel.
+Zero vendor contact needs one reproducible custom firmware build. See `design-stackchan-pieces-and-gaps-2026-10-14.md`, which supersedes
+those sections where they differ.
+
 ## 1. Answers in one place
 
 | Question | Answer |
