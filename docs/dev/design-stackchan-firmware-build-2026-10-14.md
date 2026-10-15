@@ -125,6 +125,54 @@ A build is not accepted until these pass, on a captured trace from the unit on a
 
 Step 1 and the static half of step 2 need no hardware.
 
+## 11. Taking new upstream firmware as it ships (Jesse, 2026-10-14)
+
+The aim: a new M5 release becomes a tested, signed image on our devices in hours of attention, not days of porting. The design keeps
+our diff small and mechanical so that is true.
+
+**Keep the diff rebasable**
+- Prefer config over code: every switch that exists as a Kconfig option (server URL, OTA URL) is set in `sdkconfig.defaults.local`, not patched.
+- One change per patch, each touching as few files as possible, each with a header giving the intent and the upstream file and
+  function it touches. Patches are a plain ordered series (`git format-patch` or quilt), applied with `git am --3way`.
+- A patch that has to edit the middle of a large upstream function is rewritten as a small hook plus a one-line call, or sent upstream.
+  Submitting our small fixes (the OTA-check switch, the battery read guard, a configurable NTP list) to M5 and xiaozhi is the best
+  long-term outcome: each accepted patch is one fewer for us to carry.
+
+**The bump job (run by a person or on a schedule, locally; no push-triggered CI)**
+`bodies/stackchan/firmware/bump.sh <upstream tag or commit>` does, in order, and stops at the first failure:
+1. Fetch the new upstream and its pinned dependencies into a clean directory; print what changed in `fetch_repos.py` (a bumped xiaozhi base is the big one).
+2. Apply the patch series with 3-way merge. A conflict prints the patch, the file and both sides, and stops.
+3. Build in the pinned container. A pin change (IDF version, a new component) is reported as its own line.
+4. Static vendor-host check (section 7) on the new tree, **diffed against the last accepted host list**. A new hostname, IP or URL
+   fails the bump until a person reads it. This is how a quiet new phone-home is caught.
+5. Run the contract tests (below) against the new image's protocol behaviour where it can run on the host.
+6. Write `pins.toml` changes, the new checksums and a short change report (upstream commits since the last pin, patches rebased
+   clean or not, host-list diff) to a file in the bot repo's git-ignored scratch folder. Nothing is committed or published by the job.
+
+**Contract tests protect the layer, not the firmware**
+The abstraction layer talks to the device through a small set of observed behaviours: hello fields, listen and abort messages,
+the MCP tool names and parameters, audio frame sizes and rates. A recorded session from the previous good firmware is replayed against
+the translator, and the new firmware's tool list is read on the unit after flashing (`tools/list`) and compared with the profile.
+A removed or renamed tool surfaces as a capability change (`NotSupported` in the robot object), never as a crash. New tools or message
+types (for example `notify`, gap N) appear in the capability list and stay unused until a person opts in.
+
+**Rollout to devices**
+- Our service serves the image through the update reply with a version, URL and checksum; the device writes the inactive slot and
+  switches only after the new image connects and reports healthy once; otherwise it boots back to the old slot (two OTA slots are in
+  the stock layout; whether the stock rollback-on-failure flag is enabled in M5's build is UNVERIFIED).
+- Order: one unit on a bench first (the one used for measurements), then the household's unit. Never two at once while there is a single robot.
+- The change report is shown to the admin with an approve button; there is no automatic install.
+- Images are checked against the SHA256 in `pins.toml` before they are offered. Signing the image (secure boot or a signature
+  verified by our OTA code) is an open item: stock builds do not enable it, and enabling it is an eFuse change that cannot be undone,
+  so it needs Jesse's go-ahead before it is ever tried.
+
+**Cadence and ownership**
+- Watch upstream tags for `m5stack/StackChan` and `78/xiaozhi-esp32` (the base M5 pins) by hand or a weekly read-only check; a new
+  release opens a bump, it does not auto-merge.
+- Stay one release behind on purpose for the household's unit: the bench unit takes it first.
+- When patches stop applying cleanly twice in a row, that is the signal in section 0 to reconsider (more upstreaming, or the
+  from-scratch alternative).
+
 ## Sources
 
 `design-stackchan-pieces-and-gaps-2026-10-14.md` section 8; m5stack/StackChan README and Kconfig; xiaozhi-esp32 docs (websocket, custom board);
