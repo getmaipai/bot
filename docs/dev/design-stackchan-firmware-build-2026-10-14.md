@@ -173,6 +173,24 @@ types (for example `notify`, gap N) appear in the capability list and stay unuse
 - When patches stop applying cleanly twice in a row, that is the signal in section 0 to reconsider (more upstreaming, or the
   from-scratch alternative).
 
+## 12. Step 1 findings: pinning upstream (2026-10-14)
+
+Read from the upstream tree; nothing built.
+
+- Upstream head read: `m5stack/StackChan` commit `1b5765599fba8aaad1811d9a79358ccc7051f5f3` (merge of PR 112, 2026-08-19). No release tags exist,
+  so `pins.toml` pins a commit, and "new firmware as it comes out" means watching `main`, not tags. Update section 11's cadence accordingly.
+- `firmware/repos.json` pins six dependencies: mooncake v2.3.3, mooncake_log v1.5.0, smooth_ui_toolkit v2.12.0, xiaozhi-esp32 v2.2.4,
+  ArduinoJson v7.4.2, esp-now at commit `c33383de`. All are tag or commit pins, so a build is repeatable.
+- **M5 already carries a 273-line patch on xiaozhi v2.2.4** (`firmware/patches/xiaozhi-esp32.patch`). Our patches stack on top of M5's and
+  on M5's own tree, so a bump can break at three layers: M5 tree, M5's xiaozhi patch, ours. The bump job reports which layer failed.
+- **`fetch_repos.py` silently skips a patch that does not apply cleanly** (it prints "cannot be applied cleanly ... skipped" and carries on).
+  Our recipe must not use that script as is: run the clone and checkout from `repos.json` ourselves and treat a failed patch as a hard error.
+  Otherwise a bump could build without M5's patch and look fine.
+- Upstream already has `scan_secrets.py`, `tests/` and `sdkconfig.defaults`; read them before writing ours.
+- **Docker is not installed on this MacBook (Jesse's Mac), so the container build cannot run here.** The reproducible build needs Docker
+  (or a local ESP-IDF 5.5.4 install) on whichever machine does builds. Which machine builds is open; it is a Codex-lane job
+  per the build-and-run rule, not something to run from the coordinator session.
+
 ## Sources
 
 `design-stackchan-pieces-and-gaps-2026-10-14.md` section 8; m5stack/StackChan README and Kconfig; xiaozhi-esp32 docs (websocket, custom board);
