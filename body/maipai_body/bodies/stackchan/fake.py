@@ -26,6 +26,8 @@ class FakeStackChanDeviceClient:
         self.cancelled_motion_batches = 0
         self.photo: bytes | None = None
         self.avatar_frames: list[bytes] = []
+        self.battery_status: dict[str, object] = {"percent": 75, "charging": False}
+        self.battery_error: Exception | None = None
 
         self.measurement_data = {
             "servo_limits_deg": {"yaw": [-128, 128], "pitch": [5, 85]},
@@ -37,7 +39,11 @@ class FakeStackChanDeviceClient:
                 "self.robot.set_head_angles",
                 "self.robot.set_led_color",
                 "self.audio_speaker.set_volume",
+                "self.battery.get_status",
             ],
+            "mcp_results": {
+                "self.battery.get_status": {"percent": 75, "charging": False},
+            },
         }
 
     def measure_unit(self):
@@ -74,6 +80,13 @@ class FakeStackChanDeviceClient:
         arguments = {"volume": volume}
         self.calls.append(FakeToolCall("self.audio_speaker.set_volume", arguments))
         return arguments
+
+    def get_battery_status(self) -> dict[str, object]:
+        self._require_link()
+        self.calls.append(FakeToolCall("self.battery.get_status", {}))
+        if self.battery_error is not None:
+            raise self.battery_error
+        return dict(self.battery_status)
 
     def cancel_pending(self) -> None:
         """Drop only host-side queued targets; this does not cut servo torque."""

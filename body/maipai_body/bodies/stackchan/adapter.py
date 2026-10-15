@@ -7,7 +7,7 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
-from maipai_body.hal.errors import NotSupported
+from maipai_body.hal.errors import BodyLost, NotSupported
 from maipai_body.hal.seam import BodyProfile, HeadPose
 from maipai_body.robot import Robot, load_robot_api
 
@@ -38,6 +38,8 @@ class StackChanDeviceClient(Protocol):
     def send_avatar_frame(self, frame: bytes) -> object: ...
 
     def measure_unit(self) -> Mapping[str, Any]: ...
+
+    def get_battery_status(self) -> Mapping[str, Any]: ...
 
 
 class _HeadAdapter:
@@ -289,6 +291,37 @@ class _UnsupportedSensorAdapter:
         return self.command("read")
 
 
+class _BatteryAdapter:
+    """Read the firmware's read-only AXP2101 status tool on demand."""
+
+    def __init__(self, client: StackChanDeviceClient) -> None:
+        self.client = client
+
+    def read(self, field: str) -> object:
+        try:
+            status = self.client.get_battery_status()
+        except NotSupported:
+            raise
+        except Exception as exc:
+            raise BodyLost("StackChan battery status read failed or timed out.") from exc
+        if (
+            not isinstance(status, Mapping)
+            or type(status.get("percent")) is not int
+            or not 0 <= status["percent"] <= 100
+            or type(status.get("charging")) is not bool
+        ):
+            raise BodyLost("StackChan returned invalid battery status.")
+        if field == "level":
+            return status["percent"]
+        if field == "charging":
+            return status["charging"]
+        if field == "state":
+            return {"percent": status["percent"], "charging": status["charging"]}
+        if field in {"low", "critical"}:
+            return None
+        raise AttributeError(field)
+
+
 def create_stackchan_robot(
     client: StackChanDeviceClient,
     *,
@@ -302,7 +335,7 @@ def create_stackchan_robot(
             "leds": _LedAdapter(client),
             "audio": _AudioAdapter(client),
             "estop": _SoftwareEstopAdapter(client),
-            "battery": _UnsupportedSensorAdapter("battery", "battery_readout"),
+            "battery": _BatteryAdapter(client),
             "touch": _UnsupportedSensorAdapter("touch", "touch"),
             "imu": _UnsupportedSensorAdapter("imu", "imu"),
         },
@@ -313,8 +346,16 @@ def create_stackchan_robot(
     robot._drivers["head"].expression_device = expression_device
     robot._drivers["expression"] = expression_device
 
-    fix = "Run the StackChan unit measurement kit on a paired unit, then add a verified adapter."
-    robot._unsupported_fixes = {part: fix for part in ("battery", "touch", "imu")}
+    robot._unsupported_fixes = {
+        "touch": (
+            "Pinned xiaozhi MCP tools include no touch read tool. Run the StackChan unit "
+            "measurement kit on a paired unit before adding a verified adapter."
+        ),
+        "imu": (
+            "Pinned xiaozhi MCP tools include no IMU read tool. Run the StackChan unit "
+            "measurement kit on a paired unit before adding a verified adapter."
+        ),
+    }
     return robot
 
 

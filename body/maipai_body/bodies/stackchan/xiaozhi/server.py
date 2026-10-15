@@ -62,6 +62,21 @@ class XiaozhiDeviceClient:
     def set_volume(self, volume: int) -> object:
         return self._call("self.audio_speaker.set_volume", {"volume": volume})
 
+    def get_battery_status(self) -> dict[str, object]:
+        """Read battery status using the firmware's read-only MCP tool."""
+        result = self._call("self.battery.get_status", {})
+        if (
+            not isinstance(result, dict)
+            or type(result.get("percent")) is not int
+            or not 0 <= result["percent"] <= 100
+            or type(result.get("charging")) is not bool
+        ):
+            raise BodyLost(
+                "StackChan returned invalid battery status. Check firmware compatibility and "
+                "reconnect."
+            )
+        return result
+
     def take_photo(self) -> bytes | None:
         return self._call("self.camera.take_photo", {"question": "Describe what you see."})
 
