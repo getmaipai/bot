@@ -199,6 +199,8 @@ class StackChanTurnBridge:
         stt_factory=SttStreamClient,
         turn_factory=TurnClient,
         tts_factory=TtsPlaybackClient,
+        person_attribution=None,
+        expression_sink=None,
     ) -> None:
         self.server, self.link, self.offline = server, link, offline
         self.cache_dir = cache_dir
@@ -207,10 +209,13 @@ class StackChanTurnBridge:
             turn_factory,
             tts_factory,
         )
+        self.person_attribution = person_attribution or (lambda: None)
+        self.expression_sink = expression_sink
         self._captures: dict[str, StackChanAudioCapture] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         self._playbacks: dict[str, StackChanAudioPlayback] = {}
         self._cancel_events: dict[str, threading.Event] = {}
+        self._settled_sessions: set[str] = set()
 
     async def on_audio(self, session_id: str, data: bytes) -> None:
         capture = self._captures.get(session_id)
@@ -247,12 +252,46 @@ class StackChanTurnBridge:
         task = self._tasks.pop(session_id, None)
         if task:
             task.cancel()
+        self._settled_sessions.add(session_id)
+        self._emit_expression("settle")
+
+    def _emit_expression(self, state: str, *, mood: str | None = None) -> None:
+        if self.expression_sink is None:
+            return
+        try:
+            self.expression_sink(state, mood=mood)
+        except Exception:
+            LOG.warning("StackChan expression event failed", exc_info=True)
+
+    def _speaker_evidence(self) -> dict | None:
+        try:
+            attribution = self.person_attribution()
+        except Exception:
+            LOG.warning("StackChan person attribution failed", exc_info=True)
+            return None
+        if not attribution:
+            return None
+        if isinstance(attribution, dict):
+            person_id = attribution.get("person_id")
+            confidence = attribution.get("confidence")
+            basis = attribution.get("basis", "voice")
+            level = attribution.get("level", confidence)
+        else:
+            person_id = getattr(attribution, "person_id", None)
+            confidence = getattr(attribution, "confidence", None)
+            basis = getattr(attribution, "basis", "voice")
+            level = getattr(attribution, "level", confidence)
+        if not person_id or confidence is None:
+            return None
+        return {"person": person_id, "basis": basis, "level": level}
 
     async def _run(self, session_id: str, device_id: str, capture: StackChanAudioCapture) -> None:
         playback = StackChanAudioPlayback(self.server, device_id)
         self._playbacks[session_id] = playback
         cancel_event = threading.Event()
         self._cancel_events[session_id] = cancel_event
+        self._emit_expression("listening")
+        self._settled_sessions.discard(session_id)
         try:
             cookie = self.link.hub_client.session_cookie
             pairing = self.link.pairing_store.load()
@@ -260,21 +299,33 @@ class StackChanTurnBridge:
                 pairing.base_url if pairing else None
             )
             if not cookie or not base:
+                self._emit_expression("thinking")
                 await asyncio.to_thread(self._offline_line, playback)
                 return
             stt = self.stt_factory(base, cookie)
             result = await asyncio.to_thread(stt.run, capture)
+            self._emit_expression("thinking")
             if result.kind != "final" or not result.text:
                 await asyncio.to_thread(self._speak_plain_error, playback, base, cookie)
                 return
             turn = self.turn_factory(base, cookie)
-            events = await asyncio.to_thread(lambda: list(turn.stream(result.text)))
+            events = await asyncio.to_thread(
+                lambda: list(turn.stream(result.text, speaker_evidence=self._speaker_evidence()))
+            )
             reply = next((e.reply_text for e in reversed(events) if e.reply_text), None)
             if reply:
                 tts = self.tts_factory(base, cookie, playback)
+                moods = [
+                    getattr(getattr(event, "cue", None), "expressed_emotion", None)
+                    for event in events
+                ]
+                mood = next((value for value in reversed(moods) if value), None)
+                if mood:
+                    self._emit_expression("reply_mood", mood=mood)
                 for sentence in _sentences(reply):
                     if asyncio.current_task().cancelling():
                         return
+                    self._emit_expression("speaking")
                     await asyncio.to_thread(tts.speak, sentence, stop_event=cancel_event)
                     if cancel_event.is_set():
                         return
@@ -291,6 +342,9 @@ class StackChanTurnBridge:
             else:
                 await asyncio.to_thread(self._speak_plain_error, playback, base, cookie)
         finally:
+            if session_id not in self._settled_sessions:
+                self._emit_expression("settle")
+            self._settled_sessions.discard(session_id)
             self._captures.pop(session_id, None)
             self._tasks.pop(session_id, None)
             self._playbacks.pop(session_id, None)

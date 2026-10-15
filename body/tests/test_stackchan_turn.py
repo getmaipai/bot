@@ -71,11 +71,13 @@ class FakeStt:
 
 class FakeTurn:
     urls = []
+    streams = []
 
     def __init__(self, base, cookie):
         self.urls.append((base, cookie))
 
-    def stream(self, text):
+    def stream(self, text, **kwargs):
+        self.streams.append((text, kwargs))
         return iter([SimpleNamespace(reply_text="Hello there. How are you?")])
 
 
@@ -98,6 +100,7 @@ def test_happy_path_streams_reply_sentences_only_to_live_hub(monkeypatch):
     server._loop = loop
     FakeStt.urls = []
     FakeTurn.urls = []
+    FakeTurn.streams = []
     FakeTts.sentences = []
     monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
     bridge = StackChanTurnBridge(
@@ -109,6 +112,87 @@ def test_happy_path_streams_reply_sentences_only_to_live_hub(monkeypatch):
     assert FakeTts.sentences == ["Hello there.", "How are you?"]
     assert FakeStt.urls == [("http://192.0.2.10", "cookie")]
     assert FakeTurn.urls == [("http://192.0.2.10", "cookie")]
+    assert FakeTurn.streams == [("hello", {"speaker_evidence": None})]
+
+
+def test_person_attribution_is_passed_as_turn_speaker_evidence(monkeypatch):
+    import maipai_body.bodies.stackchan.turn as turn_module
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    FakeTurn.streams = []
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    bridge = StackChanTurnBridge(
+        server,
+        Link(),
+        Offline(),
+        stt_factory=FakeStt,
+        turn_factory=FakeTurn,
+        tts_factory=FakeTts,
+        person_attribution=lambda: {"person_id": "person-7", "confidence": 0.87},
+    )
+    loop.run_until_complete(bridge._run("session", "device", FakeCapture()))
+    loop.close()
+    assert FakeTurn.streams == [
+        ("hello", {"speaker_evidence": {"person": "person-7", "basis": "voice", "level": 0.87}})
+    ]
+
+
+def test_turn_states_and_mood_are_emitted_and_sink_failure_is_isolated(monkeypatch):
+    import maipai_body.bodies.stackchan.turn as turn_module
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    states = []
+
+    def sink(state, *, mood=None):
+        states.append((state, mood))
+        if state == "speaking":
+            raise RuntimeError("renderer unavailable")
+
+    class MoodTurn(FakeTurn):
+        def stream(self, text, **kwargs):
+            return iter(
+                [
+                    SimpleNamespace(
+                        cue=SimpleNamespace(expressed_emotion="happiness"), reply_text=None
+                    ),
+                    SimpleNamespace(cue=None, reply_text="Hello there."),
+                ]
+            )
+
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    bridge = StackChanTurnBridge(
+        server,
+        Link(),
+        Offline(),
+        stt_factory=FakeStt,
+        turn_factory=MoodTurn,
+        tts_factory=FakeTts,
+        expression_sink=sink,
+    )
+    loop.run_until_complete(bridge._run("session", "device", FakeCapture()))
+    loop.close()
+    assert states == [
+        ("listening", None),
+        ("thinking", None),
+        ("reply_mood", "happiness"),
+        ("speaking", None),
+        ("settle", None),
+    ]
+
+
+def test_abort_emits_settle_state():
+    states = []
+    bridge = StackChanTurnBridge(
+        FakeServer(), Link(), Offline(), expression_sink=lambda state, **kw: states.append(state)
+    )
+    bridge.abort("session")
+    assert states == ["settle"]
 
 
 def test_stt_failure_speaks_plain_words_and_keeps_session_usable(monkeypatch):

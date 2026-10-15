@@ -68,7 +68,7 @@ Frames are decoded directly from bytes and are not written to disk. The measurem
 
 ## Known gaps
 
-- StackChan voice does not yet receive person attribution or expression turn-state events. The shared Home turn route still applies age and surface gates.
+- StackChan voice turns accept optional person attribution and pass it to the shared Home turn route as speaker evidence. The hub continues to apply child and teen floors and surface gates. Turn-state expression cues (listening, thinking, speaking, reply mood and settle) reach the injected expression sink; sink failures do not fail speech.
 - Opus duration and buffering have only been checked in software; device timing, acoustic echo behavior and abort latency remain unmeasured on hardware.
 - The firmware photo path is implemented; continuous avatar camera stream support does not yet deliver frames to the bridge.
 - The host-side synthetic test proves bounded correction and in-memory handling only. Match rate and false-accept rate remain unmeasured on a physical StackChan unit.
