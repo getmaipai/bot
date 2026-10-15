@@ -83,16 +83,16 @@ def _stackchan_selected(environ: Mapping[str, str] | None = None) -> bool:
     return environ.get("MAIPAI_BODY", "reachy_mini").strip().lower() == "stackchan"
 
 
-async def _serve_stackchan(
+async def _serve_stackchan_channels(
     stop_event: threading.Event,
     host: str,
-    port: int,
+    xiaozhi_port: int,
+    avatar_host: str,
+    avatar_port: int,
 ) -> None:
     from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
-    from maipai_body.bodies.stackchan.xiaozhi.pairing import (
-        PairingStore,
-        default_pairing_path,
-    )
+    from maipai_body.bodies.stackchan.avatar.server import AvatarServer
+    from maipai_body.bodies.stackchan.xiaozhi.pairing import PairingStore, default_pairing_path
     from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient, XiaozhiServer
     from maipai_body.bodies.stackchan.xiaozhi.tls import server_ssl_context
 
@@ -101,34 +101,53 @@ async def _serve_stackchan(
         vision_port = int(os.environ.get("MAIPAI_VISION_PORT", "8766"))
     except ValueError as exc:
         raise ValueError("MAIPAI_VISION_PORT must be a TCP port number.") from exc
-    server = XiaozhiServer(
-        PairingStore(default_pairing_path()),
+    pairing = PairingStore(default_pairing_path())
+    voice = XiaozhiServer(
+        pairing,
         robot=None,
         vision_host=vision_host,
         vision_port=vision_port,
         advertised_vision_url=os.environ.get("MAIPAI_VISION_URL"),
     )
+    avatar = AvatarServer(pairing)
     cert_path = os.environ.get("MAIPAI_XIAOZHI_TLS_CERT")
     key_path = os.environ.get("MAIPAI_XIAOZHI_TLS_KEY")
-    server.robot = StackChanRobotAdapter(XiaozhiDeviceClient(server))
-    await server.start(host, port, ssl_context=server_ssl_context(cert_path, key_path))
-    scheme = "wss" if cert_path else "ws"
-    logger.info("StackChan xiaozhi service listening on %s://%s:%s", scheme, host, port)
+    tls_context = server_ssl_context(cert_path, key_path)
+    voice.robot = StackChanRobotAdapter(XiaozhiDeviceClient(voice))
+    await voice.start(host, xiaozhi_port, ssl=tls_context)
     try:
+        await avatar.start(avatar_host, avatar_port, ssl=tls_context)
+        scheme = "wss" if cert_path else "ws"
+        logger.info(
+            "StackChan xiaozhi and avatar services listening on %s://%s:%s and %s://%s:%s",
+            scheme,
+            host,
+            xiaozhi_port,
+            scheme,
+            avatar_host,
+            avatar_port,
+        )
         await asyncio.to_thread(stop_event.wait)
     finally:
-        await server.close()
+        await avatar.close()
+        await voice.close()
 
 
 def _run_stackchan_service(stop_event: threading.Event) -> None:
     host = os.environ.get("MAIPAI_XIAOZHI_HOST", "127.0.0.1")
     try:
-        port = int(os.environ.get("MAIPAI_XIAOZHI_PORT", "8765"))
-        asyncio.run(_serve_stackchan(stop_event, host, port))
+        xiaozhi_port = int(os.environ.get("MAIPAI_XIAOZHI_PORT", "8765"))
+        avatar_host = os.environ.get("MAIPAI_STACKCHAN_AVATAR_HOST", "127.0.0.1")
+        if "MAIPAI_XIAOZHI_HOST" in os.environ and "MAIPAI_STACKCHAN_AVATAR_HOST" not in os.environ:
+            avatar_host = host
+        avatar_port = int(os.environ.get("MAIPAI_STACKCHAN_AVATAR_PORT", "8766"))
+        asyncio.run(
+            _serve_stackchan_channels(stop_event, host, xiaozhi_port, avatar_host, avatar_port)
+        )
     except ValueError as exc:
         raise ValueError(
-            "MAIPAI_XIAOZHI_PORT must be a TCP port number. "
-            "Set it to a free port and restart the bot."
+            "StackChan listener ports must be TCP port numbers. "
+            "Set MAIPAI_XIAOZHI_PORT and MAIPAI_STACKCHAN_AVATAR_PORT to free ports."
         ) from exc
 
 

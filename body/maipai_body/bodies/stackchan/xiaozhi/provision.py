@@ -143,6 +143,17 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Read the one-time per-device token from a file instead of the hidden prompt",
     )
+    parser.add_argument("--device-id", help="StackChan MAC address for the avatar channel")
+    parser.add_argument("--client-id", help="Stable UUID for this StackChan firmware identity")
+    parser.add_argument(
+        "--avatar-server-url",
+        help="Avatar WebSocket URL, for example ws://192.0.2.10:8766",
+    )
+    parser.add_argument(
+        "--firmware-recipe",
+        type=Path,
+        help="Optional firmware recipe to build with the same device identity and token",
+    )
     parser.add_argument("--version", required=True, help="Server protocol version")
     parser.add_argument(
         "--ota-url",
@@ -157,6 +168,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--esptool", help="Path to esptool.py")
     args = parser.parse_args(argv)
     try:
+        if bool(args.device_id) != bool(args.client_id):
+            raise ValueError("--device-id and --client-id must be provided together.")
+        if args.firmware_recipe and not args.device_id:
+            raise ValueError("--firmware-recipe requires --device-id and --client-id.")
         if args.write and not args.port:
             raise ValueError("--write needs --port. Add the USB serial port and retry.")
         if not args.write and args.port:
@@ -219,6 +234,26 @@ def main(argv: list[str] | None = None) -> int:
             partition_size=args.size,
             generator=args.generator,
         )
+        if args.token_file and args.firmware_recipe:
+            args.token_file.unlink()
+        if args.firmware_recipe:
+            recipe_args = [
+                str(args.firmware_recipe),
+                "--device-id",
+                args.device_id,
+                "--client-id",
+                args.client_id,
+                "--pairing-token",
+                token,
+            ]
+            if args.avatar_server_url:
+                recipe_args.extend(["--avatar-server-url", args.avatar_server_url])
+            result = subprocess.run(
+                recipe_args,
+                check=False,
+            )
+            if result.returncode:
+                raise RuntimeError("Firmware recipe failed. Keep the token file and retry.")
         print(json.dumps({"image": str(image), "bytes": image.stat().st_size}))
         print("Steps: 1. Keep the robot connected by its USB-C data port.")
         print("2. Back up the existing flash before changing partitions.")

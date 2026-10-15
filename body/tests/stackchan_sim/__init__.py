@@ -1,4 +1,4 @@
-"""Firmware-faithful StackChan helpers used by offline service tests."""
+"""Firmware-faithful StackChan helpers and local peers for protocol tests."""
 
 from .firmware import StackChanFirmware
 

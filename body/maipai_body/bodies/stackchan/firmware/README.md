@@ -19,3 +19,16 @@ The file must be a readable X.509 certificate in PEM format. The recipe writes i
 The default server URL remains unchanged. Provisioning selects the server URL and websocket scheme for the installed hub.
 
 Patch 010 adds the `self.battery.get_status` MCP tool. It returns the PMIC battery level as `percent` and charging state as `charging`, using StackChan's existing HAL power-management methods.
+
+The default avatar server URL is empty. Pass `--avatar-server-url ws://192.0.2.10:8766` to build with `CONFIG_STACKCHAN_SERVER_URL` pointing to the Bot host. Use the Bot host's LAN address, not loopback, from the robot.
+
+The avatar channel uses the same per-device pairing token and allowlist as xiaozhi. Patch 011 adds the `Device-Id` and `Client-Id` request headers and reads the configured token rather than M5's `hi-stack-chan` constant. Supply these values to the recipe for the approved identity:
+
+```sh
+firmware/recipe.sh --avatar-server-url ws://192.0.2.10:8766 \
+  --device-id 02:00:00:00:00:15 \
+  --client-id 00000000-0000-4000-8000-000000000015 \
+  --pairing-token <private-per-device-token>
+```
+
+Treat the token and build directory as private. The recipe does not print the token, and `sdkconfig.defaults.local` is restored after the build. Keep it out of logs and shared build artifacts.

@@ -38,18 +38,23 @@ def test_stackchan_service_binds_loopback_by_default_and_honors_host_override(mo
 
     started = []
 
-    async def fake_serve(stop_event, host, port):
-        started.append((host, port))
+    async def fake_serve(stop_event, host, port, avatar_host, avatar_port):
+        started.append((host, port, avatar_host, avatar_port))
         stop_event.set()
 
-    monkeypatch.setattr(app_module, "_serve_stackchan", fake_serve)
+    monkeypatch.setattr(app_module, "_serve_stackchan_channels", fake_serve)
     monkeypatch.delenv("MAIPAI_XIAOZHI_HOST", raising=False)
     monkeypatch.delenv("MAIPAI_XIAOZHI_PORT", raising=False)
+    monkeypatch.delenv("MAIPAI_STACKCHAN_AVATAR_HOST", raising=False)
+    monkeypatch.delenv("MAIPAI_STACKCHAN_AVATAR_PORT", raising=False)
     app_module._run_stackchan_service(threading.Event())
     monkeypatch.setenv("MAIPAI_XIAOZHI_HOST", "192.0.2.12")
     app_module._run_stackchan_service(threading.Event())
 
-    assert started == [("127.0.0.1", 8765), ("192.0.2.12", 8765)]
+    assert started == [
+        ("127.0.0.1", 8765, "127.0.0.1", 8766),
+        ("192.0.2.12", 8765, "192.0.2.12", 8766),
+    ]
 
 
 @dataclass

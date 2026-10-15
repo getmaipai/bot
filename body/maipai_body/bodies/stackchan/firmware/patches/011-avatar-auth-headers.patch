@@ -1,0 +1,58 @@
+# Intent: use the provisioned identity and bearer token on M5's avatar channel.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_ws_avatar.cpp (MIT).
+diff --git a/firmware/main/Kconfig.projbuild b/firmware/main/Kconfig.projbuild
+index 89592a0..e0ff1a7 100644
+--- a/firmware/main/Kconfig.projbuild
++++ b/firmware/main/Kconfig.projbuild
+@@ -3,6 +3,18 @@ menu "StackChan Server"
+ config STACKCHAN_SERVER_URL
+     string "StackChan server base URL"
+     default "http://47.113.125.164:12800"
++
++config STACKCHAN_DEVICE_ID
++    string "MaiPai Device-Id"
++    default ""
++
++config STACKCHAN_CLIENT_ID
++    string "MaiPai Client-Id"
++    default ""
++
++config STACKCHAN_PAIRING_TOKEN
++    string "MaiPai pairing token"
++    default ""
+     help
+         Base URL (scheme + host + port, no trailing slash) of the StackChan backend.
+         The HAL composes endpoint paths like /stackChan/device/user,
+diff --git a/firmware/main/hal/hal_ws_avatar.cpp b/firmware/main/hal/hal_ws_avatar.cpp
+index 0fc43ec..67421ac 100644
+--- a/firmware/main/hal/hal_ws_avatar.cpp
++++ b/firmware/main/hal/hal_ws_avatar.cpp
+@@ -115,6 +115,12 @@ public:
+ 
+         // 设置认证头
+         _websocket->SetHeader("Authorization", token.c_str());
++#ifdef CONFIG_STACKCHAN_DEVICE_ID
++        _websocket->SetHeader("Device-Id", CONFIG_STACKCHAN_DEVICE_ID);
++#endif
++#ifdef CONFIG_STACKCHAN_CLIENT_ID
++        _websocket->SetHeader("Client-Id", CONFIG_STACKCHAN_CLIENT_ID);
++#endif
+ 
+         // 设置回调
+         _websocket->OnConnected([this]() {
+diff --git a/firmware/main/hal/utils/secret_logic/secret_logic.cpp b/firmware/main/hal/utils/secret_logic/secret_logic.cpp
+index 7194b6f..10ea3f4 100644
+--- a/firmware/main/hal/utils/secret_logic/secret_logic.cpp
++++ b/firmware/main/hal/utils/secret_logic/secret_logic.cpp
+@@ -19,7 +19,11 @@ __attribute__((weak)) std::string get_server_url()
+ 
+ __attribute__((weak)) std::string generate_auth_token()
+ {
++#ifdef CONFIG_STACKCHAN_PAIRING_TOKEN
++    return CONFIG_STACKCHAN_PAIRING_TOKEN;
++#else
+     return "hi-stack-chan";
++#endif
+ }
+ 
+ __attribute__((weak)) std::string generate_handshake_token(std::string_view data)

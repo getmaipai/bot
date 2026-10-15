@@ -4,6 +4,10 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 PIN_FILE="$HERE/pins.toml"
 export PATH="/opt/homebrew/opt/python@3.12/libexec/bin:$PATH"
 CA_FILE=""
+AVATAR_SERVER_URL=""
+DEVICE_ID=""
+CLIENT_ID=""
+PAIRING_TOKEN=""
 PERSISTENT_WEBSOCKET=""
 while (($#)); do
   case "$1" in
@@ -19,8 +23,25 @@ while (($#)); do
       CA_FILE="$2"
       shift 2
       ;;
+    --avatar-server-url)
+      if (($# < 2)) || [[ -z "$2" ]]; then
+        echo "--avatar-server-url needs a ws:// or wss:// URL. Retry with --avatar-server-url ws://192.0.2.10:8766." >&2
+        exit 2
+      fi
+      AVATAR_SERVER_URL="$2"
+      shift 2
+      ;;
+    --device-id)
+      if (($# < 2)) || [[ -z "$2" ]]; then echo "--device-id needs the device MAC address." >&2; exit 2; fi
+      DEVICE_ID="$2"; shift 2 ;;
+    --client-id)
+      if (($# < 2)) || [[ -z "$2" ]]; then echo "--client-id needs the device UUID." >&2; exit 2; fi
+      CLIENT_ID="$2"; shift 2 ;;
+    --pairing-token)
+      if (($# < 2)) || [[ -z "$2" ]]; then echo "--pairing-token needs the per-device token." >&2; exit 2; fi
+      PAIRING_TOKEN="$2"; shift 2 ;;
     *)
-      echo "Unknown option: $1. Use --ca-file /path/to/ca.pem, --no-persistent-websocket, or no option." >&2
+      echo "Unknown option: $1. Use --avatar-server-url ws://192.0.2.10:8766, --device-id <MAC> --client-id <UUID> --pairing-token <token>, --ca-file /path/to/ca.pem, or --no-persistent-websocket." >&2
       exit 2
       ;;
   esac
@@ -39,6 +60,25 @@ if [[ -n "$CA_FILE" ]]; then
     echo "CA PEM file is not a readable X.509 certificate: $CA_FILE. Provide a CA certificate in PEM format." >&2
     exit 2
   fi
+fi
+if [[ -n "$AVATAR_SERVER_URL" && ! "$AVATAR_SERVER_URL" =~ ^wss?://[^/[:space:]]+(/[^[:space:]]*)?$ ]]; then
+  echo "Invalid avatar server URL: use ws:// or wss:// followed by a host and optional path." >&2
+  exit 2
+fi
+if [[ -n "$DEVICE_ID" && ! "$DEVICE_ID" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]]; then
+  echo "Invalid Device-Id; use the device MAC address (for example 02:00:00:00:00:15)." >&2; exit 2
+fi
+if [[ -n "$DEVICE_ID" && -z "$CLIENT_ID" ]] || [[ -n "$CLIENT_ID" && -z "$DEVICE_ID" ]]; then
+  echo "--device-id and --client-id must be provided together." >&2; exit 2
+fi
+if [[ -n "$PAIRING_TOKEN" && -z "$DEVICE_ID" ]]; then
+  echo "--pairing-token requires --device-id and --client-id." >&2; exit 2
+fi
+if [[ -n "$DEVICE_ID" && -z "$PAIRING_TOKEN" ]]; then
+  echo "--pairing-token is required with the avatar Device-Id and Client-Id." >&2; exit 2
+fi
+if [[ -n "$CLIENT_ID" && ! "$CLIENT_ID" =~ ^[[:xdigit:]]{8}-([[:xdigit:]]{4}-){3}[[:xdigit:]]{12}$ ]]; then
+  echo "Invalid Client-Id; use a UUID." >&2; exit 2
 fi
 ESP_IDF_VERSION=$(python3 - "$PIN_FILE" <<'PY'
 import sys, tomllib
@@ -198,15 +238,28 @@ apply_repo_patch 007-unique-firmware-identity.patch "$SRC"
 apply_repo_patch 008-additional-ca-bundle.patch "$SRC"
 apply_repo_patch 009-axp2101-charging-timeout.patch "$FW/xiaozhi-esp32"
 apply_repo_patch 010-battery-status.patch "$SRC"
+apply_repo_patch 011-avatar-auth-headers.patch "$SRC"
 
 cat > "$FW/sdkconfig.defaults.local" <<CFG
-CONFIG_STACKCHAN_SERVER_URL=""
+CONFIG_STACKCHAN_SERVER_URL="$AVATAR_SERVER_URL"
 CONFIG_OTA_URL=""
 CONFIG_STACKCHAN_NTP_SERVER=""
 CONFIG_STACKCHAN_XIAOZHI_OTA_CHECK=n
 CFG
+if [[ -n "$DEVICE_ID" ]]; then
+  printf 'CONFIG_STACKCHAN_DEVICE_ID="%s"\n' "$DEVICE_ID" >> "$FW/sdkconfig.defaults.local"
+fi
+if [[ -n "$CLIENT_ID" ]]; then
+  printf 'CONFIG_STACKCHAN_CLIENT_ID="%s"\n' "$CLIENT_ID" >> "$FW/sdkconfig.defaults.local"
+fi
+if [[ -n "$PAIRING_TOKEN" ]]; then
+  if [[ "$PAIRING_TOKEN" == *'"'* || "$PAIRING_TOKEN" == *'\'* || "$PAIRING_TOKEN" == *$'\n'* ]]; then
+    echo "Pairing token contains a character sdkconfig cannot represent." >&2; exit 2
+  fi
+  printf 'CONFIG_STACKCHAN_PAIRING_TOKEN="%s"\n' "$PAIRING_TOKEN" >> "$FW/sdkconfig.defaults.local"
+fi
 if [[ "$PERSISTENT_WEBSOCKET" == "n" ]]; then
-  echo 'CONFIG_STACKCHAN_PERSISTENT_WEBSOCKET=n' >> "$LOCAL_CONFIG"
+  echo 'CONFIG_STACKCHAN_PERSISTENT_WEBSOCKET=n' >> "$FW/sdkconfig.defaults.local"
 fi
 if [[ -n "$CA_FILE" ]]; then
   python3 - "$FW/sdkconfig.defaults.local" "$CA_FILE" <<'PY'
