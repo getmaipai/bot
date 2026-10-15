@@ -2,6 +2,14 @@
 
 `recipe.sh` builds the pinned StackChan source with the MaiPai firmware patches. It requires the pinned ESP-IDF version in `pins.toml` and the tools installed by ESP-IDF.
 
+## Reproducible release
+
+Use `release.sh --date YYYY-MM-DD --output <directory>` to build with `espressif/idf:v5.5.4`, then write the three firmware images, `SHA256SUMS`, and `manifest.json`. The manifest records the recipe commit, full pins, each ordered patch hash, ESP-IDF version, and the supplied build date. `verify.sh <directory>` recomputes every listed hash and fails if an image or manifest changed. A release refuses to start if any source, dependency, or container pin is missing a SHA256. Container builds require Docker or a compatible engine. If no container engine is installed, the documented fallback is to export a local ESP-IDF 5.5.4 toolchain and run `recipe.sh` directly; it still enforces the pinned version.
+
+Patch 004 removes public NTP host strings from firmware source when `CONFIG_STACKCHAN_NTP_SERVER` is empty, as set by the recipe. At first boot, the device uses plain `ws://` to reach the provisioned host. The host must supply `server_time` (Unix epoch seconds) in its first OTA reply so the firmware can set its clock before a later TLS connection. Until a valid clock is established, provision `ws://`; a device must not attempt `wss://` with an unset RTC. The current Bot xiaozhi service does not implement the OTA exchange yet, so this host-side time handoff and TLS transition remain unverified and must be completed before private-CA TLS is enabled.
+
+Firmware updates are a deliberate host-side operation: an administrator reviews and approves an image, verifies its checksums, and provisions it through the supported local process. The service OTA response never advertises `firmware.url`.
+
 Patch 009 makes a failed common I2C register read log a warning and return zero. This covers the AXP2101 charge-direction read at register `0x01`, so `Axp2101::IsCharging()` returns false on an I2C timeout instead of aborting the firmware. It also makes other common register reads return zero on failure, so callers must treat zero as an unavailable reading where appropriate.
 
 Run `STACKCHAN_CHECK_ONLY=1 firmware/recipe.sh` to fetch the pinned source and verify patch application plus Kconfig. A normal recipe run performs a full build when the pinned ESP-IDF toolchain is installed.

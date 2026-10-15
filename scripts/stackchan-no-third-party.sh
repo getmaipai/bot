@@ -16,9 +16,10 @@ def parse_args():
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--pcap", type=Path, help="pcap or pcapng file (requires tshark)")
     source.add_argument("--hosts", type=Path, help="text file with one destination IP per line")
-    parser.add_argument("--hub", action="append", required=True, help="allowed hub IP (repeatable)")
+    source.add_argument("--strings", type=Path, help="built image strings output to scan for vendor hosts")
+    parser.add_argument("--hub", action="append", help="allowed hub IP (repeatable)")
     parser.add_argument(
-        "--router", action="append", required=True, help="allowed router IP for local DNS/DHCP"
+        "--router", action="append", help="allowed router IP for local DNS/DHCP"
     )
     return parser.parse_args()
 
@@ -63,6 +64,24 @@ def read_hosts(args):
 
 def main():
     args = parse_args()
+    if args.strings:
+        try:
+            text = args.strings.read_text(encoding="utf-8", errors="replace").lower()
+        except OSError as exc:
+            print(f"ERROR: Could not read strings list: {exc}", file=sys.stderr)
+            return 2
+        vendors = ("tenclass", "m5stack", "ezdata2", "uiflow2", "pool.ntp.org", "time.google.com")
+        found = [host for host in vendors if host in text]
+        if found:
+            print("FAIL: vendor host string(s) found in built image:")
+            for host in found:
+                print(f"  {host}")
+            return 1
+        print("OK: no prohibited vendor host strings in built image.")
+        return 0
+    if not args.hub or not args.router:
+        print("ERROR: --hub and --router are required for destination scans.", file=sys.stderr)
+        return 2
     try:
         destinations = read_hosts(args)
         exact = {ipaddress.ip_address(value) for value in args.hub + args.router}

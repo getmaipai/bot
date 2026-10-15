@@ -1,6 +1,6 @@
 # StackChan custom firmware: build recipe design (2026-10-14)
 
-Status: DRAFT, design only. Nothing built or flashed; the unit has not arrived. Every step marked UNVERIFIED is settled on the unit.
+Status: release scripts, manifest, checksum verification, and vendor-string release gate implemented; hardware unverified because the unit has not arrived.
 Inputs: `design-stackchan-pieces-and-gaps-2026-10-14.md` (gaps A to Q, section 8) and the research behind it.
 Decided by Jesse, 2026-10-14: custom firmware first; step one is voice and tools (xiaozhi side) only.
 
