@@ -7,6 +7,7 @@ import concurrent.futures
 import itertools
 import json
 import logging
+import ssl
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -189,10 +190,21 @@ class XiaozhiServer:
         self._session_ready = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
 
-    async def start(self, host: str = "127.0.0.1", port: int = 8765) -> None:
+    async def start(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8765,
+        ssl: ssl.SSLContext | None = None,
+    ) -> None:
         self._loop = asyncio.get_running_loop()
         self._server = await serve(
-            self.handle, host, port, max_size=2**20, ping_interval=20, ping_timeout=20
+            self.handle,
+            host,
+            port,
+            max_size=2**20,
+            ping_interval=20,
+            ping_timeout=20,
+            ssl=ssl,
         )
         app = web.Application(client_max_size=self.max_photo_bytes)
         app.router.add_post("/vision/{device_id}", self._receive_photo)

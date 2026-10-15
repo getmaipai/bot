@@ -1,0 +1,23 @@
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index 42d1b6a..b219e88 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -24,6 +24,18 @@ void Hal::xiaozhi_mcp_init()
+     // System Prompt：
+     // You can control the robot's head. Use get_yaw and get_pitch to sense current position. Use set_yaw for horizontal
+     // movement and set_pitch for vertical movement. All angles are in degrees.
+ 
++    mclog::tagInfo(_tag, "add battery.get_status tool");
++    mcp_server.AddTool("self.battery.get_status",
++                       "Returns current battery level as a percent and whether the battery is charging.",
++                       std::vector<Property>{}, [this](const PropertyList& properties) -> ReturnValue {
++                           auto& hal = GetHAL();
++                           auto result = fmt::format(R"({{"percent": {}, "charging": {}}})",
++                                                     hal.getBatteryLevel(),
++                                                     hal.isBatteryCharging() ? "true" : "false");
++                           mclog::tagInfo(_tag, "battery status: {}", result);
++                           return result;
++                       });
++
+     mclog::tagInfo(_tag, "add robot.get_head_angles tool");
+     mcp_server.AddTool("self.robot.get_head_angles",

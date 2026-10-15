@@ -197,6 +197,7 @@ apply_repo_patch 005-disable-m5-registry-mqtt.patch "$SRC"
 apply_repo_patch 007-unique-firmware-identity.patch "$SRC"
 apply_repo_patch 008-additional-ca-bundle.patch "$SRC"
 apply_repo_patch 009-axp2101-charging-timeout.patch "$FW/xiaozhi-esp32"
+apply_repo_patch 010-battery-status.patch "$SRC"
 
 cat > "$FW/sdkconfig.defaults.local" <<CFG
 CONFIG_STACKCHAN_SERVER_URL=""

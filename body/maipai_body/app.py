@@ -83,13 +83,18 @@ def _stackchan_selected(environ: Mapping[str, str] | None = None) -> bool:
     return environ.get("MAIPAI_BODY", "reachy_mini").strip().lower() == "stackchan"
 
 
-async def _serve_stackchan(stop_event: threading.Event, host: str, port: int) -> None:
+async def _serve_stackchan(
+    stop_event: threading.Event,
+    host: str,
+    port: int,
+) -> None:
     from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
     from maipai_body.bodies.stackchan.xiaozhi.pairing import (
         PairingStore,
         default_pairing_path,
     )
     from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient, XiaozhiServer
+    from maipai_body.bodies.stackchan.xiaozhi.tls import server_ssl_context
 
     vision_host = os.environ.get("MAIPAI_VISION_HOST", host)
     try:
@@ -103,9 +108,12 @@ async def _serve_stackchan(stop_event: threading.Event, host: str, port: int) ->
         vision_port=vision_port,
         advertised_vision_url=os.environ.get("MAIPAI_VISION_URL"),
     )
+    cert_path = os.environ.get("MAIPAI_XIAOZHI_TLS_CERT")
+    key_path = os.environ.get("MAIPAI_XIAOZHI_TLS_KEY")
     server.robot = StackChanRobotAdapter(XiaozhiDeviceClient(server))
-    await server.start(host, port)
-    logger.info("StackChan xiaozhi service listening on %s:%s", host, port)
+    await server.start(host, port, ssl_context=server_ssl_context(cert_path, key_path))
+    scheme = "wss" if cert_path else "ws"
+    logger.info("StackChan xiaozhi service listening on %s://%s:%s", scheme, host, port)
     try:
         await asyncio.to_thread(stop_event.wait)
     finally:

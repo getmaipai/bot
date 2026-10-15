@@ -5,13 +5,18 @@ from __future__ import annotations
 import argparse
 import csv
 import getpass
+import ipaddress
 import json
+import os
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
+
+from .tls import generate_local_ca
 
 
 def _tool(name: str) -> str:
@@ -31,6 +36,16 @@ def _tool_python(tool: str) -> str:
         if candidate.is_file() and candidate != Path(sys.executable):
             return str(candidate)
     return sys.executable
+
+
+def _service_url(host: str, port: int, tls: bool) -> str:
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        formatted_host = host
+    else:
+        formatted_host = f"[{address}]" if address.version == 6 else str(address)
+    return f"{'wss' if tls else 'ws'}://{formatted_host}:{port}"
 
 
 def generate_image(
@@ -111,7 +126,17 @@ def write_image(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--url", required=True, help="LAN WebSocket URL, for example ws://192.0.2.10:8765"
+        "--url", help="LAN WebSocket URL; defaults from --host and configured TLS mode"
+    )
+    parser.add_argument("--host", help="Bot host LAN hostname or IP for the default URL")
+    parser.add_argument(
+        "--service-port", type=int, default=None, help="Bot WebSocket port for the default URL"
+    )
+    parser.add_argument(
+        "--generate-tls",
+        type=Path,
+        metavar="DIR",
+        help="Generate a local CA and server certificate in this private directory",
     )
     parser.add_argument(
         "--token-file",
@@ -149,9 +174,45 @@ def main(argv: list[str] | None = None) -> int:
             token = args.token_file.read_text().strip()
         else:
             token = getpass.getpass("One-time StackChan token: ")
+        tls_configured = bool(
+            os.environ.get("MAIPAI_XIAOZHI_TLS_CERT") and os.environ.get("MAIPAI_XIAOZHI_TLS_KEY")
+        )
+        if args.generate_tls:
+            host = args.host or os.environ.get("MAIPAI_XIAOZHI_HOST")
+            if not host:
+                raise ValueError(
+                    "--generate-tls needs --host or MAIPAI_XIAOZHI_HOST. "
+                    "Set the Bot LAN host and retry."
+                )
+            ca_cert, server_cert, server_key = generate_local_ca(args.generate_tls, host)
+            print(f"CA certificate: {ca_cert}")
+            print(f"Server certificate: {server_cert}")
+            print(f"Server key: {server_key}")
+            print(
+                "Configure Bot with MAIPAI_XIAOZHI_TLS_CERT="
+                f"{server_cert} MAIPAI_XIAOZHI_TLS_KEY={server_key}"
+            )
+            print(f"Firmware recipe: recipe.sh --ca-file {ca_cert}")
+            tls_configured = True
+        websocket_url = args.url
+        if not websocket_url:
+            host = args.host or os.environ.get("MAIPAI_XIAOZHI_HOST")
+            if not host:
+                raise ValueError("--url or --host is required. Set the Bot LAN host and retry.")
+            port = args.service_port or int(os.environ.get("MAIPAI_XIAOZHI_PORT", "8765"))
+            websocket_url = _service_url(host, port, tls_configured)
+        elif tls_configured:
+            parsed_url = urlsplit(websocket_url)
+            if parsed_url.scheme == "ws":
+                websocket_url = urlunsplit(parsed_url._replace(scheme="wss"))
+        if websocket_url.startswith("wss://") and not tls_configured and not args.generate_tls:
+            raise ValueError(
+                "A wss:// URL needs MAIPAI_XIAOZHI_TLS_CERT and MAIPAI_XIAOZHI_TLS_KEY. "
+                "Configure both Bot certificate paths or use ws://."
+            )
         image = generate_image(
             args.output,
-            websocket_url=args.url,
+            websocket_url=websocket_url,
             token=token,
             version=args.version,
             ota_url=args.ota_url,

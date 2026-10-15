@@ -1,6 +1,6 @@
 # StackChan service
 
-The Bot app starts the xiaozhi WebSocket service only when `MAIPAI_BODY=stackchan`. Other body configurations do not start it. The service listens on `127.0.0.1:8765` by default; set `MAIPAI_XIAOZHI_HOST` to the Bot host's LAN address and `MAIPAI_XIAOZHI_PORT` to select another port. The current provisioned `ws://` connection sends the bearer token, audio, and control frames as cleartext to devices on that LAN. Keep the robot and Bot host on a trusted network. The firmware can verify a `wss://` server when built with `--ca-file <pem>` containing the issuing CA. The server certificate must include a SAN matching the host or IP in the robot's URL, and the current Bot service does not yet provide a TLS listener, so use `ws://` on a trusted home network for now.
+The Bot app starts the xiaozhi WebSocket service only when `MAIPAI_BODY=stackchan`. Other body configurations do not start it. The service listens on `127.0.0.1:8765` by default; set `MAIPAI_XIAOZHI_HOST` to the Bot host's LAN address and `MAIPAI_XIAOZHI_PORT` to select another port. Set both `MAIPAI_XIAOZHI_TLS_CERT` and `MAIPAI_XIAOZHI_TLS_KEY` to enable TLS; leave both unset for the default `ws://` listener. The firmware verifies `wss://` when built with `--ca-file <pem>`, and the certificate SAN must match the URL host or IP. Use `stackchan-provision --generate-tls <private-dir> --host <bot-lan-host>` to create a local CA and server certificate, then build firmware with the printed `recipe.sh --ca-file` command.
 
 The firmware recipe enables its persistent WebSocket by default; `--ca-file <pem>` adds a CA bundle and `--no-persistent-websocket` restores session-only behavior. See the [firmware guide](../../body/maipai_body/bodies/stackchan/firmware/README.md) for details.
 
@@ -29,10 +29,10 @@ Pairing routes accept requests from the local computer only and require the dash
 Install the Bot package in its managed environment, then generate an NVS image without writing it:
 
 ```bash
-uv run stackchan-provision --url ws://192.0.2.10:8765 --version 1 --ota-url http://192.0.2.10:8765/ota --output stackchan-nvs.bin
+uv run stackchan-provision --host 192.0.2.10 --version 1 --ota-url http://192.0.2.10:8765/ota --output stackchan-nvs.bin
 ```
 
-The command asks for the token without echoing it. For a token issued by the Pairing API, pass its file path with `--token-file <path>`. The image is created with owner-only permissions because it contains the device token. To write it over USB, add `--write --port <serial-port>`. Without `--write`, the command never calls esptool. Keep the generated image private and remove it when provisioning is complete.
+The command asks for the token without echoing it. With TLS configured on the Bot, the default URL uses `wss://`; otherwise it uses `ws://`. For a token issued by the Pairing API, pass its file path with `--token-file <path>`. The image is created with owner-only permissions because it contains the device token. To write it over USB, add `--write --port <serial-port>`. Without `--write`, the command never calls esptool. Keep the generated image private and remove it when provisioning is complete.
 
 The recipe and pins live in `body/maipai_body/bodies/stackchan/firmware/`. `recipe.sh` fetches the pinned sources, applies the M5 patch and our ordered patches, builds, scans the binary and prints hashes. Build output stays outside the repository. `bump.sh <commit>` checks whether the M5 patch and each MaiPai patch still apply to a proposed upstream commit; inspect the patch changes and host-list changes before accepting new pins.
 
