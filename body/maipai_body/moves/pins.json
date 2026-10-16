@@ -78,21 +78,21 @@
         "thoughtful1": "327d5253553b9b17afb93f414de95190eb70940abacf3fb35d5cc4edd0c1b115",
         "thoughtful2": "fb07c774e2f52d098833e23ee43dece8adf7c85951bcdce5481d8e38fc2f0b0a",
         "tired1": "a3cef01a9bf7dbb7d368d123ca1535768dc0eb597606349f35dca744e9f4ce26",
+        "toc-toc-toc": "2c4d0fc049a9db0e35436615a6b2259c315f16cf96f75cf64eb5761b3a6a3190",
         "uncertain1": "897f80471bd2eb3a073dd05dd82bbd428cca2d8051181cf5526bdbbe021dd0e9",
         "uncomfortable1": "d1d22d3f2fbf37884343ecd28382f644871b81a989150ea5e4f11bb7670cfdfe",
         "understanding1": "75a1341acec63c421bda3b1302aeac8117eecf281d30b0f34a458b3ec973b37a",
         "understanding2": "78294e3e9b71a590d488e9578a0c1b123ad4c6236a3a4af8ef4a74707a2cf4e6",
+        "waiting": "5fc7e14ce0f41e6f61b004a054511651379d35a3bea3f10c48c2b3b368f5b01b",
         "welcoming1": "abeb5233b28118c66111875345d441e76ae54346a4e79a25914d07dcc1aedced",
         "welcoming2": "625585782534956eaf109fff0b0c4e87f751226ab43dbdd64260d9d9a15417d7",
         "yes1": "b355cabc9c7ef844055b2b3bb96ca914118fab1c842429e724f512852aa47568",
         "yes_sad1": "f1c80cbb282987ee7707d2850247da9c265e28f53c16b56df69ecafa9869941b"
       },
       "excluded": {
-        "mini-deep-sleep": "not a well-formed move: mini-deep-sleep: times must strictly increase",
+        "mini-deep-sleep": "antenna_left target -3.1493 rad is outside [-3.1416, 3.1416] rad (the running daemon's /api/kinematics/urdf, right_antenna/left_antenna joint limits (reachy-mini daemon 1.11.0, verified live against the simulator, 2026-09-27), 2026-09-27)",
         "sad2": "antenna_right target 3.1469 rad is outside [-3.1416, 3.1416] rad (the running daemon's /api/kinematics/urdf, right_antenna/left_antenna joint limits (reachy-mini daemon 1.11.0, verified live against the simulator, 2026-09-27), 2026-09-27)",
-        "toc-toc-toc": "not a well-formed move: toc-toc-toc: times must strictly increase",
-        "waiting": "not a well-formed move: waiting: times must strictly increase",
-        "wake-mini-up": "not a well-formed move: wake-mini-up: times must strictly increase"
+        "wake-mini-up": "antenna_right target 3.1416 rad is outside [-3.1416, 3.1416] rad (the running daemon's /api/kinematics/urdf, right_antenna/left_antenna joint limits (reachy-mini daemon 1.11.0, verified live against the simulator, 2026-09-27), 2026-09-27)"
       },
       "clips": {
         "amazed1": "When you discover something extraordinary. It could be a new robot, or someone tells you you've been programmed with new abilities. It can also be when you admire what someone has done.",

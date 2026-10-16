@@ -64,6 +64,20 @@ def test_the_shipped_pins_cover_both_libraries_with_a_clip_index():
         assert not set(pin.files) & set(pin.excluded)
 
 
+def test_clips_with_repeated_timestamps_are_pinned_after_the_parser_fix():
+    emotions = {pin.library: pin for pin in load_pins()}["emotions"]
+    assert emotions.files["toc-toc-toc"] == (
+        "2c4d0fc049a9db0e35436615a6b2259c315f16cf96f75cf64eb5761b3a6a3190"
+    )
+    assert emotions.files["waiting"] == (
+        "5fc7e14ce0f41e6f61b004a054511651379d35a3bea3f10c48c2b3b368f5b01b"
+    )
+    for name in ("mini-deep-sleep", "wake-mini-up"):
+        assert name not in emotions.files
+        assert "antenna" in emotions.excluded[name]
+        assert "strictly increase" not in emotions.excluded[name]
+
+
 def test_the_clip_index_comes_from_metadata_jsonl():
     text = (
         '{"file_name": "amazed1.ogg", "title": "amazed1", "description": "Wow.", '
