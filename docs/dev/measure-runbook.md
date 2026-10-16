@@ -150,6 +150,16 @@ default. Nothing below has been run.
 | IMU read rate | Log timestamps of ten `Imu.read()` calls in a row over HTTP | Whether the rate resolves a 120 ms impulse. If not, the mic onset detector (2 kHz high-pass, spectral flux) is the second candidate |
 | Carry and nudge | Lift and carry the sleeping body three times; nudge the table | Pass: never a wake. Sets `MAX_IMPULSE_S` and `QUIET_S` |
 
+## ROBOT-TIME-01: the clock correction (unit)
+
+`body/maipai_body/link/timesync.py` sets the clock with `sudo -n /bin/date -u -s @epoch`.
+Nothing below has been run.
+
+| Row | Run | Reads as |
+|---|---|---|
+| Privileged date | On the unit, as the app user, run the setter once with the hub's time | Whether `sudo -n date` works (the installer writes no sudoers line yet) or the SDK ships its own privileged helper. If neither, the installer gains a one-line sudoers drop-in for `/bin/date` only |
+| Boot with no network | Power on with the hub off, then bring the hub up | `clock_synced` false until the first redeem, then true; the clock corrected once |
+
 ## What the simulator already showed, and what it cannot
 
 - The harnesses run end to end against `reachy-mini-daemon` 1.11.0 `--sim`:

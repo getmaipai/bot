@@ -625,7 +625,10 @@ open.
   sender learns the receiver's time on the link, corrects its clock,
   and re-stamps only the ops in its outbox that no other node has ever
   seen, which is safe because an unsent op has no reader; a sent stamp
-  is immutable. The hub is the time authority on the link; a robot with
+  is immutable. The hub is the time authority on the link (the robot
+  compares its clock to the `Date` header of every redeem and to every
+  `time` command, corrects a drift over 1 s once through a privileged
+  `date`, and reports `clock_synced`: `link/timesync.py`); a robot with
   no time source since boot keeps stamping from its RTC, marks time
   unsynced, and syncs from the hub before its first push; relative
   timers work, absolute ones say so.

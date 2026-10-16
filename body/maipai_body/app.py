@@ -54,6 +54,7 @@ from maipai_body.link.rung0 import Rung0Cues
 from maipai_body.link.state import StateReporter
 from maipai_body.link.state_machine import DEFAULT_SLEEP_AFTER_MINUTES, LinkStateMachine
 from maipai_body.link.supervisor import LinkSupervisor
+from maipai_body.link.timesync import ClockSync, system_clock_setter
 from maipai_body.moves.react import build_react_hook
 from maipai_body.presence.motor_health import MotorHealth
 from maipai_body.presence.thermal import ThermalMonitor
@@ -700,6 +701,8 @@ def _build_conversation_loop(
         credentials=command_credentials,
         settings_handler=apply_settings,
         time_handler=getattr(link.hub_client, "sync_time", None),
+
+        time_handler=getattr(getattr(link.hub_client, "clock_sync", None), "observe_iso", None),
         on_drop=link.channel_lost,
         handlers={
             "mute": lambda _payload: set_muted({"muted": True}),
@@ -743,6 +746,12 @@ def _has_stored_pairing(link: LinkLifecycle) -> bool:
     except Exception:
         logger.warning("could not read the stored pairing at boot", exc_info=True)
         return False
+
+
+def _clock_synced(link: object) -> bool:
+    """ROBOT-TIME-01: false until the first contact with the hub since boot."""
+    sync = getattr(getattr(link, "hub_client", None), "clock_sync", None)
+    return bool(getattr(sync, "synced", False)) if isinstance(sync, ClockSync) else False
 
 
 def run_paired_body(
@@ -843,12 +852,14 @@ def run_paired_body(
                     "activity": "starting",
                     "muted": False,
                     "tracking": False,
+                    "clock_synced": _clock_synced(link),
                     "on_battery": None,
                     "battery_level": None,
                     **versions,
                 }
             return {
                 **loop_result[0].snapshot(),
+                "clock_synced": _clock_synced(link),
                 "on_battery": None,
                 "battery_level": None,
                 **versions,
@@ -926,7 +937,10 @@ class MaiPaiBody(ReachyMiniApp):
         super().__init__(*args, **kwargs)
         store = PairingStore(_default_pairing_path())
         self._stack = _build_link_stack(
-            store, HubLinkClient(store), discover=discover_hub, sleep_after_s=_sleep_after_s()
+            store,
+            HubLinkClient(store, clock_sync=ClockSync(system_clock_setter())),
+            discover=discover_hub,
+            sleep_after_s=_sleep_after_s(),
         )
         self.link = self._stack.link
         # The base class only wires static files + index.html; the

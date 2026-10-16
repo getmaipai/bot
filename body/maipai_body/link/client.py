@@ -33,6 +33,7 @@ import requests
 
 from maipai_body.link.discovery import DiscoverHub, HubAddress, discover_hub
 from maipai_body.link.store import HubPairing, PairingStore
+from maipai_body.link.timesync import ClockSync
 
 logger = logging.getLogger("maipai_body.link.client")
 
@@ -104,8 +105,12 @@ class HubLinkClient:
         *,
         session: requests.Session | None = None,
         discover: DiscoverHub = discover_hub,
+        clock_sync: ClockSync | None = None,
     ) -> None:
         self._store = store
+        # ROBOT-TIME-01: every redeem response's Date header feeds this. The default
+        # has no setter, so it measures the drift and never touches the system clock.
+        self.clock_sync = clock_sync or ClockSync()
         self._session = session or requests.Session()
         self._discover = discover
         self.last_refresh_error: str | None = None
@@ -240,6 +245,7 @@ class HubLinkClient:
         if resp.status_code in (401, 403):
             raise PairingRevoked(f"hub refused redemption: {resp.status_code} {resp.text[:200]}")
         resp.raise_for_status()
+        self.clock_sync.observe_http_date(resp.headers.get("Date"))
 
     def fetch_hub_endpoints(self, base_url: str | None = None) -> list[dict]:
         """Read the authenticated device address book from the last hub session."""
