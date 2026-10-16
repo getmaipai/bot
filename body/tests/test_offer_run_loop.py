@@ -49,7 +49,11 @@ def test_accept_runs_one_turn_without_stt_and_carries_the_offer():
     engine.tags.append("@go_ahead")
     assert loop.offer.service() is False
     assert seen["text"] == "go ahead"
-    assert seen["kwargs"] == {"ask_answer": {"offer_id": "of_1", "approved": True}}
+    assert seen["kwargs"] == {
+        "ask_answer": {"offer_id": "of_1", "approved": True},
+        # SPEAK-04: the one attentive face is the whole room, so `present` rides along.
+        "present": [{"person": "person-abc123", "basis": "face", "level": "tentative"}],
+    }
     assert seen["evidence"] == {"person": "person-abc123", "basis": "face", "level": "tentative"}
     assert parts["stt"].call_count == 0
     assert parts["engine"].ambient[0] == "offer"
