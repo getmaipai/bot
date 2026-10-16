@@ -76,7 +76,7 @@ def _recognizer(engine, **kw):
 
 def test_the_keyword_list_is_the_closed_command_list_and_nothing_else():
     assert kws.KEYWORD_PHRASES == tuple(phrases[0] for phrases in COMMAND_PHRASES.values())
-    assert len(kws.KEYWORD_PHRASES) == len(LocalCommand) == 6
+    assert len(kws.KEYWORD_PHRASES) == len(LocalCommand) == 8
     for phrase in kws.KEYWORD_PHRASES:
         assert route_phrase(phrase) is not None
 

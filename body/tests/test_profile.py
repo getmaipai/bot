@@ -125,7 +125,7 @@ def test_maipai_build_spec_fixture_validates_with_pinned_device_model():
 
 
 def test_physical_cuts_are_empty_for_this_body():
-    """This body has no physical mute or camera shutter (design record section 8)."""
+    """This body has no hardware mute switch or camera shutter (design record section 8)."""
     assert REACHY_MINI_PROFILE.physical_cuts == []
 
 

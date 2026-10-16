@@ -58,6 +58,9 @@ _TAIL_PAD_S = 0.3  # zeros that let the last token of a phrase decode
 KEYWORD_PHRASES: tuple[str, ...] = tuple(phrases[0] for phrases in COMMAND_PHRASES.values())
 
 KEYWORDS_FILE = Path(__file__).with_name("kws_keywords.txt")
+# MUTE-LOCAL-01: while muted the spotter listens for this phrase alone.
+UNMUTE_PHRASE = "listen again"
+UNMUTE_KEYWORDS_FILE = Path(__file__).with_name("kws_unmute_keywords.txt")
 
 _MODEL_DIR = "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"
 _SUFFIX = "epoch-12-avg-2-chunk-16-left-64.int8.onnx"
@@ -144,6 +147,7 @@ class SherpaKeywordEngine:
         threshold: float = KEYWORDS_THRESHOLD,
         score: float = KEYWORDS_SCORE,
         num_threads: int = 1,
+        keywords_file: Path = KEYWORDS_FILE,
     ) -> None:
         try:
             import sherpa_onnx
@@ -157,7 +161,7 @@ class SherpaKeywordEngine:
             encoder=paths["encoder"],
             decoder=paths["decoder"],
             joiner=paths["joiner"],
-            keywords_file=str(KEYWORDS_FILE),
+            keywords_file=str(keywords_file),
             keywords_threshold=threshold,
             keywords_score=score,
             num_threads=num_threads,
@@ -251,3 +255,32 @@ class KeywordStopDetector:
     def accept(self, block: npt.NDArray[np.float32]) -> bool:
         tag = self._engine.accept(block)
         return bool(tag) and tag_to_phrase(tag) == "stop"
+
+# Audio fed to one stream before it is started afresh, so a muted robot left on for
+# days never grows a stream without bound.
+_UNMUTE_RESET_BLOCKS = math.ceil(10.0 / BLOCK_DURATION_S)
+
+
+class UnmuteListener:
+    """MUTE-LOCAL-01: while muted, the one phrase that unmutes.
+
+    Wraps a :class:`KeywordEngine` built on ``UNMUTE_KEYWORDS_FILE`` (that
+    phrase only). The audio goes nowhere else: no STT stream, no wake scorer,
+    nothing stored. :meth:`feed` returns True once per spotted phrase.
+    """
+
+    def __init__(self, engine: KeywordEngine) -> None:
+        self._engine = engine
+        self._fed = 0
+        self._engine.begin()
+
+    def reset(self) -> None:
+        self._fed = 0
+        self._engine.begin()
+
+    def feed(self, block: npt.NDArray[np.float32]) -> bool:
+        self._fed += 1
+        heard = tag_to_phrase(self._engine.accept(block) or "") == UNMUTE_PHRASE
+        if heard or self._fed >= _UNMUTE_RESET_BLOCKS:
+            self.reset()
+        return heard

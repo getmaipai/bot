@@ -1,9 +1,9 @@
 """LINK-STATE-01 rung 1: a closed list of fixed local commands.
 
 While the hub is out of reach the wake word still works, and what follows it
-is matched against six fixed commands (stop, quieter, louder, timer, what
-time is it, are you connected). Nothing outside the list runs a turn, and
-the replies are fixed: each is a clip id plus its text, shown on the app
+is matched against eight fixed commands (stop, quieter, louder, timer, what
+time is it, are you connected, listen again, stop listening). Nothing outside
+the list runs a turn, and the replies are fixed: each is a clip id plus its text, shown on the app
 page and spoken only when the bundle can say every id of it.
 
 The recognizer is an interface. The sherpa-onnx keyword spotter named in
@@ -43,6 +43,9 @@ class LocalCommand(StrEnum):
     TIMER = "timer"
     TIME = "time"
     CONNECTED = "connected"
+    # MUTE-LOCAL-01: the on-robot mute path, so a hub mute can never strand the robot.
+    LISTEN_AGAIN = "listen_again"
+    STOP_LISTENING = "stop_listening"
 
 
 COMMAND_PHRASES: dict[LocalCommand, tuple[str, ...]] = {
@@ -52,6 +55,8 @@ COMMAND_PHRASES: dict[LocalCommand, tuple[str, ...]] = {
     LocalCommand.TIMER: ("timer", "set a timer"),
     LocalCommand.TIME: ("what time is it",),
     LocalCommand.CONNECTED: ("are you connected",),
+    LocalCommand.LISTEN_AGAIN: ("listen again",),
+    LocalCommand.STOP_LISTENING: ("stop listening",),
 }
 
 _PHRASE_TO_COMMAND = {p: c for c, phrases in COMMAND_PHRASES.items() for p in phrases}
@@ -109,6 +114,8 @@ FIXED_CLIPS: dict[str, str] = {
     "cmd.timer_set": "Timer set.",
     "cmd.timer_done": "Your timer is done.",
     "cmd.time_prefix": "It is",
+    "cmd.listening": "I am listening again.",
+    "cmd.muted": "Okay, I have stopped listening.",
 }
 
 
@@ -156,6 +163,10 @@ class CommandRouter:
                 f"It is {now:%H:%M}.",
                 ("cmd.time_prefix", *(char_clip_id(d) for d in digits)),
             )
+        if command is LocalCommand.LISTEN_AGAIN:
+            return self._fixed("cmd.listening")
+        if command is LocalCommand.STOP_LISTENING:
+            return self._fixed("cmd.muted")
         status = build_status(self._machine.snapshot(), tz=self._tz)
         return Reply(status.text, status.clip_ids)
 

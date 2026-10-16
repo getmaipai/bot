@@ -59,6 +59,8 @@ from maipai_body.presence.thermal import ThermalState
 from maipai_body.speech.barge import talk_over
 from maipai_body.speech.capture import AudioCapture
 from maipai_body.speech.engines import StopDetector
+
+from maipai_body.speech.kws import UnmuteListener
 from maipai_body.speech.offline_clips import FREEFALL as FREEFALL_CLIP
 from maipai_body.speech.offline_clips import RECONNECT as RECONNECT_CLIP
 from maipai_body.speech.offline_clips import THERMAL as THERMAL_CLIP
@@ -199,6 +201,7 @@ class ConversationLoop:
         is_asleep: Callable[[], bool] | None = None,
         wake_from_sleep: Callable[[], None] | None = None,
         knock_interval_s: float = _KNOCK_INTERVAL_S,
+        unmute_listener: UnmuteListener | None = None,
     ) -> None:
         # S-EXPR-04: when given, gaze and idle replace the daemon's own tracker.
         self._attention = attention
@@ -310,6 +313,8 @@ class ConversationLoop:
         self._wake_from_sleep = wake_from_sleep or (lambda: None)
         self._knock_interval_s = knock_interval_s
         self._knock = KnockDetector()
+        # MUTE-LOCAL-01: while muted the wake scorer is off and this hears "listen again".
+        self._unmute_listener = unmute_listener
         if offline is not None:
             offline.machine.subscribe(lambda _old, _new: self._notify_change())
             if offline.rung0 is not None:
@@ -611,7 +616,11 @@ class ConversationLoop:
         "capture continues but zero blocks reach the wake scorer")."""
         while not stop_event.is_set():
             if self._is_muted():
-                self._capture.poll_blocks()  # drained, never scored, while muted
+                # Drained, never scored and never sent anywhere, while muted. The
+                # one exception is the local unmute phrase, heard on this robot only.
+                blocks = self._capture.poll_blocks()
+                if self._unmute_listener is not None and self._heard_unmute(blocks):
+                    self.set_muted(False)  # renders `settle` and tells the card
                 stop_event.wait(_WAKE_POLL_SLEEP_S)
                 continue
             for block in self._capture.poll_blocks():
@@ -620,6 +629,14 @@ class ConversationLoop:
                     return wake_event
             stop_event.wait(_WAKE_POLL_SLEEP_S)
         return None
+
+    def _heard_unmute(self, blocks) -> bool:
+        assert self._unmute_listener is not None
+        try:
+            return any([self._unmute_listener.feed(block) for block in blocks])
+        except Exception:
+            logger.warning("unmute listener failed", exc_info=True)
+            return False
 
     def _retry_link(self) -> bool:
         """A wake during an outage first walks the addresses once, at once,
@@ -661,6 +678,12 @@ class ConversationLoop:
         reply = offline.router.handle(command)
         offline.last_reply = reply
         self._speak_reply(reply, command, stop_event)
+        if command is LocalCommand.STOP_LISTENING:
+            self.set_muted(True)  # MUTE-LOCAL-01: spoken first, then the muted pose
+            if self._unmute_listener is not None:
+                self._unmute_listener.reset()
+        elif command is LocalCommand.LISTEN_AGAIN:
+            self.set_muted(False)
 
     def _speak_status_line(self, stop_event: threading.Event) -> None:
         """Rung 2: the status line built from the machine's real values."""

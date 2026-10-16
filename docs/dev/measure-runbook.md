@@ -160,6 +160,18 @@ Nothing below has been run.
 | Privileged date | On the unit, as the app user, run the setter once with the hub's time | Whether `sudo -n date` works (the installer writes no sudoers line yet) or the SDK ships its own privileged helper. If neither, the installer gains a one-line sudoers drop-in for `/bin/date` only |
 | Boot with no network | Power on with the hub off, then bring the hub up | `clock_synced` false until the first redeem, then true; the clock corrected once |
 
+## MUTE-LOCAL-01: the unmute phrase (unit)
+
+`speech/kws_unmute_keywords.txt` and the two new lines of `kws_keywords.txt` were
+tokenised by hand in the existing BPE style (the model's `bpe.model` was not
+available to the session). UNVERIFIED: regenerate with `render_keywords` and diff
+before trusting a spot.
+
+| Row | Run | Reads as |
+|---|---|---|
+| Unmute while muted | Mute from the card, say "listen again" ten times at 1 m and 3 m, then ten other phrases and a minute of television | Pass: every phrase unmutes, nothing else does. Record CPU of the second spotter beside the wake model |
+| Stop listening | After a wake, say "stop listening" ten times | Pass: the reply plays, the muted pose shows, the card says muted within one heartbeat |
+
 ## What the simulator already showed, and what it cannot
 
 - The harnesses run end to end against `reachy-mini-daemon` 1.11.0 `--sim`:

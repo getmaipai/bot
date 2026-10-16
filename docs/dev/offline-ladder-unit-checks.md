@@ -104,7 +104,8 @@ on this page has been run on a unit, and no number here is a measurement.
 G4b owns the clip set. `link.commands.missing_clip_ids(load_manifest())`
 returns the ids to add: `cmd.stopped` ("Stopped."), `cmd.quieter`
 ("Quieter."), `cmd.louder` ("Louder."), `cmd.timer_set` ("Timer set."),
-`cmd.timer_done` ("Your timer is done."), `cmd.time_prefix` ("It is"), and
+`cmd.timer_done` ("Your timer is done."), `cmd.time_prefix` ("It is"), `cmd.listening` ("I am listening again."),
+`cmd.muted` ("Okay, I have stopped listening."), and
 the digit clips `char.0` and `char.1` (the pairing alphabet has no 0 or 1).
 Until they exist those replies are text on the page only.
 

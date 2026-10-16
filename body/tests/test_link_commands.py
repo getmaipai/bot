@@ -48,7 +48,7 @@ def _router(clock: FakeClock | None = None, volume: _Volume | None = None):
     return router, machine, volume, timers, clock
 
 
-def test_the_closed_list_is_exactly_the_six_commands():
+def test_the_closed_list_is_exactly_the_eight_commands():
     assert set(COMMAND_PHRASES) == {
         LocalCommand.STOP,
         LocalCommand.QUIETER,
@@ -56,6 +56,8 @@ def test_the_closed_list_is_exactly_the_six_commands():
         LocalCommand.TIMER,
         LocalCommand.TIME,
         LocalCommand.CONNECTED,
+        LocalCommand.LISTEN_AGAIN,
+        LocalCommand.STOP_LISTENING,
     }
 
 
@@ -148,6 +150,8 @@ def test_the_clip_ids_the_replies_need_but_the_bundle_lacks_are_listed():
         "cmd.timer_set",
         "cmd.timer_done",
         "cmd.time_prefix",
+        "cmd.listening",
+        "cmd.muted",
         "char.0",
         "char.1",
     }
