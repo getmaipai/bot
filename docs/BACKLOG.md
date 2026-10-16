@@ -2692,6 +2692,25 @@ value; RT-02 and RT-03 carry it.
       the gates; templates absent from every export and sync payload
       (the grep test). Out of scope: face evidence. Exit: `bash
       scripts/check.sh`.
+      **Built 2026-10-16 (lane D), left open for M-07 and the real
+      microphone:** `speaker_evidence.py` is the one builder of the spec
+      shape `{person, basis, level}` (StackChan's `_speaker_evidence`
+      is left alone: its tests use `person-7` and a numeric level 0.87,
+      both off the spec shape, so moving it onto the strict builder is
+      a follow-up that must fix those tests); `speech/voiceprint.py` holds the gallery (three-way answer:
+      known, unknown with two candidates on a close tie, unknown with none),
+      consent-gated enrollment for that exact person (never a guest, no
+      update from a match), a 0600 template file deleted with the person,
+      the two-second speech gate, direction of arrival tying a voice to a
+      recent track without identifying, the thirty-second `present` list,
+      and `signed_in` only while the touch session is live. The speech
+      process now keeps only the speech span for the embedder. The grep
+      test pins that `link/` and `bodies/` never import the gallery.
+      Thresholds (0.55 confirmed, 0.35 match, 0.08 margin) are starting
+      values, UNVERIFIED until M-07. Not built: the consent and enrollment
+      screen, wiring the identifier into `run_loop.py`, and `present`
+      reaching the turn (SPEAK-02). The template file is private (0600),
+      not encrypted at rest.
 - [ ] **SPEAK-04: face evidence and fusion** (M, after standalone).
       Objective: ArcFace on the speaking track, the confirmed and
       tentative fusion rules of `dev.md` section 6, conflicting face

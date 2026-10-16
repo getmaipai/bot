@@ -289,7 +289,10 @@ class SpeechProcess:
             self._asleep()
             self._wake_forget()
             return out + [VoiceEvent(kind="no_speech", note=heard)]
-        self.last_utterance = pcm
+        # The embedder sees the speech span only, never the trailing silence or pre-roll.
+        block = len(self._buffer[0]) if self._buffer else 0
+        end = (self._last_speech_block + 1) * block
+        self.last_utterance = pcm[onset_samples:end] if block and onset_samples < end else pcm
         doa = self._doa
         self._asleep()
         self._wake_forget()

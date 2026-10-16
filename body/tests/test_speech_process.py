@@ -174,6 +174,14 @@ def test_last_utterance_stays_in_ram_only_and_is_replaced():
     assert proc.last_utterance is not None and proc.last_utterance.size > 0
 
 
+def test_last_utterance_is_cropped_to_the_speech_span():
+    blocks = wake_blocks(1) + silence(3) + speech(20) + silence(30)
+    proc, capture, _, _, _, _ = build(blocks, "one two")
+    run_until_quiet(proc, capture)
+    assert proc.last_utterance is not None
+    assert proc.last_utterance.size == 20 * 512
+
+
 # -- speaking and the ledger ---------------------------------------------------
 
 
