@@ -223,3 +223,51 @@ def test_give_up_treats_a_closed_connection_on_send_as_a_timeout_not_an_error():
 def test_empty_session_cookie_raises_immediately():
     with pytest.raises(ValueError, match="session_cookie"):
         SttStreamClient("http://127.0.0.1:1", "")
+
+
+class _NumberedMic:
+    """An AudioIO whose Nth buffer is one block filled with the value N/10000,
+    so a received frame says which captured block it is."""
+
+    def __init__(self) -> None:
+        self.next_index = 0
+
+    def start_recording(self) -> None: ...
+
+    def stop_recording(self) -> None: ...
+
+    def get_input_audio_samplerate(self) -> int:
+        return 16000
+
+    def get_audio_sample(self):
+        value = self.next_index / 10000.0
+        self.next_index += 1
+        return np.full((512, 1), value, dtype=np.float32)
+
+
+def test_only_audio_after_the_wake_leaves_the_body_and_none_after_the_final(stt_server):
+    """RM-04: nothing ambient leaves the body. The bytes sent are the blocks captured
+    from the wake to the hub's final: none from the wake-listening stretch, and none
+    polled after the session ended."""
+    server, handler = stt_server(
+        [(0.4, {"t": "vad", "speaking": True}), (0.2, {"t": "final", "v": "ok"})]
+    )
+    client = SttStreamClient(f"http://127.0.0.1:{server.socket.getsockname()[1]}", "cookie-abc")
+    mic = _NumberedMic()
+    capture = AudioCapture(mic)
+    capture.start()
+    for _ in range(200):  # the wake-listening stretch: scored locally, never sent
+        capture.poll_blocks()
+    first_after_wake = mic.next_index
+
+    result = client.run(capture)
+
+    assert result.kind == "final"
+    sent = [
+        int(round(float(np.frombuffer(frame, dtype=np.float32)[0]) * 10000))
+        for frame in handler.received_binary
+    ]
+    assert len(sent) > 0
+    assert min(sent) >= first_after_wake  # nothing from before the wake
+    assert sent == list(range(first_after_wake, first_after_wake + len(sent)))  # the span, in order
+    assert mic.next_index == first_after_wake + len(sent)  # nothing polled or sent after the final

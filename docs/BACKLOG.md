@@ -479,6 +479,24 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       nothing ambient leaves the body (a test asserts the bytes sent are
       the endpointed span). Out of scope: the `robot` tier (M-R1
       decides). Exit: `bash scripts/check.sh` and the round trip.
+      Status 2026-10-16 (lane K), box stays open. Built before this lane
+      (G3 revised, `docs/dev/robot-streaming-turn-2026-09-28.md`): the
+      endpointing is the hub session's, so the body's job is the wake, the
+      wake-patience timer and streaming raw blocks from the wake until the
+      hub's `final`; the hub `tts` stream plays through `AudioPlayback`;
+      the stop word and a second wake cut playback and cancel the turn
+      (VOICE-02, BARGE-02, `test_bargein_run_loop.py`); the software mute
+      is `MUTE-LOCAL-01`. Added: a test that the bytes sent are the blocks
+      captured from the wake to the final and nothing from the 200 blocks
+      before it or after it (`test_stt_stream.py`). Not done: the round
+      trip on the simulator's "software echo path". The simulator runs with
+      `--no-media` (the daemon would otherwise open the host's real
+      microphone), so no spoken audio exists to echo; the live run uses a
+      scripted stand-in for the hub's `stt` final. A spoken question to a
+      spoken reply needs the real array (M-R3) or an echo fake that loops
+      playback into capture, which does not exist yet. The text above also
+      still says VAD and endpointing run in the body, which G3 revised; the
+      decision to keep them on the hub stands until M-R1 says otherwise.
 
 - [ ] **RM-05: the hub client** (M, sim, after ROBOT-DEVICE-01 and
       ROBOT-ROUTES-01). Objective: pairing by the spoken code and the
@@ -495,6 +513,17 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       rows behave as section 7 says. Out of scope: the oplog and the
       replica (no runtime on this body). Exit: `bash scripts/check.sh`
       and the simulator run.
+      **Ticked lane K, 2026-10-16:** `tests/test_run_loop_live.py` passed
+      against a real `reachy-mini-daemon --sim --headless --no-media`
+      (MuJoCo): three turns, cues `HEARD`, `SIGNAL`, `SPEAK`, `DONE` in
+      order, `SPEAK` before `DONE` each turn. That run found a defect in
+      AUDIO-TUNE-01: the daemon answers the audio routes with 503 when it
+      has no audio device, and the client treated any HTTP error as a lost
+      connection, so the first audio call poisoned the whole client and the
+      funnel stopped after `HEARD`. The audio routes now raise a plain error
+      on an HTTP answer (setup reports `audio_config_failed`) and mark the
+      body lost only on a real connection failure; regression test in
+      `tests/test_audio_config.py`. Audio stays a fake in that run.
       **Implementation landed across G4** (pairing, the sealed token,
       the link states) **and G9** (the turn stream driving cues through
       the real run loop, deterministic tests proving cue order before
@@ -1873,7 +1902,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       Amendment from Reachy design v2:
       (S; after ROBOT-ENDPOINTS-01; owner amendment 2026-10-15). Auto-provisioning is dropped. The shared link layer reads the filtered book, walks LAN rows before overlay rows, refreshes the cache after success, and detects membership through local tailscaled status. Acceptance: the hub key-off response has no overlay row, and a non-member never tries one. Cloud: no.
 
-- [ ] **LINK-STATE-00: `reconnecting` and `sleeping` activity values**
+- [x] **LINK-STATE-00: `reconnecting` and `sleeping` activity values**
       (S, spec first, filed in `commons`; prerequisite of LINK-STATE-01).
       Objective: `robot.state.activity` gains the values `reconnecting`
       and `sleeping`, so the hub's robot card can tell a robot that is
@@ -1883,8 +1912,14 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       item does not edit it). Acceptance: the schema, its fixtures and
       the tag carry both values, `home`'s card renders them, and `bot`
       pins the tag. Exit: the `commons` gate and the tag.
+      Verified satisfied, not built (lane K, 2026-10-16): `commons`
+      added both values in `robot-state.schema.json` at spec-v0.1.73
+      (commit add124b), the fixture `robot-state.sleeping.example.json`
+      carries one, `home`'s `RobotBody.tsx` labels both ("Reconnecting",
+      "Sleeping"), and bot pins spec-v0.1.141, which is later. Nothing
+      was edited in `commons`.
 
-- [ ] **LINK-STATE-01: the offline ladder's first rungs as one state
+- [x] **LINK-STATE-01: the offline ladder's first rungs as one state
       machine** (S, Reachy Mini only, after LINK-STATE-00; the spoken
       parts also wait on G4b's clips or a local TTS). Objective: one
       machine in `body/maipai_body/link/`, driven by `LinkLifecycle` and
@@ -1965,6 +2000,15 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       ROBOT-TAILSCALE-01 fills that seam, and plain-http identity is no
       defense against an on-path attacker. See
       `docs/dev/offline-ladder-unit-checks.md`.**
+      **Landed (confirmed lane K, 2026-10-16):** the machine, walk, rungs
+      0 to 2 and the replay rule are on `main`, and the tailnet seam is
+      filled by ROBOT-ENDPOINTS-01 (the address book walks LAN rows before
+      overlay rows). Every acceptance line has a test (state machine,
+      address walk, rung 0 exactly-once reconnect cue, ladder run loop,
+      status text, replay gate); the 502 link, ladder, speech and run-loop
+      tests pass. Box ticked on the acceptance as written (tests with the
+      fake body and an injected clock). Still unmeasured, needing the unit:
+      the sleep default, rung 1's CM4 CPU and false-accept row (M-R1).
 
 - [ ] **S-KWS-RUNG1: the keyword spotter behind rung 1's recognizer**
       (S, Reachy Mini only, after LINK-STATE-01). Objective: a real
