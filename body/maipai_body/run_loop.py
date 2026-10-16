@@ -54,6 +54,7 @@ from maipai_body.presence.carry_reaction import (
 )
 from maipai_body.presence.funnel import FunnelState, FunnelView, SettleGate
 from maipai_body.presence.knock import KnockDetector
+from maipai_body.presence.touch import AntennaTouchDetector
 from maipai_body.presence.motion_state import MotionState, MotionStateMachine
 from maipai_body.presence.observations import PresenceObservation, read_presence
 from maipai_body.presence.thermal import ThermalState
@@ -106,6 +107,8 @@ _WAKE_ACK_PRIMITIVE = "perk"
 # KNOCK-01: the IMU is polled this often while the robot sleeps (UNVERIFIED rate;
 # the unit row decides whether the IMU read is fast enough or the mic onset is needed).
 _KNOCK_INTERVAL_S = 0.02
+_TOUCH_INTERVAL_S = 0.05  # TOUCH-01: 20 Hz reads of the worker's cached antenna probe
+_TOUCH_DRIVE_WINDOW_S = 0.06  # a write this recent counts as the worker driving the antennas
 
 # FACE-01's own capped rate: "once every few seconds while a face is
 # present, not per frame" (design-face-recognition-models-2026-09-28.md
@@ -212,6 +215,9 @@ class ConversationLoop:
         is_asleep: Callable[[], bool] | None = None,
         wake_from_sleep: Callable[[], None] | None = None,
         knock_interval_s: float = _KNOCK_INTERVAL_S,
+        touch_detector: AntennaTouchDetector | None = None,
+        touch_interval_s: float = _TOUCH_INTERVAL_S,
+        touch_clock: Callable[[], float] = time.monotonic,
         unmute_listener: UnmuteListener | None = None,
         offer_engine: KeywordEngine | None = None,
         guest_app_active: Callable[[], bool] | None = None,
@@ -330,6 +336,11 @@ class ConversationLoop:
         self._wake_from_sleep = wake_from_sleep or (lambda: None)
         self._knock_interval_s = knock_interval_s
         self._knock = KnockDetector()
+        # TOUCH-01: an antenna push is an acknowledge, or a wake while asleep; never an
+        # offer answer. Opt-in: nothing runs without a detector.
+        self._touch = touch_detector
+        self._touch_interval_s = touch_interval_s
+        self._touch_clock = touch_clock
         # MUTE-LOCAL-01: while muted the wake scorer is off and this hears "listen again".
         self._unmute_listener = unmute_listener
         # OFFER-01: the hub's offers. Without an `offer_engine` (the local spotter)
@@ -692,6 +703,12 @@ class ConversationLoop:
                 target=self._knock_loop, args=(stop_event,), name="knock", daemon=True
             )
             knock_thread.start()
+        touch_thread = None
+        if self._touch is not None:
+            touch_thread = threading.Thread(
+                target=self._touch_loop, args=(stop_event,), name="touch", daemon=True
+            )
+            touch_thread.start()
         self._capture.start()
         self._run_stop = stop_event
         try:
@@ -709,6 +726,8 @@ class ConversationLoop:
             presence_thread.join(timeout=2.0)
             if knock_thread is not None:
                 knock_thread.join(timeout=2.0)
+            if touch_thread is not None:
+                touch_thread.join(timeout=2.0)
             close_expression = getattr(self._expression, "close", None)
             if close_expression is not None:
                 close_expression()
@@ -857,6 +876,43 @@ class ConversationLoop:
                 self._speak_status_line(stop_event)
         except Exception:
             logger.warning("knock wake failed", exc_info=True)
+
+    def _touch_loop(self, stop_event: threading.Event) -> None:
+        while not stop_event.wait(self._touch_interval_s):
+            self._touch_tick(stop_event)
+
+    def _touch_tick(self, stop_event: threading.Event) -> None:
+        """TOUCH-01: one look at the worker's commanded and observed antennas.
+
+        Never while held, tipped or falling, and never over a turn. The meaning is
+        wake (asleep) or acknowledge (idle); a touch does not answer an offer."""
+        assert self._touch is not None
+        probe_fn = getattr(self._expression, "antenna_probe", None)
+        probe = probe_fn() if probe_fn is not None else None
+        if probe is None:
+            return
+        commanded, present, driven_at = probe
+        now = self._touch_clock()
+        driving = driven_at is not None and now - driven_at <= _TOUCH_DRIVE_WINDOW_S
+        event = self._touch.update(commanded, present, now_s=now, driving=driving)
+        if event is None:
+            return
+        if (
+            self._motion.holding
+            or self._motion_state in (MotionState.TIPPED, MotionState.FREEFALL)
+            or self._current_funnel() != FunnelState.IDLE
+        ):
+            return
+        try:
+            if self._is_asleep is not None and self._is_asleep():
+                self._wake_from_sleep()
+                self._render_ambient(_WAKE_ACK_PRIMITIVE)
+                if self._offline is not None:
+                    self._speak_status_line(stop_event)
+            else:
+                self._render_ambient(_WAKE_ACK_PRIMITIVE)
+        except Exception:
+            logger.warning("touch reaction failed", exc_info=True)
 
     def _speak_reply(
         self, reply: Reply, command: LocalCommand | None, stop_event: threading.Event

@@ -121,6 +121,11 @@ class MotionWorker:
         self._speech_active = False
         self._speech_target: MotionTarget | None = None
         self._speak_enabled = False
+        # TOUCH-01: the antennas as last written, as last observed, and when the worker
+        # last drove them. `_apply_observation` rewrites `_output`, so these live apart.
+        self._commanded_antennas: AntennaPositions | None = None
+        self._present_antennas: AntennaPositions | None = None
+        self._antennas_driven_at: float | None = None
         self._sequence: list[tuple[MotionTarget, float]] = []
         self._sequence_layer: MotionLayer | None = None
         self._release_layer: MotionLayer | None = None
@@ -246,6 +251,14 @@ class MotionWorker:
         """Feed measured playback energy; no transcript or generated text enters."""
         self._speech_rms = max(0.0, rms)
         self._speak_enabled = True
+
+    def antenna_probe(self) -> tuple[AntennaPositions, AntennaPositions, float | None] | None:
+        """TOUCH-01: (commanded, present, when the worker last wrote the antennas), or
+        None until both a write and an observation exist."""
+        with self._lock:
+            if self._commanded_antennas is None or self._present_antennas is None:
+                return None
+            return self._commanded_antennas, self._present_antennas, self._antennas_driven_at
 
     def drop_stale_target(self) -> None:
         self._dropped_cues += 1
@@ -393,6 +406,9 @@ class MotionWorker:
             pose = target.pose if changed & {"head_pitch", "head_roll", "head_yaw"} else None
             antennas = target.antennas if changed & {"antenna_left", "antenna_right"} else None
             body_yaw = target.body_yaw if "body_yaw" in changed else None
+            if antennas is not None:
+                self._commanded_antennas = antennas
+                self._antennas_driven_at = stamp
             if pose is not None or antennas is not None or body_yaw is not None:
                 self._client.set_target(pose=pose, antennas=antennas, body_yaw=body_yaw)
             if self._safety_stop.is_set():
@@ -569,6 +585,7 @@ class MotionWorker:
                     head_yaw=frame.head_pose.yaw,
                 )
             if frame.antennas is not None:
+                self._present_antennas = frame.antennas
                 self._output.update(
                     antenna_left=frame.antennas.left,
                     antenna_right=frame.antennas.right,

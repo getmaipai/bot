@@ -107,6 +107,10 @@ class ExpressionEngine:
     def close(self) -> None:
         self._worker.close()
 
+    def antenna_probe(self):
+        """TOUCH-01: the worker's commanded and observed antennas, or None."""
+        return self._worker.antenna_probe()
+
     def set_speech_rms(self, rms: float) -> None:
         self._worker.set_speech_rms(rms)
 

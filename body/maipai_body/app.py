@@ -687,6 +687,7 @@ def _build_conversation_loop(
         client=tap,
         expression_engine=expression_engine,
         attention=_build_attention(expression_engine, os.environ),
+        touch_detector=_build_touch_detector(os.environ),
         audio_capture=AudioCapture(tap),
         audio_playback=audio_playback,
         wake_scorer=WakeScorer(wake_engine, tap),
@@ -807,6 +808,16 @@ def _build_attention(engine: ExpressionEngine, env: Mapping[str, str]) -> object
     from maipai_body.presence.attention import Attention
 
     return Attention(engine, clock=time.monotonic)
+
+
+def _build_touch_detector(env: Mapping[str, str]) -> object | None:
+    """TOUCH-01: an antenna push acknowledges, or wakes a sleeping robot. Off unless
+    MAIPAI_BOT_TOUCH=1: the thresholds are UNMEASURED until runbook rows T0 to T4."""
+    if env.get("MAIPAI_BOT_TOUCH") != "1":
+        return None
+    from maipai_body.presence.touch import AntennaTouchDetector
+
+    return AntennaTouchDetector()
 
 
 def _build_offer_engine(cache_dir: Path, env) -> object | None:

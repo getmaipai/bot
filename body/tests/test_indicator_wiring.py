@@ -159,3 +159,12 @@ def test_attention_is_off_unless_the_env_gate_is_set():
     engine = ExpressionEngine(FakeReachyMiniClient(), REACHY_MINI_PROFILE)
     assert app_module._build_attention(engine, {}) is None
     assert isinstance(app_module._build_attention(engine, {"MAIPAI_BOT_ATTENTION": "1"}), Attention)
+
+
+def test_touch_is_off_unless_the_env_gate_is_set():
+    from maipai_body.presence.touch import AntennaTouchDetector
+
+    assert app_module._build_touch_detector({}) is None
+    assert isinstance(
+        app_module._build_touch_detector({"MAIPAI_BOT_TOUCH": "1"}), AntennaTouchDetector
+    )

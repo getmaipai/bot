@@ -132,3 +132,27 @@ def test_gaze_counts_half_while_the_robot_is_speaking():
     talking = _settled_gaze_yaw(speaking=True)
     assert quiet == pytest.approx(0.4, abs=1e-3)
     assert talking == pytest.approx(0.2, abs=1e-3)
+
+
+def test_the_worker_keeps_the_commanded_antennas_apart_from_what_the_feed_reports():
+    from maipai_body.hal.seam import StateFrame
+
+    client = FakeReachyMiniClient()
+    worker = MotionWorker(client, REACHY_MINI_PROFILE, clock=lambda: 0.0)
+    assert worker.antenna_probe() is None
+    worker.set_layer(MotionLayer.EXPRESSION, antennas=AntennaPositions(left=0.6, right=0.6))
+    for stamp in range(100):
+        worker.tick(stamp * 0.02)
+    # The layer is released, nothing drives the antennas, and a hand pushes one.
+    worker.clear_layer(MotionLayer.EXPRESSION)
+    worker._apply_observation(
+        StateFrame(t_received_ns=1, seq=1, antennas=AntennaPositions(left=0.0, right=0.6))
+    )
+    for stamp in range(100, 110):
+        worker.tick(stamp * 0.02)
+    probe = worker.antenna_probe()
+    assert probe is not None
+    commanded, present, driven_at = probe
+    assert commanded.left == pytest.approx(0.6, abs=0.02)
+    assert present.left == pytest.approx(0.0)
+    assert driven_at is not None and driven_at < 100 * 0.02
