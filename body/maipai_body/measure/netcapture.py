@@ -553,8 +553,9 @@ _EXPECTED_SOURCE = (
 
 SOFTWARE_LABELS = (
     "Two controls here are software, not hardware. **Mute** is a software switch: the "
-    "robot's microphone stays powered and the Eyes show amber. **Camera off** is a watch "
-    "level, not a shutter: the lens is not covered, and the Eyes show a dark segment."
+    "robot's microphone stays powered and the Eyes show amber. Watch level "
+    "`off` is a software setting, not a shutter: the lens is not covered, and the Eyes "
+    "show a dark segment."
 )
 
 

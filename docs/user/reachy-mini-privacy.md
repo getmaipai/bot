@@ -52,7 +52,7 @@ These rows are the design's allowed list. No capture has been taken yet: the uni
 | Finding your hub on your own network (mDNS) | Multicast on your local network | While the robot is on | No |
 | Asking your router for an address (DHCP) | Your router | When the robot joins your network | No |
 
-Two controls here are software, not hardware. **Mute** is a software switch: the robot's microphone stays powered and the Eyes show amber. **Camera off** is a watch level, not a shutter: the lens is not covered, and the Eyes show a dark segment.
+Two controls here are software, not hardware. **Mute** is a software switch: the robot's microphone stays powered and the Eyes show amber. Watch level `off` is a software setting, not a shutter: the lens is not covered, and the Eyes show a dark segment.
 <!-- egress-table:end -->
 
 ## What MaiPai does about this for you

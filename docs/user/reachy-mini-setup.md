@@ -61,7 +61,7 @@ Your robot's card in Home shows the same states in words: listening, thinking, s
 These limits are real. They come from the robot, not from a setting you missed.
 
 - **Mute is a software switch.** When you mute the robot, MaiPai stops using the microphone and the antennas drop. The microphone is still powered. There is no button that cuts it off.
-- **Camera off is a watch level, not a shutter.** You can tell the robot not to watch. The lens stays uncovered, so if you want it blind, turn the robot to face a wall or unplug it.
+- **Watch level `off` is a setting, not a shutter.** Set the watch level to `off` and the robot stops looking at what the camera sees. The lens stays uncovered, so if you want it blind, turn the robot to face a wall or unplug it.
 - **No battery reading yet.** Home cannot read how full the battery is. It shows "level unknown", or one of three rough levels once those have been measured.
 - **No screen.** The robot cannot show a code, a picture or a message. It speaks, moves its head and antennas, and uses its card in Home.
 - **It needs your Home to think.** The robot answers by asking your Home. If Home is off or out of reach, the robot says so once and waits.

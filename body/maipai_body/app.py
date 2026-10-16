@@ -51,6 +51,7 @@ from maipai_body.link.discovery import DiscoverHub
 from maipai_body.link.lifecycle import LinkLifecycle
 from maipai_body.link.offline import OfflineRungs
 from maipai_body.link.prints import PrintSync
+from maipai_body.link.roster import RosterPoller
 from maipai_body.link.rung0 import Rung0Cues
 from maipai_body.link.state import StateReporter
 from maipai_body.link.state_machine import (
@@ -675,8 +676,9 @@ def _build_conversation_loop(
     is_asleep, wake_from_sleep = _knock_hooks(offline)
     offer_engine = _build_offer_engine(cache_dir, os.environ)
     # FOLLOWUP-01: the directory is the seam the hub's roster fills (age band and
-    # `person.robot.follow_up` per person). Until a feed fills it every speaker is
-    # the child default and the window stays closed, which is the safe direction.
+    # `person.robot.follow_up` per person; `RosterPoller` below). Until a fetch
+    # fills it, and again when it goes stale, every speaker is the child default
+    # and the window stays closed, which is the safe direction.
     people = PeopleDirectory()
     follow_up = FollowUpPolicy(people)
     sleep = _build_sleep_auto(tap, vision_watch, os.environ)
@@ -725,6 +727,10 @@ def _build_conversation_loop(
         target=_alarm_backstop, args=(alarm, stop_event), name="alarm-backstop", daemon=True
     ).start()
     threading.Thread(target=print_sync.run, name="face-print-sync", daemon=True).start()
+    # FOLLOWUP-01: the hub's roster fills `people` (refresh now, every 30 s, and
+    # right after a command-channel drop); a stale roster clears to unknown.
+    roster_poller = RosterPoller(people, hub_credentials, stop_event)
+    threading.Thread(target=roster_poller.run, name="roster-poller", daemon=True).start()
 
     from maipai_body.link.channel import CommandChannel
 
@@ -801,6 +807,7 @@ def _build_conversation_loop(
     command_channel.handlers["live_view_start"] = live_view.start
     command_channel.handlers["live_view_stop"] = live_view.stop
     command_channel.add_drop_listener(live_view.on_channel_drop)
+    command_channel.add_drop_listener(roster_poller.poke)
     threading.Thread(
         target=command_channel.run,
         args=(stop_event,),

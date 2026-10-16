@@ -400,4 +400,4 @@ def test_the_capture_table_names_a_denied_destination():
 
 def test_the_page_labels_mute_and_camera_off_as_software():
     block = nc.render_page_block(None)
-    assert "software switch" in block and "watch level, not a shutter" in block
+    assert "software switch" in block and "Watch level `off`" in block and "not a shutter" in block

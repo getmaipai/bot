@@ -13,7 +13,7 @@ decided from the speaker's evidence, never from the utterance:
   which is off, whoever else is present.
 
 Where the band and the switch come from is a seam (`PeopleDirectory`): the
-hub's roster feed fills it. Until a feed fills it, every speaker is the child
+hub's roster feed (`link/roster.py`) fills it. Until a feed fills it, every speaker is the child
 default and the window stays closed, which is the safe direction.
 """
 
@@ -44,6 +44,16 @@ class PeopleDirectory:
                 self._bands[person_id] = band
             if follow_up is not None:
                 self._switches[person_id] = follow_up
+
+    def replace_all(self, roster: dict[str, tuple[AgeBand, bool]]) -> None:
+        """The hub's wholesale snapshot: a person missing from it is forgotten."""
+        with self._lock:
+            self._bands = {pid: band for pid, (band, _f) in roster.items()}
+            self._switches = {pid: f for pid, (_b, f) in roster.items()}
+
+    def clear(self) -> None:
+        """No roster: every speaker reads as unknown, the child default."""
+        self.replace_all({})
 
     def forget(self, person_id: str) -> None:
         with self._lock:
