@@ -345,3 +345,43 @@ def test_the_expression_package_never_imports_the_moves_package():
             elif isinstance(node, ast.ImportFrom):
                 names = [node.module or ""]
             assert not any("moves" in n.split(".") for n in names), f"{path.name} imports moves"
+
+
+# -- MOVES-01: repeated timestamps are a step, not an error --
+
+
+def _stepped_move_json() -> dict:
+    """Times 0, 0.1, 0.1, 0.2: a step between the 2nd and 3rd sample, like toc-toc-toc."""
+    data = _move_json(samples=4)
+    data["time"] = [0.0, 0.1, 0.1, 0.2]
+    return data
+
+
+def test_equal_neighbouring_timestamps_parse_as_a_step():
+    move = RecordedMove.from_json("toc-toc-toc", _stepped_move_json())
+    assert move.duration_s == pytest.approx(0.2)
+    before = move.sample(0.0999).pose.yaw
+    at = move.sample(0.1).pose.yaw
+    assert at == pytest.approx(move.frames[2].pose.yaw, abs=1e-9)  # the later sample wins
+    assert before < at
+
+
+def test_a_stepped_move_plays_to_its_end_without_dividing_by_zero():
+    client = FakeReachyMiniClient()
+    clock = _Clock()
+    player = MovePlayer(client, REACHY_MINI_PROFILE, sleep=clock.sleep, monotonic=clock.monotonic)
+    player.play(RecordedMove.from_json("step", _stepped_move_json()), _OPEN)
+    last = client.sent_commands[-1]
+    assert last.kind == "set_target"
+    assert last.pose.yaw == pytest.approx(math.radians(10.0) * 1.0, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    "times",
+    [[0.0, 0.2, 0.1, 0.3, 0.4], [0.0, 0.0, 0.0, 0.0, 0.0]],
+)
+def test_backwards_time_and_a_move_with_no_duration_stay_refused(times):
+    data = _move_json()
+    data["time"] = times
+    with pytest.raises(InvalidMove):
+        RecordedMove.from_json("bad", data)

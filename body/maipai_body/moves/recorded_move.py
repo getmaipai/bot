@@ -94,8 +94,13 @@ class RecordedMove:
             raise InvalidMove(f"{name}: a move needs at least two samples")
         if len(times) != len(samples):
             raise InvalidMove(f"{name}: {len(times)} times but {len(samples)} samples")
-        if any(b <= a for a, b in zip(times, times[1:], strict=False)):
-            raise InvalidMove(f"{name}: times must strictly increase")
+        # Pollen's own clips repeat a timestamp (a step between two poses: mini-deep-sleep,
+        # toc-toc-toc, waiting, wake-mini-up). Equal neighbours are a step, never a gap,
+        # so only a backwards time or a move with no duration is malformed.
+        if any(b < a for a, b in zip(times, times[1:], strict=False)):
+            raise InvalidMove(f"{name}: times must not decrease")
+        if times[-1] <= times[0]:
+            raise InvalidMove(f"{name}: a move needs a duration")
         frames: list[MoveFrame] = []
         for index, sample in enumerate(samples):
             try:
@@ -123,6 +128,7 @@ class RecordedMove:
             return self.frames[0]
         if t >= self.times[-1]:
             return self.frames[-1]
+        # side="right": at a repeated time the later sample wins, so the span is never zero.
         upper = int(np.searchsorted(self.times, t, side="right"))
         lower = upper - 1
         span = self.times[upper] - self.times[lower]
