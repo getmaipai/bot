@@ -65,6 +65,7 @@ from maipai_body.presence.motor_health import MotorHealth
 from maipai_body.presence.thermal import ThermalMonitor
 from maipai_body.run_loop import ConversationLoop
 from maipai_body.speech.capture import AudioCapture
+from maipai_body.presence.entries import presence_entries_from
 from maipai_body.speech.follow_up import FollowUpPolicy, PeopleDirectory
 from maipai_body.speech.models import EMBEDDING, MELSPECTROGRAM, WAKE_PHRASE, ensure_wakeword_models
 from maipai_body.speech.offline_clips import (
@@ -711,6 +712,7 @@ def _build_conversation_loop(
         is_asleep=is_asleep,
         wake_from_sleep=wake_from_sleep,
         offer_engine=offer_engine,
+        presence_entries=lambda: presence_entries_from(vision_watch.current(), people.band_of),
     )
     loop.subscribe_view(director.on_view)
     alarm = _build_alarm_controller(loop, audio_playback, offline, people, lambda m: _send(m))

@@ -89,3 +89,41 @@ def test_offer_is_deferred_mid_turn_and_wrong_person_is_not_attentive():
     assert "offer" not in getattr(parts["engine"], "ambient", [])
     loop._enter(FunnelState.IDLE)
     assert loop.offer.service() is True
+
+
+def test_the_offer_line_is_spoken_through_the_hub_voice_once_the_window_opens():
+    engine = ScriptedEngine()
+    loop, parts = _loop(engine)
+    _see(loop, "person-abc123")
+    loop._run_stop = threading.Event()
+    loop.offer.receive(
+        {
+            "offer_id": "of_2",
+            "person_id": "person-abc123",
+            "tier": "ask",
+            "non_personal_line": "Want a hand with that?",
+        }
+    )
+    assert loop.offer.service() is True
+    deadline = time.monotonic() + 2
+    while not parts["tts"].speak_calls and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert parts["tts"].speak_calls == ["Want a hand with that?"]
+
+
+def test_a_failing_offer_line_never_breaks_the_offer():
+    from maipai_body.speech.tts_playback import TtsLinkLost
+
+    engine = ScriptedEngine()
+    loop, parts = _loop(engine)
+    _see(loop, "person-abc123")
+
+    def boom(*a, **k):
+        raise TtsLinkLost("down")
+
+    parts["tts"].speak = boom
+    loop._run_stop = threading.Event()
+    loop.offer.receive(
+        {"offer_id": "of_3", "person_id": "person-abc123", "non_personal_line": "Hi there."}
+    )
+    assert loop.offer.service() is True

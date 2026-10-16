@@ -380,6 +380,7 @@ class ConversationLoop:
             render=self._render_ambient,
             send_frame=lambda frame: self._offer_send(frame),
             on_window=self._set_offer_window,
+            speak=self._speak_offer_line,
             open_turn=self._open_offer_turn,
             gates=OfferGates(
                 busy=lambda: self._current_funnel() is not FunnelState.IDLE,
@@ -426,6 +427,19 @@ class ConversationLoop:
 
     def bind_offer_frames(self, send_frame: Callable[[dict], bool]) -> None:
         self._offer_send = send_frame
+
+    def _speak_offer_line(self, text: str) -> None:
+        """The hub's non-personal offer line, through the hub voice (the robot
+        never synthesises). Off the offer thread so the spotter window starts at
+        once; a failure is logged and never touches the offer."""
+
+        def run() -> None:
+            try:
+                self._tts.speak(text)
+            except Exception:
+                logger.warning("offer line failed", exc_info=True)
+
+        threading.Thread(target=run, name="offer-line", daemon=True).start()
 
     def _offer_person_attentive(self, person_id: str) -> bool:
         """The offer's person is the one the face check currently names."""
