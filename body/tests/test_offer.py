@@ -243,3 +243,15 @@ def test_gestures_and_touch_have_no_path_to_accept():
     rig = Rig()
     names = {n for n in dir(rig.controller) if not n.startswith("_")}
     assert names == {"receive", "service"}
+
+
+def test_the_window_callback_tells_the_eyes_when_it_opens_and_closes():
+    rig = Rig()
+    seen: list[bool] = []
+    rig.controller._on_window = seen.append
+    rig.offer()
+    rig.controller.service()
+    assert seen == [True]
+    rig.now += WINDOW_S + 1
+    rig.controller.service()
+    assert seen == [True, False]

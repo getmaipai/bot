@@ -168,6 +168,8 @@ class RunLoopState:
     muted: bool = False
     held: bool = False
     alarm: bool = False
+    offer: bool = False
+    fault: bool = False
     tracking: bool = False
     trace: list[StateTransition] = field(default_factory=list)
     shown_trace: list[StateTransition] = field(default_factory=list)
@@ -377,6 +379,7 @@ class ConversationLoop:
             poll_blocks=lambda: self._capture.poll_blocks(),
             render=self._render_ambient,
             send_frame=lambda frame: self._offer_send(frame),
+            on_window=self._set_offer_window,
             open_turn=self._open_offer_turn,
             gates=OfferGates(
                 busy=lambda: self._current_funnel() is not FunnelState.IDLE,
@@ -531,7 +534,14 @@ class ConversationLoop:
 
     def _view_locked(self) -> FunnelView:
         state = self._state
-        return FunnelView(shown=state.shown, muted=state.muted, held=state.held, alarm=state.alarm)
+        return FunnelView(
+            shown=state.shown,
+            muted=state.muted,
+            held=state.held,
+            alarm=state.alarm,
+            offer=state.offer,
+            fault=state.fault,
+        )
 
     def _emit_view(self) -> None:
         with self._lock:
@@ -1504,6 +1514,7 @@ class ConversationLoop:
                 self._motor_health.tick(held=held)
             except Exception:
                 logger.warning("motor watchdog failed", exc_info=True)
+            self._publish_fault()
         if self._thermal is None:
             return
         try:
@@ -1517,6 +1528,28 @@ class ConversationLoop:
                 self._say_clip(THERMAL_CLIP)
         except Exception:
             logger.warning("thermal handling failed", exc_info=True)
+
+    def _set_offer_window(self, open_: bool) -> None:
+        """The Eyes show the offer look while a window is open."""
+        with self._lock:
+            if self._state.offer == open_:
+                return
+            self._state.offer = open_
+        self._emit_view()
+
+    def _publish_fault(self) -> None:
+        """The Eyes error look: only a real fault, which today is a stuck or latched motor."""
+        try:
+            status = self._motor_health.status() if self._motor_health is not None else {}
+        except Exception:
+            logger.warning("motor status failed", exc_info=True)
+            return
+        fault = bool(status.get("motors_stuck")) or bool(status.get("motors_latched"))
+        with self._lock:
+            if self._state.fault == fault:
+                return
+            self._state.fault = fault
+        self._emit_view()
 
     def _publish_motion_facts(self, held: bool, alarm: bool) -> None:
         """Held and alarm are funnel facts for readers; told only when one flips."""

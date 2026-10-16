@@ -127,3 +127,33 @@ def test_the_loop_default_has_no_thermal_or_motor_hooks():
     bench.tick(0.3)
     assert bench.loop.thermal_state.level == 0
     assert bench.loop.thermal_frame() is None
+
+
+def test_a_stuck_motor_shows_the_error_look_and_clears_when_healthy():
+    from tests.test_run_loop import _make_loop
+
+    class Health:
+        stuck = False
+
+        def tick(self, *, held=False):
+            pass
+
+        def status(self):
+            return {"motors_latched": [], "motors_stuck": self.stuck}
+
+        def confirm_reboot(self, name, *, person_touching=False):
+            return False
+
+    health = Health()
+    loop, _parts = _make_loop(motor_health=health)
+    views = []
+    loop.subscribe_view(views.append)
+    loop._safety_ticks(False)
+    assert views == []
+    health.stuck = True
+    loop._safety_ticks(False)
+    loop._safety_ticks(False)
+    assert [v.fault for v in views] == [True]
+    health.stuck = False
+    loop._safety_ticks(False)
+    assert [v.fault for v in views] == [True, False]

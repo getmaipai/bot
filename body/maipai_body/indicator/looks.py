@@ -55,6 +55,8 @@ class LookKey(StrEnum):
     THINKING = "thinking"
     SPEAKING = "speaking"
     SLEEP = "sleep"
+    OFFER = "offer"
+    ERROR = "error"
 
 
 # row: (colour, weight). The weight is the share of the day or night level the
@@ -71,6 +73,10 @@ LOOKS: dict[LookKey, tuple[Palette, float]] = {
     LookKey.THINKING: (Palette.MAGENTA, 0.8),
     LookKey.SPEAKING: (Palette.WHITE, 1.0),
     LookKey.SLEEP: (Palette.BLUE, 0.3),
+    # OFFER-01: the robot has asked and listens locally for a yes or no. Not green: nothing
+    # is leaving for the hub. THERMAL-01/MOTOR-RECOVER-01: a real fault, steady amber (no red).
+    LookKey.OFFER: (Palette.BLUE, 0.6),
+    LookKey.ERROR: (Palette.AMBER, 0.7),
 }
 
 _FUNNEL_ROWS = {
@@ -95,6 +101,8 @@ class LookRequest:
     alarm_on: bool = False
     held: bool = False
     muted: bool = False
+    offer: bool = False
+    fault: bool = False
 
 
 def is_night(minute: int, start: int, end: int) -> bool:
@@ -147,10 +155,14 @@ def resolve(request: LookRequest) -> Look | None:
     if not settings.enabled:
         return None
     base = level(request)
+    if request.fault:
+        return _row(LookKey.ERROR, LOOKS[LookKey.ERROR][1] * base)
     if request.held:
         return _row(LookKey.HELD, LOOKS[LookKey.HELD][1] * base)
     if request.muted:
         return _row(LookKey.MUTED, LOOKS[LookKey.MUTED][1] * base)
+    if request.offer and request.funnel is FunnelState.IDLE:
+        return _row(LookKey.OFFER, LOOKS[LookKey.OFFER][1] * base)
     if request.funnel is FunnelState.IDLE and is_night(
         request.minute, settings.night_from, settings.night_to
     ):

@@ -157,6 +157,8 @@ class EyesDirector:
                 alarm_on=self._alarm_on(now),
                 held=view.held,
                 muted=view.muted,
+                offer=view.offer,
+                fault=view.fault,
             )
             look = looks.resolve(request)
             if not self._applied_known or look != self._applied:

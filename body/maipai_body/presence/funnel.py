@@ -42,6 +42,9 @@ class FunnelView:
     muted: bool = False
     held: bool = False
     alarm: bool = False
+    # OFFER-01: an offer window is open. A real motor fault (MOTOR-RECOVER-01).
+    offer: bool = False
+    fault: bool = False
 
 
 class SettleGate[S]:

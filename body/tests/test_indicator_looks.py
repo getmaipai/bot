@@ -201,3 +201,23 @@ def test_no_module_outside_the_seam_and_the_client_names_a_palette_member():
         if path not in allowed and re.search(r"Palette\.[A-Z]+", path.read_text())
     ]
     assert offenders == []
+
+
+def test_the_offer_look_shows_over_idle_and_below_held_and_muted():
+    offer = resolve(_request(offer=True))
+    assert offer is not None and offer.colour is Palette.BLUE
+    assert offer != resolve(_request(funnel=FunnelState.LISTENING))
+    assert resolve(_request(offer=True, muted=True)) == resolve(_request(muted=True))
+    assert resolve(_request(offer=True, held=True)) == resolve(_request(held=True))
+    # A turn in progress shows its own state, not the offer.
+    assert resolve(_request(offer=True, funnel=FunnelState.THINKING)) == resolve(
+        _request(funnel=FunnelState.THINKING)
+    )
+
+
+def test_the_error_look_is_amber_steady_and_outranks_held_and_muted_but_not_the_cues():
+    error = resolve(_request(fault=True, held=True, muted=True))
+    assert error is not None and error.colour is Palette.AMBER
+    assert error != resolve(_request(muted=True))
+    assert resolve(_request(fault=True, live=True)) == resolve(_request(live=True))
+    assert resolve(_request(fault=True, settings=IndicatorSettings(enabled=False))) is None

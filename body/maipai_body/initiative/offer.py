@@ -76,6 +76,7 @@ class OfferController:
         open_turn: Callable[[str, str, str], None],
         gates: OfferGates,
         speak: Callable[[str], None] | None = None,
+        on_window: Callable[[bool], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._engine = engine
@@ -85,6 +86,7 @@ class OfferController:
         self._open_turn = open_turn
         self._gates = gates
         self._speak = speak
+        self._on_window = on_window
         self._clock = clock
         self._lock = threading.Lock()
         self._pending: _Offer | None = None
@@ -165,6 +167,7 @@ class OfferController:
         assert self._engine is not None
         self._engine.begin()
         self._render("offer")
+        self._tell_window(True)
         if pending.line and self._speak is not None:
             try:
                 self._speak(pending.line)
@@ -180,6 +183,15 @@ class OfferController:
     def _end(self) -> None:
         with self._lock:
             self._active = None
+        self._tell_window(False)
+
+    def _tell_window(self, open_: bool) -> None:
+        if self._on_window is None:
+            return
+        try:
+            self._on_window(open_)
+        except Exception:
+            logger.warning("offer window callback failed", exc_info=True)
 
     def _step_window(self, offer: _Offer) -> bool:
         g = self._gates
