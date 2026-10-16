@@ -59,7 +59,6 @@ from maipai_body.presence.thermal import ThermalState
 from maipai_body.speech.barge import talk_over
 from maipai_body.speech.capture import AudioCapture
 from maipai_body.speech.engines import StopDetector
-
 from maipai_body.speech.kws import UnmuteListener
 from maipai_body.speech.offline_clips import FREEFALL as FREEFALL_CLIP
 from maipai_body.speech.offline_clips import RECONNECT as RECONNECT_CLIP
