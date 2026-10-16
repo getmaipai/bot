@@ -2261,11 +2261,12 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       Objective: armed only (a frontal face within about 1.5 m by face width, a game or offer window); 5 Hz on a 256 px crop; the vocabulary and debounce of section 5.3; no frame stored; the model never loads while unarmed.
       Acceptance (fail-first): landmark-sequence fixtures yield each gesture and a near-miss set yields none; the model is never constructed when unarmed; a wave, point or any other gesture during an offer window never accepts it, with `robot.gestures.enabled` on or off (a test); the model never loads when `robot.gestures.enabled` is off or when unarmed; the M-R1 row UNVERIFIED. Exit: `bash scripts/check.sh`. Cloud: yes.
 
-- [ ] **TOUCH-01: antenna touch as acknowledge or wake** (S on fakes; unit proof before any wider use; after S-EXPR-01R).
+- [x] **TOUCH-01: antenna touch as acknowledge or wake** (S on fakes; unit proof before any wider use; after S-EXPR-01R).
       Governs: body/maipai_body/presence/touch.py, body/tests/test_touch*.py, docs/dev/measure-runbook.md (experiments T0 to T4).
       Reuse check: the state feed's present antenna angles against the worker's commanded ones; the suppression table.
       Objective: a deviation above 0.4 rad held for 3 samples, re-armed below 0.1 rad, refractory 0.25 s, suppressed while any layer drives the antennas and for 260 ms after; meaning acknowledge or wake only; a touch never accepts an offer (OWNER-ANSWERS 3: spoken words only).
       Acceptance (fail-first): a scripted push yields one event; breathing and a clip yield none; the double crossing merges; a touch during an offer window does not accept the offer. Thresholds UNMEASURED. Exit: `bash scripts/check.sh`. Cloud: yes.
+      Landed 2026-10-16: `presence/touch.py` emits debounced observations only; fake acceptance and T0 to T4 unit procedures added. Thresholds remain UNMEASURED.
 
 - [ ] **KNOCK-01: a knock wakes the robot from sleep** (S on fakes; unit proof; after MOVE-CARRY-01a).
       Objective: an IMU accelerometer transient above a threshold with 200 ms minimum spacing, gated while the robot moves and never while `lifted` or `carried`; a double knock within 1 s wakes from sleep and asks the status line; the mic onset detector (2 kHz high-pass, spectral flux) is the second candidate if the IMU is too coarse.

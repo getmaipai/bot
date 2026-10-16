@@ -98,6 +98,26 @@ UNMEASURED design default. Nothing below has been run.
 | Tilt while held | Tilt the held body past 45 degrees | `tipped` reported, hold stays latched |
 | Gravity compensation while held (UNVERIFIED) | With `carry_gravity_compensation` on in a local profile, lift the body with the base tilted, hold it, set it down | Whether the head holds still under gravity compensation, and whether it is released on put down. The flag stays off until this row passes |
 
+## TOUCH-01: antenna touch thresholds (unit, T0 to T4)
+
+The detector's 0.4 rad activation, 0.1 rad re-arm, three-sample debounce,
+0.25 s refractory period and 260 ms post-drive suppression are design
+defaults only. No hardware measurement has been taken. Run these checks
+on the unit before using touch outside the fake-backed acknowledge/wake
+path; never use a touch to accept an offer.
+
+| Experiment | Procedure | Record |
+|---|---|---|
+| T0 baseline | Leave the head at rest for five minutes, then run the normal idle breathing clip set | Present and commanded left/right angles; largest natural deviation; any false events |
+| T1 gentle touch | Push and release each antenna by hand ten times at increasing force, stopping at the first uncomfortable resistance | Peak deviation, number of samples above 0.4 rad, event timing, and whether 0.1 rad re-arm is reached |
+| T2 drive suppression | Run breathing and one antenna clip, touching during motion and at 50 ms steps after motion ends | False events during motion and time until the first eligible sample after release |
+| T3 repeated crossing | Touch both antennas together, then release and repeat at 0.1 s intervals | Event count, refractory behavior, and merge behavior for the simultaneous crossing |
+| T4 offer isolation | With a harmless offer card visible, repeat T1 while recording only the event and acceptance outputs | A touch may acknowledge or wake; offer acceptance count must remain zero |
+
+Keep the present and commanded traces local to the measurement run; do
+not retain video or audio. Record the daemon version, profile and the
+observed threshold values in `measurements.md` after the unit exists.
+
 ## What the simulator already showed, and what it cannot
 
 - The harnesses run end to end against `reachy-mini-daemon` 1.11.0 `--sim`:
