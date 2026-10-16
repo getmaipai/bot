@@ -2299,7 +2299,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       Acceptance (fail-first): a scripted push yields one event; breathing and a clip yield none; the double crossing merges; a touch during an offer window does not accept the offer. Thresholds UNMEASURED. Exit: `bash scripts/check.sh`. Cloud: yes.
       Landed 2026-10-16: `presence/touch.py` emits debounced observations only; fake acceptance and T0 to T4 unit procedures added. Thresholds remain UNMEASURED.
 
-- [ ] **KNOCK-01: a knock wakes the robot from sleep** (S on fakes; unit proof; after MOVE-CARRY-01a).
+- [x] **KNOCK-01: a knock wakes the robot from sleep** (S on fakes; unit proof; after MOVE-CARRY-01a). Built 2026-10-16: `presence/knock.py` (`KnockDetector`, impulse under 120 ms, double knock inside 1 s, blocked by any longer movement, cleared by hold), `ConversationLoop._knock_tick` on its own 50 Hz thread, started only when the sleep owner passes `is_asleep` and `wake_from_sleep` (S-EXPR-04 wires them; until then nothing runs); the wake acks and speaks the rung 2 status line when the ladder is wired. `tests/test_knock.py`. Thresholds and the IMU read rate UNMEASURED (runbook rows); the mic-onset fallback is not built.
       Objective: an IMU accelerometer transient above a threshold with 200 ms minimum spacing, gated while the robot moves and never while `lifted` or `carried`; a double knock within 1 s wakes from sleep and asks the status line; the mic onset detector (2 kHz high-pass, spectral flux) is the second candidate if the IMU is too coarse.
       Acceptance (fail-first): a scripted carry never reads as a knock; a double knock wakes exactly once. Exit: `bash scripts/check.sh`. Cloud: yes.
 

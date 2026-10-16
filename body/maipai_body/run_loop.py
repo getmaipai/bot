@@ -52,6 +52,7 @@ from maipai_body.presence.carry_reaction import (
     line_allowed,
 )
 from maipai_body.presence.funnel import FunnelState, FunnelView, SettleGate
+from maipai_body.presence.knock import KnockDetector
 from maipai_body.presence.motion_state import MotionState, MotionStateMachine
 from maipai_body.presence.observations import PresenceObservation, read_presence
 from maipai_body.presence.thermal import ThermalState
@@ -90,6 +91,9 @@ _WAKE_POLL_SLEEP_S = 0.01
 # The body's acknowledgement of a wake the hub cannot take (the same primitive
 # rung 0 uses as its stir): the user always sees that the wake was heard.
 _WAKE_ACK_PRIMITIVE = "perk"
+# KNOCK-01: the IMU is polled this often while the robot sleeps (UNVERIFIED rate;
+# the unit row decides whether the IMU read is fast enough or the mic onset is needed).
+_KNOCK_INTERVAL_S = 0.02
 
 # FACE-01's own capped rate: "once every few seconds while a face is
 # present, not per frame" (design-face-recognition-models-2026-09-28.md
@@ -189,6 +193,12 @@ class ConversationLoop:
         thermal: Any = None,
         stop_detector: StopDetector | None = None,
         open_mic: bool = False,
+
+
+
+        is_asleep: Callable[[], bool] | None = None,
+        wake_from_sleep: Callable[[], None] | None = None,
+        knock_interval_s: float = _KNOCK_INTERVAL_S,
     ) -> None:
         # S-EXPR-04: when given, gaze and idle replace the daemon's own tracker.
         self._attention = attention
@@ -294,6 +304,12 @@ class ConversationLoop:
         self._carry_reaction = carry_reaction or (lambda: DEFAULT_CARRY_REACTION)
         self._presence_entries = presence_entries
         self._carry_line_index = 0
+        # KNOCK-01: a double knock wakes a sleeping robot. Both hooks are given by
+        # whoever owns the sleep state (S-EXPR-04); without `is_asleep` nothing runs.
+        self._is_asleep = is_asleep
+        self._wake_from_sleep = wake_from_sleep or (lambda: None)
+        self._knock_interval_s = knock_interval_s
+        self._knock = KnockDetector()
         if offline is not None:
             offline.machine.subscribe(lambda _old, _new: self._notify_change())
             if offline.rung0 is not None:
@@ -562,6 +578,13 @@ class ConversationLoop:
             threading.Thread(
                 target=self._vision_watch.run, args=(stop_event,), name="vision-watch", daemon=True
             ).start()
+
+        knock_thread = None
+        if self._is_asleep is not None:
+            knock_thread = threading.Thread(
+                target=self._knock_loop, args=(stop_event,), name="knock", daemon=True
+            )
+            knock_thread.start()
         self._capture.start()
         try:
             while not stop_event.is_set():
@@ -576,6 +599,8 @@ class ConversationLoop:
             self._cancel_settle_timer()
             self._capture.stop()
             presence_thread.join(timeout=2.0)
+            if knock_thread is not None:
+                knock_thread.join(timeout=2.0)
             close_expression = getattr(self._expression, "close", None)
             if close_expression is not None:
                 close_expression()
@@ -621,19 +646,7 @@ class ConversationLoop:
         self._render_ambient(_WAKE_ACK_PRIMITIVE)
         if offline.recognizer is None or offline.router is None:
             # No keyword spotter wired (its CPU cost is UNVERIFIED).
-            status = offline.status()
-            speaker = offline.speaker
-            selected = (
-                speaker.selected_variant(status.clip_ids[0])
-                if speaker is not None and status.clip_ids and hasattr(speaker, "selected_variant")
-                else None
-            )
-            reply = Reply(
-                selected[1] if selected else status.text,
-                (selected[0],) if selected else status.clip_ids,
-            )
-            offline.last_reply = reply
-            self._speak_reply(reply, None, stop_event)
+            self._speak_status_line(stop_event)
             return
         try:
             heard = offline.recognizer.listen(self._capture, stop_event)
@@ -648,6 +661,54 @@ class ConversationLoop:
         reply = offline.router.handle(command)
         offline.last_reply = reply
         self._speak_reply(reply, command, stop_event)
+
+    def _speak_status_line(self, stop_event: threading.Event) -> None:
+        """Rung 2: the status line built from the machine's real values."""
+        offline = self._offline
+        assert offline is not None
+        status = offline.status()
+        speaker = offline.speaker
+        selected = (
+            speaker.selected_variant(status.clip_ids[0])
+            if speaker is not None and status.clip_ids and hasattr(speaker, "selected_variant")
+            else None
+        )
+        reply = Reply(
+            selected[1] if selected else status.text,
+            (selected[0],) if selected else status.clip_ids,
+        )
+        offline.last_reply = reply
+        self._speak_reply(reply, None, stop_event)
+
+    def _knock_loop(self, stop_event: threading.Event) -> None:
+        while not stop_event.wait(self._knock_interval_s):
+            self._knock_tick(stop_event)
+
+    def _knock_tick(self, stop_event: threading.Event) -> None:
+        """KNOCK-01: one IMU read into the detector. Only a sleeping robot listens;
+        never while held, tipped or falling, and never while a turn runs."""
+        if self._is_asleep is None or not self._is_asleep():
+            self._knock.reset()
+            return
+        try:
+            reading = self._client.read()
+        except Exception:
+            logger.warning("knock IMU read failed", exc_info=True)
+            return
+        suppressed = (
+            self._motion.holding
+            or self._motion_state in (MotionState.TIPPED, MotionState.FREEFALL)
+            or self._current_funnel() != FunnelState.IDLE
+        )
+        if not self._knock.update(reading, self._motion_clock(), suppressed=suppressed):
+            return
+        try:
+            self._wake_from_sleep()
+            self._render_ambient(_WAKE_ACK_PRIMITIVE)
+            if self._offline is not None:
+                self._speak_status_line(stop_event)
+        except Exception:
+            logger.warning("knock wake failed", exc_info=True)
 
     def _speak_reply(
         self, reply: Reply, command: LocalCommand | None, stop_event: threading.Event

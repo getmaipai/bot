@@ -139,6 +139,17 @@ The logic is proven against fakes. These rows need the unit and stay UNVERIFIED 
 | Daemon restart | Run the sudoers line as `pollen` and restart the daemon | Restart works with no password prompt |
 | Thermal ramp | Warm the module; note the real temperatures where the line plays and the idle goes still | Matches 70, 75, 78 C within the hysteresis of 3 C |
 
+## KNOCK-01: the knock thresholds (unit)
+
+Every threshold in `body/maipai_body/presence/knock.py` is an UNMEASURED design
+default. Nothing below has been run.
+
+| Row | Run | Reads as |
+|---|---|---|
+| Knock on the shell | Robot asleep on a table. Knock twice with a knuckle on the base, ten times; then once, ten times | Pass: every double wakes it once, no single does. Record the peak deviation from 1 g of a knock to set `KNOCK_ACCEL_M_S2` |
+| IMU read rate | Log timestamps of ten `Imu.read()` calls in a row over HTTP | Whether the rate resolves a 120 ms impulse. If not, the mic onset detector (2 kHz high-pass, spectral flux) is the second candidate |
+| Carry and nudge | Lift and carry the sleeping body three times; nudge the table | Pass: never a wake. Sets `MAX_IMPULSE_S` and `QUIET_S` |
+
 ## What the simulator already showed, and what it cannot
 
 - The harnesses run end to end against `reachy-mini-daemon` 1.11.0 `--sim`:
