@@ -62,6 +62,15 @@ KEYWORDS_FILE = Path(__file__).with_name("kws_keywords.txt")
 UNMUTE_PHRASE = "listen again"
 UNMUTE_KEYWORDS_FILE = Path(__file__).with_name("kws_unmute_keywords.txt")
 
+# OFFER-01: the offer window listens for these and nothing else (OWNER-ANSWERS 3: spoken
+# words only, no brand name). The hub's consent vocabulary reads the accepted words
+# ("go ahead", "yes please", "okay go ahead" are all consent) and treats "not now" as a
+# 30 minute snooze and "no thanks" as a decline.
+ACCEPT_PHRASES: tuple[str, ...] = ("go ahead", "yes please", "okay go ahead")
+DECLINE_PHRASES: tuple[str, ...] = ("not now", "no thanks")
+OFFER_PHRASES: tuple[str, ...] = ACCEPT_PHRASES + DECLINE_PHRASES
+OFFER_KEYWORDS_FILE = Path(__file__).with_name("kws_offer_keywords.txt")
+
 _MODEL_DIR = "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"
 _SUFFIX = "epoch-12-avg-2-chunk-16-left-64.int8.onnx"
 MODEL_FILES = {
@@ -106,6 +115,27 @@ def tag_to_phrase(tag: str) -> str | None:
     """The command phrase a spotter tag names, or ``None`` off the list."""
     phrase = tag.strip().lstrip("@").replace("_", " ")
     return phrase if phrase in KEYWORD_PHRASES else None
+
+
+def offer_tag_to_phrase(tag: str) -> str | None:
+    """The offer-window phrase a spotter tag names, or ``None`` off that list."""
+    phrase = tag.strip().lstrip("@").replace("_", " ")
+    return phrase if phrase in OFFER_PHRASES else None
+
+
+def render_offer_keywords(bpe_model: Path) -> str:
+    """Rebuild ``kws_offer_keywords.txt`` from :data:`OFFER_PHRASES`; same dev-only
+    recipe as :func:`render_keywords`. The committed file was written by hand from
+    the token pieces of ``kws_keywords.txt`` and is UNVERIFIED until this has been
+    run against the pinned model's ``bpe.model`` and the diff read."""
+    import sentencepiece
+
+    processor = sentencepiece.SentencePieceProcessor(model_file=str(bpe_model))
+    lines = []
+    for phrase in OFFER_PHRASES:
+        tokens = processor.encode(phrase.upper(), out_type=str)
+        lines.append(f"{' '.join(tokens)} @{phrase.replace(' ', '_')}")
+    return "\n".join(lines) + "\n"
 
 
 def ensure_kws_model(cache_dir: Path) -> Path:

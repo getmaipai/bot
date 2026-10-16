@@ -38,6 +38,7 @@ from maipai_body.expression.cue import Cue, Phase
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.suppression import SuppressionContext
 from maipai_body.hal.seam import AudioIO, Camera, FaceTracker, HeadActuator, Imu
+from maipai_body.initiative.offer import OfferController, OfferGates
 from maipai_body.link.commands import LocalCommand, Reply, route_phrase
 from maipai_body.link.offline import OfflineRungs
 from maipai_body.link.replay import ReplayItem
@@ -59,7 +60,7 @@ from maipai_body.presence.thermal import ThermalState
 from maipai_body.speech.barge import talk_over
 from maipai_body.speech.capture import AudioCapture
 from maipai_body.speech.engines import StopDetector
-from maipai_body.speech.kws import UnmuteListener
+from maipai_body.speech.kws import KeywordEngine, UnmuteListener
 from maipai_body.speech.offline_clips import FREEFALL as FREEFALL_CLIP
 from maipai_body.speech.offline_clips import RECONNECT as RECONNECT_CLIP
 from maipai_body.speech.offline_clips import THERMAL as THERMAL_CLIP
@@ -198,6 +199,8 @@ class ConversationLoop:
         wake_from_sleep: Callable[[], None] | None = None,
         knock_interval_s: float = _KNOCK_INTERVAL_S,
         unmute_listener: UnmuteListener | None = None,
+        offer_engine: KeywordEngine | None = None,
+        guest_app_active: Callable[[], bool] | None = None,
     ) -> None:
         # S-EXPR-04: when given, gaze and idle replace the daemon's own tracker.
         self._attention = attention
@@ -311,6 +314,29 @@ class ConversationLoop:
         self._knock = KnockDetector()
         # MUTE-LOCAL-01: while muted the wake scorer is off and this hears "listen again".
         self._unmute_listener = unmute_listener
+        # OFFER-01: the hub's offers. Without an `offer_engine` (the local spotter)
+        # every offer is refused with `no_spotter`. The frame sender is bound once
+        # the command channel exists (`bind_offer_frames`).
+        self._offer_send: Callable[[dict], bool] = lambda _frame: False
+        self._guest_app_active = guest_app_active or (lambda: False)
+        self._run_stop: threading.Event | None = None
+        self.offer = OfferController(
+            engine=offer_engine,
+            poll_blocks=lambda: self._capture.poll_blocks(),
+            render=self._render_ambient,
+            send_frame=lambda frame: self._offer_send(frame),
+            open_turn=self._open_offer_turn,
+            gates=OfferGates(
+                busy=lambda: self._current_funnel() is not FunnelState.IDLE,
+                muted=self._is_muted,
+                held=lambda: self._motion.holding,
+                asleep=lambda: bool(self._is_asleep is not None and self._is_asleep()),
+                outage=self._in_outage,
+                guest_app=lambda: self._guest_app_active(),
+                attentive=self._offer_person_attentive,
+                child_present=self._child_present,
+            ),
+        )
         if offline is not None:
             offline.machine.subscribe(lambda _old, _new: self._notify_change())
             if offline.rung0 is not None:
@@ -319,6 +345,23 @@ class ConversationLoop:
                     may_drive=self._body_is_free,
                     on_reconnect_spoken=self._reconnect_spoken,
                 )
+
+    def bind_offer_frames(self, send_frame: Callable[[dict], bool]) -> None:
+        self._offer_send = send_frame
+
+    def _offer_person_attentive(self, person_id: str) -> bool:
+        """The offer's person is the one the face check currently names."""
+        verdict = self._current_face_verdict()
+        return verdict is not None and verdict.person_id == person_id
+
+    def _child_present(self) -> bool:
+        entries = self._presence_entries() if self._presence_entries is not None else None
+        return any(entry.kind in ("child", "teen") for entry in entries or ())
+
+    def _open_offer_turn(self, phrase: str, offer_id: str, _person_id: str) -> None:
+        """The accept: a normal turn whose text is the heard phrase."""
+        stop = self._run_stop or threading.Event()
+        self._run_turn(stop, heard_text=phrase, ask_answer={"offer_id": offer_id, "approved": True})
 
     def _notify_change(self) -> None:
         if self._on_change is not None:
@@ -587,6 +630,7 @@ class ConversationLoop:
             )
             knock_thread.start()
         self._capture.start()
+        self._run_stop = stop_event
         try:
             while not stop_event.is_set():
                 event = self._poll_wake(stop_event)
@@ -611,6 +655,11 @@ class ConversationLoop:
         is set. Skipped entirely while muted (G8's own contract:
         "capture continues but zero blocks reach the wake scorer")."""
         while not stop_event.is_set():
+            if self.offer.service():
+                # An offer window owns the audio: the local spotter hears it, the
+                # wake scorer does not, and nothing leaves the robot.
+                stop_event.wait(_WAKE_POLL_SLEEP_S)
+                continue
             if self._is_muted():
                 # Drained, never scored and never sent anywhere, while muted. The
                 # one exception is the local unmute phrase, heard on this robot only.
@@ -747,7 +796,13 @@ class ConversationLoop:
         finally:
             self._enter(FunnelState.IDLE)
 
-    def _run_turn(self, stop_event: threading.Event) -> None:
+    def _run_turn(
+        self,
+        stop_event: threading.Event,
+        *,
+        heard_text: str | None = None,
+        ask_answer: dict[str, Any] | None = None,
+    ) -> None:
         if self._hub_credentials is not None:
             try:
                 session_cookie, base_url = self._hub_credentials()
@@ -763,23 +818,29 @@ class ConversationLoop:
                     self._turn = TurnClient(base_url, session_cookie)
                     self._tts = TtsPlaybackClient(base_url, session_cookie, self._playback)
                     self._current_hub_credentials = credentials
-        self._enter(FunnelState.LISTENING)
-        self._render(Cue(phase=Phase.HEARD, cue_seq=self._next_cue_seq()))
+        if heard_text is None:
+            self._enter(FunnelState.LISTENING)
+            self._render(Cue(phase=Phase.HEARD, cue_seq=self._next_cue_seq()))
 
-        try:
-            with self._capture_scope():
-                stt_result = self._stt.run(self._capture)
-        except Exception as exc:
-            logger.warning("stt stream failed; back to idle", exc_info=True)
-            # The listen cue already moved the head; a lost stream is a
-            # lost turn, so it settles and is announced like any other.
-            self._link_lost(f"speech stream lost: {exc}")
-            self._enter(FunnelState.IDLE)
-            return
+            try:
+                with self._capture_scope():
+                    stt_result = self._stt.run(self._capture)
+            except Exception as exc:
+                logger.warning("stt stream failed; back to idle", exc_info=True)
+                # The listen cue already moved the head; a lost stream is a
+                # lost turn, so it settles and is announced like any other.
+                self._link_lost(f"speech stream lost: {exc}")
+                self._enter(FunnelState.IDLE)
+                return
 
-        if stt_result.kind != "final" or not stt_result.text:
-            self._enter(FunnelState.IDLE)
-            return
+            if stt_result.kind != "final" or not stt_result.text:
+                self._enter(FunnelState.IDLE)
+                return
+            turn_text = stt_result.text
+        else:
+            # OFFER-01: the phrase was heard locally by the spotter, so there is
+            # no speech stream to run; the phrase is the turn's text.
+            turn_text = heard_text
 
         self._enter(FunnelState.THINKING)
         reply_text: str | None = None
@@ -809,8 +870,11 @@ class ConversationLoop:
                 )
                 person, level = None, "unknown"
             speaker_evidence = {"person": person, "basis": "face", "level": level}
+        turn_extra = {"ask_answer": ask_answer} if ask_answer is not None else {}
         try:
-            for turn_event in self._turn.stream(stt_result.text, speaker_evidence=speaker_evidence):
+            for turn_event in self._turn.stream(
+                turn_text, speaker_evidence=speaker_evidence, **turn_extra
+            ):
                 if turn_event.turn_id:
                     turn_id = turn_event.turn_id
                 if turn_event.generation is not None:

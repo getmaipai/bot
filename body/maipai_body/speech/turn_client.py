@@ -94,6 +94,7 @@ class TurnClient:
         speaker_evidence: dict[str, Any] | None = None,
         present: list[dict[str, Any]] | None = None,
         conversation_id: str | None = None,
+        ask_answer: dict[str, Any] | None = None,
     ) -> Iterator[TurnEvent]:
         """POSTs the turn and yields one :class:`TurnEvent` per cue-
         worthy wire event, in order: SIGNAL (if any), then DONE (with
@@ -112,6 +113,10 @@ class TurnClient:
         }
         if conversation_id:
             body["conversation_id"] = conversation_id
+        if ask_answer is not None:
+            # OFFER-01: the answer to a hub offer. `approved` alone is never
+            # consent; the hub checks the heard words and the speaker too.
+            body["ask_answer"] = ask_answer
         state = _TurnStreamState()
         try:
             # A context manager, not a bare call: G7's own review found

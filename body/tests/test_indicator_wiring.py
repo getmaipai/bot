@@ -28,6 +28,10 @@ def _build(indicator, stop_event=None):
         def __init__(self, **kwargs):
             seen["loop"] = kwargs
             self.views = []
+            self.offer = MagicMock()
+
+        def bind_offer_frames(self, send_frame):
+            seen["offer_frames"] = send_frame
 
         def subscribe_view(self, callback):
             self.views.append(callback)
@@ -128,3 +132,8 @@ def test_the_eyes_are_closed_when_the_app_stops():
             break
         threading.Event().wait(0.02)
     assert seen_off.is_set()
+
+
+def test_offer_engine_is_off_unless_the_env_gate_is_set(tmp_path):
+    assert app_module._build_offer_engine(tmp_path, {}) is None
+    assert app_module._build_offer_engine(tmp_path, {"MAIPAI_BOT_OFFER_SPOTTER": "0"}) is None

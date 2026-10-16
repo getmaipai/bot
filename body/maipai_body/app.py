@@ -666,6 +666,7 @@ def _build_conversation_loop(
         temperature=read_cpu_temp_c,
     )
     is_asleep, wake_from_sleep = _knock_hooks(offline)
+    offer_engine = _build_offer_engine(cache_dir, os.environ)
     loop = ConversationLoop(
         client=tap,
         expression_engine=ExpressionEngine(
@@ -692,6 +693,7 @@ def _build_conversation_loop(
         thermal=ThermalMonitor(),
         is_asleep=is_asleep,
         wake_from_sleep=wake_from_sleep,
+        offer_engine=offer_engine,
     )
     loop.subscribe_view(director.on_view)
     threading.Thread(target=print_sync.run, name="face-print-sync", daemon=True).start()
@@ -732,8 +734,10 @@ def _build_conversation_loop(
             "mute": lambda _payload: set_muted({"muted": True}),
             "unmute": lambda _payload: set_muted({"muted": False}),
             "asset_changed": refresh_assets,
+            "offer": loop.offer.receive,
         },
     )
+    loop.bind_offer_frames(command_channel.send_frame)
     threading.Thread(
         target=command_channel.run,
         args=(stop_event,),
@@ -741,6 +745,25 @@ def _build_conversation_loop(
         daemon=True,
     ).start()
     return loop
+
+
+def _build_offer_engine(cache_dir: Path, env) -> object | None:
+    """OFFER-01: the local spotter for the offer window, or None (offers are then
+    refused with `no_spotter`). Off unless MAIPAI_BOT_OFFER_SPOTTER=1: the offer
+    phrases' token file is not yet checked against the pinned model."""
+    if env.get("MAIPAI_BOT_OFFER_SPOTTER") != "1":
+        return None
+    try:
+        from maipai_body.speech.kws import (
+            OFFER_KEYWORDS_FILE,
+            SherpaKeywordEngine,
+            ensure_kws_model,
+        )
+
+        return SherpaKeywordEngine(ensure_kws_model(cache_dir), keywords_file=OFFER_KEYWORDS_FILE)
+    except Exception:
+        logger.warning("offer spotter unavailable; offers will be refused", exc_info=True)
+        return None
 
 
 def _hub_credentials_reader(link: LinkLifecycle, base_url: str) -> Callable[[], tuple[str, str]]:

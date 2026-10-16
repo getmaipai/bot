@@ -122,3 +122,56 @@ def test_stand_in_replays_after_drop_and_last_event_id(monkeypatch):
         assert any(
             request.get("last_event_id") == "event-replay" for request in hub.command_handshakes
         )
+
+
+class _LiveSocket(FakeWebSocket):
+    """A socket whose recv idles until closed, then raises like a dropped link."""
+
+    def __init__(self, drop_after_s: float):
+        super().__init__()
+        self._drop_at = time.monotonic() + drop_after_s
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def recv(self, timeout=None):
+        from websockets.exceptions import ConnectionClosed
+
+        if time.monotonic() >= self._drop_at:
+            raise ConnectionClosed(None, None)
+        time.sleep(0.01)
+        raise TimeoutError
+
+
+def test_send_frame_needs_an_open_socket_and_drop_listeners_fire():
+    stop = threading.Event()
+    sockets = []
+    drops = []
+
+    def connector(*_a, **_k):
+        ws = _LiveSocket(0.15)
+        sockets.append(ws)
+        return ws
+
+    channel = CommandChannel("http://hub.test", "token", connector=connector, reconnect_delay_s=5.0)
+    channel.add_drop_listener(lambda: drops.append(1))
+    frame = {"kind": "offer_snooze", "payload": {"offer_id": "of_1", "source": "voice"}}
+    assert channel.connected is False
+    assert channel.send_frame(frame) is False
+    thread = threading.Thread(target=channel.run, args=(stop,), daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 2
+    while not channel.connected and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert channel.send_frame(frame) is True
+    assert sockets[0].sent == [frame]
+    deadline = time.monotonic() + 2
+    while channel.connected and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert drops == [1]
+    assert channel.send_frame(frame) is False
+    stop.set()
+    thread.join(timeout=3)

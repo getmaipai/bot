@@ -159,6 +159,19 @@ def test_the_request_body_carries_the_robot_surface_and_the_text(ndjson_server):
     assert handler.request_body["present"] is None
 
 
+def test_ask_answer_rides_the_body_only_when_given(ndjson_server):
+    server, handler, reset = ndjson_server
+    reset([{"type": "done", "value": {}}])
+    client = TurnClient(_base_url(server), "cookie-abc")
+
+    list(client.stream("hello"))
+    assert "ask_answer" not in handler.request_body
+
+    reset([{"type": "done", "value": {}}])
+    list(client.stream("go ahead", ask_answer={"offer_id": "of_1", "approved": True}))
+    assert handler.request_body["ask_answer"] == {"offer_id": "of_1", "approved": True}
+
+
 def test_the_session_cookie_is_sent_as_a_header(ndjson_server):
     server, handler, reset = ndjson_server
     reset([{"type": "done", "value": {}}])

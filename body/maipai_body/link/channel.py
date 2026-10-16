@@ -51,6 +51,40 @@ class CommandChannel:
         self._connect = connector
         self._processed_ids: set[str] = set()
         self.last_event_id: str | None = None
+        self._ws_lock = threading.Lock()
+        self._ws: ClientConnection | None = None
+        self._drop_listeners: list[Callable[[], None]] = []
+
+    @property
+    def connected(self) -> bool:
+        with self._ws_lock:
+            return self._ws is not None
+
+    def add_drop_listener(self, listener: Callable[[], None]) -> None:
+        """Called (on the channel thread) every time an open connection is lost."""
+        self._drop_listeners.append(listener)
+
+    def send_frame(self, frame: dict) -> bool:
+        """Send one robot channel frame on the open socket; False when there is none."""
+        with self._ws_lock:
+            ws = self._ws
+            if ws is None:
+                return False
+            try:
+                ws.send(json.dumps(frame))
+            except (ConnectionClosed, OSError):
+                return False
+        return True
+
+    def _set_ws(self, ws: ClientConnection | None) -> None:
+        with self._ws_lock:
+            self._ws = ws
+        if ws is None:
+            for listener in list(self._drop_listeners):
+                try:
+                    listener()
+                except Exception:
+                    logger.warning("command channel drop listener failed", exc_info=True)
 
     def _time_command(self, payload: dict) -> None:
         hub_time = payload.get("hub_time")
@@ -145,7 +179,11 @@ class CommandChannel:
                     ping_interval=None,
                 ) as ws:
                     delay = self._reconnect_delay_s
-                    self._receive(ws, stop_event)
+                    self._set_ws(ws)
+                    try:
+                        self._receive(ws, stop_event)
+                    finally:
+                        self._set_ws(None)
             except (ConnectionClosed, OSError, TimeoutError, ValueError) as exc:
                 if not stop_event.is_set():
                     logger.info("hub command channel reconnecting after %s", type(exc).__name__)
