@@ -91,6 +91,22 @@ class XiaozhiDeviceClient:
             raise NotSupported(f"Unknown StackChan push action '{action}'")
         return self._call(name, arguments)
 
+    def device_supports(self, feature: str) -> bool:
+        return self.server.device_supports(feature)
+
+    def create_notification_audio(self, message: object) -> str:
+        return self.server.create_notification_audio(message)
+
+    def notify(self, audio_url: str) -> object:
+        try:
+            return asyncio.run_coroutine_threadsafe(
+                self.server.send_notify(audio_url), self.server._loop
+            ).result(timeout=self.timeout)
+        except Exception as exc:
+            if isinstance(exc, NotSupported):
+                raise
+            raise BodyLost("StackChan notify push failed; reconnect and retry.") from exc
+
     def take_photo(self) -> bytes | None:
         return self._call("self.camera.take_photo", {"question": "Describe what you see."})
 
@@ -185,6 +201,7 @@ class XiaozhiServer:
         vision_port: int = 8766,
         max_photo_bytes: int = 2 * 1024 * 1024,
         advertised_vision_url: str | None = None,
+        notification_audio_handler: Callable[[str], Awaitable[str]] | None = None,
     ) -> None:
         self.pairing = pairing
         self.robot = robot
@@ -197,6 +214,7 @@ class XiaozhiServer:
         self.vision_port = vision_port
         self.max_photo_bytes = max_photo_bytes
         self.advertised_vision_url = advertised_vision_url
+        self.notification_audio_handler = notification_audio_handler
         self._vision_runner: web.AppRunner | None = None
         self._vision_site: web.TCPSite | None = None
         self._photos: dict[str, bytes] = {}
@@ -206,6 +224,7 @@ class XiaozhiServer:
         self._server: Any = None
         self._sessions: dict[str, ServerConnection] = {}
         self._session_ids: dict[str, str] = {}
+        self._session_features: dict[str, dict[str, Any]] = {}
         self._session_credentials: dict[str, tuple[str, str]] = {}
         self._pending_device_calls: dict[str, tuple[asyncio.Future[object], str, str]] = {}
         self._early_device_replies: dict[str, dict[str, Any]] = {}
@@ -213,6 +232,7 @@ class XiaozhiServer:
         self._next_device_request_id = itertools.count(1)
         self._speaking: set[str] = set()
         self._source_requests: dict[str, list[float]] = {}
+        self._notification_audio: dict[tuple[str, str], bytes] = {}
         self._session_ready = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -234,6 +254,7 @@ class XiaozhiServer:
         )
         app = web.Application(client_max_size=self.max_photo_bytes)
         app.router.add_post("/vision/{device_id}", self._receive_photo)
+        app.router.add_get("/notify/{device_id}/{audio_id}.ogg", self._serve_notify_audio)
         self._vision_runner = web.AppRunner(app)
         await self._vision_runner.setup()
         self._vision_site = web.TCPSite(self._vision_runner, self.vision_host, self.vision_port)
@@ -364,6 +385,10 @@ class XiaozhiServer:
                         )
                         continue
                     hello_received = True
+                    features = data.get("features", {})
+                    self._session_features[device_id] = (
+                        dict(features) if isinstance(features, dict) else {}
+                    )
                     await websocket.send(
                         json.dumps(
                             {
@@ -434,6 +459,7 @@ class XiaozhiServer:
             if self._sessions.get(device_id) is websocket:
                 self._sessions.pop(device_id, None)
                 self._session_credentials.pop(device_id, None)
+                self._session_features.pop(device_id, None)
                 self._session_ids.pop(device_id, None)
                 self._early_device_replies.clear()
             if not self._sessions:
@@ -779,6 +805,72 @@ class XiaozhiServer:
                 ).result(timeout=1)
             except (concurrent.futures.TimeoutError, RuntimeError):
                 pass
+
+    def device_supports(self, feature: str) -> bool:
+        if len(self._sessions) != 1:
+            return False
+        device_id = next(iter(self._sessions))
+        return self._session_features.get(device_id, {}).get(feature) is True
+
+    def create_notification_audio(self, message: object) -> str:
+        if not isinstance(message, str) or not message.strip():
+            raise ValueError("notification message must be non-empty text")
+        if self.notification_audio_handler is None:
+            raise NotSupported(
+                "Host notification audio is not configured",
+                part="audio",
+                capability="speaker",
+                fix="Configure the host TTS audio provider, then retry.",
+            )
+        if len(self._sessions) != 1:
+            raise ConnectionError("A single paired StackChan session is required")
+        device_id = next(iter(self._sessions))
+        token = uuid.uuid4().hex
+        audio = asyncio.run_coroutine_threadsafe(
+            self.notification_audio_handler(message), self._loop
+        ).result(timeout=10)
+        if not isinstance(audio, bytes) or not audio:
+            raise BodyLost("Host notification audio provider returned no audio")
+        self._notification_audio[(device_id, token)] = audio
+        return self._notify_audio_url(device_id, token)
+
+    def _notify_audio_url(self, device_id: str, audio_id: str) -> str:
+        base = self.advertised_vision_url
+        if base:
+            root = base.split("/vision/", 1)[0].rstrip("/")
+        else:
+            host = self.vision_host if self.vision_host not in {"0.0.0.0", "::"} else "127.0.0.1"
+            root = f"http://{host}:{self.vision_port}"
+        return f"{root}/notify/{device_id}/{audio_id}.ogg"
+
+    async def send_notify(self, audio_url: str) -> None:
+        if not self.device_supports("notify"):
+            raise NotSupported("StackChan did not advertise notify in hello features")
+        if len(self._sessions) != 1:
+            raise ConnectionError("A single paired StackChan session is required")
+        device_id, websocket = next(iter(self._sessions.items()))
+        session_id = self._session_ids[device_id]
+        # xiaozhi-esp32 v2.3.0 main/protocols/websocket_protocol.cc at
+        # 1b48ebd7863695bf80d384c6c09af6299a6d7d0e documents hello features;
+        # its source has no notify handler, so the notify frame is gated by hello.
+        await self._json(websocket, session_id, "notify", {"audio_url": audio_url})
+
+    async def _serve_notify_audio(self, request: web.Request) -> web.Response:
+        device_id = request.match_info["device_id"]
+        audio_id = request.match_info["audio_id"]
+        credentials = self._session_credentials.get(device_id)
+        auth = request.headers.get("Authorization", "")
+        if credentials is None or not self.pairing.authorize(device_id, *credentials):
+            raise web.HTTPUnauthorized()
+        token = auth[7:] if auth.startswith("Bearer ") else ""
+        if not self.pairing.authorize(device_id, credentials[0], token):
+            raise web.HTTPForbidden()
+        audio = self._notification_audio.pop((device_id, audio_id), None)
+        if audio is None:
+            raise web.HTTPNotFound()
+        return web.Response(
+            body=audio, content_type="audio/ogg", headers={"Cache-Control": "no-store"}
+        )
 
     def cancel_device_calls(self, name: str) -> None:
         if self._loop is not None:

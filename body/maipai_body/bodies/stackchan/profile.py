@@ -75,6 +75,9 @@ STACKCHAN_PROFILE = BodyProfile(
     safe_stop={"head": "hold"},
 )
 
+# Opt-in only. The runtime also requires the active device hello feature.
+STACKCHAN_NOTIFY_ENABLED = False
+
 __all__ = [
     "HEAD_COMMAND_SPEED",
     "HEAD_SPEED_SOFT_MAX",
@@ -82,4 +85,5 @@ __all__ = [
     "LED_COUNT",
     "SENSOR_MCP_TOOLS",
     "STACKCHAN_PROFILE",
+    "STACKCHAN_NOTIFY_ENABLED",
 ]

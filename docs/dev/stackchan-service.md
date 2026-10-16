@@ -70,6 +70,22 @@ to the face/LED/spoken presentation supported by its client. The pinned base
 tool inventory and reminder argument schema still need confirmation on a real
 unit. Fake-peer tests cover the host contract only; hardware has not arrived.
 
+StackChan notify is disabled by default. Enabling `STACKCHAN_NOTIFY_ENABLED`
+allows an alert to use the xiaozhi `notify {audio_url}` frame only when the
+connected device advertises `features.notify: true` in its hello. The audio URL
+is created by the Bot host's configured notification-audio provider and served
+from the Bot vision listener under `/notify/<device>/<audio-id>.ogg`; arbitrary
+third-party URLs are never forwarded. If the host audio provider is not
+configured, the existing face, LED, and spoken fallback remains in use. M5's
+pinned xiaozhi v2.2.4 remains unchanged. We downloaded upstream v2.3.0 archive
+at commit `1b48ebd7863695bf80d384c6c09af6299a6d7d0e` and verified its SHA256 as
+`51ab9575b6df400c88eeb3eff61255965229e40fd6c8b4807cd7c24603e42a53`, but its
+source did not contain a `notify` handler or `audio_url`. Before a future bump,
+add a script that downloads a candidate tag archive, checks its SHA256, and
+fails unless the pinned source contains the notify handler and payload shape;
+then review the patch series with `firmware/bump.sh` before changing pins.
+This source inspection and fake-peer coverage are not hardware verification.
+
 Battery is now read through the firmware's read-only `self.battery.get_status` MCP tool, which returns `{ "percent": integer 0..100, "charging": boolean }`. Patch 009 makes failed AXP2101 I2C reads return a safe zero rather than aborting the firmware; a host timeout or malformed tool result maps to `BodyLost`. Touch and IMU remain `NotSupported` because the pinned translator exposes no read-only MCP tools for them. Source-derived chip and register notes are in [the sensor map](stackchan-sensor-map.md); unit measurements are tracked in [the unit-arrival runbook](stackchan-unit-measurements.md). The unit-arrival fixture recorder and host-only egress proof are implemented; real-unit protocol capture and packet-capture results remain pending because hardware has not arrived.
 
 Patch 012 adds `self.robot.set_led_colors`, which accepts one RGB triplet per pixel and writes all 12 pixels through the pinned HAL's existing per-index `setRgbColor` primitive before refreshing the strip once. The Robot `leds.many` adapter keeps the complete-ring update requirement and preserves the existing validation error shapes. Camera capture still uses the whole-ring `self.robot.set_led_color` operation for red; while capture is active, adapter and fake reject the effect of per-pixel writes by restoring red across the ring. The pinned base has per-index HAL writes but no per-pixel MCP tool. Fake-peer tests cover distinct colors and capture indicator protection. Hardware has not arrived, so this has no hardware verification.

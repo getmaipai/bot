@@ -41,6 +41,8 @@ class FakeStackChanDeviceClient:
             "stop_reminder",
             "listen_window",
         }
+        self.notify_feature = False
+        self.notification_audio_url = "http://192.0.2.10:8766/notify/fake/audio.ogg"
         self.reminders: list[dict[str, object]] = []
 
         self.measurement_data = {
@@ -142,6 +144,21 @@ class FakeStackChanDeviceClient:
             self.reminders = [
                 item for item in self.reminders if item.get("id") != payload.get("id")
             ]
+        return True
+
+    def device_supports(self, feature: str) -> bool:
+        return feature == "notify" and self.notify_feature
+
+    def create_notification_audio(self, message: object) -> str:
+        del message
+        return self.notification_audio_url
+
+    def notify(self, audio_url: str) -> object:
+        if not self.notify_feature:
+            raise BodyLost("StackChan did not advertise notify")
+        if not audio_url.startswith("http://192.0.2."):
+            raise ValueError("notification audio must be hosted by the Bot")
+        self.push_actions.append(("notify", {"audio_url": audio_url}))
         return True
 
     def cancel_pending(self) -> None:

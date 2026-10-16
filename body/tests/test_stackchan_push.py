@@ -93,3 +93,33 @@ def test_reminder_list_stop_and_listen_window_are_pushed():
         "stop_reminder",
         "listen_window",
     ]
+
+
+def test_alert_uses_notify_only_when_profile_opt_in_and_hello_feature_are_present():
+    device = FakeStackChanDeviceClient()
+    device.notify_feature = True
+    adapter = StackChanRobotAdapter(
+        device, proactive_policy=lambda action: True, notify_enabled=True
+    )
+    adapter.robot.lease.acquire("person", "test")
+
+    adapter.robot.alerts.show(message="Door is open")
+
+    assert device.push_actions[-1] == (
+        "notify",
+        {"audio_url": device.notification_audio_url},
+    )
+    assert device.led_color == (0, 0, 0)
+
+
+def test_alert_falls_back_when_device_does_not_advertise_notify():
+    device = FakeStackChanDeviceClient()
+    adapter = StackChanRobotAdapter(
+        device, proactive_policy=lambda action: True, notify_enabled=True
+    )
+    adapter.robot.lease.acquire("person", "test")
+
+    adapter.robot.alerts.show(message="Door is open")
+
+    assert device.led_color == (168, 36, 0)
+    assert device.push_actions[-1] == ("speak", {"text": "Door is open"})

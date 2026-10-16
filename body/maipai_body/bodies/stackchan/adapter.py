@@ -18,6 +18,7 @@ from .profile import (
     HEAD_COMMAND_SPEED,
     LED_CHANNEL_MAX,
     LED_COUNT,
+    STACKCHAN_NOTIFY_ENABLED,
     STACKCHAN_PROFILE,
 )
 
@@ -46,6 +47,10 @@ class StackChanDeviceClient(Protocol):
     def get_battery_status(self) -> Mapping[str, Any]: ...
 
     def push_action(self, action: str, arguments: Mapping[str, Any]) -> object: ...
+
+    def notify(self, audio_url: str) -> object: ...
+
+    def device_supports(self, feature: str) -> bool: ...
 
 
 class _HeadAdapter:
@@ -211,8 +216,11 @@ class _AudioAdapter:
 
 
 class _PushAdapter:
-    def __init__(self, client: StackChanDeviceClient, proactive_policy, queue) -> None:
+    def __init__(
+        self, client: StackChanDeviceClient, proactive_policy, queue, notify_enabled
+    ) -> None:
         self.client, self.policy, self.queue = client, proactive_policy, queue
+        self.notify_enabled = notify_enabled
 
     def command(self, verb: str, *args: Any, **kwargs: Any) -> object:
         action = verb
@@ -227,6 +235,9 @@ class _PushAdapter:
                 fix="Change the household quiet-hours or surface policy, then retry.",
             )
         try:
+            if action == "show" and self.notify_enabled and self.client.device_supports("notify"):
+                audio_url = self.client.create_notification_audio(arguments.get("message", "Alert"))
+                return self.client.notify(audio_url)
             return self.client.push_action(action, arguments)
         except BodyLost:
             if action == "show":
@@ -433,10 +444,11 @@ def create_stackchan_robot(
     profile: BodyProfile = STACKCHAN_PROFILE,
     proactive_policy=lambda _action: False,
     reminder_queue=None,
+    notify_enabled: bool = STACKCHAN_NOTIFY_ENABLED,
 ) -> Robot:
     """Build the shared robot object with StackChan's supported tool adapters."""
     queue = reminder_queue if reminder_queue is not None else deque()
-    push = _PushAdapter(client, proactive_policy, queue)
+    push = _PushAdapter(client, proactive_policy, queue, notify_enabled)
     robot = Robot(
         profile,
         {
@@ -474,13 +486,20 @@ class StackChanRobotAdapter:
     """The xiaozhi service's small robot interface backed by the shared Robot object."""
 
     def __init__(
-        self, client: StackChanDeviceClient, *, proactive_policy=lambda _action: False
+        self,
+        client: StackChanDeviceClient,
+        *,
+        proactive_policy=lambda _action: False,
+        notify_enabled: bool = STACKCHAN_NOTIFY_ENABLED,
     ) -> None:
         self.client = client
         self.queued_reminders = deque()
         self.proactive_policy = proactive_policy
         self.robot = create_stackchan_robot(
-            client, proactive_policy=proactive_policy, reminder_queue=self.queued_reminders
+            client,
+            proactive_policy=proactive_policy,
+            reminder_queue=self.queued_reminders,
+            notify_enabled=notify_enabled,
         )
         self.expression = self.robot._driver("expression")
 
