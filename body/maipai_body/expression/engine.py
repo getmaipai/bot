@@ -22,6 +22,7 @@ from maipai_body.presence.arbitration import ArbitrationState, expression_may_dr
 from .cue import Cue, Phase, map_cue_to_primitive
 from .motion_worker import MotionLayer, MotionTarget, MotionWorker, entry_blend_seconds
 from .primitives import (
+    ALARM_STATE,
     HELD_STATE,
     MUTED_STATE,
     PRIMITIVE_NAMES,
@@ -89,6 +90,7 @@ class ExpressionEngine:
         self._expression_device = getattr(client, "expression_device", None)
         self._muted = False
         self._asleep = False
+        self._alarmed = False
         self._last_cue_seq = -1
         self._turn_terminal = False
 
@@ -283,6 +285,24 @@ class ExpressionEngine:
         primitive = MUTED_STATE if muted else "settle"
         self._render_named(primitive, 0.0)
         self._muted = muted
+        return ExpressionOutcome(
+            cue_seq=-1,
+            primitive=None,
+            suppressed_reason=None,
+            rendered=True,
+            rendered_primitive=primitive,
+        )
+
+    def set_alarm(self, active: bool) -> ExpressionOutcome | None:
+        """ALARM-PLAY-01: hold the alarm pose, or settle when the hub clears it.
+
+        A safety state: it bypasses arbitration and suppression (mute, sleep and
+        quiet hours do not stop an alarm). Only an edge renders."""
+        if active == self._alarmed:
+            return None
+        primitive = ALARM_STATE if active else "settle"
+        self._render_named(primitive, 0.0)
+        self._alarmed = active
         return ExpressionOutcome(
             cue_seq=-1,
             primitive=None,

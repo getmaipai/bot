@@ -56,6 +56,11 @@ THERMAL = "line.thermal"
 # lifted. Never generated and never hub-TTS-only; written for the youngest
 # listener.
 CARRY_LINES = ("line.carry.1", "line.carry.2", "line.carry.3")
+# ALARM-PLAY-01: the hub bundles one generic line and one line per safety sensor
+# (`alarm-<kind>-<12 hex>`, the text names the kind and the area). The child line
+# is a bundle clip too once Home makes one; until then none plays.
+ALARM_GENERIC = "alarm-generic"
+ALARM_CHILD = "alarm-child"
 PHRASES = (UNREACHABLE, FREEFALL, RECONNECT, THERMAL, *CARRY_LINES)
 
 
@@ -441,6 +446,29 @@ class OfflineSpeakerLike(Protocol):
 
 
 BUNDLE_FILE = "offline-clips-v1.zip"
+
+
+def alarm_clip_ids(
+    manifest: Manifest, has: Callable[[str], bool], kind: str | None, area: str | None
+) -> list[str]:
+    """The alarm line for one sensor: the clip for this kind whose text names the
+    area, else the generic line, else nothing (the chime still plays). Only
+    rendered clips are named, so a missing clip falls back instead of failing."""
+    if kind and area:
+        wanted = area.strip().lower()
+        for clip in manifest.clips:
+            if (
+                clip.id.startswith(f"alarm-{kind}-")
+                and wanted
+                and wanted in clip.text.lower()
+                and has(clip.id)
+            ):
+                return [clip.id]
+    return [ALARM_GENERIC] if has(ALARM_GENERIC) else []
+
+
+def alarm_child_clip_ids(has: Callable[[str], bool]) -> list[str]:
+    return [ALARM_CHILD] if has(ALARM_CHILD) else []
 
 
 def extract_bundle(zip_path: Path, target: Path) -> Path:

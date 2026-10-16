@@ -85,4 +85,7 @@ REACHY_MINI_EXPRESSION_ENVELOPE: dict[str, PrimitiveEnvelope] = {
     "shake": PrimitiveEnvelope(yaw_fraction=1.0 / 18.0, duration_s=0.2),
     # sleep: head lowered 10 degrees (10/40 of head_pitch), antennas mid-low.
     "sleep": PrimitiveEnvelope(pitch_fraction=0.25, antenna_fraction=0.12, duration_s=1.5),
+    # alarm (ALARM-PLAY-01): head raised 6 degrees (6/40 of head_pitch), antennas
+    # high at the conservative 0.30, then still; UNMEASURED default.
+    "alarm": PrimitiveEnvelope(pitch_fraction=0.15, antenna_fraction=0.30, duration_s=0.6),
 }

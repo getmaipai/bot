@@ -365,6 +365,10 @@ class ConversationLoop:
         self.last_evidence: SpeakerEvidence | None = None
         # FOLLOWUP-01: None (the default) keeps the loop exactly as it was.
         self._follow_up = follow_up
+        # ALARM-PLAY-01: the hub's safety alarm, distinct from the tip/fall fact.
+        self._safety_alarm = False
+        self._motion_alarm = False
+        self._alarm_word: Callable[[str], bool] | None = None
         if offline is not None:
             offline.machine.subscribe(lambda _old, _new: self._notify_change())
             if offline.rung0 is not None:
@@ -414,6 +418,7 @@ class ConversationLoop:
             muted=self._is_muted(),
             held=self._motion.holding,
             thermal_pressure=self._thermal_state.idle_still,
+            alarm=self._safety_alarm,
         )
 
     @property
@@ -648,6 +653,27 @@ class ConversationLoop:
         if self._on_change is not None:
             self._on_change()
 
+    def set_safety_alarm(self, active: bool) -> None:
+        """ALARM-PLAY-01: the hub's alarm is live (or cleared). Holds the alarm pose
+        through mute, sleep and quiet hours, ORs the amber pulse into the funnel's
+        alarm fact, and stops a reply in progress so the alarm is heard. Wake
+        handling is skipped while it is live (see `_poll_wake`)."""
+        with self._lock:
+            if self._safety_alarm == active:
+                return
+            self._safety_alarm = active
+            held, motion_alarm = self._state.held, self._motion_alarm
+        if active:
+            self._playback.stop()
+        setter = getattr(self._expression, "set_alarm", None)
+        if setter is not None:
+            setter(active)
+        self._publish_motion_facts(held, motion_alarm)
+
+    def set_alarm_word_handler(self, handler: Callable[[str], bool] | None) -> None:
+        """Where a spotted stop word goes while an alarm is live."""
+        self._alarm_word = handler
+
     def run(self, stop_event: threading.Event) -> None:
         """Blocks until `stop_event` is set. Runs the presence tick on
         its own thread; the wake-then-turn loop on this one."""
@@ -697,6 +723,12 @@ class ConversationLoop:
                 # wake scorer does not, and nothing leaves the robot.
                 stop_event.wait(_WAKE_POLL_SLEEP_S)
                 continue
+            if self._safety_alarm:
+                # A live alarm owns the room: no wake, no turn. The stop word is
+                # still listened for (one acknowledgement; the hub ends the alarm).
+                self._listen_for_alarm_word(self._capture.poll_blocks())
+                stop_event.wait(_WAKE_POLL_SLEEP_S)
+                continue
             if self._is_muted():
                 # Drained, never scored and never sent anywhere, while muted. The
                 # one exception is the local unmute phrase, heard on this robot only.
@@ -711,6 +743,17 @@ class ConversationLoop:
                     return wake_event
             stop_event.wait(_WAKE_POLL_SLEEP_S)
         return None
+
+    def _listen_for_alarm_word(self, blocks) -> None:
+        detector, handler = self._stop_detector, self._alarm_word
+        if detector is None or handler is None:
+            return
+        try:
+            if any([detector.accept(block) for block in blocks]):
+                detector.reset()
+                handler("stop")
+        except Exception:
+            logger.warning("alarm stop word handling failed", exc_info=True)
 
     def _heard_unmute(self, blocks) -> bool:
         assert self._unmute_listener is not None
@@ -1359,6 +1402,8 @@ class ConversationLoop:
     def _publish_motion_facts(self, held: bool, alarm: bool) -> None:
         """Held and alarm are funnel facts for readers; told only when one flips."""
         with self._lock:
+            self._motion_alarm = alarm
+            alarm = alarm or self._safety_alarm
             if (self._state.held, self._state.alarm) == (held, alarm):
                 return
             self._state.held, self._state.alarm = held, alarm

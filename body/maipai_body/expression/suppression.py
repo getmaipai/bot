@@ -28,6 +28,7 @@ class SuppressionContext(BaseModel):
     tool_failure: bool = False
     no_fresh_target: bool = False
     held: bool = False
+    alarm: bool = False  # ALARM-PLAY-01: the pose is held still until the hub clears it
 
 
 def suppression_reason(primitive: str, context: SuppressionContext) -> str | None:
@@ -39,6 +40,10 @@ def suppression_reason(primitive: str, context: SuppressionContext) -> str | Non
     """
     if primitive == "stop":
         return None
+
+    # ALARM-PLAY-01: a live safety alarm holds its pose; no cue moves the body.
+    if context.alarm:
+        return "alarm"
 
     # MOVE-CARRY-01: lifted or carried, the body commands no motion at all.
     if context.held:

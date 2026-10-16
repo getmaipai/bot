@@ -37,6 +37,10 @@ HELD_STATE = "held"
 # MUTED_STATE on the antenna axis (asserted in tests/test_sleep_state.py).
 SLEEP_STATE = "sleep"
 
+# ALARM-PLAY-01: the safety alarm pose, head up and antennas high, held still.
+# A state like sleep, never a cue; the hub's alarm command enters and leaves it.
+ALARM_STATE = "alarm"
+
 # Primitives that return to neutral on their own and so release the
 # expression layer when done, letting gaze and idle resume.
 RELEASING_PRIMITIVES: frozenset[str] = frozenset({"thinking", "offer", "shake"})

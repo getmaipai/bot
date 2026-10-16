@@ -45,6 +45,7 @@ from maipai_body.hal.errors import BodyLost
 from maipai_body.hal.seam import AntennaPositions, HeadActuator, HeadPose, Indicator, NullIndicator
 from maipai_body.indicator.director import EyesDirector
 from maipai_body.indicator.live import LiveCaptureTap
+from maipai_body.initiative.alarm import AlarmController, chime_samples
 from maipai_body.link import HubLinkClient, PairingStore, discover_hub
 from maipai_body.link.discovery import DiscoverHub
 from maipai_body.link.lifecycle import LinkLifecycle
@@ -72,6 +73,8 @@ from maipai_body.speech.offline_clips import (
     CodeAnnouncer,
     ManifestError,
     OfflineSpeaker,
+    alarm_child_clip_ids,
+    alarm_clip_ids,
     ensure_clip_bundle,
 )
 from maipai_body.speech.playback import AudioPlayback
@@ -671,7 +674,8 @@ def _build_conversation_loop(
     # FOLLOWUP-01: the directory is the seam the hub's roster fills (age band and
     # `person.robot.follow_up` per person). Until a feed fills it every speaker is
     # the child default and the window stays closed, which is the safe direction.
-    follow_up = FollowUpPolicy(PeopleDirectory())
+    people = PeopleDirectory()
+    follow_up = FollowUpPolicy(people)
     loop = ConversationLoop(
         client=tap,
         expression_engine=ExpressionEngine(
@@ -702,6 +706,11 @@ def _build_conversation_loop(
         offer_engine=offer_engine,
     )
     loop.subscribe_view(director.on_view)
+    alarm = _build_alarm_controller(loop, audio_playback, offline, people, lambda m: _send(m))
+    loop.set_alarm_word_handler(alarm.on_spoken)
+    threading.Thread(
+        target=_alarm_backstop, args=(alarm, stop_event), name="alarm-backstop", daemon=True
+    ).start()
     threading.Thread(target=print_sync.run, name="face-print-sync", daemon=True).start()
 
     from maipai_body.link.channel import CommandChannel
@@ -728,6 +737,8 @@ def _build_conversation_loop(
         level = values.get("robot.camera.watch_level") if isinstance(values, dict) else None
         if level in ("off", "presence", "identify"):
             loop.set_watch_level(level)
+        if isinstance(values, dict):
+            alarm.apply_settings(values)
         seconds = values.get("robot.follow_up.seconds") if isinstance(values, dict) else None
         if isinstance(seconds, (int, float)) and not isinstance(seconds, bool):
             follow_up.set_seconds(seconds)
@@ -744,9 +755,13 @@ def _build_conversation_loop(
             "unmute": lambda _payload: set_muted({"muted": False}),
             "asset_changed": refresh_assets,
             "offer": loop.offer.receive,
+            "alarm": alarm.handle_command,
         },
     )
     loop.bind_offer_frames(command_channel.send_frame)
+
+    def _send(message: dict) -> bool:
+        return command_channel.send_frame(message)
 
     from maipai_body.vision.live_view import LiveViewStreamer
 
@@ -797,6 +812,75 @@ def _build_offer_engine(cache_dir: Path, env) -> object | None:
     except Exception:
         logger.warning("offer spotter unavailable; offers will be refused", exc_info=True)
         return None
+
+
+class _AlarmSpeaker:
+    """The alarm's `AlarmPlayer`: a fixed chime and bundle clips through the
+    robot's own playback. It never synthesises; no bundle means chime only."""
+
+    def __init__(self, playback: AudioPlayback, offline: OfflineRungs | None) -> None:
+        self._playback = playback
+        self._offline = offline
+
+    def _speaker(self):
+        return None if self._offline is None else self._offline.speaker
+
+    def chime(self) -> None:
+        rate = self._playback.output_samplerate()
+        if rate:
+            self._playback.push(chime_samples(rate))
+
+    def clips(self, clip_ids) -> bool:
+        speaker = self._speaker()
+        if speaker is None or not speaker.can_say(list(clip_ids)):
+            return False
+        return bool(speaker.say(list(clip_ids)))
+
+    def stop(self) -> None:
+        self._playback.flush()
+
+
+def _build_alarm_controller(
+    loop: ConversationLoop,
+    playback: AudioPlayback,
+    offline: OfflineRungs | None,
+    people: PeopleDirectory,
+    send: Callable[[dict], bool],
+) -> AlarmController:
+    """ALARM-PLAY-01. No daemon volume seam exists on this body yet, so the
+    floor is applied only where a `Volume` is injected (BACKLOG, open)."""
+    from maipai_body.speaker_evidence import effective_band
+
+    def bundle():
+        speaker = None if offline is None else offline.speaker
+        return getattr(speaker, "bundle", None)
+
+    def has(clip_id: str) -> bool:
+        b = bundle()
+        return b is not None and b.has(clip_id)
+
+    def resolve(kind, area):
+        b = bundle()
+        return [] if b is None else alarm_clip_ids(b.manifest, has, kind, area)
+
+    return AlarmController(
+        player=_AlarmSpeaker(playback, offline),
+        present=loop.set_safety_alarm,
+        resolve_clips=resolve,
+        child_clips=lambda: alarm_child_clip_ids(has),
+        send_action=send,
+        audience=lambda: loop.speaker_snapshot()[1],
+        is_child=lambda entry: effective_band(entry, people.band_of)[0] == "child",
+        evidence=lambda: loop.speaker_snapshot()[0],
+    )
+
+
+def _alarm_backstop(alarm: AlarmController, stop_event: threading.Event) -> None:
+    while not stop_event.wait(1.0):
+        try:
+            alarm.tick()
+        except Exception:
+            logger.warning("alarm backstop failed", exc_info=True)
 
 
 def _hub_credentials_reader(link: LinkLifecycle, base_url: str) -> Callable[[], tuple[str, str]]:

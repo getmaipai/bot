@@ -252,6 +252,17 @@ def build_steps(primitive: str, profile: BodyProfile, *, doa_angle_rad: float = 
         steps.append(Step(method="goto", pose=HeadPose(), duration_s=spec.duration_s))
         return steps
 
+    if primitive == "alarm":
+        high = _amplitude_rad(profile, "antenna_left", spec.antenna_fraction)
+        return [
+            Step(
+                method="goto",
+                pose=HeadPose(pitch=-_amplitude_rad(profile, "head_pitch", spec.pitch_fraction)),
+                antennas=AntennaPositions(left=high, right=high),
+                duration_s=spec.duration_s,
+            )
+        ]
+
     if primitive == "sleep":
         low = _amplitude_rad(profile, "antenna_left", spec.antenna_fraction)
         return [

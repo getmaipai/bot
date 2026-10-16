@@ -48,6 +48,11 @@ class _RecordingExpressionEngine:
     def render_held_look(self):
         return self._engine.render_held_look()
 
+    def set_alarm(self, active: bool):
+        self.alarm_calls = getattr(self, "alarm_calls", [])
+        self.alarm_calls.append(active)
+        return self._engine.set_alarm(active)
+
     def render_primitive(self, primitive: str, context, **kwargs):
         return self._engine.render_primitive(primitive, context, **kwargs)
 

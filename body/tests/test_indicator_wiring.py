@@ -40,6 +40,15 @@ def _build(indicator, stop_event=None):
             self.views.append(callback)
             seen["view_callback"] = callback
 
+        def set_safety_alarm(self, active):
+            pass
+
+        def set_alarm_word_handler(self, handler):
+            seen["alarm_word"] = handler
+
+        def speaker_snapshot(self):
+            return {"person": None, "basis": "unknown", "level": "unknown"}, []
+
     heavy = [
         "ensure_wakeword_models",
         "OpenWakeWordEngine",

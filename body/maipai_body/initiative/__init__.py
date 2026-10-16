@@ -1,1 +1,1 @@
-"""Hub-initiated offers (OFFER-01): the robot's side of the offer wire."""
+"""Things the robot starts on the hub's say-so: offers (OFFER-01) and the safety alarm (ALARM-PLAY-01)."""
