@@ -205,6 +205,10 @@ ALLOWED_SITES = {
     ("vision/capture.py", "client"),
     ("vision/watch.py", "self._camera"),  # FACE-WATCH-01: handed the tapped client
     ("vision/live_view.py", "self._camera"),  # LIVE-VIEW-01: handed the tapped client
+    (
+        "presence/sleep_auto.py",
+        "camera",
+    ),  # SLEEP-AUTO-01: `luma_reader` is handed the tapped client
     ("run_loop.py", "self._client"),
 }
 
