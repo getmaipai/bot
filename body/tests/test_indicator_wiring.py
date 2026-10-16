@@ -168,3 +168,16 @@ def test_touch_is_off_unless_the_env_gate_is_set():
     assert isinstance(
         app_module._build_touch_detector({"MAIPAI_BOT_TOUCH": "1"}), AntennaTouchDetector
     )
+
+
+def test_sleep_auto_is_off_unless_gated_and_takes_its_settings_from_the_frame():
+    from maipai_body.bodies.reachy_mini.fake import FakeReachyMiniClient
+
+    assert app_module._build_sleep_auto(FakeReachyMiniClient(), MagicMock(), {}) is None
+    sleep = app_module._build_sleep_auto(
+        FakeReachyMiniClient(), MagicMock(device_level="presence"), {"MAIPAI_BOT_SLEEP_AUTO": "1"}
+    )
+    assert sleep.policy.auto_enabled is False
+    sleep.apply_settings({"robot.sleep.auto": True})
+    assert sleep.policy.auto_enabled is True
+    assert sleep.quiet.active() is False

@@ -54,6 +54,7 @@ from maipai_body.presence.carry_reaction import (
 )
 from maipai_body.presence.funnel import FunnelState, FunnelView, SettleGate
 from maipai_body.presence.knock import KnockDetector
+from maipai_body.presence.sleep_auto import SleepAutoPolicy
 from maipai_body.presence.touch import AntennaTouchDetector
 from maipai_body.presence.motion_state import MotionState, MotionStateMachine
 from maipai_body.presence.observations import PresenceObservation, read_presence
@@ -216,6 +217,10 @@ class ConversationLoop:
         wake_from_sleep: Callable[[], None] | None = None,
         knock_interval_s: float = _KNOCK_INTERVAL_S,
         touch_detector: AntennaTouchDetector | None = None,
+        sleep_auto: SleepAutoPolicy | None = None,
+        luma_source: Callable[[], float | None] | None = None,
+        quiet_hours: Callable[[], bool] | None = None,
+        sleep_clock: Callable[[], float] = time.monotonic,
         touch_interval_s: float = _TOUCH_INTERVAL_S,
         touch_clock: Callable[[], float] = time.monotonic,
         unmute_listener: UnmuteListener | None = None,
@@ -334,6 +339,24 @@ class ConversationLoop:
         # whoever owns the sleep state (S-EXPR-04); without `is_asleep` nothing runs.
         self._is_asleep = is_asleep
         self._wake_from_sleep = wake_from_sleep or (lambda: None)
+        # SLEEP-AUTO-01: the policy decides dark-and-quiet and quiet-hours sleep from the
+        # presence tick. The robot is asleep when the ladder says so or the policy does.
+        self._sleep_auto = sleep_auto
+        self._luma_source = luma_source
+        self._quiet_hours = quiet_hours or (lambda: False)
+        self._sleep_clock = sleep_clock
+        if sleep_auto is not None:
+            ladder_asleep, ladder_wake = is_asleep, self._wake_from_sleep
+
+            def _asleep_now() -> bool:
+                return bool(ladder_asleep is not None and ladder_asleep()) or sleep_auto.asleep
+
+            def _wake_all() -> None:
+                ladder_wake()
+                self._leave_auto_sleep()
+
+            self._is_asleep = _asleep_now
+            self._wake_from_sleep = _wake_all
         self._knock_interval_s = knock_interval_s
         self._knock = KnockDetector()
         # TOUCH-01: an antenna push is an acknowledge, or a wake while asleep; never an
@@ -1433,6 +1456,46 @@ class ConversationLoop:
         if observation.face_detected and self._vision_watch is None:
             self._maybe_check_face(stop_event)
         self._safety_ticks(held)
+        self._sleep_tick(observation, held)
+
+    def _sleep_tick(self, observation: PresenceObservation, held: bool) -> None:
+        """SLEEP-AUTO-01: one presence tick into the policy, its edges into the engine.
+
+        A running turn counts as activity (the robot is talking), and a carried robot
+        is left alone. The wake word stays live: nothing here touches the capture."""
+        policy = self._sleep_auto
+        if policy is None or held:
+            return
+        busy = self._current_funnel() is not FunnelState.IDLE
+        try:
+            luma = self._luma_source() if self._luma_source is not None else None
+            now = self._sleep_clock()
+            edge = policy.update(
+                now,
+                luma=luma,
+                speech=observation.speech_detected or busy,
+                face=observation.face_detected,
+                quiet_hours=self._quiet_hours(),
+            )
+            if edge == "sleep":
+                self._expression.set_sleep(True, ArbitrationState())
+            elif edge == "wake":
+                self._expression.set_sleep(False, ArbitrationState())
+            elif policy.asleep:
+                self._expression.sleep_breathe(now)
+        except Exception:
+            logger.warning("auto sleep tick failed", exc_info=True)
+
+    def _leave_auto_sleep(self) -> None:
+        """A knock or touch woke the robot: the policy and the pose follow."""
+        policy = self._sleep_auto
+        if policy is None or not policy.asleep:
+            return
+        policy.asleep = False
+        try:
+            self._expression.set_sleep(False, ArbitrationState())
+        except Exception:
+            logger.warning("leaving auto sleep failed", exc_info=True)
 
     def _safety_ticks(self, held: bool) -> None:
         """Motor watchdog and thermal governor; a bug in either is logged, never raised."""

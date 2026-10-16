@@ -48,6 +48,14 @@ class _RecordingExpressionEngine:
     def render_held_look(self):
         return self._engine.render_held_look()
 
+    def set_sleep(self, asleep: bool, arbitration):
+        self.sleep_calls = getattr(self, "sleep_calls", [])
+        self.sleep_calls.append(asleep)
+        return self._engine.set_sleep(asleep, arbitration)
+
+    def sleep_breathe(self, now: float) -> bool:
+        return self._engine.sleep_breathe(now)
+
     def set_alarm(self, active: bool):
         self.alarm_calls = getattr(self, "alarm_calls", [])
         self.alarm_calls.append(active)

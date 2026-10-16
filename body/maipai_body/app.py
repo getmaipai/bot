@@ -676,6 +676,7 @@ def _build_conversation_loop(
     # the child default and the window stays closed, which is the safe direction.
     people = PeopleDirectory()
     follow_up = FollowUpPolicy(people)
+    sleep = _build_sleep_auto(tap, vision_watch, os.environ)
     expression_engine = ExpressionEngine(
         tap,
         REACHY_MINI_PROFILE,
@@ -688,6 +689,9 @@ def _build_conversation_loop(
         expression_engine=expression_engine,
         attention=_build_attention(expression_engine, os.environ),
         touch_detector=_build_touch_detector(os.environ),
+        sleep_auto=sleep.policy if sleep else None,
+        luma_source=sleep.luma if sleep else None,
+        quiet_hours=sleep.quiet.active if sleep else None,
         audio_capture=AudioCapture(tap),
         audio_playback=audio_playback,
         wake_scorer=WakeScorer(wake_engine, tap),
@@ -742,6 +746,8 @@ def _build_conversation_loop(
             loop.set_watch_level(level)
         if isinstance(values, dict):
             alarm.apply_settings(values)
+        if sleep is not None and isinstance(values, dict):
+            sleep.apply_settings(values)
         seconds = values.get("robot.follow_up.seconds") if isinstance(values, dict) else None
         if isinstance(seconds, (int, float)) and not isinstance(seconds, bool):
             follow_up.set_seconds(seconds)
@@ -808,6 +814,37 @@ def _build_attention(engine: ExpressionEngine, env: Mapping[str, str]) -> object
     from maipai_body.presence.attention import Attention
 
     return Attention(engine, clock=time.monotonic)
+
+
+@dataclass
+class _SleepAuto:
+    """SLEEP-AUTO-01's pieces, so `apply_settings` can reach the live policy."""
+
+    policy: object
+    luma: Callable[[], float | None]
+    quiet: object
+
+    def apply_settings(self, values: Mapping[str, object]) -> None:
+        self.quiet.apply(values)  # type: ignore[attr-defined]
+        auto = values.get("robot.sleep.auto")
+        if isinstance(auto, bool):
+            self.policy.auto_enabled = auto  # type: ignore[attr-defined]
+
+
+def _build_sleep_auto(camera: object, vision_watch: VisionWatch, env: Mapping[str, str]):
+    """SLEEP-AUTO-01: dark-and-quiet and quiet-hours sleep. Off unless
+    MAIPAI_BOT_SLEEP_AUTO=1. The dark rule stays off until the hub sends
+    `robot.sleep.auto` (not yet in the settings registry), and quiet hours need the
+    household bounds in the settings frame."""
+    if env.get("MAIPAI_BOT_SLEEP_AUTO") != "1":
+        return None
+    from maipai_body.presence.sleep_auto import QuietHours, SleepAutoPolicy, luma_reader
+
+    return _SleepAuto(
+        policy=SleepAutoPolicy(auto_enabled=False),
+        luma=luma_reader(camera, level=lambda: vision_watch.device_level),
+        quiet=QuietHours(),
+    )
 
 
 def _build_touch_detector(env: Mapping[str, str]) -> object | None:

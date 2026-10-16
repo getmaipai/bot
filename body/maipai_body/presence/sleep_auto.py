@@ -23,7 +23,9 @@ Rules:
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, time as dtime
 from typing import Literal
 
 DARK_LUMA = 25.0  # of 255; UNMEASURED
@@ -37,6 +39,63 @@ def mean_luma(frame: object) -> float:
     import numpy as np
 
     return float(np.asarray(frame, dtype=np.float32).mean())
+
+
+def luma_reader(
+    camera: object, *, level: Callable[[], str] = lambda: "presence"
+) -> Callable[[], float | None]:
+    """A luma source over a camera with ``get_frame``. At watch level ``off`` the camera
+    is never read; the frame is subsampled and nothing is kept."""
+
+    def read() -> float | None:
+        if level() == "off":
+            return None
+        frame = camera.get_frame()  # type: ignore[attr-defined]
+        if frame is None:
+            return None
+        import numpy as np
+
+        return mean_luma(np.asarray(frame)[::8, ::8])
+
+    return read
+
+
+def _parse_clock(value: object) -> dtime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        hour, minute = value.split(":")
+        return dtime(int(hour), int(minute))
+    except ValueError:
+        return None
+
+
+class QuietHours:
+    """The household quiet-hours window, from the hub's settings frame.
+
+    Unset until both ``household.quiet_hours.from`` and ``.to`` arrive; a window
+    that crosses midnight (21:00 to 07:00) is handled; equal bounds mean never."""
+
+    def __init__(self, now: Callable[[], datetime] = datetime.now) -> None:
+        self._now = now
+        self._from: dtime | None = None
+        self._to: dtime | None = None
+
+    def apply(self, values: Mapping[str, object]) -> None:
+        start = _parse_clock(values.get("household.quiet_hours.from"))
+        end = _parse_clock(values.get("household.quiet_hours.to"))
+        if start is not None:
+            self._from = start
+        if end is not None:
+            self._to = end
+
+    def active(self) -> bool:
+        if self._from is None or self._to is None or self._from == self._to:
+            return False
+        now = self._now().time()
+        if self._from < self._to:
+            return self._from <= now < self._to
+        return now >= self._from or now < self._to
 
 
 @dataclass

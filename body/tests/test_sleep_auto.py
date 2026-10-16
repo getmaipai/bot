@@ -94,3 +94,42 @@ def test_the_policy_never_touches_audio_so_the_wake_word_stays_live():
     tree = ast.parse(Path(sleep_auto.__file__).read_text())
     modules = [n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)]
     assert not [m for m in modules if "speech" in m or "audio" in m or "kws" in m]
+
+
+def test_quiet_hours_cross_midnight_and_stay_off_until_both_bounds_arrive():
+    from datetime import datetime
+
+    from maipai_body.presence.sleep_auto import QuietHours
+
+    clock = {"now": datetime(2026, 10, 16, 22, 0)}
+    quiet = QuietHours(now=lambda: clock["now"])
+    assert quiet.active() is False
+    quiet.apply({"household.quiet_hours.from": "21:00"})
+    assert quiet.active() is False
+    quiet.apply({"household.quiet_hours.to": "07:00", "other": 1})
+    assert quiet.active() is True
+    clock["now"] = datetime(2026, 10, 16, 3, 0)
+    assert quiet.active() is True
+    clock["now"] = datetime(2026, 10, 16, 12, 0)
+    assert quiet.active() is False
+    quiet.apply({"household.quiet_hours.from": "garbage"})
+    assert quiet.active() is False
+
+
+def test_the_luma_reader_never_reads_the_camera_at_level_off():
+    import numpy as np
+
+    from maipai_body.presence.sleep_auto import luma_reader
+
+    class Camera:
+        reads = 0
+
+        def get_frame(self):
+            Camera.reads += 1
+            return np.full((48, 64, 3), 10, dtype=np.uint8)
+
+    level = {"v": "off"}
+    read = luma_reader(Camera(), level=lambda: level["v"])
+    assert read() is None and Camera.reads == 0
+    level["v"] = "presence"
+    assert read() == 10.0 and Camera.reads == 1
