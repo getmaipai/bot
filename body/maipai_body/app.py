@@ -690,7 +690,6 @@ def _build_conversation_loop(
         capture_scope=tap.sending_to_hub,
         motor_health=motor_health,
         thermal=ThermalMonitor(),
-
         is_asleep=is_asleep,
         wake_from_sleep=wake_from_sleep,
     )
