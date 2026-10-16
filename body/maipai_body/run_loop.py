@@ -29,6 +29,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
+from typing import Literal
 
 import requests
 
@@ -63,6 +64,7 @@ from maipai_body.vision.detect import FiveLandmarkDetector
 from maipai_body.vision.embed import SFaceEmbedder
 from maipai_body.vision.gallery import FaceGallery, FaceVerdict
 from maipai_body.vision.recognize import recognize_face
+from maipai_body.vision.watch import VisionWatch
 
 logger = logging.getLogger("maipai_body.run_loop")
 
@@ -165,6 +167,7 @@ class ConversationLoop:
         face_embedder: SFaceEmbedder | None = None,
         face_gallery: FaceGallery | None = None,
         face_recognition_interval_s: float = _FACE_RECOGNITION_INTERVAL_S,
+        vision_watch: VisionWatch | None = None,
         offline: OfflineRungs | None = None,
         react_hook: Callable[..., bool] | None = None,
         motion_clock: Callable[[], float] = time.monotonic,
@@ -209,6 +212,9 @@ class ConversationLoop:
         self._face_embedder = face_embedder
         self._face_gallery = face_gallery
         self._face_recognition_interval_s = face_recognition_interval_s
+        # FACE-WATCH-01: when given, the always-on watch replaces the
+        # presence-triggered check above as the source of face verdicts.
+        self._vision_watch = vision_watch
         # Presence-thread-private pacing: written and read only there,
         # never under `self._lock` (a single thread's own bookkeeping,
         # not reportable state - `RunLoopState.face_verdict_at` is the
@@ -413,11 +419,22 @@ class ConversationLoop:
             if phase is not LinkPhase.CONNECTED:
                 activity = phase.value  # `reconnecting` or `sleeping` (spec-v0.1.73)
         with self._lock:
-            return {
+            frame: dict[str, object] = {
                 "activity": activity,
                 "muted": self._state.muted,
                 "tracking": self._state.tracking,
             }
+        if self._vision_watch is not None:
+            frame["watch_level"] = self._vision_watch.device_level
+        return frame
+
+    def set_watch_level(self, level: Literal["off", "presence", "identify"]) -> None:
+        """The device's `robot.camera.watch_level`, from the hub's settings_changed."""
+        if self._vision_watch is None:
+            return
+        self._vision_watch.set_device_level(level)
+        if self._on_change is not None:
+            self._on_change()
 
     def _current_funnel(self) -> FunnelState:
         with self._lock:
@@ -432,6 +449,8 @@ class ConversationLoop:
         or it's gone stale (`_FACE_VERDICT_STALE_AFTER_S`) - never a
         verdict from a face that may no longer be there answering for
         an utterance that just started."""
+        if self._vision_watch is not None:
+            return self._vision_watch.current().verdict  # applies its own staleness
         with self._lock:
             verdict = self._state.face_verdict
             verdict_at = self._state.face_verdict_at
@@ -491,6 +510,10 @@ class ConversationLoop:
             target=self._presence_loop, args=(stop_event,), name="presence", daemon=True
         )
         presence_thread.start()
+        if self._vision_watch is not None:
+            threading.Thread(
+                target=self._vision_watch.run, args=(stop_event,), name="vision-watch", daemon=True
+            ).start()
         self._capture.start()
         try:
             while not stop_event.is_set():
@@ -882,7 +905,7 @@ class ConversationLoop:
         except Exception:
             logger.warning("carry hold handling failed", exc_info=True)
 
-        if observation.face_detected:
+        if observation.face_detected and self._vision_watch is None:
             self._maybe_check_face(stop_event)
 
     def _publish_motion_facts(self, held: bool, alarm: bool) -> None:

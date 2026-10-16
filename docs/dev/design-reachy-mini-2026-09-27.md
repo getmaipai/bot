@@ -262,11 +262,13 @@ is the reference embedding created once, at enrollment, from a photo
 or voice sample captured and processed at the hub itself - a durable
 biometric identifier, stored there encrypted at rest
 (`lib/secrets.ts`'s existing pattern), synced to paired devices for
-their own local matching. All of this runs at an opportunistic, capped
-rate driven off the existing presence system (never a continuous
-background stream competing with wake-word and audio), and only for a
-person explicitly, revocably enrolled by an adult - never inferred
-from repeated appearances. `docs/PRIVACY.md`'s
+their own local matching. **Amended 2026-10-16 by FACE-WATCH-01 (OWNER-ANSWERS 4):** this
+runs continuously at a low rate under a watch level (section 6), not
+opportunistically off the daemon's tracker. The level is the stricter
+of `robot.camera.watch_level` and each person's `person.vision.watch`;
+only enrolled people are ever named (a child needs a parent's
+enrolment, a teen must agree, a guest can never be enrolled), and
+nothing is inferred from repeated appearances. `docs/PRIVACY.md`'s
 "zero phone-home, no MaiPai-operated service in a user data path"
 already constrains this to entirely local models and local storage;
 nothing here asks for an exception. Also confirmed live, 2026-09-28:
@@ -332,6 +334,23 @@ member relies on the card; a blind one on the sounds, which are the
 same sound set the MaiPai build uses. Not claimed as met.
 
 ## 6. Vision, presence and tracking
+
+**Watch levels (FACE-WATCH-01, 2026-10-16).** A vision thread
+(`vision/watch.py`) reads the local frame, shrinks it to 320x240, and
+runs our own YuNet at 5 Hz (2 Hz at 70 C). Faces are followed by a
+continuity rule (a face that moved less than 0.75 face-widths is the
+same track; a track is dropped after 1 s unseen). A new track is
+embedded at once and each tracked face every 2 s, matched against the
+gallery under the model-id guard. The level is `off` (the camera is
+never read; the media stream is released where the SDK allows),
+`presence` (faces are counted, nothing is embedded) or `identify`
+(embed and match). The effective answer is the stricter of the device
+level and the matched person's own level, recomputed on every read, so
+lowering a level or revoking a print takes effect at once. A guest or
+unenrolled face matches nothing: its embedding is a local variable of
+one cycle, never stored and never compared across appearances. Frames
+never persist past one cycle. The privacy page's "camera off" is watch
+level `off`: software, not a shutter.
 
 The daemon's own face tracking is prebuilt, runs on the robot, and
 drives the head with a blend weight; it is the `track` primitive's

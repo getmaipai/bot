@@ -203,6 +203,7 @@ ALLOWED_SITES = {
     ("bodies/reachy_mini/client.py", "self._reachy.media"),
     ("speech/capture.py", "self._client"),
     ("vision/capture.py", "client"),
+    ("vision/watch.py", "self._camera"),  # FACE-WATCH-01: handed the tapped client
     ("run_loop.py", "self._client"),
 }
 

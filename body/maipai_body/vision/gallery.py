@@ -60,6 +60,11 @@ class FacePrint:
     model_id: str
     model_sha256: str
     embedding: npt.NDArray[np.float32]
+    # The person's own `person.vision.watch`, as the hub states it with
+    # the sync. Missing or unrecognised means `presence`: identity is
+    # opt-in, so the safe reading of silence is "do not name them"
+    # (FACE-WATCH-01, OWNER-ANSWERS 4).
+    watch: Literal["off", "presence", "identify"] = "presence"
 
 
 @dataclass(frozen=True)
@@ -129,6 +134,17 @@ class FaceGallery:
             matching.append(print_)
         with self._lock:
             self._prints = matching
+
+    def person_watch(self, person_id: str) -> Literal["off", "presence", "identify"] | None:
+        """That person's own watch level (the strictest across their
+        prints), or `None` when no print of theirs is held any more (a
+        revoked or withheld enrolment)."""
+        order = {"off": 0, "presence": 1, "identify": 2}
+        with self._lock:
+            levels = [p.watch for p in self._prints if p.person_id == person_id]
+        if not levels:
+            return None
+        return min(levels, key=lambda level: order[level])
 
     def identify(self, embedding: npt.NDArray[np.float32]) -> FaceVerdict:
         """Best cosine score per person (multiple prints per person

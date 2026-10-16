@@ -74,6 +74,7 @@ from maipai_body.vision.detect import FiveLandmarkDetector
 from maipai_body.vision.embed import ensure_embedder
 from maipai_body.vision.gallery import FaceGallery
 from maipai_body.vision.models import SFACE
+from maipai_body.vision.watch import VisionWatch, read_cpu_temp_c
 
 logger = logging.getLogger("maipai_body.app")
 
@@ -591,6 +592,16 @@ def _build_conversation_loop(
             offline.rung0.attach(speaker=offline.speaker)
     gallery = FaceGallery(model_id=_FACE_MODEL_ID, model_sha256=SFACE.sha256)
     print_sync = PrintSync(gallery, hub_credentials, stop_event)
+    # FACE-WATCH-01: the always-on watch, at the default `identify` until the
+    # hub's settings_changed says otherwise (enrolled faces only: the gallery
+    # holds no print for a guest, and each person's own level still applies).
+    vision_watch = VisionWatch(
+        tap,
+        FiveLandmarkDetector(),
+        ensure_embedder(cache_dir),
+        gallery,
+        temperature=read_cpu_temp_c,
+    )
     loop = ConversationLoop(
         client=tap,
         expression_engine=ExpressionEngine(
@@ -607,9 +618,7 @@ def _build_conversation_loop(
         turn_client=TurnClient(base_url, session_cookie),
         tts_client=TtsPlaybackClient(base_url, session_cookie, audio_playback),
         hub_credentials=hub_credentials,
-        face_detector=FiveLandmarkDetector(),
-        face_embedder=ensure_embedder(cache_dir),
-        face_gallery=gallery,
+        vision_watch=vision_watch,
         offline=offline,
         # MOVES-01: None unless MAIPAI_BOT_REACT_MOVES is set.
         react_hook=build_react_hook(tap, cache_dir / "moves", os.environ),
@@ -638,10 +647,17 @@ def _build_conversation_loop(
         cookie, current_url = hub_credentials()
         return current_url, cookie
 
+    def apply_settings(payload: dict) -> None:
+        values = payload.get("values")
+        level = values.get("robot.camera.watch_level") if isinstance(values, dict) else None
+        if level in ("off", "presence", "identify"):
+            loop.set_watch_level(level)
+
     command_channel = CommandChannel(
         base_url,
         session_cookie,
         credentials=command_credentials,
+        settings_handler=apply_settings,
         time_handler=getattr(link.hub_client, "sync_time", None),
         on_drop=link.channel_lost,
         handlers={

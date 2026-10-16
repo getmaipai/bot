@@ -66,6 +66,7 @@ header (the scripts write all three). Never a hostname, never a transcript.
 | S-EXPR-01R tilt during track (sim) | Run the deterministic layered-worker fixture with gaze at yaw 0.9 rad, then apply tilt roll 0.4 rad/yaw -0.4 rad for 0.5 s; save every 50 Hz target | 2 min | Per tick: gaze share, expression share, profile bounds, rate and acceleration; confirm no mode-switch snap. Constants remain UNMEASURED until M-R2 unit rows. |
 | M-R5 | `measure_mr5_link.py --mode unit --trials 10 --record`, then the Wi-Fi cycle (below) | 20 min, then 10 min | cancel latency, pose still, reconnect p50 and p95, the one line once; the real radio's time back to the hub |
 | M-R1 | `measure_mr1_budget.py --config daemon`, then `pod`, then `robot` (each on a fresh boot) | 3 hours | RSS, CPU, temperature and throttle flags per configuration; the robot-tier decision |
+| M-R1 (FACE-WATCH-01 row) | `measure_mr1_budget.py --config pod` with the vision watch at `identify` and one face in view, then `presence`, then `off` | 30 min | CPU of the 5 Hz watch beside the wake scorer, the keyword spotter and the daemon; temperature, and whether the 70 C drop to 2 Hz ever triggers. UNVERIFIED until the unit |
 | M-R3 | `measure_mr3_wake_doa.py` parts 1 to 5 | 3 hours, most of it the false-accept listen | gates from `dev.md` section 11 |
 | M-R4 | `measure_mr4_battery.py probe`, then one `run` per workload from a full charge | a day or more of wall clock | runtime to the LED's red by workload; whether any fact is readable; whether it runs while charging |
 

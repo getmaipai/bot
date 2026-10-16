@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
+from typing import Literal
 
 import numpy as np
 import requests
@@ -12,6 +13,14 @@ import requests
 from maipai_body.vision.gallery import FaceGallery, FacePrint
 
 logger = logging.getLogger("maipai_body.link.prints")
+
+
+def _watch_level(value: object) -> Literal["off", "presence", "identify"]:
+    """The person's `person.vision.watch` from the sync entry; anything
+    missing or unknown reads as `presence` (identity is opt-in)."""
+    if value == "identify" or value == "off":
+        return value
+    return "presence"
 
 
 class PrintSyncError(RuntimeError):
@@ -73,6 +82,7 @@ class PrintSync:
                                     model_id=entry["model_id"],
                                     model_sha256=entry["model_sha256"],
                                     embedding=np.array(entry["embedding"], dtype=np.float32),
+                                    watch=_watch_level(entry.get("vision_watch")),
                                 )
                                 for entry in payload["prints"]
                             ]
