@@ -195,11 +195,6 @@ class ConversationLoop:
         thermal: Any = None,
         stop_detector: StopDetector | None = None,
         open_mic: bool = False,
-
-
-
-
-
         is_asleep: Callable[[], bool] | None = None,
         wake_from_sleep: Callable[[], None] | None = None,
         knock_interval_s: float = _KNOCK_INTERVAL_S,

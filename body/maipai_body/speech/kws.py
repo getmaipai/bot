@@ -256,6 +256,7 @@ class KeywordStopDetector:
         tag = self._engine.accept(block)
         return bool(tag) and tag_to_phrase(tag) == "stop"
 
+
 # Audio fed to one stream before it is started afresh, so a muted robot left on for
 # days never grows a stream without bound.
 _UNMUTE_RESET_BLOCKS = math.ceil(10.0 / BLOCK_DURATION_S)
