@@ -700,8 +700,6 @@ def _build_conversation_loop(
         session_cookie,
         credentials=command_credentials,
         settings_handler=apply_settings,
-        time_handler=getattr(link.hub_client, "sync_time", None),
-
         time_handler=getattr(getattr(link.hub_client, "clock_sync", None), "observe_iso", None),
         on_drop=link.channel_lost,
         handlers={
