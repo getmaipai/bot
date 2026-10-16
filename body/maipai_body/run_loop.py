@@ -29,7 +29,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from typing import Any, Literal
 
 import requests
 
@@ -53,9 +53,11 @@ from maipai_body.presence.carry_reaction import (
 from maipai_body.presence.funnel import FunnelState, FunnelView, SettleGate
 from maipai_body.presence.motion_state import MotionState, MotionStateMachine
 from maipai_body.presence.observations import PresenceObservation, read_presence
+from maipai_body.presence.thermal import ThermalState
 from maipai_body.speech.capture import AudioCapture
 from maipai_body.speech.offline_clips import FREEFALL as FREEFALL_CLIP
 from maipai_body.speech.offline_clips import RECONNECT as RECONNECT_CLIP
+from maipai_body.speech.offline_clips import THERMAL as THERMAL_CLIP
 from maipai_body.speech.playback import AudioPlayback
 from maipai_body.speech.stt_stream import SttStreamClient
 from maipai_body.speech.tts_playback import TtsLinkLost, TtsPlaybackClient
@@ -180,10 +182,17 @@ class ConversationLoop:
         funnel_clock: Callable[[], float] = time.monotonic,
         capture_scope: Callable[[], AbstractContextManager[object]] | None = None,
         attention: Attention | None = None,
+        motor_health: Any = None,
+        thermal: Any = None,
     ) -> None:
         # S-EXPR-04: when given, gaze and idle replace the daemon's own tracker.
         self._attention = attention
         self._client = client
+        # MOTOR-RECOVER-01 / THERMAL-01: optional, ticked from the presence tick,
+        # and neither may ever break it.
+        self._motor_health = motor_health
+        self._thermal = thermal
+        self._thermal_state = ThermalState()
         self._expression = expression_engine
         self._capture = audio_capture
         self._playback = audio_playback
@@ -295,7 +304,33 @@ class ConversationLoop:
         return self._expression.render_ambient(primitive, self._suppression_context()).rendered
 
     def _suppression_context(self) -> SuppressionContext:
-        return SuppressionContext(muted=self._is_muted(), held=self._motion.holding)
+        return SuppressionContext(
+            muted=self._is_muted(),
+            held=self._motion.holding,
+            thermal_pressure=self._thermal_state.idle_still,
+        )
+
+    @property
+    def thermal_state(self) -> ThermalState:
+        return self._thermal_state
+
+    def thermal_frame(self) -> dict[str, object] | None:
+        """The thermal block for the state frame, or None when no monitor is wired."""
+        return None if self._thermal is None else self._thermal_state.as_frame()
+
+    def motor_status(self) -> dict[str, object]:
+        if self._motor_health is None:
+            return {"motors_latched": [], "motors_stuck": False}
+        try:
+            return self._motor_health.status()
+        except Exception:
+            logger.warning("motor status failed", exc_info=True)
+            return {"motors_latched": [], "motors_stuck": False}
+
+    def confirm_motor_reboot(self, name: str, *, person_touching: bool = False) -> bool:
+        if self._motor_health is None:
+            return False
+        return bool(self._motor_health.confirm_reboot(name, person_touching=person_touching))
 
     @property
     def motion_state(self) -> MotionState:
@@ -924,6 +959,28 @@ class ConversationLoop:
 
         if observation.face_detected and self._vision_watch is None:
             self._maybe_check_face(stop_event)
+        self._safety_ticks(held)
+
+    def _safety_ticks(self, held: bool) -> None:
+        """Motor watchdog and thermal governor; a bug in either is logged, never raised."""
+        if self._motor_health is not None:
+            try:
+                self._motor_health.tick(held=held)
+            except Exception:
+                logger.warning("motor watchdog failed", exc_info=True)
+        if self._thermal is None:
+            return
+        try:
+            self._thermal_state = self._thermal.poll()
+            if (
+                self._current_funnel() is FunnelState.IDLE
+                and not self._is_muted()
+                and not held
+                and self._thermal.take_line()
+            ):
+                self._say_clip(THERMAL_CLIP)
+        except Exception:
+            logger.warning("thermal handling failed", exc_info=True)
 
     def _publish_motion_facts(self, held: bool, alarm: bool) -> None:
         """Held and alarm are funnel facts for readers; told only when one flips."""

@@ -44,6 +44,7 @@ from maipai_body.hal.seam import (
     InterpolationMethod,
     StateFrame,
 )
+from maipai_body.presence.motor_health import PresentPose
 
 from .audio_config import AudioConfigurator, AudioSetupResult
 from .envelope import clamp_target
@@ -192,6 +193,21 @@ class ReachyMiniClient:
         except _CONNECTION_LOST_ERRORS as error:
             self._mark_lost(error)
 
+    def present_state(self) -> PresentPose:
+        """Where the head, antennas and body actually are now (daemon REST reads)."""
+        base = self._daemon_base
+        try:
+            pose = HeadPose(**requests.get(f"{base}/api/state/present_head_pose", timeout=5).json())
+            left, right = requests.get(
+                f"{base}/api/state/present_antenna_joint_positions", timeout=5
+            ).json()
+            body_yaw = float(requests.get(f"{base}/api/state/present_body_yaw", timeout=5).json())
+        except (*_CONNECTION_LOST_ERRORS, requests.RequestException) as error:
+            self._mark_lost(error)  # NoReturn: raises BodyLost
+        return PresentPose(
+            pose=pose, antennas=AntennaPositions(left=left, right=right), body_yaw=body_yaw
+        )
+
     def hold(self) -> None:
         """Cancel whatever is in flight, then re-issue the present pose as an
         immediate target so nothing drifts once it's cancelled.
@@ -210,15 +226,9 @@ class ReachyMiniClient:
             self._reachy.client.send_command(StopMoveCmd())
         except _CONNECTION_LOST_ERRORS as error:
             self._mark_lost(error)  # NoReturn: raises BodyLost
-        base = self._daemon_base
-        try:
-            pose = HeadPose(**requests.get(f"{base}/api/state/present_head_pose", timeout=5).json())
-            left, right = requests.get(
-                f"{base}/api/state/present_antenna_joint_positions", timeout=5
-            ).json()
-            body_yaw = float(requests.get(f"{base}/api/state/present_body_yaw", timeout=5).json())
-        except (*_CONNECTION_LOST_ERRORS, requests.RequestException) as error:
-            self._mark_lost(error)  # NoReturn: raises BodyLost
+        present = self.present_state()
+        pose, body_yaw = present.pose, present.body_yaw
+        left, right = present.antennas.left, present.antennas.right
         self.set_target(
             pose=pose, antennas=AntennaPositions(left=left, right=right), body_yaw=body_yaw
         )
@@ -311,7 +321,7 @@ class ReachyMiniClient:
 
     def read(self) -> ImuReading | None:
         self._require_connected()
-        base = self._reachy._daemon_http_url
+        base = self._daemon_base
         try:
             response = requests.get(f"{base}/api/state/imu", timeout=5)
             response.raise_for_status()

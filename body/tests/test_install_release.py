@@ -252,6 +252,10 @@ def test_daemon_drop_in_sets_offline_mode_and_all_required_flags():
     ) in configure
     assert "Environment=HF_HUB_OFFLINE=1" in configure
     assert (
+        "pollen ALL=(root) NOPASSWD: /usr/bin/systemctl restart reachy-mini-daemon.service"
+        in configure
+    )
+    assert (
         "UnsetEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy"
     ) in configure
     assert 'MAIPAI_TAILNET_ENABLED" = 1' in configure

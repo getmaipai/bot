@@ -33,6 +33,12 @@ Environment=HF_HUB_OFFLINE=1
 Environment=MALLOC_ARENA_MAX=2
 UnsetEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 UNITFILE
+# MOTOR-RECOVER-01: the bot (user pollen) may restart the daemon, and only that.
+SUDOERS=/etc/sudoers.d/maipai-motor-recover
+printf '%s\n' 'pollen ALL=(root) NOPASSWD: /usr/bin/systemctl restart reachy-mini-daemon.service' > "$SUDOERS.tmp"
+chmod 0440 "$SUDOERS.tmp"
+visudo -cf "$SUDOERS.tmp" >/dev/null
+mv "$SUDOERS.tmp" "$SUDOERS"
 install -d -m 0755 /etc/nftables.d
 TAILNET_RULE='# tailnet is disabled'
 if [ "$MAIPAI_TAILNET_ENABLED" = 1 ]; then
@@ -55,6 +61,7 @@ grep -q -- '--dataset-update-interval 0 --no-preload-datasets --fastapi-host 127
 grep -qx 'Environment=HF_HUB_OFFLINE=1' "$UNIT"
 grep -qx 'Environment=MALLOC_ARENA_MAX=2' "$UNIT"
 ! grep -Eqi '^(Environment=)?(HTTP|HTTPS|ALL)_PROXY=' "$UNIT"
+grep -qx 'pollen ALL=(root) NOPASSWD: /usr/bin/systemctl restart reachy-mini-daemon.service' "$SUDOERS"
 grep -q "elements = { $HUB }" /etc/nftables.d/maipai.nft
 test "$(systemctl is-enabled systemd-timesyncd.service)" = masked
 test "$(systemctl is-enabled apt-daily.timer)" = masked

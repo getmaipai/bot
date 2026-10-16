@@ -126,6 +126,19 @@ Keep the present and commanded traces local to the measurement run; do
 not retain video or audio. Record the daemon version, profile and the
 observed threshold values in `measurements.md` after the unit exists.
 
+## MOTOR-RECOVER-01 and THERMAL-01 (unit)
+
+The logic is proven against fakes. These rows need the unit and stay UNVERIFIED until run.
+
+| Row | What to do | Pass |
+|---|---|---|
+| Servo error register | Read register 70 and voltage register 144 per servo over the raw channel (`/ws/raw/write`, `async_read_raw_bytes`) | The read works, or the channel is found missing and `DaemonMotorBus` is given another path |
+| Latched input-voltage error | Cause a 0x01 error, confirm `motors_latched` names the servo and a reboot is only sent on the hub's yes | The servo moves after the reboot |
+| Wake window | Send targets during `wake_up` and for 2.2 s after | None reaches the servos; `dropped_targets` counts them |
+| Charging voltage | Read the bus voltage on the charger (M-R4) | The 7.0 V refusal threshold sits above battery and below charge |
+| Daemon restart | Run the sudoers line as `pollen` and restart the daemon | Restart works with no password prompt |
+| Thermal ramp | Warm the module; note the real temperatures where the line plays and the idle goes still | Matches 70, 75, 78 C within the hysteresis of 3 C |
+
 ## What the simulator already showed, and what it cannot
 
 - The harnesses run end to end against `reachy-mini-daemon` 1.11.0 `--sim`:

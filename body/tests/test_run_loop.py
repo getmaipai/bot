@@ -201,6 +201,7 @@ def _make_loop(
     react_hook=None,
     settle_gate_s: float | None = None,
     vision_watch=None,
+    **loop_kwargs,
 ):
     client = FakeReachyMiniClient(REACHY_MINI_PROFILE, camera_frame=camera_frame)
     engine = _RecordingExpressionEngine(client, REACHY_MINI_PROFILE)
@@ -234,6 +235,7 @@ def _make_loop(
         react_hook=react_hook,
         vision_watch=vision_watch,
         **({} if settle_gate_s is None else {"settle_gate_s": settle_gate_s}),
+        **loop_kwargs,
     )
     parts = {
         "client": client,

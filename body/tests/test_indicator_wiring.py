@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import maipai_body.app as app_module
 from maipai_body.bodies.reachy_mini.fake import FakeEyes, FakeReachyMiniClient
+from maipai_body.bodies.reachy_mini.motors import MotorGate
 from maipai_body.hal.seam import NullIndicator, Palette
 from maipai_body.indicator.live import LiveCaptureTap
 from maipai_body.indicator.settings import IndicatorSettings
@@ -47,6 +48,7 @@ def _build(indicator, stop_event=None):
         "build_react_hook",
         "ExpressionEngine",
         "_hub_credentials_reader",
+        "DaemonMotorBus",
     ]
     patches = [patch.object(app_module, name, MagicMock()) for name in heavy]
     patches.append(patch("maipai_body.link.assets.AssetSync.sync", return_value={}))
@@ -77,7 +79,9 @@ def test_the_loop_and_the_audio_capture_get_the_tap_not_the_bare_client():
     loop_kwargs = seen["loop"]
     assert isinstance(loop_kwargs["client"], LiveCaptureTap)
     assert seen["capture_client"] is loop_kwargs["client"]
-    assert seen["capture_client"]._inner is client
+    gate = seen["capture_client"]._inner
+    assert isinstance(gate, MotorGate)
+    assert gate._inner is client
     assert callable(loop_kwargs["capture_scope"])
 
 

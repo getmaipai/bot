@@ -136,6 +136,18 @@
       "sha256": ""
     },
     {
+      "id": "line.thermal.1",
+      "text": "I'm a little warm, so I'm going to take it easy for a bit.",
+      "file": "line_thermal_1.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.thermal.2",
+      "text": "I'm getting warm. I'll slow down until I cool off.",
+      "file": "line_thermal_2.wav",
+      "sha256": ""
+    },
+    {
       "id": "char.A",
       "text": "A",
       "file": "char_A.wav",

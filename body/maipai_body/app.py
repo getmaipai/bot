@@ -37,6 +37,7 @@ from reachy_mini import ReachyMini, ReachyMiniApp
 
 from maipai_body.bodies.reachy_mini.client import ReachyMiniClient
 from maipai_body.bodies.reachy_mini.eyes_client import EyesClient
+from maipai_body.bodies.reachy_mini.motors import DaemonMotorBus, MotorGate
 from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.suppression import SuppressionContext
@@ -54,6 +55,8 @@ from maipai_body.link.state import StateReporter
 from maipai_body.link.state_machine import DEFAULT_SLEEP_AFTER_MINUTES, LinkStateMachine
 from maipai_body.link.supervisor import LinkSupervisor
 from maipai_body.moves.react import build_react_hook
+from maipai_body.presence.motor_health import MotorHealth
+from maipai_body.presence.thermal import ThermalMonitor
 from maipai_body.run_loop import ConversationLoop
 from maipai_body.speech.capture import AudioCapture
 from maipai_body.speech.models import EMBEDDING, MELSPECTROGRAM, WAKE_PHRASE, ensure_wakeword_models
@@ -514,6 +517,41 @@ def _start_eyes() -> Indicator:
         return NullIndicator()
 
 
+def _attach_motor_safety(client: ReachyMiniClient, stop_event: threading.Event):
+    """SETTLE-GATE and MOTOR-RECOVER-01: every head command goes through the gate,
+    the watchdog compares what was asked with where the body is, and the process
+    leaves the head at a safe rest when it stops (never asleep)."""
+    bus = DaemonMotorBus.for_client(client)
+    gate = MotorGate(client, bus)
+
+    def offer(names: list[str]) -> None:
+        logger.warning("motors %s are stuck; a reboot is offered and needs a yes", names)
+
+    def repaired(record: dict) -> None:
+        logger.warning("motor repair record: %s", record)
+
+    health = MotorHealth(
+        bus,
+        commanded=lambda: gate.commanded,
+        present=client.present_state,
+        on_offer=offer,
+        on_repair=repaired,
+        after_step=gate.invalidate_checks,
+    )
+
+    def safe_exit_when_stopped() -> None:
+        stop_event.wait()
+        try:
+            why = gate.safe_exit()
+            if why:
+                logger.info("safe exit skipped motion: %s", why)
+        except Exception:
+            logger.warning("safe exit failed", exc_info=True)
+
+    threading.Thread(target=safe_exit_when_stopped, name="motor-safe-exit", daemon=True).start()
+    return gate, health
+
+
 def _attach_eyes(
     client: ReachyMiniClient, stop_event: threading.Event
 ) -> tuple[LiveCaptureTap, EyesDirector]:
@@ -578,7 +616,8 @@ def _build_conversation_loop(
     hub_credentials = _hub_credentials_reader(link, base_url)
     # From here every consumer gets the tap, never the bare client: it is how
     # the green live cue knows when the voice is leaving for the hub.
-    tap, director = _attach_eyes(client, stop_event)
+    gate, motor_health = _attach_motor_safety(client, stop_event)
+    tap, director = _attach_eyes(gate, stop_event)
     wakeword_paths = ensure_wakeword_models(cache_dir)
     wake_engine = OpenWakeWordEngine(
         wake_phrase_model=wakeword_paths[WAKE_PHRASE.file],
@@ -624,6 +663,8 @@ def _build_conversation_loop(
         react_hook=build_react_hook(tap, cache_dir / "moves", os.environ),
         carry_gravity_compensation=REACHY_MINI_PROFILE.carry_gravity_compensation,
         capture_scope=tap.sending_to_hub,
+        motor_health=motor_health,
+        thermal=ThermalMonitor(),
     )
     loop.subscribe_view(director.on_view)
     threading.Thread(target=print_sync.run, name="face-print-sync", daemon=True).start()

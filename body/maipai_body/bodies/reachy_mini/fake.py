@@ -42,6 +42,7 @@ from maipai_body.hal.seam import (
     StateFrame,
     check_pulse,
 )
+from maipai_body.presence.motor_health import PresentPose
 
 from .envelope import clamp_target
 from .profile import REACHY_MINI_PROFILE
@@ -398,6 +399,14 @@ class FakeReachyMiniClient:
             SentCommand(kind="set_target", pose=pose, antennas=antennas, body_yaw=body_yaw)
         )
         self._apply(pose, antennas, body_yaw)
+
+    def present_state(self) -> PresentPose:
+        self._require_connected()
+        return PresentPose(
+            pose=self._current_pose,
+            antennas=self._current_antennas,
+            body_yaw=self._current_body_yaw,
+        )
 
     def hold(self) -> None:
         self._require_connected()
