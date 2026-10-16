@@ -2,4 +2,16 @@
 
 from .firmware import StackChanFirmware
 
-__all__ = ["StackChanFirmware"]
+
+class FakeHubVoiceReply:
+    """Simulated per-utterance hub match, deliberately held in memory only."""
+
+    def __init__(self, *, person_id="person-7", level="confirmed"):
+        self.speaker_evidence = {
+            "person_id": person_id,
+            "basis": "voice",
+            "level": level,
+        }
+
+
+__all__ = ["FakeHubVoiceReply", "StackChanFirmware"]

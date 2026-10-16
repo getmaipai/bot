@@ -262,6 +262,10 @@ async def _serve_stackchan_channels(
             link,
             offline,
             cache_dir=_default_models_cache_dir(),
+            # The current /api/stt/stream contract has no speaker field.
+            # This adapter consumes that field when the hub adds it; absent
+            # results remain anonymous on this turn.
+            person_attribution=lambda result: getattr(result, "speaker_evidence", None),
             expression_sink=behavior.render_turn_state,
         )
         voice.audio_handler = bridge.on_audio

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import queue
 import re
@@ -354,9 +355,18 @@ class StackChanTurnBridge:
         except Exception:
             LOG.warning("StackChan expression event failed", exc_info=True)
 
-    def _speaker_evidence(self) -> dict | None:
+    def _speaker_evidence(self, stt_result) -> dict | None:
         try:
-            attribution = self.person_attribution()
+            # Keep compatibility with the original zero-argument injection,
+            # while allowing a provider to inspect a hub STT result.
+            try:
+                signature = inspect.signature(self.person_attribution)
+                takes_result = bool(signature.parameters)
+            except (TypeError, ValueError):
+                takes_result = True
+            attribution = (
+                self.person_attribution(stt_result) if takes_result else self.person_attribution()
+            )
         except Exception:
             LOG.warning("StackChan person attribution failed", exc_info=True)
             return None
@@ -372,7 +382,16 @@ class StackChanTurnBridge:
             confidence = getattr(attribution, "confidence", None)
             basis = getattr(attribution, "basis", "voice")
             level = getattr(attribution, "level", confidence)
-        if not person_id or confidence is None:
+        if not person_id:
+            return None
+        # The household evidence contract permits only a calibrated confirmed
+        # match to establish voice identity. Keep legacy numeric providers
+        # behind the documented starting threshold until they return a level.
+        if level == "tentative" or level == "unknown":
+            return None
+        if level != "confirmed" and (not isinstance(confidence, (int, float)) or confidence < 0.6):
+            return None
+        if basis != "voice":
             return None
         return {"person": person_id, "basis": basis, "level": level}
 
@@ -405,7 +424,9 @@ class StackChanTurnBridge:
                 return
             turn = self.turn_factory(base, cookie)
             events = await asyncio.to_thread(
-                lambda: list(turn.stream(result.text, speaker_evidence=self._speaker_evidence()))
+                lambda: list(
+                    turn.stream(result.text, speaker_evidence=self._speaker_evidence(result))
+                )
             )
             reply = next((e.reply_text for e in reversed(events) if e.reply_text), None)
             if reply:
