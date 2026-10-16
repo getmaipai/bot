@@ -29,7 +29,6 @@ MAX_HELLO_SIZE = 4096
 EXPRESSIONS = {
     "neutral": "neutral",
     "happy": "happy",
-    "joy": "happy",
     "angry": "angry",
     "sad": "sad",
     "doubt": "doubt",

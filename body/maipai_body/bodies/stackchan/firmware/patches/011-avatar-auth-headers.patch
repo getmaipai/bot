@@ -1,28 +1,5 @@
 # Intent: use the provisioned identity and bearer token on M5's avatar channel.
 # Upstream: m5stack/StackChan firmware/main/hal/hal_ws_avatar.cpp (MIT).
-diff --git a/firmware/main/Kconfig.projbuild b/firmware/main/Kconfig.projbuild
-index 89592a0..e0ff1a7 100644
---- a/firmware/main/Kconfig.projbuild
-+++ b/firmware/main/Kconfig.projbuild
-@@ -3,6 +3,18 @@ menu "StackChan Server"
- config STACKCHAN_SERVER_URL
-     string "StackChan server base URL"
-     default "http://47.113.125.164:12800"
-+
-+config STACKCHAN_DEVICE_ID
-+    string "MaiPai Device-Id"
-+    default ""
-+
-+config STACKCHAN_CLIENT_ID
-+    string "MaiPai Client-Id"
-+    default ""
-+
-+config STACKCHAN_PAIRING_TOKEN
-+    string "MaiPai pairing token"
-+    default ""
-     help
-         Base URL (scheme + host + port, no trailing slash) of the StackChan backend.
-         The HAL composes endpoint paths like /stackChan/device/user,
 diff --git a/firmware/main/hal/hal_ws_avatar.cpp b/firmware/main/hal/hal_ws_avatar.cpp
 index 0fc43ec..67421ac 100644
 --- a/firmware/main/hal/hal_ws_avatar.cpp

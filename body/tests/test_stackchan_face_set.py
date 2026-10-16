@@ -44,6 +44,24 @@ def test_checked_in_map_faces_exist_in_face_set():
     assert used <= faces
 
 
+def test_upstream_emotion_enum_has_no_joy_face():
+    faces = set(json.loads((PACKAGE / "face_set.json").read_text())["faces"])
+    assert faces == {"neutral", "happy", "angry", "sad", "doubt", "sleepy"}
+    from maipai_body.bodies.stackchan.avatar_frames import encode_face
+
+    with pytest.raises(ValueError, match="unsupported StackChan face: joy"):
+        encode_face("joy")
+
+
+def test_firmware_patch_series_has_valid_hunk_counts():
+    patches = PACKAGE / "firmware" / "patches"
+    for patch in sorted(patches.glob("*.patch")):
+        result = subprocess.run(
+            ["git", "apply", "--stat", str(patch)], capture_output=True, text=True
+        )
+        assert result.returncode == 0, f"{patch.name}: {result.stderr}"
+
+
 def test_expression_map_names_missing_face_in_plain_import_error(tmp_path, monkeypatch):
     data = json.loads((PACKAGE / "face_set.json").read_text())
     data["faces"].remove("doubt")
