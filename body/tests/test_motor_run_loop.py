@@ -3,8 +3,8 @@ motor watchdog and the thermal governor; neither can break the tick."""
 
 from __future__ import annotations
 
-from maipai_body.presence.thermal import ThermalGovernor, ThermalMonitor
 from maipai_body.expression.suppression import suppression_reason
+from maipai_body.presence.thermal import ThermalGovernor, ThermalMonitor
 from tests.test_motion_state_hold import Bench
 
 
@@ -168,7 +168,12 @@ def test_the_state_frame_carries_motor_and_thermal_health_when_wired():
     bench.tick(0.2)
     frame = bench.loop.snapshot()
     assert frame["motors_latched"] == ["head_1"] and frame["motors_stuck"] is True
-    assert frame["thermal"] == {"level": "vision_slowed", "temp_c": 72.0, "vision_hz": 2.0, "fault": False}
+    assert frame["thermal"] == {
+        "level": "vision_slowed",
+        "temp_c": 72.0,
+        "vision_hz": 2.0,
+        "fault": False,
+    }
 
 
 def test_the_state_frame_omits_what_this_body_does_not_report():

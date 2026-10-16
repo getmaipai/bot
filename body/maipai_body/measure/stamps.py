@@ -37,7 +37,14 @@ COMMAND_P95_BUDGET_MS = 50.0
 # playfulness rule) make a row ineligible before it is measured; they are
 # not a bench excuse.
 SAFETY_SUPPRESSIONS = frozenset(
-    {"near_hand", "service_mode", "dock_transition", "thermal_pressure", "thermal_gestures", "stale_track"}
+    {
+        "near_hand",
+        "service_mode",
+        "dock_transition",
+        "thermal_pressure",
+        "thermal_gestures",
+        "stale_track",
+    }
 )
 # How far the hub's own heard-to-emitted interval may differ from the local
 # one before the row says they disagree. A starting value for the first
