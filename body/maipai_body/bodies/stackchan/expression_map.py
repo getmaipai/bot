@@ -18,6 +18,9 @@ PRIMITIVE_NAMES = (
     "breathe",
     "track",
     "speak",
+    "thinking",
+    "offer",
+    "shake",
     "stop",
 )
 
@@ -88,6 +91,9 @@ UNSUPPORTED_PRIMITIVES = {
         "StackChan tracking needs a verified camera-to-head tracking loop, which this profile "
         "does not provide."
     ),
+    "thinking": "StackChan has no antennas or roll axis, which the thinking cue is made of.",
+    "offer": "StackChan has no antennas, which the offer's twitch is made of.",
+    "shake": "StackChan has no verified yaw sweep; a static head target cannot shake.",
     "stop": (
         "Stop is a motion-worker safety state, not an expression animation; use the worker "
         "hold path."

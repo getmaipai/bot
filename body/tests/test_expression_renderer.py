@@ -7,7 +7,7 @@ import pytest
 from maipai_body.bodies.reachy_mini.envelope import clamp_target
 from maipai_body.bodies.reachy_mini.fake import FakeReachyMiniClient
 from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
-from maipai_body.expression.primitives import MUTED_STATE, PRIMITIVE_NAMES
+from maipai_body.expression.primitives import MUTED_STATE, PRIMITIVE_NAMES, SLEEP_STATE
 from maipai_body.expression.reachy_mini_renderer import build_steps, render
 
 # track and stop take a different path (set_target with a caller-given
@@ -20,7 +20,7 @@ SET_TARGET_PRIMITIVES = ("track", "breathe", "speak")
 # own contract) also meant it was excluded from these two tests, so a
 # later fraction change to the muted pose would render and clamp-check
 # nothing at all. Renderable, not cue-driven: covered here, not there.
-RENDERABLE_NAMES = (*PRIMITIVE_NAMES, MUTED_STATE)
+RENDERABLE_NAMES = (*PRIMITIVE_NAMES, MUTED_STATE, SLEEP_STATE)
 
 
 @pytest.mark.parametrize("primitive", RENDERABLE_NAMES)

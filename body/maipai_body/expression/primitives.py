@@ -18,6 +18,10 @@ PRIMITIVE_NAMES: tuple[str, ...] = (
     "track",
     "speak",
     "stop",
+    # S-EXPR-04 (design v2 section 4.2): discrete cues that end at neutral.
+    "thinking",
+    "offer",
+    "shake",
 )
 
 # "muted" is a state, not a cue-driven primitive (dev.md section 5's own
@@ -27,3 +31,12 @@ MUTED_STATE = "muted"
 
 # MOVE-CARRY-01c: the held look, antennas only. Also a state, never a cue.
 HELD_STATE = "held"
+
+# S-EXPR-04: sleep is a state like muted, entered by SLEEP-AUTO-01 or quiet
+# hours. Head lowered, antennas mid-low, wake word live; it must differ from
+# MUTED_STATE on the antenna axis (asserted in tests/test_sleep_state.py).
+SLEEP_STATE = "sleep"
+
+# Primitives that return to neutral on their own and so release the
+# expression layer when done, letting gaze and idle resume.
+RELEASING_PRIMITIVES: frozenset[str] = frozenset({"thinking", "offer", "shake"})

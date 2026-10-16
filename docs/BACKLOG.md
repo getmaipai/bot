@@ -352,7 +352,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       `BodyLost`. Not run: anything needing the physical unit (up to 90
       days out per the design record).
 
-- [ ] **RM-02: the expression column on the simulator** (M, sim, with
+- [x] **RM-02: the expression column on the simulator** (M, sim, with
       EXPR-01). Objective: the primitive table's Reachy Mini column
       (section 5: roll for the tilt, the antennas as a channel, body
       yaw following the head past the delta limit, the `speak` sway on
@@ -366,8 +366,12 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       (cue to first state-feed delta, amplitude, peak velocity, settling
       time per primitive) recorded. Out of scope: the unit's numbers.
       Exit: `bash scripts/check.sh` and the recorded rows.
-      **Not fully landed**, box stays unchecked: body yaw does not yet
-      follow the head past the 65-degree delta limit (that is a
+      **Closed 2026-10-16:** the one residual, body yaw following the
+      head past the 65-degree delta limit, landed with S-EXPR-04's
+      `GazeController` body follow (the simulator replay is a
+      deterministic fake test, not a live sim run).
+      Earlier note: body yaw did not follow the head past the
+      65-degree delta limit (that is a
       tracking-loop behavior, EXPR-04's, not one primitive's own
       render). "Device-scope settings" is a Python dict
       (`expression/envelope.py`) with a source and date, the same shape
@@ -2197,12 +2201,13 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       Objective: one 50 Hz worker thread is the only `set_target` writer; layers (safety, service, gaze, expression, idle) write per-axis targets; per axis the highest active layer keeps its share (gaze 0.7 of yaw and pitch, expression 1.0 of antennas and roll while gaze is active, idle the remainder), targets are scaled before the sum, then a rate limiter (yaw 1.0, pitch 0.7, roll 0.2, body 0.5, antennas 2.0 rad/s; acceleration 4 and 8 rad/s2; dt capped 70 ms), then the profile clamp; a dt-aware low-pass (tau 65 ms, 120 ms on relaxation); discrete moves get a distance-scaled entry blend (head 0.015 s per magic-mm, antennas 0.005 s per degree, body 0.015 s per degree, slowest wins, clamp 0.2 to 1.5 s, skip under 0.15 s); `speak` sway amplitude follows the playback ledger's RMS with a 0.2 s lag and a hysteretic gate (-35 and -45 dBFS); the rest pose is identity head, antennas at the anti-resonance offset, body 0; a dropped cue is counted and logged; `set_target` errors log once per second with a suppressed count.
       Acceptance (fail-first): two simultaneous layers never exceed a profile limit or a rate cap on any axis; a tilt during gaze keeps gaze within its share and never snaps at the mode switch; `stop` reaches the daemon within one tick while a 2 s goto is in flight (`_SlowGotoClient`); a dropped cue appears in the counter; the sway is zero during silence in the ledger; a sim row of tilt during track recorded. Constants UNMEASURED with M-R2 rows. Exit: `bash scripts/check.sh`. Cloud: yes (sim row local).
 
-- [ ] **S-EXPR-04: gaze, idle, body follow, DoA disambiguation, the new primitives** (M, after S-EXPR-01R and S-FAKES-01; Reachy design v2 sections 4.2 to 4.5).
+- [x] **S-EXPR-04: gaze, idle, body follow, DoA disambiguation, the new primitives** (M, after S-EXPR-01R and S-FAKES-01; Reachy design v2 sections 4.2 to 4.5).
       Governs: body/maipai_body/expression/{gaze,idle}.py, expression/primitives.py (`thinking`, `offer`, `shake`), presence/*, run_loop.py (`_presence_loop` region only), body/tests/test_gaze*.py, test_idle*.py, test_doa*.py.
       Amends: EXPR-04's objective gains the numbers; RM-02's residual (body follows head) is folded in; design section 5's table gains `thinking`, `offer`, `shake` and the `sleep` and `held` states.
       Reuse check: our own YuNet target (FACE-WATCH-01) and the DoA fake are the inputs; the daemon's `start_head_tracking` is not used (one writer, D10); FAKES-02's mirrored DoA readings.
       Objective: the gaze law of section 4.4 (deadband subtracted, send epsilon, head leads 0.22 rad then body at min(0.5 rad/s, delta x 2.5), total under 175 degrees, settle 260 ms after a body move, target continuity, the loss ladder: coast 0.6 s, drop 0.8 s, home 3 s, look-around 6 s, never tilt down past 5 degrees); the idle policy of section 4.3 with `robot.idle.level`; the DoA rule of section 4.5 (a 20 degree probe turn when the bearing is within 25 degrees of plus or minus 90 and no face confirms it); the `thinking`, `offer` and `shake` primitives; the `sleep` state distinct from `muted`.
       Acceptance (fail-first): deterministic trajectory tests per rule; the idle loop never emits a clip, a line or an offer; a stale detection older than 250 ms never moves a motor; a mirrored DoA fixture ends with the body facing the true source inside the 160 degree limit; `sleep` and `muted` differ on the antenna axis by at least 0.3 rad in the fake's trace. Exit: `bash scripts/check.sh`. Cloud: yes.
+      Status: done 2026-10-16. `expression/gaze.py`, `expression/idle.py`, `presence/doa.py`, `presence/attention.py`, the `thinking`, `offer` and `shake` primitives, the `sleep` state (`ExpressionEngine.set_sleep`) and `release_on_end` on the motion worker (so a finished cue hands the head back to gaze and idle). Every number is an UNMEASURED design default; the face frame (centred, [-1, 1]) and the SDK DoA scale (`sdk_angle_to_bearing`) are UNVERIFIED on hardware. Not done: target continuity across several faces (the body reports one face), the 0.5 gaze weight while speaking, the once-a-minute sleep breathe (the sleep pose masks it), the offer's 5 s repeat (OFFER-01 owns the window), and the `app.py` wiring: `ConversationLoop(attention=...)` is opt-in and `app.py` still uses the daemon tracker until the unit rows (M-R2) confirm the numbers.
 
 - [x] **SETTLE-GATE: enforce the 0.5 s settle gate on the one funnel** (S, run-loop lane; EYES-02's precondition; BODY-05 ticked by this).
       Governs: body/maipai_body/run_loop.py, body/tests/test_run_loop_settle.py.
@@ -2293,9 +2298,10 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       Objective: the CM4 temperature and throttle flags (the sampler exists) drive the vision rate (2 Hz at 70 C), suspend gestures at 75 C, drop the idle level to `still` at 78 C, say one clip line once, and show the Eyes error look only at a real fault; the state frame carries `thermal`.
       Acceptance (fail-first): a scripted temperature ramp changes the rates in that order and back with hysteresis of 3 C; the line plays once per episode. Exit: `bash scripts/check.sh`. Cloud: yes.
 
-- [ ] **SLEEP-AUTO-01: dark and quiet means sleep, arrival wakes** (S, after S-EXPR-04).
+- [x] **SLEEP-AUTO-01: dark and quiet means sleep, arrival wakes** (S, after S-EXPR-04).
       Objective: a dark frame (mean luma under a threshold, no frame stored) and no DoA speech for 10 min enters `sleep`; a face, speech or a knock wakes; quiet hours enter sleep regardless; the wake word stays live.
       Acceptance (fail-first): light alone or sound alone never sleeps; a face wakes within one presence tick. Exit: `bash scripts/check.sh`. Cloud: yes.
+      Status: done 2026-10-16 as a pure policy. `presence/sleep_auto.py` (`SleepAutoPolicy`, `mean_luma`) and `tests/test_sleep_auto.py`; it drives `ExpressionEngine.set_sleep` and never touches audio, so the wake word stays live. The 25 of 255 luma threshold and the 10 min are UNMEASURED design defaults. Not done: feeding it from the presence tick (a frame source for luma, the `robot.sleep.auto` setting and the quiet-hours schedule are not wired in `app.py`, same opt-in as S-EXPR-04's attention) and a real dark-room run on the unit.
 
 - [ ] **SOUND-EVENTS-01: on-robot sound tags as hints only** (M, filed, not scheduled; OWNER-ANSWERS 5: later, off by default, switch per robot; architect ruling first).
       Objective: an audio tagger (YAMNet-class, Apache-2.0, pinned via the hub) at 1 Hz, off by default per robot, labels from a closed list sent as `sound_event` observations that can only create tier 2 offers; never a safety input, never a capture trigger, never recorded.
@@ -2574,7 +2580,7 @@ value; RT-02 and RT-03 carry it.
       three modes. Acceptance: the expression rows of section 11 in the
       three modes; onset before the first audio sample on every eligible
       row. Exit: `bash scripts/check.sh` and the three-mode bench.
-- [ ] **EXPR-04: tracking and idle** (S, after BODY-04, BODY-05).
+- [x] **EXPR-04: tracking and idle** (S, after BODY-04, BODY-05).
       Objective: deadbanded gaze with velocity and acceleration limits
       on a fresh track or direction of arrival; freeze then settle on a
       stale or conflicting track; breathing on the idle policy with its
@@ -2583,6 +2589,7 @@ value; RT-02 and RT-03 carry it.
       bearing with face tracking, otherwise turn the body slowly to
       resolve a possible mirrored behind-robot reading. Exit:
       `bash scripts/check.sh`.
+      Status: done 2026-10-16 by S-EXPR-04 (gaze, idle, DoA front/back probe, deterministic trajectory tests in `test_gaze.py`, `test_idle.py`, `test_doa.py`). The physical run is NOT recorded: it needs the unit (runbook rows M-R2, M-R3).
 - [ ] **EXPR-05: a body-agnostic web dashboard** (M, sim; owner's ask,
       2026-09-27). Objective: a small web page (a lightweight Python
       HTTP server in `body/`, no framework beyond what a health check

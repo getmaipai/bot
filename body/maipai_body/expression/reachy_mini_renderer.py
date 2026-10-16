@@ -203,6 +203,66 @@ def build_steps(primitive: str, profile: BodyProfile, *, doa_angle_rad: float = 
             )
         ]
 
+    if primitive == "thinking":
+        roll = _amplitude_rad(profile, "head_roll", spec.roll_fraction)
+        ant = _amplitude_rad(profile, "antenna_left", spec.antenna_fraction)
+        return [
+            Step(
+                method="goto",
+                pose=HeadPose(roll=roll),
+                antennas=AntennaPositions(left=ant, right=-ant),
+                duration_s=spec.duration_s,
+            ),
+            Step(
+                method="goto",
+                pose=HeadPose(roll=roll),
+                antennas=AntennaPositions(left=-ant, right=ant),
+                duration_s=spec.duration_s,
+            ),
+            Step(
+                method="goto",
+                pose=HeadPose(),
+                antennas=AntennaPositions(left=0.0, right=0.0),
+                duration_s=spec.duration_s,
+            ),
+        ]
+
+    if primitive == "offer":
+        ant = _amplitude_rad(profile, "antenna_left", spec.antenna_fraction)
+        glance = HeadPose(yaw=_amplitude_rad(profile, "head_yaw", spec.yaw_fraction) * yaw_sign)
+        up = AntennaPositions(left=ant, right=ant)
+        down = AntennaPositions(left=0.0, right=0.0)
+        # Two twitches over 0.6 s: up, down, up, down at 0.15 s each.
+        steps = [
+            Step(method="goto", pose=glance, antennas=up, duration_s=spec.duration_s),
+            Step(method="goto", pose=glance, antennas=down, duration_s=spec.duration_s),
+            Step(method="goto", pose=glance, antennas=up, duration_s=spec.duration_s),
+            Step(method="goto", pose=glance, antennas=down, duration_s=spec.duration_s),
+        ]
+        steps.append(Step(method="goto", pose=HeadPose(), antennas=down, duration_s=0.3))
+        return steps
+
+    if primitive == "shake":
+        swing = _amplitude_rad(profile, "head_yaw", spec.yaw_fraction)
+        sequence = [swing, -swing, swing, -swing]
+        steps = [
+            Step(method="goto", pose=HeadPose(yaw=yaw), duration_s=spec.duration_s)
+            for yaw in sequence
+        ]
+        steps.append(Step(method="goto", pose=HeadPose(), duration_s=spec.duration_s))
+        return steps
+
+    if primitive == "sleep":
+        low = _amplitude_rad(profile, "antenna_left", spec.antenna_fraction)
+        return [
+            Step(
+                method="goto",
+                pose=HeadPose(pitch=_amplitude_rad(profile, "head_pitch", spec.pitch_fraction)),
+                antennas=AntennaPositions(left=-low, right=-low),
+                duration_s=spec.duration_s,
+            )
+        ]
+
     if primitive == "speak":
         left_amplitude = _amplitude_rad(profile, "antenna_left", spec.antenna_fraction)
         right_amplitude = _amplitude_rad(profile, "antenna_right", spec.antenna_fraction)

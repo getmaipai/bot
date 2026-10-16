@@ -32,7 +32,8 @@ ASSETS = {
 }
 
 # One cue per cue-mapped primitive; breathe and track are not cue-mapped
-# (scripted_source.py), so they take the renderer column directly.
+# (scripted_source.py), so they take the renderer column directly; the
+# thinking, offer and shake cues belong to later items and are direct too.
 _CUES: dict[str, dict[str, Any]] = {
     "listen": {"phase": Phase.HEARD},
     "glance": {"phase": Phase.SIGNAL, "has_target": True},
@@ -44,7 +45,7 @@ _CUES: dict[str, dict[str, Any]] = {
     "speak": {"phase": Phase.SPEAK},
     "stop": {"phase": Phase.CANCEL},
 }
-_DIRECT = ("breathe", "track")
+_DIRECT = ("breathe", "track", "thinking", "offer", "shake")
 
 
 class _Handler(BaseHTTPRequestHandler):

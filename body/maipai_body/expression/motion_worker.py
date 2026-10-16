@@ -123,6 +123,7 @@ class MotionWorker:
         self._speak_enabled = False
         self._sequence: list[tuple[MotionTarget, float]] = []
         self._sequence_layer: MotionLayer | None = None
+        self._release_layer: MotionLayer | None = None
         if threaded:
             self.start()
 
@@ -195,11 +196,23 @@ class MotionWorker:
             self._stopped = False
             self._safety_stop.clear()
 
-    def submit_sequence(self, layer: MotionLayer, steps: list[tuple[MotionTarget, float]]) -> None:
-        """Run a discrete primitive's target steps through the same mixer."""
+    def submit_sequence(
+        self,
+        layer: MotionLayer,
+        steps: list[tuple[MotionTarget, float]],
+        *,
+        release_on_end: bool = False,
+    ) -> None:
+        """Run a discrete primitive's target steps through the same mixer.
+
+        ``release_on_end`` frees the layer once the last step has finished, so
+        lower layers (gaze, idle) resume. Off by default: older primitives keep
+        holding their final pose.
+        """
         if not steps:
             self.clear_layer(layer)
             return
+        self._release_layer = layer if release_on_end else None
         self._sequence_layer = layer
         self._sequence = list(steps)
         first, duration = self._sequence.pop(0)
@@ -441,6 +454,12 @@ class MotionWorker:
         return {axis: start[axis] + (end[axis] - start[axis]) * eased for axis in end}
 
     def _advance_sequence(self, now: float) -> None:
+        release = self._release_layer
+        if release is not None and not self._sequence and self._sequence_layer is None:
+            request = self._requests[release]
+            if now - request.started >= request.duration:
+                self._release_layer = None
+                self.clear_layer(release)
         layer = self._sequence_layer
         if layer is None or not self._sequence:
             return

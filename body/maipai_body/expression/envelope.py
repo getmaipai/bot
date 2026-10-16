@@ -76,4 +76,13 @@ REACHY_MINI_EXPRESSION_ENVELOPE: dict[str, PrimitiveEnvelope] = {
     # Design record section 5's `held` row: antennas soft and low, then still.
     # The same fraction as attend's subtle low; head and body yaw untouched.
     "held": PrimitiveEnvelope(antenna_fraction=0.08, duration_s=0.8),
+    # S-EXPR-04 (design v2 section 4.2); UNMEASURED defaults.
+    # thinking: antenna alternation plus a 6 degree roll (6/40 of head_roll).
+    "thinking": PrimitiveEnvelope(roll_fraction=0.15, antenna_fraction=0.20, duration_s=0.35),
+    # offer: both antennas twitch twice over 0.6 s, a glance at the person.
+    "offer": PrimitiveEnvelope(yaw_fraction=0.10, antenna_fraction=0.25, duration_s=0.15),
+    # shake: yaw +-10 degrees (1/18 of head_yaw) twice at 200 ms a swing.
+    "shake": PrimitiveEnvelope(yaw_fraction=1.0 / 18.0, duration_s=0.2),
+    # sleep: head lowered 10 degrees (10/40 of head_pitch), antennas mid-low.
+    "sleep": PrimitiveEnvelope(pitch_fraction=0.25, antenna_fraction=0.12, duration_s=1.5),
 }

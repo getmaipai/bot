@@ -42,6 +42,7 @@ from maipai_body.link.offline import OfflineRungs
 from maipai_body.link.replay import ReplayItem
 from maipai_body.link.state_machine import LinkPhase
 from maipai_body.presence.arbitration import ArbitrationState, tracking_may_drive
+from maipai_body.presence.attention import Attention
 from maipai_body.presence.carry_reaction import (
     CARRY_LINES,
     DEFAULT_CARRY_REACTION,
@@ -51,7 +52,7 @@ from maipai_body.presence.carry_reaction import (
 )
 from maipai_body.presence.funnel import FunnelState, FunnelView, SettleGate
 from maipai_body.presence.motion_state import MotionState, MotionStateMachine
-from maipai_body.presence.observations import read_presence
+from maipai_body.presence.observations import PresenceObservation, read_presence
 from maipai_body.speech.capture import AudioCapture
 from maipai_body.speech.offline_clips import FREEFALL as FREEFALL_CLIP
 from maipai_body.speech.offline_clips import RECONNECT as RECONNECT_CLIP
@@ -178,7 +179,10 @@ class ConversationLoop:
         settle_gate_s: float = SETTLE_GATE_S,
         funnel_clock: Callable[[], float] = time.monotonic,
         capture_scope: Callable[[], AbstractContextManager[object]] | None = None,
+        attention: Attention | None = None,
     ) -> None:
+        # S-EXPR-04: when given, gaze and idle replace the daemon's own tracker.
+        self._attention = attention
         self._client = client
         self._expression = expression_engine
         self._capture = audio_capture
@@ -859,6 +863,17 @@ class ConversationLoop:
         if self._face_check_thread is not None:
             self._face_check_thread.join(timeout=_FACE_CHECK_JOIN_TIMEOUT_S)
 
+    def _drive_attention(self, observation: PresenceObservation, held: bool) -> None:
+        """S-EXPR-04: feed gaze and idle, or release both when motion may not drive."""
+        assert self._attention is not None
+        if held or not self._tracking_allowed():
+            self._attention.release()
+            return
+        try:
+            self._attention.step(observation)
+        except Exception:
+            logger.warning("attention step failed", exc_info=True)
+
     def _presence_tick(self, stop_event: threading.Event) -> None:
         try:
             observation = read_presence(self._client)
@@ -884,13 +899,15 @@ class ConversationLoop:
         )
         with self._lock:
             already_tracking = self._state.tracking
-        if should_track and not already_tracking:
+        if self._attention is not None:
+            self._drive_attention(observation, held)
+        elif should_track and not already_tracking:
             self._client.enable_tracking()
             with self._lock:
                 self._state.tracking = True
             if self._on_change is not None:
                 self._on_change()
-        elif not should_track and already_tracking:
+        elif not should_track and already_tracking and self._attention is None:
             self._client.disable_tracking()
             with self._lock:
                 self._state.tracking = False

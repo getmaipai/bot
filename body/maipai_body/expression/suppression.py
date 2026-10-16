@@ -83,6 +83,15 @@ def suppression_reason(primitive: str, context: SuppressionContext) -> str | Non
             return "muted"
         return None
 
+    if primitive in ("thinking", "offer", "shake"):
+        # S-EXPR-04: discrete cues stay silent while muted, and the playful
+        # offer never fires where playfulness is forbidden.
+        if context.muted:
+            return "muted"
+        if primitive == "offer" and context.playfulness_forbidden:
+            return "playfulness_forbidden"
+        return None
+
     if primitive == "track":
         if context.stale_track:
             return "stale_track"

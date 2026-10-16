@@ -21,7 +21,13 @@ from maipai_body.presence.arbitration import ArbitrationState, expression_may_dr
 
 from .cue import Cue, Phase, map_cue_to_primitive
 from .motion_worker import MotionLayer, MotionTarget, MotionWorker, entry_blend_seconds
-from .primitives import HELD_STATE, MUTED_STATE, PRIMITIVE_NAMES
+from .primitives import (
+    HELD_STATE,
+    MUTED_STATE,
+    PRIMITIVE_NAMES,
+    RELEASING_PRIMITIVES,
+    SLEEP_STATE,
+)
 from .reachy_mini_renderer import build_steps
 from .renderers import renderer_for
 from .suppression import SuppressionContext, suppression_reason
@@ -40,6 +46,9 @@ class ExpressionOutcome:
     # `primitive` on a normal render, or a set_muted() outcome's own
     # rendered_primitive ("muted" or "settle") when cue_seq is -1.
     rendered_primitive: str | None = None
+
+
+_LAYER_BLEND_S = 0.1
 
 
 class ExpressionEngine:
@@ -79,6 +88,7 @@ class ExpressionEngine:
         self._renderer = renderer_for(profile.id)
         self._expression_device = getattr(client, "expression_device", None)
         self._muted = False
+        self._asleep = False
         self._last_cue_seq = -1
         self._turn_terminal = False
 
@@ -216,7 +226,9 @@ class ExpressionEngine:
             )
             sequence.append((target, entry_blend_seconds(previous, target)))
             previous = target
-        self._worker.submit_sequence(MotionLayer.EXPRESSION, sequence)
+        self._worker.submit_sequence(
+            MotionLayer.EXPRESSION, sequence, release_on_end=primitive in RELEASING_PRIMITIVES
+        )
         if not self._worker.running:
             self._worker.flush()
             if primitive == "settle":
@@ -278,3 +290,40 @@ class ExpressionEngine:
             rendered=True,
             rendered_primitive=primitive,
         )
+
+    def set_sleep(self, asleep: bool, arbitration: ArbitrationState) -> ExpressionOutcome | None:
+        """S-EXPR-04: enter or leave the sleep state on an allowed edge.
+
+        Sleep lowers the head and settles the antennas mid-low; leaving
+        renders ``settle``. It is a state like mute, never a cue.
+        """
+        if asleep == self._asleep or not expression_may_drive(arbitration):
+            return None
+        primitive = SLEEP_STATE if asleep else "settle"
+        self._render_named(primitive, 0.0)
+        self._asleep = asleep
+        return ExpressionOutcome(
+            cue_seq=-1,
+            primitive=None,
+            suppressed_reason=None,
+            rendered=True,
+            rendered_primitive=primitive,
+        )
+
+    def set_gaze(self, pose: HeadPose, body_yaw: float) -> None:
+        """Hold the gaze layer at a head pose (world-frame yaw) and body yaw."""
+        self._worker.set_layer(
+            MotionLayer.GAZE, pose=pose, body_yaw=body_yaw, duration_s=_LAYER_BLEND_S
+        )
+
+    def clear_gaze(self) -> None:
+        self._worker.clear_layer(MotionLayer.GAZE)
+
+    def set_idle(self, pose: HeadPose, antennas: AntennaPositions | None) -> None:
+        """Hold the idle layer at a pose; idle never owns the body."""
+        self._worker.set_layer(
+            MotionLayer.IDLE, pose=pose, antennas=antennas, duration_s=_LAYER_BLEND_S
+        )
+
+    def clear_idle(self) -> None:
+        self._worker.clear_layer(MotionLayer.IDLE)
