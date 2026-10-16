@@ -22,6 +22,7 @@ from maipai_body.link.address_walk import (
     PathKind,
     TailnetEndpoints,
     classify_base_url,
+    host_is_tailnet_member,
     no_tailnet_endpoints,
 )
 from maipai_body.link.client import HubLinkClient, PairingRefused, PairingTimedOut
@@ -74,6 +75,7 @@ class LinkLifecycle:
         observer: LinkObserver | None = None,
         address_walk: bool = False,
         tailnet: TailnetEndpoints = no_tailnet_endpoints,
+        tailnet_member: Callable[[], bool] | None = None,
     ) -> None:
         self._store = store
         self._client = client
@@ -81,6 +83,8 @@ class LinkLifecycle:
         self._label = label
         self._on_code = on_code
         self._observer = observer
+        self._hub_address_book: list[HubEndpoint] = []
+        self._tailnet_detector = tailnet_member or host_is_tailnet_member
         # LINK-STATE-01: with `address_walk` a re-redeem walks the LAN then
         # the tailnet (`tailnet` is ROBOT-TAILSCALE-01's seam) instead of
         # retrying the one stored address.
@@ -89,7 +93,11 @@ class LinkLifecycle:
                 paired_base_url=self._stored_base_url,
                 discover=discover,
                 try_endpoint=self._try_endpoint,
-                tailnet=tailnet,
+                tailnet=self._tailnet_candidates if tailnet is no_tailnet_endpoints else tailnet,
+                lan=self._lan_candidates,
+                tailnet_allowed=(
+                    self._tailnet_detector if tailnet is no_tailnet_endpoints else lambda: True
+                ),
                 on_attempt=self._note_attempt,
             )
             if address_walk
@@ -145,9 +153,47 @@ class LinkLifecycle:
             instance_id=endpoint.instance_id,
         )
         if ok:
+            self._refresh_address_book()
             return True, None, None
         kind = getattr(self._client, "last_refresh_kind", None) or "unreachable"
         return False, self._client.last_refresh_error, kind
+
+    def _refresh_address_book(self) -> None:
+        """Refresh the cache after every successful redeem; failure leaves the last book usable."""
+        fetch = getattr(self._client, "fetch_hub_endpoints", None)
+        if fetch is None:
+            return
+        try:
+            entries = fetch()
+            parsed: list[tuple[int, HubEndpoint]] = []
+            for entry in entries:
+                kind = entry.get("kind")
+                if not entry.get("enabled", True) or kind not in ("lan", "overlay"):
+                    continue
+                url = entry.get("url")
+                instance = entry.get("instanceId")
+                if isinstance(url, str) and isinstance(instance, str):
+                    path_kind = PathKind.LAN if kind == "lan" else PathKind.TAILNET
+                    parsed.append(
+                        (
+                            entry.get("priority", 0),
+                            HubEndpoint(path_kind, url, "hub-address-book", instance),
+                        )
+                    )
+            ordered = sorted(parsed, key=lambda row: row[0])
+            self._hub_address_book = [endpoint for _, endpoint in ordered]
+        except Exception as exc:
+            logger.warning("could not refresh the hub address book: %s", exc)
+
+    def _tailnet_candidates(self) -> list[HubEndpoint]:
+        if not self._tailnet_detector():
+            return []
+        return [
+            endpoint for endpoint in self._hub_address_book if endpoint.kind is PathKind.TAILNET
+        ]
+
+    def _lan_candidates(self) -> list[HubEndpoint]:
+        return [endpoint for endpoint in self._hub_address_book if endpoint.kind is PathKind.LAN]
 
     def _note_attempt(self, endpoint: HubEndpoint) -> None:
         if self._observer is not None:

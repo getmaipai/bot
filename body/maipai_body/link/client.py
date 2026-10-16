@@ -38,6 +38,7 @@ logger = logging.getLogger("maipai_body.link.client")
 
 POLL_INTERVAL_S = 2.0
 POLL_TIMEOUT_S = 300.0  # 5 minutes, matching the code's own server-side TTL
+WALK_TIMEOUT_S = 2.0
 
 
 class PairingRefused(RuntimeError):
@@ -185,6 +186,7 @@ class HubLinkClient:
         # cost is negligible against a multi-minute pairing flow anyway.
         self._redeem(pairing)  # confirms the token works before saving
         self._store.save(pairing)
+        self.active_base_url = pairing.base_url
         return PairingResult(pairing=pairing, code=pending.code)
 
     def pair(
@@ -233,11 +235,23 @@ class HubLinkClient:
         resp = self._session.post(
             f"{pairing.base_url}/api/auth/devices/redeem",
             json={"token": pairing.device_token},
-            timeout=10,
+            timeout=WALK_TIMEOUT_S,
         )
         if resp.status_code in (401, 403):
             raise PairingRevoked(f"hub refused redemption: {resp.status_code} {resp.text[:200]}")
         resp.raise_for_status()
+
+    def fetch_hub_endpoints(self, base_url: str | None = None) -> list[dict]:
+        """Read the authenticated device address book from the last hub session."""
+        url = base_url or self.active_base_url
+        if not url:
+            raise requests.ConnectionError("no active hub address for the address book")
+        resp = self._session.get(f"{url}/api/devices/me/hub-endpoints", timeout=WALK_TIMEOUT_S)
+        resp.raise_for_status()
+        body = resp.json()
+        if not isinstance(body, list):
+            raise ValueError("hub address book response was not a list")
+        return body
 
     def _verify_identity(self, pairing: HubPairing) -> None:
         """Refuses (raises :class:`PairingRefused`) only on a
@@ -326,7 +340,9 @@ class HubLinkClient:
             if parsed.hostname is None:
                 raise IdentityMismatch(f"{pairing.base_url} has no host to verify")
             try:
-                actual = _https_fingerprint(parsed.hostname, parsed.port or 443)
+                actual = _https_fingerprint(
+                    parsed.hostname, parsed.port or 443, timeout_s=WALK_TIMEOUT_S
+                )
             except (OSError, ssl.SSLError) as exc:
                 raise requests.ConnectionError(f"could not fetch the certificate: {exc}") from exc
             if actual != pairing.fingerprint:

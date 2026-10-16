@@ -12,7 +12,9 @@ The walk is lazy: mDNS is asked only if the paired address did not answer.
 from __future__ import annotations
 
 import ipaddress
+import json
 import logging
+import subprocess
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -25,6 +27,7 @@ logger = logging.getLogger("maipai_body.link.address_walk")
 
 _TAILNET_NET = ipaddress.ip_network("100.64.0.0/10")
 DISCOVER_TIMEOUT_S = 3.0
+TAILNET_STATUS_TIMEOUT_S = 1.0
 
 
 class PathKind(StrEnum):
@@ -70,11 +73,37 @@ class TailnetEndpoints(Protocol):
     def __call__(self) -> list[HubEndpoint]: ...
 
 
+class LanEndpoints(Protocol):
+    def __call__(self) -> list[HubEndpoint]: ...
+
+
 def no_tailnet_endpoints() -> list[HubEndpoint]:
     """SEAM (ROBOT-TAILSCALE-01): the cached tailnet entries of the hub's
     address book, in the server's priority order. Empty until that item's
     bot half lands: no route to fetch the book exists on the hub yet."""
     return []
+
+
+def host_is_tailnet_member(
+    *, run=subprocess.run, timeout_s: float = TAILNET_STATUS_TIMEOUT_S
+) -> bool:
+    """Check tailscaled's local status only; this never contacts a Tailscale service."""
+    try:
+        result = run(
+            ["tailscale", "status", "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout_s,
+        )
+        if result.returncode != 0:
+            return False
+        status = json.loads(result.stdout)
+        return status.get("BackendState") == "Running" and bool(
+            status.get("Self", {}).get("TailscaleIPs")
+        )
+    except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+        return False
 
 
 @dataclass(frozen=True)
@@ -105,6 +134,8 @@ class AddressWalker:
         discover: DiscoverHub,
         try_endpoint: TryEndpoint,
         tailnet: TailnetEndpoints = no_tailnet_endpoints,
+        lan: LanEndpoints = lambda: [],
+        tailnet_allowed: Callable[[], bool] = lambda: True,
         on_attempt: Callable[[HubEndpoint], None] | None = None,
         discover_timeout_s: float = DISCOVER_TIMEOUT_S,
     ) -> None:
@@ -112,6 +143,8 @@ class AddressWalker:
         self._discover = discover
         self._try = try_endpoint
         self._tailnet = tailnet
+        self._lan = lan
+        self._tailnet_allowed = tailnet_allowed
         self._on_attempt = on_attempt
         self._discover_timeout_s = discover_timeout_s
 
@@ -133,6 +166,10 @@ class AddressWalker:
         if paired_endpoint and paired_endpoint.kind is PathKind.LAN and fresh(paired_endpoint):
             yield paired_endpoint
 
+        for entry in self._lan():
+            if entry.kind is PathKind.LAN and fresh(entry):
+                yield entry
+
         try:
             found = self._discover(timeout_s=self._discover_timeout_s)
         except Exception as exc:
@@ -151,11 +188,17 @@ class AddressWalker:
             if fresh(lan):
                 yield lan
 
-        if paired_endpoint and paired_endpoint.kind is PathKind.TAILNET and fresh(paired_endpoint):
+        if (
+            paired_endpoint
+            and paired_endpoint.kind is PathKind.TAILNET
+            and self._tailnet_allowed()
+            and fresh(paired_endpoint)
+        ):
             yield paired_endpoint
-        for entry in self._tailnet():
-            if fresh(entry):
-                yield entry
+        if self._tailnet_allowed():
+            for entry in self._tailnet():
+                if entry.kind is PathKind.TAILNET and fresh(entry):
+                    yield entry
 
     def walk(self) -> WalkResult:
         result = WalkResult(answered=None)

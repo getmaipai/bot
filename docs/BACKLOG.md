@@ -1818,9 +1818,7 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       (S, docs). The design text changes as the item says; the owner's agreement is recorded as decision D18 of Reachy design v2. Cloud: yes.
 
 - [ ] **ROBOT-TAILSCALE-01 (bot half, amended): detect a hand-joined tailnet, walk the book** (M, hub half, filed
-      in `home`; the bot half may be S; needs a CREDENTIALS.md review
-      before dispatch, since the auto-provision path is a new credential
-      class). Objective: every robot body off the home LAN (Reachy Mini, the
+      in `home`; bot half). Objective: every robot body off the home LAN (Reachy Mini, the
       Pi 5 robot, and StackChan through its bot host, owner's call
       2026-10-15) reconnects to its hub over Tailscale with its pairing
       intact, by one mechanism in the bot link layer and never a
@@ -1832,27 +1830,25 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       Tailscale entry next (priority 60), and records a `.ts.net` name
       or a `100.64.0.0/10` address with kind `overlay`; a `.ts.net`
       name or tailnet address is reachable only by a tailnet member, so
-      the robot must be its own tailnet node (section "The crux"); both
-      join paths are decided (owner's call 2026-09-28, "both": the
-      owner joins the robot by hand with `tailscale up`, and the hub
-      mints a single-use, tagged, pre-authorized auth key at pairing,
-      stored through `lib/secrets.ts`); pairing stays LAN mDNS
+      the robot must be its own tailnet node (section "The crux"); the
+      join path is manual: the owner joins the robot host with
+      `tailscale up`; hub auth-key provisioning was dropped by the
+      2026-10-15 amendment. Pairing stays LAN mDNS
       (`_maipai._tcp`), Tailscale is a post-pairing fallback only
       (section "What G4 should build regardless"); the 24 h re-redeem
       heartbeat already exists (`LinkLifecycle`, `link/lifecycle.py`).
-      Not there yet: no authenticated hub-endpoints route (the doc names
-      `GET /api/devices/me/hub-endpoints`, gated like `redeem` and
-      returning `listHubEndpoints()` unfiltered, unlike the CA route),
-      no client that walks the book, and no latency budget for a remote
-      turn (M-R5 measures reconnect p50 and p95 only; the budget is
-      proposed from the number recorded here and set by the owner, never
-      guessed). Hub half: the route, the Tailscale OAuth or API
-      credential setup and its consent flow, the key-minting call, and
-      the revoke path that removes the robot's tailnet node with the
-      device token. Bot half: `link/` caches the book, walks it in the
-      server's priority order, re-fetches it on every successful
-      connection, and detects a hand-joined tailnet (a `tailscaled`
-      identity already present). Acceptance: a Reachy off the home LAN
+      The hub route is landed as ROBOT-ENDPOINTS-01 and filters overlay
+      rows behind `robot.offlan.tailnet`. Bot half: `link/` fetches and
+      caches the authenticated book, tries LAN rows in server priority
+      order then overlay rows, refreshes the book after successful
+      connections, and tries overlay only when local `tailscale status
+      --json` reports a joined host. Each redeem attempt has a short
+      timeout; the stored pairing remains the same. Acceptance: fakes
+      cover LAN success, LAN down with a joined host, non-member skip,
+      key-off response without overlay rows, and all-address failure
+      reaching the existing offline ladder. Record the measured walk time
+      in the link-layer doc; do not set a latency budget here. A Reachy off
+      the home LAN
       reconnects over the tailnet with its pairing state preserved (no
       new code, no re-pair); a turn completes over the tailnet with its
       latency (first delta and total, p50 and p95 over a fixed set)
@@ -1861,13 +1857,12 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       Out of scope: installing Tailscale on the hub; a relay or proxy
       for a robot that is not a tailnet member; any change to LAN
       pairing. Reuse check: `hubEndpoints.ts` and `tailscale.ts` are used
-      verbatim, `lib/secrets.ts` stores the credential, `link/` extends
-      the existing `LinkLifecycle` and `HubLinkClient`, and M-R5's
-      harness measures the latency; no new address detection, no new
-      secret store. Exit: `bash scripts/check.sh` in bot, the hub's own
-      gate in `home`, and the recorded latency row.
+      verbatim, `link/` extends the existing `LinkLifecycle` and
+      `HubLinkClient`, and M-R5's harness measures latency; no new
+      address detection or credential class. Exit: `bash scripts/check.sh`
+      in bot and the recorded measured walk time.
       Amendment from Reachy design v2:
-      (S; after ROBOT-ENDPOINTS-01). The auto-provisioning half is dropped (OWNER-ANSWERS 1). The bot half: `address_walk`'s tailnet provider reads the hub's filtered book; a `tailscaled` identity already present is detected and reported; the firewall's tailnet ruleset is installed only when `robot.offlan.tailnet` is on (ROBOT-DAEMON-CONF-01's second ruleset). Acceptance (fail-first): with the key off the walk never tries an overlay address even when the book contains one (the hub filters, the robot also refuses). Cloud: yes.
+      (S; after ROBOT-ENDPOINTS-01; owner amendment 2026-10-15). Auto-provisioning is dropped. The shared link layer reads the filtered book, walks LAN rows before overlay rows, refreshes the cache after success, and detects membership through local tailscaled status. Acceptance: the hub key-off response has no overlay row, and a non-member never tries one. Cloud: no.
 
 - [ ] **LINK-STATE-00: `reconnecting` and `sleeping` activity values**
       (S, spec first, filed in `commons`; prerequisite of LINK-STATE-01).

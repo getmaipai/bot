@@ -33,15 +33,18 @@ class _StandInHub(http.server.BaseHTTPRequestHandler):
     ]
     redeem_status: int = 200
     redeem_calls: int = 0
+    address_book_cookie: str | None = None
 
     def log_message(self, format, *args):  # noqa: A002 - stdlib signature
         pass  # silence the default stderr access log
 
-    def _send_json(self, status: int, body: dict) -> None:
+    def _send_json(self, status: int, body, headers: dict[str, str] | None = None) -> None:
         payload = json.dumps(body).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(payload)
 
@@ -58,7 +61,9 @@ class _StandInHub(http.server.BaseHTTPRequestHandler):
             if self.redeem_status != 200:
                 self._send_json(self.redeem_status, {"error": "refused"})
             else:
-                self._send_json(200, {"success": True})
+                self._send_json(
+                    200, {"success": True}, {"Set-Cookie": "session=hub-session; Path=/"}
+                )
         else:
             self._send_json(404, {"error": "not found"})
 
@@ -67,6 +72,23 @@ class _StandInHub(http.server.BaseHTTPRequestHandler):
             responses = type(self).poll_responses
             next_response = responses.pop(0) if len(responses) > 1 else responses[0]
             self._send_json(200, next_response)
+        elif self.path == "/api/devices/me/hub-endpoints":
+            type(self).address_book_cookie = self.headers.get("Cookie")
+            self._send_json(
+                200,
+                [
+                    {
+                        "id": "endpoint-1",
+                        "name": "Hub",
+                        "url": "http://100.64.1.2:80",
+                        "kind": "overlay",
+                        "priority": 60,
+                        "enabled": True,
+                        "source": "detected",
+                        "instanceId": "hub-test",
+                    }
+                ],
+            )
         else:
             self._send_json(404, {"error": "not found"})
 
@@ -80,6 +102,7 @@ def stand_in_hub():
     ]
     _StandInHub.redeem_status = 200
     _StandInHub.redeem_calls = 0
+    _StandInHub.address_book_cookie = None
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _StandInHub)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -112,6 +135,17 @@ def _never_discovers(timeout_s: float) -> HubAddress | None:
 
 def _client(store: PairingStore, *, discover=_never_discovers) -> HubLinkClient:
     return HubLinkClient(store, discover=discover)
+
+
+def test_address_book_uses_the_session_cookie_from_redeem(tmp_path, stand_in_hub):
+    server, hub = stand_in_hub
+    client = _client(PairingStore(tmp_path / "pairing.json"))
+    client.pair(_address(server), label="Test robot")
+
+    entries = client.fetch_hub_endpoints()
+
+    assert entries[0]["kind"] == "overlay"
+    assert hub.address_book_cookie == "session=hub-session"
 
 
 def test_pair_runs_code_approve_poll_redeem_end_to_end(stand_in_hub, tmp_path):

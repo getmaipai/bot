@@ -34,6 +34,12 @@ class _AddressClient(_FakeClient):
         self.answering = answering
         self.refreshed_at: list[str | None] = []
         self.last_refresh_error: str | None = None
+        self.address_book: list[dict] = []
+        self.fetch_calls = 0
+
+    def fetch_hub_endpoints(self, base_url=None):
+        self.fetch_calls += 1
+        return self.address_book
 
     def refresh(
         self, base_url: str | None = None, persist: bool = True, instance_id: str | None = None
@@ -58,6 +64,108 @@ def test_a_resumed_pairing_is_reported_as_a_redeem(tmp_path):
     )
     _run_until(lifecycle, lambda: lifecycle.state.paired)
     assert observer.events[0][0] == "redeemed"
+
+
+def test_lifecycle_refreshes_address_book_then_uses_overlay_only_for_joined_host(
+    tmp_path, monkeypatch
+):
+    joined = [True]
+    client = _AddressClient(answering={"http://192.0.2.10:80"})
+    client.address_book = [
+        {
+            "url": "http://hub.tail1234.ts.net:80",
+            "kind": "overlay",
+            "enabled": True,
+            "priority": 60,
+            "instanceId": "hub-test",
+        }
+    ]
+    lifecycle = LinkLifecycle(
+        _paired_store(tmp_path),
+        client,
+        discover=lambda timeout_s: HubAddress("192.0.2.77", 80, "hub-test", "Hub", False),
+        address_walk=True,
+        tailnet_member=lambda: joined[0],
+    )
+
+    assert lifecycle.reconnect_once()  # LAN reachable, refreshes address book
+    assert client.fetch_calls == 1
+    client.answering = {"http://hub.tail1234.ts.net:80"}
+    assert lifecycle.reconnect_once()
+    assert client.refreshed_at[-1] == "http://hub.tail1234.ts.net:80"
+    assert client.fetch_calls == 2
+    joined[0] = False
+    client.answering = set()
+    before = len(client.refreshed_at)
+    assert not lifecycle.reconnect_once()
+    assert "http://hub.tail1234.ts.net:80" not in client.refreshed_at[before:]
+
+
+def test_key_off_book_and_nonmember_skip_overlay(tmp_path, monkeypatch):
+    joined = [True]
+    client = _AddressClient(answering=set())
+    client.address_book = []  # The hub's key-off response contains LAN rows only.
+    lifecycle = LinkLifecycle(
+        _paired_store(tmp_path),
+        client,
+        discover=lambda timeout_s: None,
+        address_walk=True,
+        tailnet_member=lambda: joined[0],
+    )
+    assert not lifecycle.reconnect_once()
+    assert client.refreshed_at == ["http://192.0.2.10:80"]
+
+    joined[0] = False
+    client.address_book = [
+        {
+            "url": "http://hub.tail1234.ts.net:80",
+            "kind": "overlay",
+            "enabled": True,
+            "priority": 60,
+            "instanceId": "hub-test",
+        }
+    ]
+    assert lifecycle.reconnect_once() is False
+    assert client.refreshed_at[-1] == "http://192.0.2.10:80"
+
+
+def test_address_book_lan_rows_follow_server_priority_and_total_failure_reports_to_ladder(
+    tmp_path,
+):
+    observer = _Observer()
+    client = _AddressClient(answering=set())
+    client.address_book = [
+        {
+            "url": "http://192.0.2.20:80",
+            "kind": "lan",
+            "enabled": True,
+            "priority": 20,
+            "instanceId": "hub-test",
+        },
+        {
+            "url": "http://192.0.2.19:80",
+            "kind": "lan",
+            "enabled": True,
+            "priority": 10,
+            "instanceId": "hub-test",
+        },
+    ]
+    lifecycle = LinkLifecycle(
+        _paired_store(tmp_path),
+        client,
+        discover=lambda timeout_s: None,
+        address_walk=True,
+        observer=observer,
+        tailnet_member=lambda: True,
+    )
+    lifecycle._refresh_address_book()
+
+    assert [endpoint.base_url for endpoint in lifecycle._lan_candidates()] == [
+        "http://192.0.2.19:80",
+        "http://192.0.2.20:80",
+    ]
+    assert lifecycle.reconnect_once() is False
+    assert observer.events[-1][0] == "failed"
 
 
 def test_a_failed_heartbeat_is_reported_as_a_failed_re_redeem(tmp_path, monkeypatch):

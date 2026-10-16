@@ -7,6 +7,7 @@ from maipai_body.link.address_walk import (
     HubEndpoint,
     PathKind,
     classify_base_url,
+    host_is_tailnet_member,
     no_tailnet_endpoints,
 )
 from maipai_body.link.discovery import HubAddress
@@ -104,6 +105,41 @@ def test_the_result_records_each_attempt_and_its_error():
     assert attempts == [PAIRED, MDNS_HOST, TAILNET.base_url]
     assert [a.ok for a in result.attempts] == [False, False, False]
     assert {a.error for a in result.attempts} == {"unreachable: ConnectTimeout"}
+
+
+def test_lan_success_does_not_try_overlay_and_offline_lan_uses_overlay_for_member():
+    walker, tried, _ = _walker({PAIRED: True})
+    assert walker.walk().answered.kind is PathKind.LAN
+    assert tried == [PAIRED]
+
+    walker, tried, _ = _walker({TAILNET.base_url: True})
+    assert walker.walk().answered.kind is PathKind.TAILNET
+    assert tried == [PAIRED, MDNS_HOST, TAILNET.base_url]
+
+
+def test_non_member_skips_overlay_and_hub_key_off_book_contains_no_overlay():
+    # The authenticated hub route filters overlay entries when its setting is off.
+    key_off_response: list[dict] = []
+    joined = False
+    walker, tried, _ = _walker({}, tailnet=lambda: [TAILNET] if joined and key_off_response else [])
+    walker.walk()
+    assert tried == [PAIRED, MDNS_HOST]
+
+
+def test_tailnet_membership_reads_local_cli_json_only():
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = '{"BackendState":"Running","Self":{"TailscaleIPs":["100.64.1.2"]}}'
+
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        return Result()
+
+    assert host_is_tailnet_member(run=run)
+    assert calls[0][0] == ["tailscale", "status", "--json"]
+    assert calls[0][1]["timeout"] <= 1.0
 
 
 def test_no_paired_address_still_walks_what_it_can_find():
