@@ -52,7 +52,11 @@ from maipai_body.link.offline import OfflineRungs
 from maipai_body.link.prints import PrintSync
 from maipai_body.link.rung0 import Rung0Cues
 from maipai_body.link.state import StateReporter
-from maipai_body.link.state_machine import DEFAULT_SLEEP_AFTER_MINUTES, LinkStateMachine
+from maipai_body.link.state_machine import (
+    DEFAULT_SLEEP_AFTER_MINUTES,
+    LinkPhase,
+    LinkStateMachine,
+)
 from maipai_body.link.supervisor import LinkSupervisor
 from maipai_body.link.timesync import ClockSync, system_clock_setter
 from maipai_body.moves.react import build_react_hook
@@ -466,6 +470,25 @@ def _build_link_stack(
     )
 
 
+def _knock_hooks(
+    offline: OfflineRungs | None,
+) -> tuple[Callable[[], bool] | None, Callable[[], None] | None]:
+    """KNOCK-01's two hooks: the robot sleeps in the ladder's `sleeping` phase,
+    and a double knock is an immediate try at the hub (the supervisor's own
+    sleeping cadence is minutes). None while there is no ladder."""
+    if offline is None:
+        return None, None
+
+    def is_asleep() -> bool:
+        return offline.machine.phase is LinkPhase.SLEEPING
+
+    def wake() -> None:
+        if offline.retry_link is not None:
+            offline.retry_link()
+
+    return is_asleep, wake
+
+
 def _link_state_payload(link: LinkLifecycle, offline: OfflineRungs) -> dict:
     """The settings page's frame: pairing as before, plus the ladder's phase
     and its rung 2 status text (always visible, whatever can be spoken)."""
@@ -642,6 +665,7 @@ def _build_conversation_loop(
         gallery,
         temperature=read_cpu_temp_c,
     )
+    is_asleep, wake_from_sleep = _knock_hooks(offline)
     loop = ConversationLoop(
         client=tap,
         expression_engine=ExpressionEngine(
@@ -666,6 +690,9 @@ def _build_conversation_loop(
         capture_scope=tap.sending_to_hub,
         motor_health=motor_health,
         thermal=ThermalMonitor(),
+
+        is_asleep=is_asleep,
+        wake_from_sleep=wake_from_sleep,
     )
     loop.subscribe_view(director.on_view)
     threading.Thread(target=print_sync.run, name="face-print-sync", daemon=True).start()

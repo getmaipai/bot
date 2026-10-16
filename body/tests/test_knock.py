@@ -161,3 +161,24 @@ def test_the_knock_wake_asks_the_status_line():
     _double_knock(loop, parts, clock)
     assert woken == [True]
     assert len(speaker.said) == 1
+
+
+def test_the_app_wires_the_knock_to_the_ladders_sleeping_phase() -> None:
+    from maipai_body.app import _knock_hooks
+    from maipai_body.link.offline import OfflineRungs
+    from maipai_body.link.state_machine import LinkStateMachine
+
+    assert _knock_hooks(None) == (None, None)
+    clock = [0.0]
+    machine = LinkStateMachine(clock=lambda: clock[0], sleep_after_s=10.0)
+    tries: list[int] = []
+    offline = OfflineRungs(machine=machine, retry_link=lambda: tries.append(1) or False)
+    is_asleep, wake = _knock_hooks(offline)
+    assert is_asleep is not None and wake is not None
+    assert not is_asleep()
+    machine.link_lost("down")
+    clock[0] = 11.0
+    machine.tick()
+    assert is_asleep()
+    wake()
+    assert tries == [1]
