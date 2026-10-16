@@ -115,6 +115,7 @@ class VisionWatch:
         device_level: WatchLevel = "identify",
         release_media: Callable[[], None] | None = None,
         temperature: Callable[[], float | None] | None = None,
+        rate_hz: Callable[[], float] | None = None,
         clock: Callable[[], float] = time.monotonic,
         verdict_stale_after_s: float = VERDICT_STALE_AFTER_S,
     ) -> None:
@@ -125,6 +126,7 @@ class VisionWatch:
         self._level: WatchLevel = device_level
         self._release_media = release_media
         self._temperature = temperature
+        self._rate_hz = rate_hz
         self._clock = clock
         self._stale_after = verdict_stale_after_s
         self._tracks: list[_Track] = []
@@ -149,6 +151,13 @@ class VisionWatch:
                     track.raw_at = None
 
     def interval_s(self) -> float:
+        # THERMAL-01: the thermal governor (with its hysteresis) owns the rate when wired.
+        if self._rate_hz is not None:
+            try:
+                return 1.0 / max(self._rate_hz(), 0.1)
+            except Exception:
+                logger.warning("thermal rate unreadable; using the full rate", exc_info=True)
+                return 1.0 / RATE_HZ
         temp = self._temperature() if self._temperature is not None else None
         hot = temp is not None and temp >= HOT_AT_C
         return 1.0 / (HOT_RATE_HZ if hot else RATE_HZ)

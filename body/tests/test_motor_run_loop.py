@@ -4,6 +4,7 @@ motor watchdog and the thermal governor; neither can break the tick."""
 from __future__ import annotations
 
 from maipai_body.presence.thermal import ThermalGovernor, ThermalMonitor
+from maipai_body.expression.suppression import suppression_reason
 from tests.test_motion_state_hold import Bench
 
 
@@ -157,3 +158,76 @@ def test_a_stuck_motor_shows_the_error_look_and_clears_when_healthy():
     health.stuck = False
     loop._safety_ticks(False)
     assert [v.fault for v in views] == [True, False]
+
+
+# -- the state frame and the consumers (spec-v0.1.147) --
+
+
+def test_the_state_frame_carries_motor_and_thermal_health_when_wired():
+    bench, _, _ = _warm_bench(72.0, motor_health=_Health())
+    bench.tick(0.2)
+    frame = bench.loop.snapshot()
+    assert frame["motors_latched"] == ["head_1"] and frame["motors_stuck"] is True
+    assert frame["thermal"] == {"level": "vision_slowed", "temp_c": 72.0, "vision_hz": 2.0, "fault": False}
+
+
+def test_the_state_frame_omits_what_this_body_does_not_report():
+    frame = Bench().loop.snapshot()
+    assert "thermal" not in frame and "motors_latched" not in frame and "motors_stuck" not in frame
+
+
+def test_the_state_frame_validates_against_the_pinned_spec_schema():
+    import json
+    import os
+    from pathlib import Path
+
+    import pytest
+
+    spec = os.environ.get("MAIPAI_SPEC_DIR")
+    jsonschema = pytest.importorskip("jsonschema")
+    if not spec or not (Path(spec) / "schemas" / "robot-state.schema.json").exists():
+        pytest.skip("pinned spec source not found (set MAIPAI_SPEC_DIR)")
+    schema = json.loads((Path(spec) / "schemas" / "robot-state.schema.json").read_text())
+    bench, _, _ = _warm_bench(79.0, motor_health=_Health())
+    bench.tick(0.2)
+    jsonschema.validate(bench.loop.snapshot(), schema)
+
+
+def test_gestures_are_suspended_at_75_and_the_posture_cues_are_not():
+    bench, sampler, _ = _warm_bench(65.0)
+    bench.tick(0.2)
+    assert suppression_reason("nod", bench.loop._suppression_context()) is None
+    sampler.temp = 76.0
+    bench.tick(0.2)
+    context = bench.loop._suppression_context()
+    assert context.thermal_gestures is True and context.thermal_pressure is False
+    for gesture in ("nod", "perk", "shake", "offer", "thinking", "glance"):
+        assert suppression_reason(gesture, context) == "thermal_gestures"
+    assert suppression_reason("listen", context) is None
+    assert suppression_reason("stop", context) is None
+    sampler.temp = 60.0
+    bench.tick(0.2)
+    assert suppression_reason("nod", bench.loop._suppression_context()) is None
+
+
+def test_a_react_move_waits_out_the_heat():
+    played: list[str] = []
+    bench, sampler, _ = _warm_bench(76.0)
+    bench.loop._react_hook = lambda move, *_a, **_k: played.append(move) or True
+    bench.tick(0.2)
+    bench.loop._play_react("nod", True)
+    assert played == []
+    sampler.temp = 50.0
+    bench.tick(0.2)
+    bench.loop._play_react("nod", True)
+    assert played == ["nod"]
+
+
+def test_a_thermal_level_change_tells_the_reporter_at_once():
+    changes: list[int] = []
+    bench, sampler, _ = _warm_bench(60.0, on_change=lambda: changes.append(1))
+    bench.tick(0.2)
+    before = len(changes)
+    sampler.temp = 71.0
+    bench.tick(0.2)
+    assert len(changes) > before

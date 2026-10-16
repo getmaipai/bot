@@ -19,6 +19,7 @@ class SuppressionContext(BaseModel):
     service_mode: bool = False
     dock_transition: bool = False
     thermal_pressure: bool = False
+    thermal_gestures: bool = False  # THERMAL-01: at 75 C the discrete gesture cues stay still
     muted: bool = False
     stale_track: bool = False
     playfulness_forbidden: bool = False
@@ -29,6 +30,9 @@ class SuppressionContext(BaseModel):
     no_fresh_target: bool = False
     held: bool = False
     alarm: bool = False  # ALARM-PLAY-01: the pose is held still until the hub clears it
+
+
+_GESTURES = frozenset({"glance", "nod", "perk", "thinking", "offer", "shake"})
 
 
 def suppression_reason(primitive: str, context: SuppressionContext) -> str | None:
@@ -48,6 +52,11 @@ def suppression_reason(primitive: str, context: SuppressionContext) -> str | Non
     # MOVE-CARRY-01: lifted or carried, the body commands no motion at all.
     if context.held:
         return "held"
+
+    # THERMAL-01: at 75 C gestures are suspended; the listening posture, the track
+    # follow and the idle breathe (its own thermal rung) are not gestures.
+    if primitive in _GESTURES and context.thermal_gestures:
+        return "thermal_gestures"
 
     if primitive == "listen":
         if context.muted:

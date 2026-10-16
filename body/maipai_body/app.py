@@ -87,7 +87,7 @@ from maipai_body.vision.detect import FiveLandmarkDetector
 from maipai_body.vision.embed import ensure_embedder
 from maipai_body.vision.gallery import FaceGallery
 from maipai_body.vision.models import SFACE
-from maipai_body.vision.watch import VisionWatch, read_cpu_temp_c
+from maipai_body.vision.watch import VisionWatch
 
 logger = logging.getLogger("maipai_body.app")
 
@@ -663,12 +663,14 @@ def _build_conversation_loop(
     # FACE-WATCH-01: the always-on watch, at the default `identify` until the
     # hub's settings_changed says otherwise (enrolled faces only: the gallery
     # holds no print for a guest, and each person's own level still applies).
+    thermal_monitor = ThermalMonitor()
     vision_watch = VisionWatch(
         tap,
         FiveLandmarkDetector(),
         ensure_embedder(cache_dir),
         gallery,
-        temperature=read_cpu_temp_c,
+        # THERMAL-01: the one governor sets the rate (2 Hz from 70 C), not a second thermometer.
+        rate_hz=lambda: thermal_monitor.state.vision_hz,
     )
     is_asleep, wake_from_sleep = _knock_hooks(offline)
     offer_engine = _build_offer_engine(cache_dir, os.environ)
@@ -708,7 +710,7 @@ def _build_conversation_loop(
         carry_gravity_compensation=REACHY_MINI_PROFILE.carry_gravity_compensation,
         capture_scope=tap.sending_to_hub,
         motor_health=motor_health,
-        thermal=ThermalMonitor(),
+        thermal=thermal_monitor,
         is_asleep=is_asleep,
         wake_from_sleep=wake_from_sleep,
         offer_engine=offer_engine,

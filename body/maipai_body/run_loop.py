@@ -474,6 +474,7 @@ class ConversationLoop:
             muted=self._is_muted(),
             held=self._motion.holding,
             thermal_pressure=self._thermal_state.idle_still,
+            thermal_gestures=self._thermal_state.gestures_suspended,
             alarm=self._safety_alarm,
         )
 
@@ -639,6 +640,13 @@ class ConversationLoop:
             }
         if self._vision_watch is not None:
             frame["watch_level"] = self._vision_watch.device_level
+        # spec-v0.1.147: reported only where the monitor is wired, because omission
+        # means "this producer does not report it" and a default would claim health.
+        if self._motor_health is not None:
+            frame.update(self.motor_status())
+        thermal = self.thermal_frame()
+        if thermal is not None:
+            frame["thermal"] = thermal
         return frame
 
     def set_watch_level(self, level: Literal["off", "presence", "identify"]) -> None:
@@ -1249,6 +1257,9 @@ class ConversationLoop:
         if self._motion.holding:
             logger.info("react move %r skipped: the body is held", move)
             return
+        if self._thermal_state.gestures_suspended:
+            logger.info("react move %r skipped: gestures are suspended while warm", move)
+            return
         try:
             self._react_hook(
                 move,
@@ -1538,7 +1549,10 @@ class ConversationLoop:
         if self._thermal is None:
             return
         try:
+            level = self._thermal_state.level
             self._thermal_state = self._thermal.poll()
+            if self._thermal_state.level != level and self._on_change is not None:
+                self._on_change()
             if (
                 self._current_funnel() is FunnelState.IDLE
                 and not self._is_muted()

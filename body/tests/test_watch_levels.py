@@ -333,3 +333,17 @@ def test_read_cpu_temp_returns_none_when_unreadable(tmp_path):
     zone = tmp_path / "temp"
     zone.write_text("71250\n")
     assert read_cpu_temp_c(zone) == 71.25
+
+
+def test_a_wired_thermal_rate_sets_the_watch_interval():
+    hz = [5.0]
+    watch, *_ = _make(rate_hz=lambda: hz[0], temperature=lambda: 90.0)
+    assert watch.interval_s() == 0.2  # the governor wins over a raw temperature
+    hz[0] = 2.0
+    assert watch.interval_s() == 0.5
+
+    def broken() -> float:
+        raise RuntimeError("no governor")
+
+    watch, *_ = _make(rate_hz=broken)
+    assert watch.interval_s() == 0.2
