@@ -30,6 +30,9 @@ def _build(indicator, stop_event=None):
             self.views = []
             self.offer = MagicMock()
 
+        def live_view_refusal(self):
+            return None
+
         def bind_offer_frames(self, send_frame):
             seen["offer_frames"] = send_frame
 
