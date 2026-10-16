@@ -738,6 +738,30 @@ def _build_conversation_loop(
         },
     )
     loop.bind_offer_frames(command_channel.send_frame)
+
+    from maipai_body.vision.live_view import LiveViewStreamer
+
+    def post_live_frame(view_id: str, jpeg: bytes) -> int:
+        import requests
+
+        cookie, current_url = hub_credentials()
+        response = requests.post(
+            f"{current_url.rstrip('/')}/api/devices/me/stream/{view_id}",
+            data=jpeg,
+            headers={"Cookie": f"session={cookie}", "Content-Type": "image/jpeg"},
+            timeout=(3, 5),
+        )
+        return response.status_code
+
+    live_view = LiveViewStreamer(
+        camera=tap,
+        post_frame=post_live_frame,
+        refusal=loop.live_view_refusal,
+        connected=lambda: command_channel.connected,
+    )
+    command_channel.handlers["live_view_start"] = live_view.start
+    command_channel.handlers["live_view_stop"] = live_view.stop
+    command_channel.add_drop_listener(live_view.on_channel_drop)
     threading.Thread(
         target=command_channel.run,
         args=(stop_event,),

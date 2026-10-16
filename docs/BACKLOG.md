@@ -2326,9 +2326,10 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       Objective: a `capture_request` for the current turn renders the signal cue if not yet rendered, switches the Eyes to cyan before the frame is read, reads one 640x480 JPEG, posts it, returns the Eyes; refused with a spoken line at watch level `off`; a dominant-colour question is answered locally in numpy when the plan says `colour_only`.
       Acceptance (fail-first): the Eyes look changes before `get_frame` is called (ordering test on the fake); a request for a finished turn is ignored; at `off` no frame is read. Exit: `bash scripts/check.sh`. Cloud: yes.
 
-- [ ] **LIVE-VIEW-01 (bot half): the JPEG stream to the hub** (S, after CHANNEL-CLIENT-01, Home LIVE-VIEW-01).
+- [x] **LIVE-VIEW-01 (bot half): the JPEG stream to the hub** (S, after CHANNEL-CLIENT-01, Home LIVE-VIEW-01).
       Objective: `live_view_start` opens the stream WebSocket and pushes 640x360 JPEG at 5 fps with the Eyes cyan until `live_view_stop`, a 10 min cap or a channel drop; never while held or during an alarm.
       Acceptance (fail-first): the Eyes are cyan for every frame; a drop stops the stream within one heartbeat; a held robot refuses the start. Exit: `bash scripts/check.sh`. Cloud: yes.
+      Landed 2026-10-16 (bot half): `vision/live_view.py` (`LiveViewStreamer`), handlers `live_view_start` / `live_view_stop` in `app.py`, `ConversationLoop.live_view_refusal` (held, alarm). Posts the daemon's JPEG every 200 ms to `/api/devices/me/stream/{view_id}` through the Eyes tap (the cue goes up before each read and the 0.5 s hold spans the 0.2 s period); stops on stop, the 10 min cap, a channel drop (listener, at once), a 404, five failed posts, or a pick-up; frames over 512 KB are dropped. It uses the hub's HTTP POST route (home dc7cbfb7), not a WebSocket. Fakes only. UNVERIFIED: the daemon JPEG size is posted as is, not resized to 640x360; nothing has run against the hub or the unit.
 
 - [ ] **GESTURE-01: wave, open palm, thumbs up, fist, victory, point** (M, after FACE-WATCH-01, S-FAKES-02; Reachy design v2 section 5.3; architect ruling on the vocabulary).
       Governs: body/maipai_body/vision/gestures.py (new), vision/models.py (the hand model pin from the spec), run_loop.py (one hook), body/tests/test_gesture*.py, docs/dev/measure-runbook.md (M-R1 row).

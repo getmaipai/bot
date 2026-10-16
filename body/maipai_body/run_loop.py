@@ -346,6 +346,15 @@ class ConversationLoop:
                     on_reconnect_spoken=self._reconnect_spoken,
                 )
 
+    def live_view_refusal(self) -> str | None:
+        """LIVE-VIEW-01: why the camera may not stream right now, or None."""
+        if self._motion.holding:
+            return "held"
+        with self._lock:
+            if self._state.alarm:
+                return "alarm"
+        return None
+
     def bind_offer_frames(self, send_frame: Callable[[dict], bool]) -> None:
         self._offer_send = send_frame
 

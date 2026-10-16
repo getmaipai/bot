@@ -204,6 +204,7 @@ ALLOWED_SITES = {
     ("speech/capture.py", "self._client"),
     ("vision/capture.py", "client"),
     ("vision/watch.py", "self._camera"),  # FACE-WATCH-01: handed the tapped client
+    ("vision/live_view.py", "self._camera"),  # LIVE-VIEW-01: handed the tapped client
     ("run_loop.py", "self._client"),
 }
 
