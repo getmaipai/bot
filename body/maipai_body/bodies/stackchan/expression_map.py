@@ -2,9 +2,33 @@
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass
+from pathlib import Path
 
-from maipai_body.expression.primitives import PRIMITIVE_NAMES
+PRIMITIVE_NAMES = (
+    "listen",
+    "glance",
+    "tilt",
+    "nod",
+    "perk",
+    "attend",
+    "settle",
+    "breathe",
+    "track",
+    "speak",
+    "stop",
+)
+
+_FACE_SET_PATH = Path(
+    os.environ.get("MAIPAI_STACKCHAN_FACE_SET", Path(__file__).with_name("face_set.json"))
+)
+try:
+    _FACE_SET_DATA = json.loads(_FACE_SET_PATH.read_text())
+    SUPPORTED_FACES = frozenset(_FACE_SET_DATA["faces"])
+except (OSError, ValueError, KeyError, TypeError) as exc:
+    raise ValueError(f"cannot load StackChan face set from {_FACE_SET_PATH}") from exc
 
 SUPPORTED_PRIMITIVES = set(PRIMITIVE_NAMES) - {"stop", "muted", "held"}
 
@@ -71,10 +95,15 @@ UNSUPPORTED_PRIMITIVES = {
 }
 
 if set(PRIMITIVE_BODY_MAP) | set(UNSUPPORTED_PRIMITIVES) != set(PRIMITIVE_NAMES):
-    # The shared vocabulary also includes state-only names that are consumed by
-    # the motion worker, not by a body's animation table.
-    if set(PRIMITIVE_BODY_MAP) | set(UNSUPPORTED_PRIMITIVES) != SUPPORTED_PRIMITIVES:
-        raise RuntimeError("StackChan expression map must account for every shared primitive")
+    raise RuntimeError("StackChan expression map must account for every shared primitive")
+
+_USED_FACES = (
+    {frame.expression for frame in CUE_FACE_MAP.values()}
+    | set(REPLY_MOOD_FACE_MAP.values())
+    | {action.face for action in PRIMITIVE_BODY_MAP.values()}
+)
+for _face in sorted(_USED_FACES - SUPPORTED_FACES):
+    raise ValueError(f"unsupported StackChan face: {_face}")
 
 __all__ = [
     "BodyAction",

@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from enum import IntEnum
+from pathlib import Path
 
 
 class AvatarCommand(IntEnum):
     START_CAMERA_STREAM = 0x05
+
+
+_FACE_SET = json.loads(Path(__file__).with_name("face_set.json").read_text())
+SUPPORTED_FACES = frozenset(_FACE_SET["faces"])
 
 
 @dataclass(frozen=True)
@@ -23,6 +29,13 @@ def encode_frame(command: int | AvatarCommand, payload: bytes = b"") -> bytes:
     if len(payload) > 65535:
         raise ValueError("avatar payload exceeds the two-byte frame length")
     return b"\xaa\x55" + len(payload).to_bytes(2, "big") + bytes([int(command)]) + payload
+
+
+def encode_face(expression: str, payload: bytes = b"") -> bytes:
+    """Validate a face token before encoding its ControlAvatar payload."""
+    if expression not in SUPPORTED_FACES:
+        raise ValueError(f"unsupported StackChan face: {expression}")
+    return encode_frame(0x03, payload)
 
 
 def decode_frame(data: bytes) -> AvatarFrame:

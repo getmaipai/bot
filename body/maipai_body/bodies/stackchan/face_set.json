@@ -1,0 +1,13 @@
+{
+  "source_file": "body/maipai_body/bodies/stackchan/avatar/server.py (fallback; M5 source unavailable locally)",
+  "upstream_commit": "1b5765599fba8aaad1811d9a79358ccc7051f5f3",
+  "faces": [
+    "angry",
+    "doubt",
+    "happy",
+    "joy",
+    "neutral",
+    "sad",
+    "sleepy"
+  ]
+}
