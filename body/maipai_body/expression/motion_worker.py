@@ -403,6 +403,12 @@ class MotionWorker:
 
     def _mix(self, now: float) -> dict[str, float]:
         values = {layer: self._request_value(layer, now) for layer in MotionLayer}
+        if self._speech_active:
+            # While the robot speaks, gaze counts half on the head (S-EXPR-04).
+            gaze = values[MotionLayer.GAZE]
+            for head_axis in ("head_pitch", "head_yaw"):
+                if head_axis in gaze:
+                    gaze[head_axis] *= SPEAKING_GAZE_WEIGHT
         result: dict[str, float] = {}
         for axis in self._output:
             active = {
@@ -573,6 +579,8 @@ class MotionWorker:
             self._last_write_axes.clear()
             self._target_axes.clear()
 
+
+SPEAKING_GAZE_WEIGHT = 0.5
 
 _RATE_LIMITS = {
     "head_yaw": 1.0,

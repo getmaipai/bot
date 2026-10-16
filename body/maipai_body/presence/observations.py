@@ -26,6 +26,9 @@ class PresenceObservation(BaseModel):
     face_detected: bool
     face_x: float | None = None
     face_y: float | None = None
+    # Every face the source can see, centred frame coordinates. Empty when the source
+    # reports one face only (the daemon tracker); `face_x`/`face_y` stay the primary.
+    faces: tuple[tuple[float, float], ...] = ()
     doa_angle_rad: float | None = None
     speech_detected: bool = False
     tip_detected: bool = False

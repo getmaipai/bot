@@ -13,8 +13,8 @@ by SETTINGS-ROBOT-01) arrives through ``level_provider``:
 * ``calm`` (default): breathe, antenna sway, micro-poses every 3 to 6 s.
 * ``lively``: micro-poses twice as often, antenna sway 12 degrees.
 
-Not implemented: the once-a-minute slow breathe cycle while asleep (the
-sleep pose owns the expression layer, which masks it).
+The once-a-minute breathe while asleep is ``ExpressionEngine.sleep_breathe``
+(the sleep pose owns the expression layer, so it is not an idle behaviour).
 """
 
 from __future__ import annotations

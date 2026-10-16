@@ -115,3 +115,56 @@ def test_run_loop_without_attention_keeps_the_daemon_tracker():
     client.face_target = FaceTrackTarget(detected=True, x=-0.4, y=0.0)
     loop._presence_tick(threading.Event())
     assert client.tracking_enabled is True
+
+
+def test_attention_keeps_following_the_same_face_when_a_larger_one_appears():
+    clock = ManualClock(100.0)
+    rec = _Recorder()
+    attention = Attention(rec, clock=clock)
+    first = PresenceObservation(
+        t_received_ns=int(clock() * 1e9), face_detected=True, face_x=0.5, face_y=0.0
+    )
+    attention.step(first)
+    clock.advance(0.1)
+    # The tracker now reports the other face as primary, but ours is still in view.
+    second = PresenceObservation(
+        t_received_ns=int(clock() * 1e9),
+        face_detected=True,
+        face_x=-0.6,
+        face_y=0.0,
+        faces=((-0.6, 0.0), (0.48, 0.0)),
+    )
+    attention.step(second)
+    assert attention.gaze.head_yaw < 0.0  # still turned toward +x (right = negative yaw)
+
+
+def test_attention_switches_to_the_primary_when_the_followed_face_is_gone():
+    clock = ManualClock(100.0)
+    attention = Attention(_Recorder(), clock=clock)
+    attention.step(
+        PresenceObservation(
+            t_received_ns=int(clock() * 1e9), face_detected=True, face_x=0.5, face_y=0.0
+        )
+    )
+    clock.advance(0.1)
+    attention.step(
+        PresenceObservation(
+            t_received_ns=int(clock() * 1e9),
+            face_detected=True,
+            face_x=-0.6,
+            face_y=0.0,
+            faces=((-0.6, 0.0),),
+        )
+    )
+    for _ in range(30):
+        clock.advance(0.1)
+        attention.step(
+            PresenceObservation(
+                t_received_ns=int(clock() * 1e9),
+                face_detected=True,
+                face_x=-0.6,
+                face_y=0.0,
+                faces=((-0.6, 0.0),),
+            )
+        )
+    assert attention.gaze.head_yaw > 0.0

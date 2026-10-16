@@ -24,6 +24,23 @@ from maipai_body.presence.observations import PresenceObservation
 
 # A face counts as "present" for idle micro-poses this long after it was last seen.
 _PRESENT_GRACE_S = 5.0
+# Several faces: keep following the one nearest the last target while it stays within
+# this distance (frame units, UNMEASURED); past it the primary face takes over.
+CONTINUITY_RADIUS = 0.35
+
+
+def pick_face(
+    faces: tuple[tuple[float, float], ...],
+    primary: tuple[float, float],
+    previous: tuple[float, float] | None,
+) -> tuple[float, float]:
+    """Target continuity across several faces: stay on the face we were following."""
+    candidates = faces or (primary,)
+    if previous is None:
+        return primary
+    nearest = min(candidates, key=lambda f: (f[0] - previous[0]) ** 2 + (f[1] - previous[1]) ** 2)
+    distance = ((nearest[0] - previous[0]) ** 2 + (nearest[1] - previous[1]) ** 2) ** 0.5
+    return nearest if distance <= CONTINUITY_RADIUS else primary
 
 
 class _Layers:
@@ -52,6 +69,7 @@ class Attention:
         self._doa = DoaResolver()
         self._last_gaze: GazeOutput | None = None
         self._last_face_seen: float | None = None
+        self._followed: tuple[float, float] | None = None
         self._gaze_active = False
         self._idle_active = False
 
@@ -74,7 +92,13 @@ class Attention:
         stamp = seen_at if seen_at is not None else observation.t_received_ns / 1e9
         face: FaceSample | None = None
         if observation.face_detected and observation.face_x is not None:
-            face = FaceSample(observation.face_x, observation.face_y or 0.0, stamp)
+            x, y = pick_face(
+                observation.faces,
+                (observation.face_x, observation.face_y or 0.0),
+                self._followed if now - (self._last_face_seen or -1e9) < 1.0 else None,
+            )
+            face = FaceSample(x, y, stamp)
+            self._followed = (x, y)
             self._last_face_seen = stamp
         if face is None:
             self._point_at_sound(now, observation)

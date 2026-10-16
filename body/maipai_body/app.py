@@ -676,15 +676,17 @@ def _build_conversation_loop(
     # the child default and the window stays closed, which is the safe direction.
     people = PeopleDirectory()
     follow_up = FollowUpPolicy(people)
+    expression_engine = ExpressionEngine(
+        tap,
+        REACHY_MINI_PROFILE,
+        threaded=True,
+        speech_rms_provider=audio_playback.recent_rms,
+        state_feed_factory=lambda: tap.state_feed(frequency=50.0),
+    )
     loop = ConversationLoop(
         client=tap,
-        expression_engine=ExpressionEngine(
-            tap,
-            REACHY_MINI_PROFILE,
-            threaded=True,
-            speech_rms_provider=audio_playback.recent_rms,
-            state_feed_factory=lambda: tap.state_feed(frequency=50.0),
-        ),
+        expression_engine=expression_engine,
+        attention=_build_attention(expression_engine, os.environ),
         audio_capture=AudioCapture(tap),
         audio_playback=audio_playback,
         wake_scorer=WakeScorer(wake_engine, tap),
@@ -793,6 +795,18 @@ def _build_conversation_loop(
         daemon=True,
     ).start()
     return loop
+
+
+def _build_attention(engine: ExpressionEngine, env: Mapping[str, str]) -> object | None:
+    """S-EXPR-04: our own gaze and idle layers instead of the daemon's tracker.
+    Off unless MAIPAI_BOT_ATTENTION=1: every number in it is an UNMEASURED design
+    default until the unit rows (M-R2) confirm them, so the daemon tracker stays
+    the default."""
+    if env.get("MAIPAI_BOT_ATTENTION") != "1":
+        return None
+    from maipai_body.presence.attention import Attention
+
+    return Attention(engine, clock=time.monotonic)
 
 
 def _build_offer_engine(cache_dir: Path, env) -> object | None:

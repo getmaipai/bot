@@ -15,8 +15,8 @@ Rules implemented: deadband, mapping with send epsilon, dt cap, head
 first then body follow with hysteresis, total yaw caps, the 260 ms
 body-move ignore window, the 250 ms stale-detection rule, the loss ladder
 (coast, drop, ease home, one look-around), and never tilting down past 5
-degrees while tracking. Not implemented: multi-face target continuity
-(the body's tracker reports one face) and the speaking gaze weight.
+degrees while tracking. The speaking gaze weight lives in the motion worker and
+multi-face continuity in ``Attention`` (``pick_face``).
 """
 
 from __future__ import annotations

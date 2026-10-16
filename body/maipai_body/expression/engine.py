@@ -50,6 +50,11 @@ class ExpressionOutcome:
 
 
 _LAYER_BLEND_S = 0.1
+# S-EXPR-04: while asleep the head lifts about 3 degrees and settles back once a minute
+# (UNMEASURED defaults, unit row M-R2).
+SLEEP_BREATHE_PERIOD_S = 60.0
+SLEEP_BREATHE_LIFT_RAD = 0.05
+SLEEP_BREATHE_HALF_S = 2.0
 
 
 class ExpressionEngine:
@@ -90,6 +95,7 @@ class ExpressionEngine:
         self._expression_device = getattr(client, "expression_device", None)
         self._muted = False
         self._asleep = False
+        self._next_breathe: float | None = None
         self._alarmed = False
         self._last_cue_seq = -1
         self._turn_terminal = False
@@ -322,6 +328,7 @@ class ExpressionEngine:
         primitive = SLEEP_STATE if asleep else "settle"
         self._render_named(primitive, 0.0)
         self._asleep = asleep
+        self._next_breathe = None
         return ExpressionOutcome(
             cue_seq=-1,
             primitive=None,
@@ -329,6 +336,31 @@ class ExpressionEngine:
             rendered=True,
             rendered_primitive=primitive,
         )
+
+    def sleep_breathe(self, now: float) -> bool:
+        """Once a minute while asleep, lift the head a little and settle it back.
+
+        Returns True when a breath started. The first one comes a period after
+        the sleep edge; waking cancels the schedule."""
+        if not self._asleep or self._profile.id == "stackchan":
+            return False
+        if self._next_breathe is None:
+            self._next_breathe = now + SLEEP_BREATHE_PERIOD_S
+            return False
+        if now < self._next_breathe:
+            return False
+        self._next_breathe = now + SLEEP_BREATHE_PERIOD_S
+        rest = build_steps(SLEEP_STATE, self._profile)[0]
+        assert rest.pose is not None and rest.antennas is not None
+        owned = frozenset(("head_pitch", "head_roll", "head_yaw", "antenna_left", "antenna_right"))
+        sequence = []
+        for pitch in (rest.pose.pitch - SLEEP_BREATHE_LIFT_RAD, rest.pose.pitch):
+            target = MotionTarget(
+                pose=HeadPose(pitch=pitch), antennas=rest.antennas, owned_axes=owned
+            )
+            sequence.append((target, SLEEP_BREATHE_HALF_S))
+        self._worker.submit_sequence(MotionLayer.EXPRESSION, sequence)
+        return True
 
     def set_gaze(self, pose: HeadPose, body_yaw: float) -> None:
         """Hold the gaze layer at a head pose (world-frame yaw) and body yaw."""

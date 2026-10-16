@@ -115,3 +115,20 @@ def test_entry_blend_uses_distance_and_caps_its_duration():
         )
         == 0.0
     )
+
+
+def _settled_gaze_yaw(*, speaking: bool) -> float:
+    client = FakeReachyMiniClient()
+    worker = MotionWorker(client, REACHY_MINI_PROFILE, clock=lambda: 0.0)
+    worker.set_speech_rms(1.0 if speaking else 0.0)
+    worker.set_layer(MotionLayer.GAZE, pose=HeadPose(yaw=0.4))
+    for stamp in range(300):
+        worker.tick(stamp * 0.02)
+    return worker.last_target.pose.yaw
+
+
+def test_gaze_counts_half_while_the_robot_is_speaking():
+    quiet = _settled_gaze_yaw(speaking=False)
+    talking = _settled_gaze_yaw(speaking=True)
+    assert quiet == pytest.approx(0.4, abs=1e-3)
+    assert talking == pytest.approx(0.2, abs=1e-3)

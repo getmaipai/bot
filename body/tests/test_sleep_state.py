@@ -124,3 +124,17 @@ def test_a_non_releasing_cue_keeps_holding_its_last_pose():
     worker.submit_sequence(MotionLayer.EXPRESSION, _shake_sequence())
     _drive(worker, clock, 4.0)
     assert worker.last_target.pose.yaw == pytest.approx(0.0, abs=0.01)
+
+
+def test_a_sleeping_robot_breathes_once_a_minute_and_waking_cancels_it():
+    client = FakeReachyMiniClient()
+    engine = ExpressionEngine(client, REACHY_MINI_PROFILE)
+    assert engine.sleep_breathe(0.0) is False  # awake: nothing
+    engine.set_sleep(True, AWAKE)
+    assert engine.sleep_breathe(10.0) is False  # schedules the first breath
+    assert engine.sleep_breathe(69.0) is False
+    assert engine.sleep_breathe(70.0) is True
+    assert engine.sleep_breathe(100.0) is False
+    assert engine.sleep_breathe(130.0) is True
+    engine.set_sleep(False, AWAKE)
+    assert engine.sleep_breathe(400.0) is False

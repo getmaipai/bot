@@ -149,3 +149,13 @@ def test_the_eyes_are_closed_when_the_app_stops():
 def test_offer_engine_is_off_unless_the_env_gate_is_set(tmp_path):
     assert app_module._build_offer_engine(tmp_path, {}) is None
     assert app_module._build_offer_engine(tmp_path, {"MAIPAI_BOT_OFFER_SPOTTER": "0"}) is None
+
+
+def test_attention_is_off_unless_the_env_gate_is_set():
+    from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
+    from maipai_body.expression.engine import ExpressionEngine
+    from maipai_body.presence.attention import Attention
+
+    engine = ExpressionEngine(FakeReachyMiniClient(), REACHY_MINI_PROFILE)
+    assert app_module._build_attention(engine, {}) is None
+    assert isinstance(app_module._build_attention(engine, {"MAIPAI_BOT_ATTENTION": "1"}), Attention)
