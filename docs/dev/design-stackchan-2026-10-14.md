@@ -115,7 +115,7 @@ What the stock device reaches for, and what replaces it:
 Network shape:
 
 - The ESP32-S3 cannot run a Tailscale client (no official build; running WireGuard on it is a project of its own). So the device joins the home Wi-Fi and talks to the bot host on the LAN. The bot host, and Home, are Tailscale nodes.
-- Away from home, the person reaches the robot through the host over Tailscale (app, chat, status). The device itself never needs a public address and has no inbound path from the internet. A Tailscale subnet router at home covers any case where the device must be reachable from the tailnet. UNVERIFIED: whether we want the device reachable at all from outside the LAN.
+- Away from home, the person reaches the robot through the host over Tailscale (app, chat, status). The device itself never needs a public address and has no inbound path from the internet. A Tailscale subnet router at home covers any case where the device must be reachable from the tailnet. Settled 2026-10-15: remote reach is through the host over Tailscale for every robot (decision 5); the device is not reachable from outside the LAN.
 - The device's DNS and default route are limited to the LAN host by an access rule at the router if possible. Section 8's capture proves it.
 
 Same or better than stock, from what the research shows:
@@ -192,7 +192,7 @@ This restates BODY-STACKCHAN-01's own steps with what the research adds. It does
 2. Face recognition scope if the measurement is poor: ship tracking and voice identity only, or hold the body until recognition works?
 3. Camera indicator: the RGB LEDs lit by the translator are the v1 indicator (Jesse, 2026-10-14). Revisit a firmware patch only if bring-up finds the firmware can capture on its own.
 4. Settled by Jesse 2026-10-14: no live third party and no data funnel; M5Stack and xiaozhi cloud features are replaced by Home over Tailscale (section 5.2a), not left as an option.
-5. Remote reach: should the robot be controllable from outside the home through the host over Tailscale, or only on the home network?
+5. Settled by Jesse 2026-10-15: remote reach is over Tailscale, and it is one mechanism for every robot body, not a StackChan path. It is `ROBOT-TAILSCALE-01` in `docs/BACKLOG.md`. For StackChan the tailnet node is the bot host that runs the translator; the device stays on the LAN and is never a tailnet node.
 
 ## Sources
 

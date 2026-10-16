@@ -1820,8 +1820,13 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
 - [ ] **ROBOT-TAILSCALE-01 (bot half, amended): detect a hand-joined tailnet, walk the book** (M, hub half, filed
       in `home`; the bot half may be S; needs a CREDENTIALS.md review
       before dispatch, since the auto-provision path is a new credential
-      class). Objective: a Reachy Mini off the home LAN reconnects to its
-      hub over Tailscale with its pairing intact. Facts from
+      class). Objective: every robot body off the home LAN (Reachy Mini, the
+      Pi 5 robot, and StackChan through its bot host, owner's call
+      2026-10-15) reconnects to its hub over Tailscale with its pairing
+      intact, by one mechanism in the bot link layer and never a
+      per-body path. A body that cannot run Tailscale (StackChan's
+      ESP32-S3) stays on the LAN and the bot host that runs its
+      translator is the tailnet node. Facts from
       `dev/robot-tailscale-access-2026-09-28.md`: the hub's address book
       (`hubEndpoints.ts`) sorts detected LAN first (priority 10) and the
       Tailscale entry next (priority 60), and records a `.ts.net` name
