@@ -712,6 +712,7 @@ def _build_conversation_loop(
         is_asleep=is_asleep,
         wake_from_sleep=wake_from_sleep,
         offer_engine=offer_engine,
+        unmute_listener=_build_unmute_listener(cache_dir, os.environ),
         band_of=people.band_of,
         presence_entries=lambda: presence_entries_from(vision_watch.current(), people.band_of),
     )
@@ -876,6 +877,29 @@ def _build_offer_engine(cache_dir: Path, env) -> object | None:
         return SherpaKeywordEngine(ensure_kws_model(cache_dir), keywords_file=OFFER_KEYWORDS_FILE)
     except Exception:
         logger.warning("offer spotter unavailable; offers will be refused", exc_info=True)
+        return None
+
+
+def _build_unmute_listener(cache_dir: Path, env) -> object | None:
+    """MUTE-LOCAL-01: the on-robot "listen again" spotter, or None (a hub mute can then
+    only be lifted by the hub). Off unless MAIPAI_BOT_UNMUTE_SPOTTER=1: the phrase's
+    token file is hand-tokenised and its CPU row is not measured."""
+    if env.get("MAIPAI_BOT_UNMUTE_SPOTTER") != "1":
+        return None
+    try:
+        from maipai_body.speech.kws import (
+            UNMUTE_KEYWORDS_FILE,
+            SherpaKeywordEngine,
+            UnmuteListener,
+            ensure_kws_model,
+        )
+
+        engine = SherpaKeywordEngine(
+            ensure_kws_model(cache_dir), keywords_file=UNMUTE_KEYWORDS_FILE
+        )
+        return UnmuteListener(engine)
+    except Exception:
+        logger.warning("unmute spotter unavailable; only the hub can unmute", exc_info=True)
         return None
 
 

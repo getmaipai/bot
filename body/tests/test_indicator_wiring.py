@@ -181,3 +181,18 @@ def test_sleep_auto_is_off_unless_gated_and_takes_its_settings_from_the_frame():
     sleep.apply_settings({"robot.sleep.auto": True})
     assert sleep.policy.auto_enabled is True
     assert sleep.quiet.active() is False
+
+
+def test_the_unmute_spotter_is_off_unless_asked_for(tmp_path):
+    assert app_module._build_unmute_listener(tmp_path, {}) is None
+    assert app_module._build_unmute_listener(tmp_path, {"MAIPAI_BOT_UNMUTE_SPOTTER": "0"}) is None
+
+
+def test_the_unmute_spotter_failing_to_load_leaves_the_hub_to_unmute(tmp_path, monkeypatch):
+    import maipai_body.speech.kws as kws
+
+    def boom(_cache):
+        raise RuntimeError("no model")
+
+    monkeypatch.setattr(kws, "ensure_kws_model", boom)
+    assert app_module._build_unmute_listener(tmp_path, {"MAIPAI_BOT_UNMUTE_SPOTTER": "1"}) is None
