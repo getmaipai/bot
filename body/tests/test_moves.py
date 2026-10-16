@@ -25,7 +25,6 @@ from maipai_body.expression.suppression import SuppressionContext
 from maipai_body.hal.seam import HeadPose
 from maipai_body.model_assets import AssetUnavailable
 from maipai_body.moves.library import (
-    EXCLUDED_LIBRARIES,
     LibraryPin,
     ensure_move,
     load_pins,
@@ -178,13 +177,6 @@ def test_a_move_the_pin_does_not_list_is_unavailable(tmp_path):
     pin = _pin(tmp_path, b"x")
     with pytest.raises(AssetUnavailable):
         ensure_move(pin, "not_in_the_pin", tmp_path)
-
-
-def test_the_dances_library_is_excluded_until_its_licence_is_stated():
-    assert "dances" in EXCLUDED_LIBRARIES
-    assert all(pin.library != "dances" for pin in load_pins())
-    with pytest.raises(ValueError):
-        LibraryPin(library="dances", repo="o/r", revision="c" * 40, license="", files={})
 
 
 def test_the_shipped_pins_hold_only_apache_licensed_libraries():

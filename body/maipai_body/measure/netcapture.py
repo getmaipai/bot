@@ -365,6 +365,47 @@ ALLOWED: tuple[AllowedRule, ...] = (
 )
 ALLOWED_BY_ID = {rule.id: rule for rule in ALLOWED}
 
+
+@dataclass(frozen=True)
+class DenyRule:
+    """A named destination the capture must show absent (RM-07 amendment, design v2)."""
+
+    id: str
+    what: str
+    host_suffixes: tuple[str, ...] = ()
+    udp_ports: tuple[int, ...] = ()
+
+
+# Order matters: the first match names the row. Names beat ports, so a Cloudflare TURN
+# server on port 3478 is "TURN", not "Google STUN".
+DENY: tuple[DenyRule, ...] = (
+    DenyRule("space", "The signalling Space (remote access)", ("hf.space",)),
+    DenyRule("turn", "TURN relay (Cloudflare)", ("turn.cloudflare.com",)),
+    DenyRule("huggingface", "Hugging Face", ("huggingface.co", "hf.co")),
+    DenyRule("github", "GitHub", ("github.com", "githubusercontent.com", "github.io")),
+    DenyRule("cloudflare", "Cloudflare", ("cloudflare.com", "cloudflare-dns.com")),
+    DenyRule(
+        "google-stun",
+        "Google STUN",
+        ("stun.l.google.com", "stun1.l.google.com", "stun2.l.google.com"),
+        (19302,),
+    ),
+    DenyRule("ntp", "NTP time sync", ("ntp.org", "ubuntu.com"), (123,)),
+)
+DENY_BY_ID = {rule.id: rule for rule in DENY}
+
+
+def _deny_rule_for(group: Group) -> str | None:
+    host = group.host.lower()
+    for rule in DENY:
+        if any(host == s or host.endswith("." + s) for s in rule.host_suffixes):
+            return rule.id
+    for rule in DENY:
+        if group.proto == "udp" and group.port in rule.udp_ports:
+            return rule.id
+    return None
+
+
 _MDNS = {"224.0.0.251", "ff02::fb"}
 
 
@@ -378,6 +419,7 @@ class Row:
     packets: int
     bytes_out: int
     addresses: frozenset[str]
+    denied: str | None = None  # the named deny rule's id, when the destination matches one
 
     @property
     def listed(self) -> bool:
@@ -434,9 +476,25 @@ def label_groups(groups: list[Group], hub: HubTarget) -> list[Row]:
             g.packets,
             g.bytes_out,
             frozenset(g.addresses),
+            None if _rule_for(g, hub) else _deny_rule_for(g),
         )
         for g in groups
     ]
+
+
+def deny_status(rows: list[Row]) -> list[tuple[DenyRule, int]]:
+    """Each named deny row with the number of flows seen to it (0 means absent)."""
+    return [(rule, sum(r.flows for r in rows if r.denied == rule.id)) for rule in DENY]
+
+
+def render_deny_table(rows: list[Row]) -> str:
+    """The deny rows a capture must show absent, each marked absent or PRESENT."""
+    lines = ["| Must be absent | Result |", "|---|---|"]
+    for rule, flows in deny_status(rows):
+        lines.append(
+            f"| {rule.what} | {'absent' if flows == 0 else f'**PRESENT, {flows} flows**'} |"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def unlisted(rows: list[Row]) -> list[Row]:
@@ -472,7 +530,12 @@ def render_capture_table(rows: list[Row]) -> str:
         "|---|---|---|---|---|---|---|---|",
     ]
     for row in sorted(rows, key=lambda r: (not r.listed, r.rule or "", r.host, r.port)):
-        what = ALLOWED_BY_ID[row.rule].what if row.rule else "**not on the list**"
+        if row.rule:
+            what = ALLOWED_BY_ID[row.rule].what
+        elif row.denied:
+            what = f"**denied: {DENY_BY_ID[row.denied].what}**"
+        else:
+            what = "**not on the list**"
         lines.append(
             f"| {what} | {_shown_host(row)} | {row.port or 'n/a'} | {row.proto} | {row.flows} "
             f"| {row.packets} | {row.bytes_out} | {'yes' if row.listed else 'no'} |"
@@ -485,6 +548,13 @@ def render_capture_table(rows: list[Row]) -> str:
 _EXPECTED_SOURCE = (
     "These rows are the design's allowed list. No capture has been taken yet: the unit "
     "has not arrived, and a capture replaces this line when it has."
+)
+
+
+SOFTWARE_LABELS = (
+    "Two controls here are software, not hardware. **Mute** is a software switch: the "
+    "robot's microphone stays powered and the Eyes show amber. **Camera off** is a watch "
+    "level, not a shutter: the lens is not covered, and the Eyes show a dark segment."
 )
 
 
@@ -507,6 +577,7 @@ def render_page_block(rows: list[Row] | None, *, source: str | None = None) -> s
     for rule in rules:
         leaves = "Only on a click" if rule.scope == "internet" else "No"
         lines.append(f"| {rule.what} | {rule.where} | {rule.when} | {leaves} |")
+    lines += ["", SOFTWARE_LABELS]
     lines += [PAGE_END, ""]
     return "\n".join(lines)
 

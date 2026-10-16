@@ -82,6 +82,8 @@ def _section(
         "",
         nc.render_capture_table(rows).rstrip("\n"),
         "",
+        nc.render_deny_table(rows).rstrip("\n"),
+        "",
         *(
             [f"- ignored IP fragments: {ignored_fragments}; capture is incomplete"]
             if ignored_fragments
@@ -174,6 +176,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         rows = nc.label_groups(nc.group_egress(packets, robot_ip), hub)
         print(nc.render_capture_table(rows))
+        print(nc.render_deny_table(rows))
         if diagnostics.ignored_fragments:
             print(f"ignored IP fragments: {diagnostics.ignored_fragments}; capture is incomplete")
         bad = nc.unlisted(rows)

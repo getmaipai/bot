@@ -338,3 +338,66 @@ def test_script_rehearsal_exit_codes_follow_the_stray(tmp_path):
         pytest.skip(probe.stderr.strip())
     assert probe.returncode == 0, probe.stdout + probe.stderr
     assert _script("--rehearse", "--stray").returncode == 1
+
+
+# -- RM-07 amendment: named deny rows the capture must show absent --
+
+
+def _named(host: str, address: str, port: int = 443):
+    return [
+        udp_frame(RESOLVER, 53, ROBOT, 1, dns_response(host, address)),
+        tcp_frame(ROBOT, 50020, address, port),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("host", "deny_id"),
+    [
+        ("huggingface.co", "huggingface"),
+        ("pollen-robotics-reachy-mini-central.hf.space", "space"),
+        ("raw.githubusercontent.com", "github"),
+        ("turn.cloudflare.com", "turn"),
+        ("one.one.one.cloudflare.com", "cloudflare"),
+        ("stun.l.google.com", "google-stun"),
+    ],
+)
+def test_each_named_deny_row_is_recognised_by_name(host, deny_id):
+    rows = _rows(_named(host, STRAY_IP))
+    denied = [r for r in rows if r.denied]
+    assert [r.denied for r in denied] == [deny_id]
+    assert not nc.passes(rows)
+
+
+def test_ntp_is_recognised_by_its_port_and_also_fails_the_check():
+    rows = _rows([udp_frame(ROBOT, 123, "203.0.113.50", 123, b"n" * 48)])
+    assert [r.denied for r in rows] == ["ntp"]
+    assert not nc.passes(rows)
+
+
+def test_google_stun_by_port_without_a_dns_name():
+    rows = _rows([udp_frame(ROBOT, 40100, "203.0.113.60", 19302, b"s")])
+    assert [r.denied for r in rows] == ["google-stun"]
+
+
+def test_the_deny_table_marks_every_row_absent_on_a_clean_capture():
+    table = nc.render_deny_table(_rows(sample_session()))
+    for rule in nc.DENY:
+        assert rule.what in table
+    assert table.count("| absent |") == len(nc.DENY)
+    assert "PRESENT" not in table
+
+
+def test_the_deny_table_marks_a_seen_row_present():
+    table = nc.render_deny_table(_rows(_named("huggingface.co", STRAY_IP)))
+    assert "PRESENT" in table
+    assert table.count("| absent |") == len(nc.DENY) - 1
+
+
+def test_the_capture_table_names_a_denied_destination():
+    table = nc.render_capture_table(_rows(_named("github.com", STRAY_IP)))
+    assert "denied: GitHub" in table
+
+
+def test_the_page_labels_mute_and_camera_off_as_software():
+    block = nc.render_page_block(None)
+    assert "software switch" in block and "watch level, not a shutter" in block

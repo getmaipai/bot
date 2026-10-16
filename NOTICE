@@ -7,3 +7,11 @@ getmaipai/.github.
 
 pyserial 3.5 (Chris Liechti), BSD-3-Clause. Declared in body/pyproject.toml;
 used for the Reachy Eyes USB serial link. https://github.com/pyserial/pyserial
+
+Pollen Robotics recorded moves, Apache-2.0. The optional moves package
+plays motion files from the datasets reachy-mini-emotions-library and
+reachy-mini-dances-library (https://huggingface.co/datasets/pollen-robotics),
+credit to Pollen Robotics and Hugging Face. The files are never vendored:
+the hub downloads them at a pinned revision with a sha256 checksum, and
+only when the package is installed. The move format and the community
+moves tag are Pollen's: reachy_mini_community_moves.
