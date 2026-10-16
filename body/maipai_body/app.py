@@ -64,6 +64,7 @@ from maipai_body.presence.motor_health import MotorHealth
 from maipai_body.presence.thermal import ThermalMonitor
 from maipai_body.run_loop import ConversationLoop
 from maipai_body.speech.capture import AudioCapture
+from maipai_body.speech.follow_up import FollowUpPolicy, PeopleDirectory
 from maipai_body.speech.models import EMBEDDING, MELSPECTROGRAM, WAKE_PHRASE, ensure_wakeword_models
 from maipai_body.speech.offline_clips import (
     AssetUnavailable,
@@ -667,6 +668,10 @@ def _build_conversation_loop(
     )
     is_asleep, wake_from_sleep = _knock_hooks(offline)
     offer_engine = _build_offer_engine(cache_dir, os.environ)
+    # FOLLOWUP-01: the directory is the seam the hub's roster fills (age band and
+    # `person.robot.follow_up` per person). Until a feed fills it every speaker is
+    # the child default and the window stays closed, which is the safe direction.
+    follow_up = FollowUpPolicy(PeopleDirectory())
     loop = ConversationLoop(
         client=tap,
         expression_engine=ExpressionEngine(
@@ -684,6 +689,7 @@ def _build_conversation_loop(
         tts_client=TtsPlaybackClient(base_url, session_cookie, audio_playback),
         hub_credentials=hub_credentials,
         vision_watch=vision_watch,
+        follow_up=follow_up,
         offline=offline,
         # MOVES-01: None unless MAIPAI_BOT_REACT_MOVES is set.
         react_hook=build_react_hook(tap, cache_dir / "moves", os.environ),
@@ -722,6 +728,9 @@ def _build_conversation_loop(
         level = values.get("robot.camera.watch_level") if isinstance(values, dict) else None
         if level in ("off", "presence", "identify"):
             loop.set_watch_level(level)
+        seconds = values.get("robot.follow_up.seconds") if isinstance(values, dict) else None
+        if isinstance(seconds, (int, float)) and not isinstance(seconds, bool):
+            follow_up.set_seconds(seconds)
 
     command_channel = CommandChannel(
         base_url,

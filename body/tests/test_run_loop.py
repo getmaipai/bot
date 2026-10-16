@@ -124,8 +124,9 @@ class _ScriptedSttStreamClient:
         self._result = result
         self.call_count = 0
 
-    def run(self, capture) -> SttStreamResult:
+    def run(self, capture, *, patience_s=None) -> SttStreamResult:
         self.call_count += 1
+        self.patience_calls = [*getattr(self, "patience_calls", []), patience_s]
         return self._result
 
 
@@ -134,11 +135,15 @@ class _ScriptedTurnClient:
         self._events = events
         self.stream_calls: list[str] = []
         self.speaker_evidence_calls: list[dict | None] = []
+        self.present_calls: list[list[dict] | None] = []
         self.cancel_calls: list[str] = []
         self.cancel_return = True
 
-    def stream(self, text: str, *, speaker_evidence=None, **_kwargs) -> Iterator[TurnEvent]:
+    def stream(
+        self, text: str, *, speaker_evidence=None, present=None, **_kwargs
+    ) -> Iterator[TurnEvent]:
         self.stream_calls.append(text)
+        self.present_calls.append(present)
         self.speaker_evidence_calls.append(speaker_evidence)
         return iter(self._events)
 
@@ -911,7 +916,7 @@ def test_a_malformed_person_id_is_dropped_not_sent_to_the_hub():
     try:
         _wait_for_idle_after_turn(loop)
         assert parts["turn"].speaker_evidence_calls == [
-            {"person": None, "basis": "face", "level": "unknown"}
+            {"person": None, "basis": "unknown", "level": "unknown"}
         ]
     finally:
         _stop(stop_event, thread)

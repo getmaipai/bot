@@ -14,6 +14,7 @@ import av
 import numpy as np
 import numpy.typing as npt
 
+from maipai_body.speaker_evidence import SpeakerEvidenceError, speaker_evidence
 from maipai_body.speech.capture import BLOCK_SAMPLES
 from maipai_body.speech.offline_clips import UNREACHABLE
 from maipai_body.speech.playback import AudioPlayback
@@ -373,7 +374,7 @@ class StackChanTurnBridge:
         if not attribution:
             return None
         if isinstance(attribution, dict):
-            person_id = attribution.get("person_id")
+            person_id = attribution.get("person_id") or attribution.get("person")
             confidence = attribution.get("confidence")
             basis = attribution.get("basis", "voice")
             level = attribution.get("level", confidence)
@@ -393,7 +394,15 @@ class StackChanTurnBridge:
             return None
         if basis != "voice":
             return None
-        return {"person": person_id, "basis": basis, "level": level}
+        # SPEAK-02: the one strict spec-shape builder. A numeric legacy
+        # confidence that cleared the bar above is a `confirmed` match.
+        if level != "confirmed":
+            level = "confirmed"
+        try:
+            return speaker_evidence(person_id, basis, level)
+        except SpeakerEvidenceError:
+            LOG.warning("StackChan attribution dropped: malformed person id %r", person_id)
+            return None
 
     async def _run(self, session_id: str, device_id: str, capture: StackChanAudioCapture) -> None:
         try:

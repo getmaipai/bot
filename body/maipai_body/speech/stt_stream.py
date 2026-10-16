@@ -16,9 +16,10 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
+import numpy as np
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import ClientConnection, connect
 
@@ -31,6 +32,13 @@ WAKE_PATIENCE_S = 6.0
 # back to poll capture again - short enough that audio keeps flowing
 # in near real time, long enough not to busy-loop.
 _RECV_POLL_S = 0.05
+# SPEAK-02: the utterance audio kept locally for the voice embedder. The hub
+# never sees a template; this copy never leaves the process. Bounded so a
+# long monologue cannot grow it without limit.
+_MAX_KEPT_BLOCKS = 1900  # about 60 s of 32 ms blocks
+# The hub's vad message trails the audio by its own latency; start the kept
+# span this many blocks before it so the first syllable is inside.
+_VAD_LEAD_BLOCKS = 10
 
 
 class SttStreamError(RuntimeError):
@@ -44,6 +52,12 @@ class SttStreamResult:
     kind: Literal["final", "no_speech", "timeout", "error"]
     text: str | None = None
     error: str | None = None
+    # SPEAK-02: the speech span as 16 kHz mono float32 and how many seconds of
+    # it the hub's VAD called speech. Local only: they feed the voice embedder
+    # and are never sent anywhere. UNVERIFIED against the real hub's vad
+    # cadence (M-07).
+    audio: Any = field(default=None, repr=False)
+    speech_s: float | None = None
 
 
 def _ws_url(base_url: str) -> str:
@@ -80,39 +94,73 @@ class SttStreamClient:
         self._wake_patience_s = wake_patience_s
         self._connect = connect_fn
 
-    def run(self, capture: AudioCapture) -> SttStreamResult:
+    def run(self, capture: AudioCapture, *, patience_s: float | None = None) -> SttStreamResult:
         """Blocks until a terminal event, or the wake-patience timeout.
         Raises :class:`SttStreamError` if the connection itself drops
         mid-stream (never for a session-level `{t:"error"}`, which is a
-        normal terminal result, not a transport failure)."""
+        normal terminal result, not a transport failure). ``patience_s``
+        overrides the wake patience for this call (FOLLOWUP-01's window)."""
         try:
             with self._connect(
                 self._url, additional_headers={"Cookie": f"session={self._cookie}"}
             ) as ws:
-                return self._run_over(ws, capture)
+                return self._run_over(ws, capture, patience_s)
         except SttStreamError:
             raise
         except Exception as exc:  # noqa: BLE001 - any transport failure is link_lost
             raise SttStreamError(f"hub stt connection failed: {exc}") from exc
 
-    def _run_over(self, ws: ClientConnection, capture: AudioCapture) -> SttStreamResult:
+    def _run_over(
+        self, ws: ClientConnection, capture: AudioCapture, patience_s: float | None = None
+    ) -> SttStreamResult:
         self._await_ready(ws)
-        deadline = time.monotonic() + self._wake_patience_s
+        deadline = time.monotonic() + (self._wake_patience_s if patience_s is None else patience_s)
         speaking_seen = False
+        blocks: list[Any] = []
+        start_index: int | None = None
+        speech_started: float | None = None
+        speech_total = 0.0
         while True:
             for block in capture.poll_blocks():
                 ws.send(block.tobytes())
+                blocks.append(block)
+            if len(blocks) > _MAX_KEPT_BLOCKS:
+                drop = len(blocks) - _MAX_KEPT_BLOCKS
+                del blocks[:drop]
+                if start_index is not None:
+                    start_index = max(0, start_index - drop)
 
             message = self._recv_nonblocking(ws)
             if message is not None:
                 result = self._handle_message(message)
                 if result is not None:
-                    return result
-                if message.get("t") == "vad" and message.get("speaking"):
-                    speaking_seen = True
+                    if speech_started is not None:
+                        speech_total += time.monotonic() - speech_started
+                    return self._with_audio(result, blocks, start_index, speech_total)
+                if message.get("t") == "vad":
+                    now = time.monotonic()
+                    if message.get("speaking"):
+                        speaking_seen = True
+                        if start_index is None:
+                            start_index = max(0, len(blocks) - _VAD_LEAD_BLOCKS)
+                        if speech_started is None:
+                            speech_started = now
+                    elif speech_started is not None:
+                        speech_total += now - speech_started
+                        speech_started = None
 
             if not speaking_seen and time.monotonic() >= deadline:
                 return self._give_up(ws)
+
+    @staticmethod
+    def _with_audio(
+        result: SttStreamResult, blocks: list[Any], start_index: int | None, speech_s: float
+    ) -> SttStreamResult:
+        if result.kind != "final" or start_index is None or start_index >= len(blocks):
+            return result
+        result.audio = np.concatenate(blocks[start_index:]).astype(np.float32, copy=False)
+        result.speech_s = speech_s
+        return result
 
     def _await_ready(self, ws: ClientConnection) -> None:
         raw = ws.recv(timeout=10)

@@ -57,9 +57,18 @@ from maipai_body.presence.knock import KnockDetector
 from maipai_body.presence.motion_state import MotionState, MotionStateMachine
 from maipai_body.presence.observations import PresenceObservation, read_presence
 from maipai_body.presence.thermal import ThermalState
+from maipai_body.speaker_evidence import (
+    PresentEntry,
+    SpeakerEvidence,
+    claimed_evidence,
+    sensitive_allowed,
+    unknown_evidence,
+)
+from maipai_body.speaker_fusion import build_present, fuse
 from maipai_body.speech.barge import talk_over
 from maipai_body.speech.capture import AudioCapture
 from maipai_body.speech.engines import StopDetector
+from maipai_body.speech.follow_up import FollowUpPolicy
 from maipai_body.speech.kws import KeywordEngine, UnmuteListener
 from maipai_body.speech.offline_clips import FREEFALL as FREEFALL_CLIP
 from maipai_body.speech.offline_clips import RECONNECT as RECONNECT_CLIP
@@ -68,6 +77,7 @@ from maipai_body.speech.playback import AudioPlayback
 from maipai_body.speech.stt_stream import SttStreamClient
 from maipai_body.speech.tts_playback import TtsLinkLost, TtsPlaybackClient
 from maipai_body.speech.turn_client import TurnClient, TurnLinkLost
+from maipai_body.speech.voiceprint import VoiceIdentifier
 from maipai_body.speech.wake import WakeScorer
 from maipai_body.vision.detect import FiveLandmarkDetector
 from maipai_body.vision.embed import SFaceEmbedder
@@ -119,6 +129,10 @@ _FACE_CHECK_JOIN_TIMEOUT_S = 5.0
 # FaceGallery's own person_id already looks like this - checked here
 # defensively rather than assumed.
 _PERSON_ID_RE = re.compile(r"^person-[a-z0-9]{6,}$")
+
+# SPEAK-02: while a reply that was cleared for sensitive records is spoken, the
+# audience is looked at again this often; a new person stops the sentence.
+_AUDIENCE_CHECK_INTERVAL_S = 0.25
 
 # M-R5 / design record section 4: when a turn was lost to the link, the
 # robot says one line once the hub answers again, never one per failed
@@ -201,6 +215,10 @@ class ConversationLoop:
         unmute_listener: UnmuteListener | None = None,
         offer_engine: KeywordEngine | None = None,
         guest_app_active: Callable[[], bool] | None = None,
+        voice_identifier: VoiceIdentifier | None = None,
+        follow_up: FollowUpPolicy | None = None,
+        identity_clock: Callable[[], float] = time.monotonic,
+        audience_check_interval_s: float = _AUDIENCE_CHECK_INTERVAL_S,
     ) -> None:
         # S-EXPR-04: when given, gaze and idle replace the daemon's own tracker.
         self._attention = attention
@@ -337,6 +355,16 @@ class ConversationLoop:
                 child_present=self._child_present,
             ),
         )
+        # SPEAK-02/04: with an identifier (or the vision watch) wired, every turn
+        # carries typed `speaker_evidence` and `present`; with neither, the turn
+        # carries what the legacy face check had, or nothing.
+        self._voice = voice_identifier
+        self._identity_clock = identity_clock
+        self._audience_check_interval_s = audience_check_interval_s
+        self._claim: str | None = None
+        self.last_evidence: SpeakerEvidence | None = None
+        # FOLLOWUP-01: None (the default) keeps the loop exactly as it was.
+        self._follow_up = follow_up
         if offline is not None:
             offline.machine.subscribe(lambda _old, _new: self._notify_change())
             if offline.rung0 is not None:
@@ -812,6 +840,23 @@ class ConversationLoop:
         heard_text: str | None = None,
         ask_answer: dict[str, Any] | None = None,
     ) -> None:
+        """One wake's worth of conversation: the turn the wake opened, then
+        (FOLLOWUP-01) another for each follow-up window the speaker's policy
+        allows, with no wake word between them."""
+        window = self._one_turn(stop_event, None, heard_text=heard_text, ask_answer=ask_answer)
+        while window and not stop_event.is_set():
+            window = self._one_turn(stop_event, window)
+
+    def _one_turn(
+        self,
+        stop_event: threading.Event,
+        follow_up_s: float | None,
+        *,
+        heard_text: str | None = None,
+        ask_answer: dict[str, Any] | None = None,
+    ) -> float | None:
+        """One listen, think and speak. Returns the seconds the stream should
+        reopen for (the follow-up window), or None when it should not."""
         if self._hub_credentials is not None:
             try:
                 session_cookie, base_url = self._hub_credentials()
@@ -827,24 +872,29 @@ class ConversationLoop:
                     self._turn = TurnClient(base_url, session_cookie)
                     self._tts = TtsPlaybackClient(base_url, session_cookie, self._playback)
                     self._current_hub_credentials = credentials
+        stt_result = None
         if heard_text is None:
             self._enter(FunnelState.LISTENING)
-            self._render(Cue(phase=Phase.HEARD, cue_seq=self._next_cue_seq()))
+            if follow_up_s is None:
+                self._render(Cue(phase=Phase.HEARD, cue_seq=self._next_cue_seq()))
 
             try:
                 with self._capture_scope():
-                    stt_result = self._stt.run(self._capture)
+                    if follow_up_s is None:
+                        stt_result = self._stt.run(self._capture)
+                    else:
+                        stt_result = self._stt.run(self._capture, patience_s=follow_up_s)
             except Exception as exc:
                 logger.warning("stt stream failed; back to idle", exc_info=True)
                 # The listen cue already moved the head; a lost stream is a
                 # lost turn, so it settles and is announced like any other.
                 self._link_lost(f"speech stream lost: {exc}")
                 self._enter(FunnelState.IDLE)
-                return
+                return None
 
             if stt_result.kind != "final" or not stt_result.text:
                 self._enter(FunnelState.IDLE)
-                return
+                return None
             turn_text = stt_result.text
         else:
             # OFFER-01: the phrase was heard locally by the spotter, so there is
@@ -855,35 +905,18 @@ class ConversationLoop:
         reply_text: str | None = None
         turn_id: str | None = None
         cancelled = False
-        speaker_evidence = None
         react_move: str | None = None
         react_allowed = False
         generation: int | None = None
-        face_verdict = self._current_face_verdict()
-        if face_verdict is not None:
-            # Only the derived fields (dev.md section 6: "never a
-            # score, an embedding... leaves the robot") - the
-            # verdict's own score and candidates stay local.
-            person, level = face_verdict.person_id, face_verdict.level
-            if person is not None and not _PERSON_ID_RE.match(person):
-                # The hub's own schema refuses the whole turn over a
-                # malformed id - no real print record exists yet to
-                # guarantee this never happens, so it's checked, not
-                # assumed. Downgraded, not raised: a bad id here means
-                # the local gallery is misconfigured, not a reason to
-                # go silent for the person actually speaking.
-                logger.warning(
-                    "face verdict person_id %r doesn't match the hub's id "
-                    "format - dropping it, not sending a turn the hub would refuse",
-                    person,
-                )
-                person, level = None, "unknown"
-            speaker_evidence = {"person": person, "basis": "face", "level": level}
-        turn_extra = {"ask_answer": ask_answer} if ask_answer is not None else {}
+        evidence, present = self._speaker_context(stt_result)
+        self.last_evidence = evidence
+        turn_kwargs: dict[str, Any] = {"speaker_evidence": evidence}
+        if present is not None:
+            turn_kwargs["present"] = present
+        if ask_answer is not None:
+            turn_kwargs["ask_answer"] = ask_answer
         try:
-            for turn_event in self._turn.stream(
-                turn_text, speaker_evidence=speaker_evidence, **turn_extra
-            ):
+            for turn_event in self._turn.stream(turn_text, **turn_kwargs):
                 if turn_event.turn_id:
                     turn_id = turn_event.turn_id
                 if turn_event.generation is not None:
@@ -911,11 +944,11 @@ class ConversationLoop:
             logger.warning("turn stream link lost", exc_info=True)
             self._link_lost(f"turn stream lost: {exc}")
             self._enter(FunnelState.IDLE)
-            return
+            return None
 
         if cancelled or not reply_text:
             self._enter(FunnelState.IDLE)
-            return
+            return None
 
         announce = self._lost_turn_unannounced
         if announce and self._say_clip(RECONNECT_CLIP, "I'm back in touch with home."):
@@ -923,11 +956,125 @@ class ConversationLoop:
             self._lost_turn_unannounced = False
             announce = False
         text = f"{LINK_RESTORED_LINE} {reply_text}" if announce else reply_text
-        if not self._speak(text, turn_id, stop_event, generation=generation) and announce:
+        # SPEAK-02: a reply that may carry `sensitive` records is spoken only to a
+        # confirmed speaker who is alone, and that is looked at again as it is spoken.
+        guard = (
+            (lambda: self._still_alone(evidence))
+            if evidence is not None and sensitive_allowed(evidence, present)
+            else None
+        )
+        self._speak_cut = False
+        link_dropped = self._speak(
+            text, turn_id, stop_event, generation=generation, audience_guard=guard
+        )
+        if not link_dropped and announce:
             self._lost_turn_unannounced = False
         self._enter(FunnelState.IDLE)
         if react_move and self._react_hook is not None and not stop_event.is_set():
             self._play_react(react_move, react_allowed)
+        return self._follow_up_window(evidence, stop_event, lost=link_dropped)
+
+    def _follow_up_window(
+        self, evidence: SpeakerEvidence | None, stop_event: threading.Event, *, lost: bool
+    ) -> float | None:
+        """FOLLOWUP-01: how long to reopen the stream, after the tail, for this
+        speaker. Never after a barge-in, a lost link, a mute, a hold or a stop."""
+        if self._follow_up is None or lost or self._speak_cut or stop_event.is_set():
+            return None
+        if self._is_muted() or self._motion.holding or self._in_outage():
+            return None
+        if self._is_asleep is not None and self._is_asleep():
+            return None
+        seconds = self._follow_up.window(evidence)
+        return seconds if seconds > 0 else None
+
+    # -- SPEAK-02 / SPEAK-04: who is speaking, who is present ---------------
+
+    def _face_view(self) -> tuple[FaceVerdict | None, int]:
+        """The nearest face's verdict and how many faces are in view now."""
+        if self._vision_watch is not None:
+            snapshot = self._vision_watch.current()
+            return snapshot.verdict, snapshot.present
+        verdict = self._current_face_verdict()
+        return verdict, 1 if verdict is not None else 0
+
+    def _read_doa(self) -> float | None:
+        try:
+            reading = self._client.get_doa()  # type: ignore[union-attr]
+        except Exception:
+            return None
+        return None if reading is None else float(reading.angle_rad)
+
+    def claim_speaker(self, person_id: str) -> None:
+        """The answer to the who-is-speaking ask, for the next turn only
+        (identity is per turn, never sticky). It is a claim, never access: it
+        is `tentative`, and an enrolled print that disagrees makes the turn
+        `unknown`."""
+        if not _PERSON_ID_RE.match(person_id):
+            raise ValueError(f"claimed person must look like person-xxxxxx, got {person_id!r}")
+        self._claim = person_id
+
+    def _speaker_context(
+        self, stt_result: Any
+    ) -> tuple[SpeakerEvidence | None, list[PresentEntry] | None]:
+        face, faces = self._face_view()
+        if self._voice is None and self._vision_watch is None and face is None:
+            return None, None  # no identity machinery wired: the turn says nothing
+        now = self._identity_clock()
+        voice_evidence: SpeakerEvidence | None = None
+        voice_present: list[PresentEntry] = []
+        if self._voice is not None:
+            audio = getattr(stt_result, "audio", None)
+            speech_s = getattr(stt_result, "speech_s", None)
+            if audio is not None and speech_s is not None:
+                voice_evidence = self._voice.evidence(
+                    audio, speech_s=speech_s, doa=self._read_doa(), now=now
+                )
+            else:
+                voice_evidence = unknown_evidence()
+            voice_present = list(self._voice.present(now=now))
+        evidence = fuse(voice_evidence, face, faces_in_view=faces)
+        evidence = self._apply_claim(evidence, voice_evidence, face, faces)
+        present = build_present(
+            voice_present,
+            face,
+            faces_in_view=faces,
+            speaker_voice_unknown=voice_evidence is not None
+            and voice_evidence["level"] == "unknown",
+        )
+        return evidence, present
+
+    def _apply_claim(
+        self,
+        evidence: SpeakerEvidence,
+        voice_evidence: SpeakerEvidence | None,
+        face: FaceVerdict | None,
+        faces: int,
+    ) -> SpeakerEvidence:
+        claim, self._claim = self._claim, None
+        if claim is None:
+            return evidence
+        if evidence["person"] == claim and evidence["level"] != "unknown":
+            return evidence  # the body already knows it is them
+        heard = voice_evidence["person"] if voice_evidence is not None else None
+        seen = face.person_id if face is not None and faces == 1 else None
+        return claimed_evidence(claim, contradicted_by=(heard, seen))
+
+    def _still_alone(self, evidence: SpeakerEvidence | None) -> bool:
+        """The delivery-time recheck: the speaker is still the only one present."""
+        face, faces = self._face_view()
+        voice_present = list(self._voice.present(now=self._identity_clock())) if self._voice else []
+        return sensitive_allowed(evidence, build_present(voice_present, face, faces_in_view=faces))
+
+    def speaker_snapshot(self) -> tuple[SpeakerEvidence, list[PresentEntry]]:
+        """Evidence and `present` without an utterance (face and recent voices
+        only), for a spotted word that is too short to embed."""
+        face, faces = self._face_view()
+        now = self._identity_clock()
+        voice_present = list(self._voice.present(now=now)) if self._voice else []
+        return fuse(None, face, faces_in_view=faces), build_present(
+            voice_present, face, faces_in_view=faces
+        )
 
     def _say_clip(self, clip_id: str, fallback_text: str | None = None) -> bool:
         """Speaks one offline clip when the bundle can; False when it cannot
@@ -968,8 +1115,13 @@ class ConversationLoop:
         outer_stop_event: threading.Event,
         *,
         generation: int | None = None,
+        audience_guard: Callable[[], bool] | None = None,
     ) -> bool:
-        """Speak the reply; returns True when the link dropped under it."""
+        """Speak the reply; returns True when the link dropped under it.
+
+        `audience_guard` (SPEAK-02) is the delivery-time recheck for a reply that
+        may carry sensitive records: when it turns False (someone walked in) the
+        reply stops mid-sentence, like a barge-in, and settles."""
         self._enter(FunnelState.SPEAKING)
         barge_in = threading.Event()
         link_lost = threading.Event()
@@ -986,6 +1138,7 @@ class ConversationLoop:
             daemon=True,
         )
         speak_thread.start()
+        next_audience_check = self._funnel_clock()
 
         # Wake scoring keeps running while speaking (G8): a fresh wake
         # is the barge-in trigger, not a second detector. Stops the
@@ -999,9 +1152,20 @@ class ConversationLoop:
             if outer_stop_event.is_set():
                 barge_in.set()
                 break
+            if audience_guard is not None and self._funnel_clock() >= next_audience_check:
+                next_audience_check = self._funnel_clock() + self._audience_check_interval_s
+                if not audience_guard():
+                    barge_in.set()
+                    self._speak_cut = True
+                    if turn_id is not None:
+                        self._cancel_turn(turn_id)
+                    self._playback.flush()
+                    self._expression.render_primitive("settle", self._suppression_context())
+                    break
             for block in self._capture.poll_blocks():
                 if self._barge_trigger(block, speech_started):
                     barge_in.set()
+                    self._speak_cut = True
                     # All four actions: cancel the turn, flush what is queued
                     # (the stop is the playback's own), freeze via the CANCEL cue.
                     if turn_id is not None:

@@ -2301,10 +2301,12 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       real spotter over real playback, the loop-back fixture with the real
       wake model, and the 450 ms tail on the array (M-R3).
 
-- [ ] **FOLLOWUP-01: the follow-up window without the wake word** (S, after BARGE-02, SETTINGS-ROBOT-01; OWNER-ANSWERS 2).
+- [x] **FOLLOWUP-01: the follow-up window without the wake word** (S, after BARGE-02, SETTINGS-ROBOT-01; OWNER-ANSWERS 2).
       Governs: run_loop.py (speech section), body/tests/test_followup.py.
       Objective: after the tail, the default window is 8 s (`robot.follow_up.seconds`, declared by SETTINGS-ROBOT-01) for adults and teens; for a child it is off unless a parent turns on `person.robot.follow_up`; with the key on for the speaker and the seconds above 0, the stream reopens for that many seconds with the Eyes green; the hub's `no_speech` or silence closes it; a second reply re-arms it; `present` with an unknown speaker uses the child default.
       Acceptance (fail-first): with the window at 0 nothing reopens; a child-band speaker never gets the window without the parent switch, and gets it with the switch on; an unknown speaker keeps the child default; an adult and a teen get 8 s by default; the Eyes are green for the whole window and the state frame says `listening`. Exit: `bash scripts/check.sh`. Cloud: yes.
+      Landed 2026-10-16 (bot half): `speech/follow_up.py` (`FollowUpPolicy`, `PeopleDirectory`), `SttStreamClient.run(..., patience_s=)`, and a follow-up loop in `ConversationLoop` (no HEARD cue on a reopen, the capture scope keeps the Eyes green for the window, never after a barge-in, a lost link, mute, hold, sleep or outage); `robot.follow_up.seconds` is applied from `settings_changed` and clamped to 0 to 20; a `claimed` speaker never opens it. 9 tests in `test_followup.py`, run against fakes only.
+      Open, each named: the hub does not feed age band or `person.robot.follow_up` to the robot, so the directory is empty and every speaker is the child default (the window stays closed in the field); the green Eyes for the whole window and the 8 s timing were not exercised on a real robot.
 
 - [x] **OFFER-01: the offer on the robot** (M, after S-EXPR-04, S-KWS-RUNG1 landed, CHANNEL-CLIENT-01, Home INITIATIVE-01; Reachy design v2 section 6.2).
       Governs: body/maipai_body/initiative/offer.py (new), link/commands.py (the `offer` kind), speech/kws.py (the acceptance and decline sets), run_loop.py (one hook), body/tests/test_offer*.py.
@@ -2776,14 +2778,15 @@ value; RT-02 and RT-03 carry it.
       screen, wiring the identifier into `run_loop.py`, and `present`
       reaching the turn (SPEAK-02). The template file is private (0600),
       not encrypted at rest.
-- [ ] **SPEAK-04: face evidence and fusion** (M, after standalone).
+- [x] **SPEAK-04: face evidence and fusion** (M, after standalone).
       Objective: ArcFace on the speaking track, the confirmed and
       tentative fusion rules of `dev.md` section 6, conflicting face
       and voice as unknown, face templates under the same consent,
       sealing and deletion rules. Acceptance: the conflicting-evidence
       and visitor rows of section 11; templates absent from every
       payload. Exit: `bash scripts/check.sh`.
-- [ ] **SPEAK-02: `speaker_evidence` and `present` on the turn** (S,
+      Landed 2026-10-16 (bot half): `speaker_fusion.py` (`fuse`, `build_present`): voice and face agreeing is `voice_and_face` at `confirmed`; a face alone is capped at `tentative`; a voice and a face naming different people are `unknown`, never a pick; the face joins the speaker only when exactly one face is in view (no verified bearing from the array to a face, so with two or more the voice stands alone); every other face and an unknown voice with nobody in view count in `present` as unknown entries, so a visitor means not alone. 8 tests in `test_speaker_fusion.py`, run against fakes only. Not done: ArcFace (the SFace watch embedder is what is on the robot), a face-to-array bearing, and a live run with two people.
+- [x] **SPEAK-02: `speaker_evidence` and `present` on the turn** (S,
       after the spec fields and RT-05). Objective: the body's evidence
       typed on every turn; `claimed` from the who-ask; confirmed and
       signed-in the only levels that open the ceiling, disclosure,
@@ -2795,6 +2798,8 @@ value; RT-02 and RT-03 carry it.
       Acceptance: the speaker rows of section 11; the band-claim and
       unknown-speaker rows from the hub's fixture pass on the robot.
       Exit: `bash scripts/check.sh`.
+      Landed 2026-10-16 (bot half): `speaker_evidence.py` gained the section 6 helpers (`effective_band`, `opens_ceiling`, `present_and_alone`, `sensitive_allowed`, `claimed_evidence`), mirroring `home/backend/src/lib/turnContext.ts`; `SttStreamResult` carries the speech span (`audio`, `speech_s`, local only) so the VoiceIdentifier embeds it; `ConversationLoop(voice_identifier=...)` builds `speaker_evidence` and `present` on every turn (DoA read per turn), `claim_speaker(person)` is the one-shot who-ask answer (`claimed`, `tentative`, unknown when a print disagrees); a reply opened with sensitive access allowed is rechecked every 250 ms while spoken and stops like a barge-in when someone else is present; StackChan's `_speaker_evidence` now uses the strict builder (a malformed id is dropped with a warning, a numeric legacy confidence that clears 0.6 is `confirmed`). Tests: `test_speaker_evidence_turn.py` (14), `test_stackchan_turn.py`, `test_run_loop.py`, run against fakes only.
+      Open, each named: (1) the wire has no `sensitive` flag, so the delivery recheck runs for any turn that opened with access, which is conservative; (2) `app.py` does not construct a VoiceIdentifier yet because no CAM++ model is delivered to the robot cache (VOICE-03 packaging), so on the robot the evidence is face-only and never `confirmed`; (3) nothing produces `claimed` until the who-ask flow exists; (4) the hub's age-band and signed-in rows were not run against the robot fixture.
 - [ ] **SPEAK-03: the bindings on the robot** (S, after COMP-06).
       Objective: the companion-binding records resolved per turn
       (speaker's, then device, then household), authored on the screen

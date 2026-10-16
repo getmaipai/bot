@@ -131,12 +131,21 @@ def test_person_attribution_is_passed_as_turn_speaker_evidence(monkeypatch):
         stt_factory=FakeStt,
         turn_factory=FakeTurn,
         tts_factory=FakeTts,
-        person_attribution=lambda: {"person_id": "person-7", "confidence": 0.87},
+        person_attribution=lambda: {"person_id": "person-abc123", "confidence": 0.87},
     )
     loop.run_until_complete(bridge._run("session", "device", FakeCapture()))
     loop.close()
     assert FakeTurn.streams == [
-        ("hello", {"speaker_evidence": {"person": "person-7", "basis": "voice", "level": 0.87}})
+        (
+            "hello",
+            {
+                "speaker_evidence": {
+                    "person": "person-abc123",
+                    "basis": "voice",
+                    "level": "confirmed",
+                }
+            },
+        )
     ]
 
 
@@ -283,3 +292,26 @@ def test_opus_uplink_decodes_to_steady_float32_blocks():
     blocks = capture.poll_blocks()
     assert blocks
     assert all(block.shape == (512,) and block.dtype == np.float32 for block in blocks)
+
+
+def test_a_malformed_person_id_is_dropped_not_sent(monkeypatch):
+    import maipai_body.bodies.stackchan.turn as turn_module
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    FakeTurn.streams = []
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    bridge = StackChanTurnBridge(
+        server,
+        Link(),
+        Offline(),
+        stt_factory=FakeStt,
+        turn_factory=FakeTurn,
+        tts_factory=FakeTts,
+        person_attribution=lambda: {"person": "person-7", "level": "confirmed"},
+    )
+    loop.run_until_complete(bridge._run("session", "device", FakeCapture()))
+    loop.close()
+    assert FakeTurn.streams == [("hello", {"speaker_evidence": None})]

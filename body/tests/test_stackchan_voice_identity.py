@@ -116,15 +116,15 @@ def test_confirmed_fake_hub_voice_match_attaches_per_turn_evidence(monkeypatch):
 
     calls = _run(monkeypatch, lambda stt_result: stt_result.speaker_evidence)
 
-    assert calls == [("hello", {"person": "person-7", "basis": "voice", "level": "confirmed"})]
+    assert calls == [("hello", {"person": "person-7abc12", "basis": "voice", "level": "confirmed"})]
 
 
 @pytest.mark.parametrize(
     "match",
     [
         None,
-        {"person_id": "person-7", "basis": "voice", "level": "tentative"},
-        {"person_id": "person-7", "basis": "voice", "level": 0.2, "confidence": 0.2},
+        {"person_id": "person-7abc12", "basis": "voice", "level": "tentative"},
+        {"person_id": "person-7abc12", "basis": "voice", "level": 0.2, "confidence": 0.2},
     ],
 )
 def test_absent_or_below_confidence_voice_result_sends_no_evidence(monkeypatch, match):
