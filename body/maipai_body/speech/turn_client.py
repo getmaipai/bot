@@ -47,6 +47,9 @@ class TurnEvent:
     # such field yet, so the real client never sets it; the run loop's
     # react hook reads it (MOVES-01, behind a flag).
     react_move: str | None = None
+    # The hub's response generation for this turn (STT-TURN-02), read from the
+    # stamped events; the speech request echoes it so a cut reply is refused.
+    generation: int | None = None
 
 
 @dataclass
@@ -56,6 +59,7 @@ class _TurnStreamState:
     turn_id: str | None = None
     reply_parts: list[str] = field(default_factory=list)
     terminal_seen: bool = False
+    generation: int | None = None
 
     def next_cue_seq(self) -> int:
         self.cue_seq += 1
@@ -184,6 +188,9 @@ class TurnClient:
 
     def _handle_line(self, message: dict, state: _TurnStreamState) -> TurnEvent | None:
         kind = message.get("type")
+        stamped = message.get("generation")
+        if isinstance(stamped, int) and not isinstance(stamped, bool):
+            state.generation = stamped
         if kind == "turn_meta":
             state.conversation_id = message.get("conversation_id")
             state.turn_id = message.get("turn_id")
@@ -211,6 +218,7 @@ class TurnClient:
                 reply_text="".join(state.reply_parts),
                 conversation_id=state.conversation_id,
                 turn_id=state.turn_id,
+                generation=state.generation,
             )
         if kind == "error":
             state.terminal_seen = True

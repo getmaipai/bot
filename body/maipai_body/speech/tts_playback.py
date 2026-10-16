@@ -85,6 +85,13 @@ def _resample(
 resample_audio = _resample  # the public name: the speech process reuses the same resampler
 
 
+def _is_turn_cancelled(response: requests.Response) -> bool:
+    try:
+        return response.json().get("code") == "turn_cancelled"
+    except ValueError:
+        return False
+
+
 class TtsPlaybackClient:
     """Streams `POST /api/tts`'s reply into `playback` as it arrives."""
 
@@ -109,6 +116,8 @@ class TtsPlaybackClient:
         *,
         on_first_chunk=None,
         stop_event: threading.Event | None = None,
+        turn_id: str | None = None,
+        generation: int | None = None,
     ) -> TtsResult:
         """Blocks until the reply has fully streamed and been pushed
         through `playback`, or a terminal failure. `on_first_chunk` (if
@@ -119,7 +128,16 @@ class TtsPlaybackClient:
         mid-stream - G8's own barge-in) stops pushing further chunks and
         returns `kind="cancelled"`; the ledger keeps whatever prefix was
         already pushed, exactly as `AudioPlayback.stop()`'s own contract
-        already promises."""
+        already promises. `turn_id` and `generation` (BARGE-02) tell the hub
+        which reply this sentence belongs to: it refuses a stale one with a 409
+        `turn_cancelled`, which is a cancel here, not an error. Chunks are also
+        tagged with the playback's own generation at the start of the call and
+        dropped before the push once a flush has moved it on."""
+        payload: dict = {"text": text}
+        if turn_id is not None and generation is not None:
+            payload["turn_id"] = turn_id
+            payload["generation"] = generation
+        local_generation = self._playback.generation
         try:
             # A context manager, not a bare call: every exit path (a
             # 401, any other non-2xx, an unsupported header, a normal
@@ -129,15 +147,19 @@ class TtsPlaybackClient:
             # inside _stream_into_playback called close() explicitly.
             with self._session.post(
                 f"{self._base_url}/api/tts",
-                json={"text": text},
+                json=payload,
                 headers={"Cookie": f"session={self._cookie}"},
                 stream=True,
                 timeout=(10, 120),
             ) as response:
                 if response.status_code == 401:
                     raise TtsAuthFailed(f"hub rejected the tts request: {response.text[:200]}")
+                if response.status_code == 409 and _is_turn_cancelled(response):
+                    return TtsResult(kind="cancelled")
                 response.raise_for_status()
-                return self._stream_into_playback(response, on_first_chunk, stop_event)
+                return self._stream_into_playback(
+                    response, on_first_chunk, stop_event, local_generation
+                )
         except (TtsLinkLost, TtsAuthFailed):
             raise
         except requests.RequestException as exc:
@@ -148,6 +170,7 @@ class TtsPlaybackClient:
         response: requests.Response,
         on_first_chunk,
         stop_event: threading.Event | None,
+        local_generation: int | None = None,
     ) -> TtsResult:
         header = b""
         leftover = b""  # an incomplete trailing multi-channel frame, held for the next chunk
@@ -195,7 +218,8 @@ class TtsPlaybackClient:
             resampled = _resample(samples, sample_rate, output_rate)
             if len(resampled) == 0:
                 continue
-            self._playback.push(resampled)
+            if not self._playback.push(resampled, generation=local_generation):
+                return TtsResult(kind="cancelled", first_chunk_pushed=first_chunk_pushed)
             if not first_chunk_pushed:
                 first_chunk_pushed = True
                 if on_first_chunk is not None:

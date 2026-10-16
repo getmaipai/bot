@@ -151,9 +151,10 @@ def test_stopping_mid_stream_keeps_the_pushed_prefix(tts_server):
     # counts real pushes instead - still exercising the real code path.
     real_push = playback.push
 
-    def _counting_push(chunk):
-        real_push(chunk)
+    def _counting_push(chunk, generation=None):
+        accepted = real_push(chunk, generation=generation)
         _stop_after_a_few_chunks()
+        return accepted
 
     playback.push = _counting_push
 

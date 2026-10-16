@@ -59,3 +59,20 @@ class TranscriptStopDetector:
             return is_stop_phrase(self._stt.transcribe(span, SAMPLE_RATE) or "")
         except Exception:  # noqa: BLE001 - a failed check must not cut or crash the reply
             return False
+
+
+# BARGE-02: the open-mic bleed gate, behind `robot.barge_in.open_mic` (default off).
+BLEED_RATIO = 1.6 * 0.4
+BLEED_FLOOR = 0.01
+BLEED_GRACE_S = 0.25
+
+
+def talk_over(mic_rms: float, tts_rms: float, since_speech_start_s: float) -> bool:
+    """True when the mic is louder than the robot's own playback can explain.
+
+    The mic RMS must exceed ``1.6 x 0.4 x`` the playback energy plus 0.01, and
+    never within the first 250 ms of a reply (the speaker's own onset). The
+    constants are the plan's starting values; the arrival-day test sets them."""
+    if since_speech_start_s < BLEED_GRACE_S:
+        return False
+    return mic_rms > BLEED_RATIO * tts_rms + BLEED_FLOOR

@@ -295,6 +295,13 @@ class ReachyMiniClient:
         self._require_connected()
         self._reachy.media.stop_playing()
 
+    def clear_player(self) -> None:
+        """Drop audio still queued in the daemon's player (barge-in, BARGE-02)."""
+        self._require_connected()
+        audio = self._reachy.media.audio  # MediaManager has no clear_player of its own (SDK 1.11.0)
+        if audio is not None:
+            audio.clear_player()
+
     def get_output_audio_samplerate(self) -> int:
         self._require_connected()
         return self._reachy.media.get_output_audio_samplerate()

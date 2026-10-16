@@ -2237,6 +2237,25 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       Reuse check: the keyword spotter's closed list already contains `stop`; `clear_incoming_audio` exists in 1.11.0 and nothing calls it; the hub's generation on every chunk (STT-TURN-02).
       Objective: during playback the keyword spotter runs with `stop` only (the wake word stays live); a spotted stop or a wake does all four actions; chunks carrying a stale generation are dropped before the push; the stream reopens only after the tail; the open-mic bleed gate (mic RMS above 1.6 x 0.4 x TTS energy + 0.01, 250 ms grace) exists behind `robot.barge_in.open_mic` (declared by SETTINGS-ROBOT-01), default off; full talk-over stays a switch until the arrival-day test (OWNER-ANSWERS 6).
       Acceptance (fail-first): no queued sample plays after a stop; a stale-generation chunk never reaches the fake's playback; the stream does not reopen inside the tail; the robot's own last syllable on a loop-back fixture never re-wakes it. Exit: `bash scripts/check.sh`. Cloud: yes.
+      **Built 2026-10-16 (lane D), left open for the unit:** `AudioPlayback`
+      gains `flush()` (bumps the generation, calls the SDK's `clear_player`
+      through the client, stops), generation-tagged `push` that drops a stale
+      chunk, and `listen_again_at()` (end of the last played sample, or the
+      cut, plus 450 ms). `TtsPlaybackClient.speak` sends `turn_id` and
+      `generation` and treats the hub's 409 `turn_cancelled` as a cancel;
+      the turn client reads the hub's `generation` off stamped events onto the
+      done event. The funnel feeds an optional `StopDetector` beside the wake
+      scorer while speaking, runs cancel, flush and the CANCEL cue on either,
+      drains the capture unscored until the tail ends, and resets the wake
+      scorer after. `KeywordStopDetector` adapts the spotter (`stop` only).
+      The open-mic gate (`talk_over`, 1.6 x 0.4 x playback RMS + 0.01, 250 ms
+      grace) is behind the `open_mic` argument, default off; nothing yet maps
+      `robot.barge_in.open_mic` to it because SETTINGS-ROBOT-01 has not
+      declared the key. Exercised: fakes and a stand-in hub only. UNVERIFIED:
+      `clear_player` on the real daemon (the client reaches it through
+      `media.audio`, since the SDK's media manager has no such method), the
+      real spotter over real playback, the loop-back fixture with the real
+      wake model, and the 450 ms tail on the array (M-R3).
 
 - [ ] **FOLLOWUP-01: the follow-up window without the wake word** (S, after BARGE-02, SETTINGS-ROBOT-01; OWNER-ANSWERS 2).
       Governs: run_loop.py (speech section), body/tests/test_followup.py.

@@ -83,9 +83,21 @@ class _FakeAudioCapture:
 class _FakeAudioPlayback:
     def __init__(self) -> None:
         self.stop_calls = 0
+        self.flush_calls = 0
+        self.rms = 0.0
+        self.tail_until = 0.0
 
     def stop(self) -> None:
         self.stop_calls += 1
+
+    def flush(self) -> None:
+        self.flush_calls += 1
+
+    def recent_rms(self) -> float:
+        return self.rms
+
+    def listen_again_at(self) -> float:
+        return self.tail_until
 
 
 class _ScriptedWakeScorer:
@@ -102,6 +114,9 @@ class _ScriptedWakeScorer:
         if self._script:
             return self._script.pop(0)
         return None
+
+    def reset(self) -> None:
+        self.reset_count = getattr(self, "reset_count", 0) + 1
 
 
 class _ScriptedSttStreamClient:
@@ -168,8 +183,16 @@ class _ScriptedTtsPlaybackClient:
         self.behavior = behavior
         self.speak_calls: list[str] = []
 
-    def speak(self, text: str, *, on_first_chunk=None, stop_event: threading.Event | None = None):
+    def speak(
+        self,
+        text: str,
+        *,
+        on_first_chunk=None,
+        stop_event: threading.Event | None = None,
+        **tags,
+    ):
         self.speak_calls.append(text)
+        self.speak_tags = tags
         if self.behavior == "error":
             raise TtsLinkLost("tts connection failed")
         if on_first_chunk is not None:
@@ -485,6 +508,7 @@ def test_a_second_wake_during_speaking_barges_in_and_cancels_the_turn():
         assert Phase.DONE not in phases  # barge-in preempts the DONE render
         assert parts["turn"].cancel_calls == ["turn-1"]
         assert parts["playback"].stop_calls == 1
+        assert parts["playback"].flush_calls == 1  # BARGE-02: the cut flushes the queue
     finally:
         _stop(stop_event, thread)
 

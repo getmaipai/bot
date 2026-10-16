@@ -75,7 +75,7 @@ class _SequencedTts:
         self._behaviors = list(behaviors)
         self.speak_calls: list[str] = []
 
-    def speak(self, text: str, *, on_first_chunk=None, stop_event=None):
+    def speak(self, text: str, *, on_first_chunk=None, stop_event=None, **_tags):
         self.speak_calls.append(text)
         behavior = self._behaviors.pop(0) if self._behaviors else "ok"
         if behavior == "drop_before_audio":

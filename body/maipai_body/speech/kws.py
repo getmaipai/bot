@@ -231,3 +231,23 @@ class KeywordSpotterRecognizer:
         if stop_event.is_set():
             return None
         return tag_to_phrase(engine.finish() or "")
+
+
+class KeywordStopDetector:
+    """BARGE-02: the keyword spotter's ``stop`` over the robot's own playback.
+
+    The same ``StopDetector`` seam ``TranscriptStopDetector`` fills, but the
+    word is caught mid-span instead of at its end. ``reset`` opens a fresh
+    stream when playback starts. Only ``stop`` counts here; the wake word stays
+    with the wake scorer."""
+
+    def __init__(self, engine: KeywordEngine) -> None:
+        self._engine = engine
+        self._engine.begin()
+
+    def reset(self) -> None:
+        self._engine.begin()
+
+    def accept(self, block: npt.NDArray[np.float32]) -> bool:
+        tag = self._engine.accept(block)
+        return bool(tag) and tag_to_phrase(tag) == "stop"

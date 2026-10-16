@@ -532,6 +532,10 @@ class FakeReachyMiniClient:
         if self.recorder is not None:
             self.recorder.on_stop()
 
+    def clear_player(self) -> None:
+        self._require_connected()
+        self.cleared_player_count = getattr(self, "cleared_player_count", 0) + 1
+
     def get_output_audio_samplerate(self) -> int:
         self._require_connected()
         return 16000

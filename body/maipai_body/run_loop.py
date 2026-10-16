@@ -31,6 +31,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
+import numpy as np
 import requests
 
 from maipai_body.expression.cue import Cue, Phase
@@ -54,7 +55,9 @@ from maipai_body.presence.funnel import FunnelState, FunnelView, SettleGate
 from maipai_body.presence.motion_state import MotionState, MotionStateMachine
 from maipai_body.presence.observations import PresenceObservation, read_presence
 from maipai_body.presence.thermal import ThermalState
+from maipai_body.speech.barge import talk_over
 from maipai_body.speech.capture import AudioCapture
+from maipai_body.speech.engines import StopDetector
 from maipai_body.speech.offline_clips import FREEFALL as FREEFALL_CLIP
 from maipai_body.speech.offline_clips import RECONNECT as RECONNECT_CLIP
 from maipai_body.speech.offline_clips import THERMAL as THERMAL_CLIP
@@ -184,6 +187,8 @@ class ConversationLoop:
         attention: Attention | None = None,
         motor_health: Any = None,
         thermal: Any = None,
+        stop_detector: StopDetector | None = None,
+        open_mic: bool = False,
     ) -> None:
         # S-EXPR-04: when given, gaze and idle replace the daemon's own tracker.
         self._attention = attention
@@ -201,6 +206,10 @@ class ConversationLoop:
         self._turn = turn_client
         self._tts = tts_client
         self._hub_credentials = hub_credentials
+        # BARGE-02: the local stop word runs over playback; the open-mic bleed
+        # gate is the `robot.barge_in.open_mic` setting, off until the arrival-day test.
+        self._stop_detector = stop_detector
+        self._open_mic = open_mic
         self._on_change = on_change
         self._current_hub_credentials: tuple[str, str] | None = None
         self._presence_interval_s = presence_interval_s
@@ -699,6 +708,7 @@ class ConversationLoop:
         speaker_evidence = None
         react_move: str | None = None
         react_allowed = False
+        generation: int | None = None
         face_verdict = self._current_face_verdict()
         if face_verdict is not None:
             # Only the derived fields (dev.md section 6: "never a
@@ -723,6 +733,8 @@ class ConversationLoop:
             for turn_event in self._turn.stream(stt_result.text, speaker_evidence=speaker_evidence):
                 if turn_event.turn_id:
                     turn_id = turn_event.turn_id
+                if turn_event.generation is not None:
+                    generation = turn_event.generation
                 if turn_event.react_move:
                     react_move = turn_event.react_move
                 if turn_event.cue is not None:
@@ -758,7 +770,7 @@ class ConversationLoop:
             self._lost_turn_unannounced = False
             announce = False
         text = f"{LINK_RESTORED_LINE} {reply_text}" if announce else reply_text
-        if not self._speak(text, turn_id, stop_event) and announce:
+        if not self._speak(text, turn_id, stop_event, generation=generation) and announce:
             self._lost_turn_unannounced = False
         self._enter(FunnelState.IDLE)
         if react_move and self._react_hook is not None and not stop_event.is_set():
@@ -797,19 +809,27 @@ class ConversationLoop:
             logger.warning("react move %r failed", move, exc_info=True)
 
     def _speak(
-        self, reply_text: str, turn_id: str | None, outer_stop_event: threading.Event
+        self,
+        reply_text: str,
+        turn_id: str | None,
+        outer_stop_event: threading.Event,
+        *,
+        generation: int | None = None,
     ) -> bool:
         """Speak the reply; returns True when the link dropped under it."""
         self._enter(FunnelState.SPEAKING)
         barge_in = threading.Event()
         link_lost = threading.Event()
+        if self._stop_detector is not None:
+            self._stop_detector.reset()
+        speech_started = self._funnel_clock()
 
         def _on_first_chunk() -> None:
             self._render(Cue(phase=Phase.SPEAK, cue_seq=self._next_cue_seq()))
 
         speak_thread = threading.Thread(
             target=self._speak_worker,
-            args=(reply_text, barge_in, _on_first_chunk, link_lost),
+            args=(reply_text, barge_in, _on_first_chunk, link_lost, turn_id, generation),
             daemon=True,
         )
         speak_thread.start()
@@ -827,11 +847,13 @@ class ConversationLoop:
                 barge_in.set()
                 break
             for block in self._capture.poll_blocks():
-                wake_event = self._wake.poll(block)
-                if wake_event is not None:
+                if self._barge_trigger(block, speech_started):
                     barge_in.set()
+                    # All four actions: cancel the turn, flush what is queued
+                    # (the stop is the playback's own), freeze via the CANCEL cue.
                     if turn_id is not None:
                         self._cancel_turn(turn_id)
+                    self._playback.flush()
                     self._render(Cue(phase=Phase.CANCEL, cue_seq=self._next_cue_seq()))
                     break
             time.sleep(_WAKE_POLL_SLEEP_S)
@@ -844,15 +866,42 @@ class ConversationLoop:
         # connect/read timeout, which barge-in's stop_event usually
         # beats by checking between every streamed chunk.
         speak_thread.join()
-        if barge_in.is_set():
+        try:
+            if barge_in.is_set():
+                return False
+            if link_lost.is_set():
+                # Mid-sentence loss: the reply was not finished, so this is a
+                # cancel, never the settle a finished reply earns.
+                self._link_lost("speech playback lost the hub")
+                return True
+            self._render(Cue(phase=Phase.DONE, cue_seq=self._next_cue_seq()))
             return False
-        if link_lost.is_set():
-            # Mid-sentence loss: the reply was not finished, so this is a
-            # cancel, never the settle a finished reply earns.
-            self._link_lost("speech playback lost the hub")
+        finally:
+            self._hold_for_tail(outer_stop_event)
+
+    def _barge_trigger(self, block, speech_started: float) -> bool:
+        """Wake, the local stop word, or (only with the open-mic setting on) talk-over."""
+        if self._wake.poll(block) is not None:
             return True
-        self._render(Cue(phase=Phase.DONE, cue_seq=self._next_cue_seq()))
+        if self._stop_detector is not None and self._stop_detector.accept(block):
+            return True
+        if self._open_mic:
+            mic_rms = (
+                float(np.sqrt(np.mean(np.square(block, dtype="float64")))) if len(block) else 0.0
+            )
+            return talk_over(
+                mic_rms, self._playback.recent_rms(), self._funnel_clock() - speech_started
+            )
         return False
+
+    def _hold_for_tail(self, stop_event: threading.Event) -> None:
+        """The capture is drained, never scored, until 450 ms after the last played
+        sample, so the robot's own last syllable cannot wake it (G7 amended)."""
+        until = self._playback.listen_again_at()
+        while not stop_event.is_set() and self._funnel_clock() < until:
+            self._capture.poll_blocks()
+            stop_event.wait(min(_WAKE_POLL_SLEEP_S, max(0.0, until - self._funnel_clock())))
+        self._wake.reset()
 
     def _speak_worker(
         self,
@@ -860,9 +909,17 @@ class ConversationLoop:
         stop_event: threading.Event,
         on_first_chunk,
         link_lost: threading.Event,
+        turn_id: str | None = None,
+        generation: int | None = None,
     ) -> None:
         try:
-            self._tts.speak(reply_text, on_first_chunk=on_first_chunk, stop_event=stop_event)
+            self._tts.speak(
+                reply_text,
+                on_first_chunk=on_first_chunk,
+                stop_event=stop_event,
+                turn_id=turn_id,
+                generation=generation,
+            )
         except (TtsLinkLost, requests.RequestException):
             logger.warning("tts playback failed", exc_info=True)
             link_lost.set()
