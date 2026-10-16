@@ -33,6 +33,24 @@ the build guide) is in build; Reachy Mini by Pollen Robotics
 is in build too, behind the same HAL seam, and neither is supported
 until every row of that design's section 13 is true.
 
+## StackChan
+
+StackChan is a small robot that can turn and nod its head, light its ring,
+play and hear sound, and take pictures. The ring turns red whenever the
+camera is looking. The Bot reads the battery level.
+
+StackChan needs MaiPai's custom firmware, flashed once before setup. The Bot
+host runs a translator that connects the robot to MaiPai. Its audio and camera
+stay on your home network and do not go to the vendor cloud. The pairing page
+shows a pending device; press **Approve** for your robot.
+
+Audio and camera data are not encrypted while they travel on your home
+network. Keep StackChan and the Bot host on a trusted network. StackChan has
+not yet been verified on real hardware.
+
+See the [StackChan firmware guide](body/maipai_body/bodies/stackchan/firmware/README.md)
+and [household setup steps](docs/user/stackchan-setup.md).
+
 ## Development
 
 See [docs/dev.md](docs/dev.md) for the design record and
