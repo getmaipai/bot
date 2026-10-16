@@ -46,6 +46,8 @@ class StackChanFirmware:
         self._motion_started_at = time.monotonic()
         self._motion_duration = 0.0
         self.led_color = (0, 0, 0)
+        self.led_colors = ((0, 0, 0),) * 12
+        self.camera_indicator_active = False
         self.volume = 50
         self.tool_calls: list[tuple[str, dict[str, Any]]] = []
         self.motion_commands: list[tuple[dict[str, int], dict[str, int]]] = []
@@ -301,6 +303,7 @@ class StackChanFirmware:
                         "self.robot.get_head_angles",
                         "self.robot.set_head_angles",
                         "self.robot.set_led_color",
+                        "self.robot.set_led_colors",
                         "self.audio_speaker.set_volume",
                     )
                 ]
@@ -350,6 +353,21 @@ class StackChanFirmware:
             return {"accepted": True, **target}
         if name == "self.robot.set_led_color":
             self.led_color = tuple(int(arguments[key]) for key in ("red", "green", "blue"))
+            self.led_colors = (self.led_color,) * 12
+            return {"accepted": True}
+        if name == "self.robot.set_led_colors":
+            colors = [
+                tuple(
+                    int(arguments[f"led_{index}_{channel}"]) for channel in ("red", "green", "blue")
+                )
+                for index in range(12)
+            ]
+            if self.camera_indicator_active:
+                self.led_color = (168, 0, 0)
+                self.led_colors = (self.led_color,) * 12
+            else:
+                self.led_colors = tuple(colors)
+                self.led_color = colors[0] if len(set(colors)) == 1 else (-1, -1, -1)
             return {"accepted": True}
         if name == "self.audio_speaker.set_volume":
             self.volume = int(arguments["volume"])

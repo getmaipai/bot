@@ -21,6 +21,10 @@ class FakeStackChanDeviceClient:
         self.head_angles = {"yaw": 0, "pitch": 45}
         self.volume = 50
         self.led_color = (0, 0, 0)
+        self.led_colors = ((0, 0, 0),) * 12
+        self._camera_indicator_active = False
+        self._camera_indicator_depth = 0
+        self._camera_indicator_saved: list[tuple[int, int, int]] | None = None
         self.calls: list[FakeToolCall] = []
         self.pending_motion: list[object] = []
         self.cancelled_motion_batches = 0
@@ -80,9 +84,25 @@ class FakeStackChanDeviceClient:
     def set_led_color(self, red: int, green: int, blue: int) -> dict[str, int]:
         self._require_link()
         self.led_color = (red, green, blue)
+        self.led_colors = ((red, green, blue),) * 12
         arguments = {"red": red, "green": green, "blue": blue}
         self.calls.append(FakeToolCall("self.robot.set_led_color", arguments))
         return arguments
+
+    def set_led_colors(self, colors: list[tuple[int, int, int]]) -> dict[str, bool]:
+        self._require_link()
+        if len(colors) != 12:
+            raise ValueError("StackChan LED tool needs exactly 12 colors")
+        colors = list(colors)
+        if self._camera_indicator_active or self._camera_indicator_depth:
+            self.led_color = (168, 0, 0)
+            self.led_colors = ((168, 0, 0),) * 12
+        else:
+            self.led_colors = tuple(colors)
+            self.led_color = colors[0] if len(set(colors)) == 1 else (-1, -1, -1)
+        arguments = {f"led_{index}": color for index, color in enumerate(colors)}
+        self.calls.append(FakeToolCall("self.robot.set_led_colors", arguments))
+        return {"accepted": True}
 
     def set_volume(self, volume: int) -> dict[str, int]:
         self._require_link()
@@ -134,7 +154,13 @@ class FakeStackChanDeviceClient:
         if self.led_color != (168, 0, 0):
             raise AssertionError("camera capture refused because its indicator is off")
         self.calls.append(FakeToolCall("camera.take_photo", {}))
-        return self.photo
+        self._camera_indicator_active = True
+        self._camera_indicator_depth += 1
+        try:
+            return self.photo
+        finally:
+            self._camera_indicator_depth -= 1
+            self._camera_indicator_active = False
 
     def send_avatar_frame(self, frame: bytes) -> None:
         self._require_link()

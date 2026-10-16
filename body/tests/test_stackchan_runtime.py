@@ -25,9 +25,8 @@ def test_runtime_renders_idle_turn_and_tracking_through_robot_api():
         assert device.avatar_frames
         assert any(call.name == "self.robot.set_head_angles" for call in device.calls)
         assert any(
-            call.name == "self.robot.set_led_color"
-            and (call.arguments["red"], call.arguments["green"], call.arguments["blue"])
-            != (0, 0, 0)
+            call.name == "self.robot.set_led_colors"
+            and any(color != (0, 0, 0) for color in call.arguments.values())
             for call in device.calls
         )
     finally:

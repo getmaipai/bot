@@ -107,6 +107,7 @@ class StackChanFirmwareEndToEndTests(unittest.IsolatedAsyncioTestCase):
                 "self.robot.get_head_angles",
                 "self.robot.set_head_angles",
                 "self.robot.set_led_color",
+                "self.robot.set_led_colors",
                 "self.audio_speaker.set_volume",
             },
         )

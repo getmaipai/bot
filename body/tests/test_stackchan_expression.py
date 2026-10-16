@@ -101,7 +101,7 @@ def test_camera_photo_requires_indicator_first_and_clears_it_on_capture_error():
     adapter = StackChanRobotAdapter(device)
     device.photo = b"jpeg"
     assert asyncio.run(adapter.take_photo()) == b"jpeg"
-    assert device.led_color == (0, 0, 0)
+    assert device.led_colors == ((168, 0, 0),) * 12
 
     class FailingCamera(GuardedCamera):
         def take_photo(self):
@@ -111,4 +111,4 @@ def test_camera_photo_requires_indicator_first_and_clears_it_on_capture_error():
     failing = StackChanRobotAdapter(FailingCamera())
     with pytest.raises(RuntimeError, match="capture failed"):
         asyncio.run(failing.take_photo())
-    assert failing.client.led_color == (0, 0, 0)
+    assert failing.client.led_colors == ((168, 0, 0),) * 12

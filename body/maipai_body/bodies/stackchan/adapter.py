@@ -31,6 +31,8 @@ class StackChanDeviceClient(Protocol):
 
     def set_led_color(self, red: int, green: int, blue: int) -> object: ...
 
+    def set_led_colors(self, colors: list[tuple[int, int, int]]) -> object: ...
+
     def set_volume(self, volume: int) -> object: ...
 
     def cancel_pending(self) -> None: ...
@@ -114,6 +116,7 @@ class _HeadAdapter:
 class _LedAdapter:
     def __init__(self, client: StackChanDeviceClient) -> None:
         self.client = client
+        self.camera_indicator_active = False
 
     def command(self, verb: str, *args: Any, **kwargs: Any) -> object:
         if verb == "set":
@@ -154,14 +157,16 @@ class _LedAdapter:
             ):
                 raise ValueError(f"LED channels must be integers from 0 to {LED_CHANNEL_MAX}")
             colors.append((rgb[0], rgb[1], rgb[2]))
-        if indexes != set(range(LED_COUNT)) or len(set(colors)) != 1:
+        if indexes != set(range(LED_COUNT)):
             raise NotSupported(
-                "StackChan cannot set separate LED colors",
+                "StackChan requires an update for each LED index",
                 part="leds",
                 capability="light_ring",
-                fix="Use one RGB color for every light index in the ring.",
+                fix="Include all 12 light indexes.",
             )
-        return self.client.set_led_color(*colors[0])
+        if self.camera_indicator_active:
+            return self.client.set_led_color(LED_CHANNEL_MAX, 0, 0)
+        return self.client.set_led_colors(colors)
 
 
 class _AudioAdapter:
@@ -331,12 +336,16 @@ class _CameraAdapter:
         self._light_off()
 
     def _light_on(self) -> None:
+        self.robot._driver("leds").camera_indicator_active = True
         self.robot.leds.many(
             [{"index": index, "rgb": [LED_CHANNEL_MAX, 0, 0]} for index in range(LED_COUNT)]
         )
 
     def _light_off(self) -> None:
-        self.robot.leds.many([{"index": index, "rgb": [0, 0, 0]} for index in range(LED_COUNT)])
+        try:
+            self.robot.leds.many([{"index": index, "rgb": [0, 0, 0]} for index in range(LED_COUNT)])
+        finally:
+            self.robot._driver("leds").camera_indicator_active = False
 
 
 class _ExpressionDevice:
@@ -501,8 +510,7 @@ class StackChanRobotAdapter:
         return await asyncio.to_thread(self._set_led_color, red, green, blue)
 
     def _set_led_color(self, red: int, green: int, blue: int) -> object:
-        updates = [{"index": index, "rgb": [red, green, blue]} for index in range(LED_COUNT)]
-        return self.robot.leds.many(updates)
+        return self.client.set_led_color(red, green, blue)
 
     async def set_volume(self, volume: int) -> object:
         return await asyncio.to_thread(self.robot.audio.speaker.volume, volume)

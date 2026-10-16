@@ -72,6 +72,8 @@ unit. Fake-peer tests cover the host contract only; hardware has not arrived.
 
 Battery is now read through the firmware's read-only `self.battery.get_status` MCP tool, which returns `{ "percent": integer 0..100, "charging": boolean }`. Patch 009 makes failed AXP2101 I2C reads return a safe zero rather than aborting the firmware; a host timeout or malformed tool result maps to `BodyLost`. Touch and IMU remain `NotSupported` because the pinned translator exposes no read-only MCP tools for them. Source-derived chip and register notes are in [the sensor map](stackchan-sensor-map.md); unit measurements are tracked in [the unit-arrival runbook](stackchan-unit-measurements.md). The unit-arrival fixture recorder and host-only egress proof are implemented; real-unit protocol capture and packet-capture results remain pending because hardware has not arrived.
 
+Patch 012 adds `self.robot.set_led_colors`, which accepts one RGB triplet per pixel and writes all 12 pixels through the pinned HAL's existing per-index `setRgbColor` primitive before refreshing the strip once. The Robot `leds.many` adapter keeps the complete-ring update requirement and preserves the existing validation error shapes. Camera capture still uses the whole-ring `self.robot.set_led_color` operation for red; while capture is active, adapter and fake reject the effect of per-pixel writes by restoring red across the ring. The pinned base has per-index HAL writes but no per-pixel MCP tool. Fake-peer tests cover distinct colors and capture indicator protection. Hardware has not arrived, so this has no hardware verification.
+
 ## Tests
 
 The STACKCHAN-30 failure, soak and privacy suite is software-only and uses the
