@@ -82,6 +82,9 @@ def _resample(
     return resample_poly(samples, up, down).astype(np.float32)
 
 
+resample_audio = _resample  # the public name: the speech process reuses the same resampler
+
+
 class TtsPlaybackClient:
     """Streams `POST /api/tts`'s reply into `playback` as it arrives."""
 

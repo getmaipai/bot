@@ -86,6 +86,13 @@ class WakeScorer:
         self._engine.reset()
         return event
 
+    def reset(self) -> None:
+        """Forget the audio scored so far (the speech process calls this when
+        a listen window ends, so the phrase that woke the robot cannot wake
+        it again)."""
+        self.last_score = 0.0
+        self._engine.reset()
+
 
 class OpenWakeWordEngine:
     """The real `WakeEngine`: openWakeWord's own `Model`, pointed at

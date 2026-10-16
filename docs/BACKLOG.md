@@ -2356,6 +2356,24 @@ Unchanged and still open, dispatched as already written: EYES-02 to EYES-07 (rev
       fixtures; the hub's voice-contract client talks to the body's
       server in a test; M-06 and M-08 recorded. Out of scope: the
       runtime. Exit: `bash scripts/check.sh`.
+      **Built 2026-10-16 (lane D), left open for the unit rows:**
+      `speech/process.py` (`SpeechProcess`: wake, Silero-gated listen,
+      pre-roll trim, retry from the onset block, the 6 s patience, the
+      tail-syllable rule, a 12 s cap, DOA at onset, the spoken-text ledger
+      with the heard prefix), `speech/engines.py` (the engine seams),
+      `speech/voice_server.py` (the voice contract's `GET /health`,
+      `POST /tts` and `WS /api/stt/stream`), `speech/sherpa_engines.py`
+      (Silero, Moonshine, Piper, CAM++). Tests run the state machine on
+      scripted blocks with the fake body, and the hub's own
+      `PocketTtsClient` (Bun) and the robot's `SttStreamClient` talk to the
+      body's server for real. Not done: M-06 and M-08 (the unit); the sherpa
+      engines have never run against a model (`sherpa_onnx` does not load on
+      the dev Mac), so they are UNVERIFIED; the endpointing rows used
+      scripted blocks, not recorded fixtures. **Spec gap (commons):** the
+      voice contract has no wake event and no endpoint event, so the wake
+      word and the follow-up window stay in the body process until the
+      contract adds them; and the spec pins no Moonshine, Silero, Piper or
+      CAM++ model, so the engines take paths and the fetch pins wait on it.
 - [ ] **VOICE-02: barge-in and double-talk** (S, after VOICE-01).
       Objective: a "stop" over playback cuts playback locally within one
       block, sends `cancel` to the runtime, and the ledger holds the
