@@ -712,6 +712,7 @@ def _build_conversation_loop(
         is_asleep=is_asleep,
         wake_from_sleep=wake_from_sleep,
         offer_engine=offer_engine,
+        band_of=people.band_of,
         presence_entries=lambda: presence_entries_from(vision_watch.current(), people.band_of),
     )
     loop.subscribe_view(director.on_view)

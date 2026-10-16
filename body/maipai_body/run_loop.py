@@ -60,9 +60,11 @@ from maipai_body.presence.sleep_auto import SleepAutoPolicy
 from maipai_body.presence.thermal import ThermalState
 from maipai_body.presence.touch import AntennaTouchDetector
 from maipai_body.speaker_evidence import (
+    AgeBand,
     PresentEntry,
     SpeakerEvidence,
     claimed_evidence,
+    effective_band,
     sensitive_allowed,
     unknown_evidence,
 )
@@ -202,6 +204,7 @@ class ConversationLoop:
         vision_watch: VisionWatch | None = None,
         offline: OfflineRungs | None = None,
         react_hook: Callable[..., bool] | None = None,
+        band_of: Callable[[str], AgeBand | None] | None = None,
         motion_clock: Callable[[], float] = time.monotonic,
         carry_gravity_compensation: bool = False,
         teach_active: Callable[[], bool] | None = None,
@@ -320,6 +323,8 @@ class ConversationLoop:
         self._offline = offline
         # MOVES-01 plan react hook; optional and inert until the wire names a move.
         self._react_hook = react_hook
+        # The speaker's age band for the allow-list; without a roster everyone is the child band.
+        self._band_of = band_of or (lambda _person: None)
         # MOVE-CARRY-01: lifted, carried and put down. `holding` is the motion
         # floor: no tracking, cue, breathe or move is commanded while it is true.
         self._motion = MotionStateMachine()
@@ -1250,6 +1255,7 @@ class ConversationLoop:
                 ArbitrationState(),
                 react_allowed=react_allowed,
                 muted=self._is_muted(),
+                band=effective_band(self.last_evidence, self._band_of)[0],
             )
         except Exception:
             logger.warning("react move %r failed", move, exc_info=True)

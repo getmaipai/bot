@@ -42,12 +42,15 @@ class ReactHook:
         *,
         react_allowed: bool,
         muted: bool = False,
+        band: str = "unknown",
     ) -> bool:
         """Play ``move`` if the flag is on and the plan allows it; say whether it played."""
         if not self._enabled:
             return False
         try:
-            self._service.react(move, arbitration, react_allowed=react_allowed, muted=muted)
+            self._service.react(
+                move, arbitration, react_allowed=react_allowed, muted=muted, band=band
+            )
         except MoveRefused:
             return False
         return True

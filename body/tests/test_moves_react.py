@@ -95,7 +95,7 @@ def _run_one_turn(react_hook, events):
 def test_the_loop_calls_the_hook_after_the_reply_is_spoken():
     calls = []
 
-    def hook(move, arbitration, *, react_allowed, muted):
+    def hook(move, arbitration, *, react_allowed, muted, band="child"):
         calls.append((move, react_allowed, muted, isinstance(arbitration, ArbitrationState)))
         return True
 
@@ -107,7 +107,7 @@ def test_the_loop_calls_the_hook_after_the_reply_is_spoken():
 def test_the_loop_passes_the_plans_react_permission_through():
     calls = []
 
-    def hook(move, arbitration, *, react_allowed, muted):
+    def hook(move, arbitration, *, react_allowed, muted, band="child"):
         calls.append(react_allowed)
         return False
 
@@ -125,7 +125,7 @@ def test_no_hook_and_no_move_name_means_no_call():
 
 
 def test_a_failing_hook_never_breaks_the_turn():
-    def hook(move, arbitration, *, react_allowed, muted):
+    def hook(move, arbitration, *, react_allowed, muted, band="child"):
         raise RuntimeError("move library unreachable")
 
     parts = _run_one_turn(hook, _turn_events(react_move="happy1", react_allowed=True))
@@ -174,3 +174,49 @@ def test_build_react_hook_with_the_flag_on_is_a_hook_over_the_pinned_library(tmp
     # network, so nothing can be fetched: an unpinned name fails loudly.
     with pytest.raises(Exception, match="not in the pinned|no pin"):
         hook("happy1", _OPEN, react_allowed=True)
+
+
+def test_the_loop_passes_the_speakers_band_to_the_hook():
+    from maipai_body.speaker_evidence import claimed_evidence
+
+    seen = []
+
+    def hook(move, arbitration, *, react_allowed, muted, band):
+        seen.append(band)
+        return True
+
+    loop, _ = _make_loop(
+        wake_events=[], turn_events=[], react_hook=hook, band_of={"person-abc123": "adult"}.get
+    )
+    loop.last_evidence = claimed_evidence("person-abc123")
+    loop._play_react("happy1", True)
+    loop.last_evidence = None
+    loop._play_react("happy1", True)
+    assert seen == ["adult", "child"]  # no identified speaker is the child band
+
+
+def test_a_loop_without_a_roster_holds_every_speaker_to_the_child_band():
+    from maipai_body.speaker_evidence import claimed_evidence
+
+    seen = []
+    loop, _ = _make_loop(
+        wake_events=[],
+        turn_events=[],
+        react_hook=lambda move, arb, *, react_allowed, muted, band: seen.append(band) or True,
+    )
+    loop.last_evidence = claimed_evidence("person-abc123")
+    loop._play_react("happy1", True)
+    assert seen == ["child"]
+
+
+def test_the_react_hook_hands_the_band_to_the_service():
+    seen = []
+
+    class Service:
+        def react(self, name, arbitration, *, react_allowed, muted, band):
+            seen.append(band)
+
+    assert ReactHook(Service(), enabled=True)(
+        "happy1", ArbitrationState(), react_allowed=True, band="adult"
+    )
+    assert seen == ["adult"]
