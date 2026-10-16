@@ -142,3 +142,26 @@ def test_reconnect_hook_reapplies_mic_profile_each_time():
     assert config.on_connect().ok
     assert config.on_connect().ok
     assert sum(call == ("mic_volume", 100) for call in daemon.calls) == 2
+
+
+def test_a_daemon_audio_http_error_does_not_mark_the_body_lost(monkeypatch):
+    """The sim and `--no-media` daemon answers 503 on the audio routes: not a lost body."""
+
+    class Response:
+        status_code = 503
+
+        def raise_for_status(self):
+            raise reachy_client_module.requests.HTTPError(
+                "503 Server Error: Service Unavailable", response=self
+            )
+
+    monkeypatch.setattr(reachy_client_module.requests, "get", lambda url, **kw: Response())
+    monkeypatch.setattr(reachy_client_module.requests, "post", lambda url, **kw: Response())
+    fake_sdk = SimpleNamespace(
+        _daemon_http_url="http://fake-daemon:8000",
+        client=SimpleNamespace(disconnect=lambda: None),
+    )
+    adapter = ReachyMiniClient(reachy=fake_sdk)
+    assert adapter.audio_setup.ok is False
+    assert adapter.audio_setup.health == "audio_config_failed"
+    adapter._require_connected()  # raises BodyLost if the 503 poisoned the client

@@ -103,6 +103,8 @@ class ReachyMiniClient:
             )
             response.raise_for_status()
             return [float(value) for value in response.json()["values"]]
+        except requests.HTTPError as error:
+            raise RuntimeError(f"daemon audio route refused: {error}") from error
         except (*_CONNECTION_LOST_ERRORS, requests.RequestException) as error:
             self._mark_lost(error)
 
@@ -119,6 +121,8 @@ class ReachyMiniClient:
             )
             response.raise_for_status()
             return bool(response.json().get("applied"))
+        except requests.HTTPError as error:
+            raise RuntimeError(f"daemon audio route refused: {error}") from error
         except (*_CONNECTION_LOST_ERRORS, requests.RequestException) as error:
             self._mark_lost(error)
 
@@ -136,6 +140,8 @@ class ReachyMiniClient:
             )
             response.raise_for_status()
             return int(response.json()["volume"])
+        except requests.HTTPError as error:
+            raise RuntimeError(f"daemon audio route refused: {error}") from error
         except (*_CONNECTION_LOST_ERRORS, requests.RequestException) as error:
             self._mark_lost(error)
 
