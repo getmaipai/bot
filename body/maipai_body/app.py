@@ -61,11 +61,11 @@ from maipai_body.link.state_machine import (
 from maipai_body.link.supervisor import LinkSupervisor
 from maipai_body.link.timesync import ClockSync, system_clock_setter
 from maipai_body.moves.react import build_react_hook
+from maipai_body.presence.entries import presence_entries_from
 from maipai_body.presence.motor_health import MotorHealth
 from maipai_body.presence.thermal import ThermalMonitor
 from maipai_body.run_loop import ConversationLoop
 from maipai_body.speech.capture import AudioCapture
-from maipai_body.presence.entries import presence_entries_from
 from maipai_body.speech.follow_up import FollowUpPolicy, PeopleDirectory
 from maipai_body.speech.models import EMBEDDING, MELSPECTROGRAM, WAKE_PHRASE, ensure_wakeword_models
 from maipai_body.speech.offline_clips import (

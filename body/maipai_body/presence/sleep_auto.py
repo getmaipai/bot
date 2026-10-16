@@ -25,7 +25,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, time as dtime
+from datetime import datetime
+from datetime import time as dtime
 from typing import Literal
 
 DARK_LUMA = 25.0  # of 255; UNMEASURED

@@ -54,11 +54,11 @@ from maipai_body.presence.carry_reaction import (
 )
 from maipai_body.presence.funnel import FunnelState, FunnelView, SettleGate
 from maipai_body.presence.knock import KnockDetector
-from maipai_body.presence.sleep_auto import SleepAutoPolicy
-from maipai_body.presence.touch import AntennaTouchDetector
 from maipai_body.presence.motion_state import MotionState, MotionStateMachine
 from maipai_body.presence.observations import PresenceObservation, read_presence
+from maipai_body.presence.sleep_auto import SleepAutoPolicy
 from maipai_body.presence.thermal import ThermalState
+from maipai_body.presence.touch import AntennaTouchDetector
 from maipai_body.speaker_evidence import (
     PresentEntry,
     SpeakerEvidence,
