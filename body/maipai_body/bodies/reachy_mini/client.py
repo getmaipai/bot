@@ -45,6 +45,7 @@ from maipai_body.hal.seam import (
     StateFrame,
 )
 
+from .audio_config import AudioConfigurator, AudioSetupResult
 from .envelope import clamp_target
 from .profile import REACHY_MINI_PROFILE
 
@@ -80,6 +81,62 @@ class ReachyMiniClient:
         self.profile = profile
         self._lost = False
         self._reachy = reachy or ReachyMini(host=host, port=port, connection_mode=connection_mode)
+        self.audio = AudioConfigurator(self)
+        self.audio_setup = self.audio.on_connect()
+
+    def audio_reconnected(self) -> AudioSetupResult:
+        """Reapply the profile after a daemon audio stream reconnects."""
+        self.audio.mark_capture_started()
+        self.audio_setup = self.audio.on_connect()
+        return self.audio_setup
+
+    @property
+    def _daemon_base(self) -> str:
+        return str(self._reachy._daemon_http_url).rstrip("/")
+
+    def get_audio_parameter(self, name: str) -> list[float]:
+        self._require_connected()
+        try:
+            response = requests.get(
+                f"{self._daemon_base}/api/audio/config/parameter/{name}", timeout=5
+            )
+            response.raise_for_status()
+            return [float(value) for value in response.json()["values"]]
+        except (*_CONNECTION_LOST_ERRORS, requests.RequestException) as error:
+            self._mark_lost(error)
+
+    def apply_audio_config(self, config: dict[str, list[float]], verify: bool = True) -> bool:
+        self._require_connected()
+        try:
+            response = requests.post(
+                f"{self._daemon_base}/api/audio/config/apply",
+                json={
+                    "config": [{"name": name, "values": values} for name, values in config.items()],
+                    "verify": verify,
+                },
+                timeout=5,
+            )
+            response.raise_for_status()
+            return bool(response.json().get("applied"))
+        except (*_CONNECTION_LOST_ERRORS, requests.RequestException) as error:
+            self._mark_lost(error)
+
+    def set_microphone_volume(self, volume: int) -> int:
+        return self._set_volume("/api/volume/microphone/set", volume)
+
+    def set_output_volume(self, volume: int) -> int:
+        return self._set_volume("/api/volume/set", volume)
+
+    def _set_volume(self, endpoint: str, volume: int) -> int:
+        self._require_connected()
+        try:
+            response = requests.post(
+                f"{self._daemon_base}{endpoint}", json={"volume": volume}, timeout=5
+            )
+            response.raise_for_status()
+            return int(response.json()["volume"])
+        except (*_CONNECTION_LOST_ERRORS, requests.RequestException) as error:
+            self._mark_lost(error)
 
     # -- connection lifecycle --
 
@@ -153,7 +210,7 @@ class ReachyMiniClient:
             self._reachy.client.send_command(StopMoveCmd())
         except _CONNECTION_LOST_ERRORS as error:
             self._mark_lost(error)  # NoReturn: raises BodyLost
-        base = self._reachy._daemon_http_url
+        base = self._daemon_base
         try:
             pose = HeadPose(**requests.get(f"{base}/api/state/present_head_pose", timeout=5).json())
             left, right = requests.get(

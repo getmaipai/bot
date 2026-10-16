@@ -70,6 +70,13 @@ header (the scripts write all three). Never a hostname, never a transcript.
 | M-R3 | `measure_mr3_wake_doa.py` parts 1 to 5 | 3 hours, most of it the false-accept listen | gates from `dev.md` section 11 |
 | M-R4 | `measure_mr4_battery.py probe`, then one `run` per workload from a full charge | a day or more of wall clock | runtime to the LED's red by workload; whether any fact is readable; whether it runs while charging |
 
+Reachy Mini startup applies the XVF3800 profile and mic volume through the
+daemon on every client connection. Deterministic fakes cover the request
+payloads, verification and failure path. The simulator has no array or audio
+path, so tuning response, ALSA `PCM`/`PCM,1`, XMOS recovery and M-R3 acoustic
+results remain unverified until the unit run; do not treat a fake or simulator
+result as a device measurement.
+
 Each script's own docstring has the exact commands, flags and prompts. Order
 of work: M-R2 first (it also checks the envelope against the declared limits on
 the real head), then M-R5, M-R1, M-R3, and M-R4 last because it needs the
