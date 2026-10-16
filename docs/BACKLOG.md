@@ -2400,6 +2400,16 @@ Unchanged and still open, dispatched as already written: EYES-02 to EYES-07 (rev
       Acceptance: the same text through the hub's normalizer and the
       robot's produces identical speech text (the spec fixtures). Exit:
       `bash scripts/check.sh`.
+      **Built 2026-10-16 (lane D), left open for M-09 and a real Piper
+      voice:** `speech/normalize.py` loads the pinned spec's own
+      `normalize_for_speech.py` (no second copy) and a test runs all 50
+      shared fixtures through it; `speech/voices.py` resolves a companion's
+      `voice_id` to an installed voice that lists the `bot` platform, else
+      the default voice with the notice "voice not available on this
+      robot" (never silent, never another companion); `num2words` joins the
+      `voice` extra. UNVERIFIED: a Piper package synthesizing on the robot
+      (see VOICE-01) and M-09. The package install path for a voice is not
+      built.
 
 ## Household runtime on the robot
 
