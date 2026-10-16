@@ -2380,6 +2380,18 @@ Unchanged and still open, dispatched as already written: EYES-02 to EYES-07 (rev
       exact spoken prefix. Acceptance: the double-talk rows pass on the
       bench array at real playback levels with zero self-wakes. Exit:
       `bash scripts/check.sh`.
+      **Built 2026-10-16 (lane D), left open for the bench row:**
+      `SpeechProcess.speak` reads the capture while it talks, asks a
+      `StopDetector` (`speech/barge.py`, a VAD-gated transcript check on a
+      closed stop list) once per block, stops the output on a hit or on
+      `stop_event`, runs the cancel callback, and writes the words that had
+      fully played (rounded down) to the ledger. Fake-body tests show the cut
+      at the block of the stop, the prefix, the cancel call, and zero
+      self-wakes with the echo looped into the capture. UNVERIFIED: the
+      double-talk rows on the bench array at real playback levels (M-R3),
+      which decide whether the array's echo cancellation leaves the robot
+      deaf to its own voice. BARGE-02 swaps the keyword spotter in behind
+      the same seam.
 - [ ] **VOICE-03: the voice packages on the robot** (S, after VOICE-01).
       Objective: a Piper voice package served by the body's speech
       process through the shared voice contract;
