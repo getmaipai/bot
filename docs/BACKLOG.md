@@ -1975,8 +1975,8 @@ The offline ladder (LINK-STATE-01 below) is scoped to the Reachy Mini.
       yields none; the funnel never leaves `idle` except for a rung 1
       command; the Compute Module CPU and false-accept row is written as
       UNVERIFIED with a measurement script entry. Exit: `bash
-      scripts/check.sh`. **Built 2026-10-05 on the branch
-      `cloud/kws-rung1`, not landed:** `speech/kws.py` (pinned model
+      scripts/check.sh`. **Built 2026-10-05, landed on main
+      (confirmed 2026-10-16):** `speech/kws.py` (pinned model
       fetched on demand, a committed keyword file, a bounded listen window
       after the wake), behind a new optional `kws` extra, with scripted-engine
       tests that always run and real-model tests gated on
