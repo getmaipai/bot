@@ -20,8 +20,6 @@ EXPECTED_KEYS = {
     "robot.indicator.enabled",
     "robot.indicator.brightness",
     "robot.indicator.night_brightness",
-    "robot.indicator.night_from",
-    "robot.indicator.night_to",
     "robot.indicator.sleep_eyes",
     "robot.indicator.alarm",
 }
@@ -39,10 +37,10 @@ ALLOWED_FIELDS = {
 }
 
 
-def test_exactly_the_seven_keys():
+def test_exactly_the_five_keys():
     declared = eyes_settings_declaration("eyes")
     assert {entry["key"] for entry in declared} == EXPECTED_KEYS
-    assert len(declared) == 7
+    assert len(declared) == 5
     assert set(INDICATOR_KEYS) == EXPECTED_KEYS
 
 
@@ -81,7 +79,7 @@ def test_out_of_range_or_malformed_values_fall_back_to_the_default():
     bad = {
         "robot.indicator.brightness": 9,
         "robot.indicator.night_brightness": "bright",
-        "robot.indicator.night_from": "25:99",
+        "household.quiet_hours.from": "25:99",
         "robot.indicator.sleep_eyes": "strobe",
         "robot.indicator.enabled": "yes",
     }
@@ -99,3 +97,16 @@ def test_the_declarations_validate_against_spec_settings_key_schema_when_availab
     for capability in ("eyes", "light_ring"):
         for entry in eyes_settings_declaration(capability):
             jsonschema.validate(entry, schema)
+
+
+def test_night_is_the_household_quiet_hours_from_the_settings_frame():
+    parsed = parse_settings(
+        {"household.quiet_hours.from": "22:30", "household.quiet_hours.to": "06:15"}
+    )
+    assert (parsed.night_from, parsed.night_to) == (22 * 60 + 30, 6 * 60 + 15)
+
+
+def test_the_retired_robot_night_keys_are_ignored_and_not_declared():
+    parsed = parse_settings({"robot.indicator.night_from": "01:00"})
+    assert parsed.night_from == IndicatorSettings().night_from
+    assert not {"robot.indicator.night_from", "robot.indicator.night_to"} & set(INDICATOR_KEYS)

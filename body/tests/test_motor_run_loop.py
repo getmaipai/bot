@@ -19,10 +19,22 @@ class _Health:
             raise RuntimeError("watchdog bug")
 
     def status(self):
-        return {"motors_latched": ["head_1"], "motors_stuck": True}
+        return {
+            "motors_latched": ["head_1"],
+            "motors_stuck": True,
+            "motors_reboot_offer": ["head_1"],
+        }
 
     def confirm_reboot(self, name, *, person_touching=False):
         return name == "head_1" and not person_touching
+
+    def reboot_motors(self, names, *, person_touching=False):
+        self.reboots = getattr(self, "reboots", [])
+        self.reboots.append((list(names), person_touching))
+        if person_touching:
+            return {"rebooted": [], "failed": list(names)}
+        ok = [n for n in names if n == "head_1"]
+        return {"rebooted": ok, "failed": [n for n in names if n not in ok]}
 
 
 def test_each_presence_tick_runs_the_watchdog_and_the_loop_reports_its_status():
@@ -30,7 +42,11 @@ def test_each_presence_tick_runs_the_watchdog_and_the_loop_reports_its_status():
     bench = Bench(motor_health=health)
     bench.tick(0.3)
     assert len(health.ticks) == 3 and not any(health.ticks)
-    assert bench.loop.motor_status() == {"motors_latched": ["head_1"], "motors_stuck": True}
+    assert bench.loop.motor_status() == {
+        "motors_latched": ["head_1"],
+        "motors_stuck": True,
+        "motors_reboot_offer": ["head_1"],
+    }
     assert bench.loop.confirm_motor_reboot("head_1") is True
 
 
@@ -47,9 +63,42 @@ def test_a_failing_watchdog_never_breaks_the_presence_tick():
     assert bench.loop.state is not None
 
 
+def test_the_state_frame_carries_the_reboot_offer():
+    bench = Bench(motor_health=_Health())
+    bench.tick(0.2)
+    assert bench.loop.snapshot()["motors_reboot_offer"] == ["head_1"]
+
+
+def test_a_motor_reboot_goes_to_the_watchdog_and_pushes_a_state_frame():
+    health = _Health()
+    bench = Bench(motor_health=health)
+    bench.tick(0.3)
+    assert bench.loop.reboot_motors(["head_1", "head_9"]) == {
+        "rebooted": ["head_1"],
+        "failed": ["head_9"],
+    }
+    assert health.reboots == [(["head_1", "head_9"], False)]
+
+
+def test_a_motor_reboot_while_the_body_is_held_is_refused():
+    health = _Health()
+    bench = Bench(motor_health=health)
+    bench.tick(1.5, shake=True)
+    assert bench.loop.reboot_motors(["head_1"])["rebooted"] == []
+    assert health.reboots[-1][1] is True
+
+
+def test_with_no_watchdog_a_motor_reboot_fails_every_name():
+    assert Bench().loop.reboot_motors(["head_1"]) == {"rebooted": [], "failed": ["head_1"]}
+
+
 def test_with_no_watchdog_the_status_is_clean():
     bench = Bench()
-    assert bench.loop.motor_status() == {"motors_latched": [], "motors_stuck": False}
+    assert bench.loop.motor_status() == {
+        "motors_latched": [],
+        "motors_stuck": False,
+        "motors_reboot_offer": [],
+    }
     assert bench.loop.confirm_motor_reboot("head_1") is False
 
 
@@ -236,3 +285,33 @@ def test_a_thermal_level_change_tells_the_reporter_at_once():
     sampler.temp = 71.0
     bench.tick(0.2)
     assert len(changes) > before
+
+
+def test_a_new_reboot_offer_pushes_a_state_frame_once():
+    from tests.test_run_loop import _make_loop
+
+    class Health:
+        offer: list[str] = []
+
+        def tick(self, *, held=False):
+            pass
+
+        def status(self):
+            return {
+                "motors_latched": list(self.offer),
+                "motors_stuck": bool(self.offer),
+                "motors_reboot_offer": list(self.offer),
+            }
+
+    health = Health()
+    changes = []
+    loop, _parts = _make_loop(motor_health=health, on_change=lambda: changes.append(1))
+    loop._safety_ticks(False)
+    assert changes == []
+    health.offer = ["stewart_3"]
+    loop._safety_ticks(False)
+    loop._safety_ticks(False)
+    assert changes == [1]
+    health.offer = []
+    loop._safety_ticks(False)
+    assert changes == [1, 1]

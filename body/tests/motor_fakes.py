@@ -19,6 +19,7 @@ class FakeMotorBus:
         self.faulted = False
         self.refuse_enable_while_faulted = True
         self.reboot_target: str | None = None
+        self.reboot_fails: set[str] = set()
         self._cycled = False
 
     def plant_fault(self, *, cleared_by: str | None, latched: tuple[str, ...] = ()) -> None:
@@ -74,6 +75,8 @@ class FakeMotorBus:
 
     def reboot_motor(self, name: str) -> None:
         self.calls.append(f"reboot_motor:{name}")
+        if name in self.reboot_fails:
+            raise OSError(f"servo {name} did not answer")
         self.reboot_target = name
         self._clear("reboot")
 

@@ -96,24 +96,38 @@ def test_the_policy_never_touches_audio_so_the_wake_word_stays_live():
     assert not [m for m in modules if "speech" in m or "audio" in m or "kws" in m]
 
 
-def test_quiet_hours_cross_midnight_and_stay_off_until_both_bounds_arrive():
+def test_quiet_hours_use_the_registry_defaults_until_the_hub_sends_a_window():
     from datetime import datetime
 
     from maipai_body.presence.sleep_auto import QuietHours
 
     clock = {"now": datetime(2026, 10, 16, 22, 0)}
     quiet = QuietHours(now=lambda: clock["now"])
+    assert quiet.active() is True, "21:00 to 07:00 by default"
+    clock["now"] = datetime(2026, 10, 16, 12, 0)
     assert quiet.active() is False
-    quiet.apply({"household.quiet_hours.from": "21:00"})
+
+
+def test_quiet_hours_cross_midnight_follow_the_settings_frame_and_ignore_garbage():
+    from datetime import datetime
+
+    from maipai_body.presence.sleep_auto import QuietHours
+
+    clock = {"now": datetime(2026, 10, 16, 22, 0)}
+    quiet = QuietHours(now=lambda: clock["now"])
+    quiet.apply({"household.quiet_hours.from": "23:00", "household.quiet_hours.to": "05:00"})
     assert quiet.active() is False
-    quiet.apply({"household.quiet_hours.to": "07:00", "other": 1})
+    clock["now"] = datetime(2026, 10, 16, 23, 30)
     assert quiet.active() is True
     clock["now"] = datetime(2026, 10, 16, 3, 0)
     assert quiet.active() is True
-    clock["now"] = datetime(2026, 10, 16, 12, 0)
+    clock["now"] = datetime(2026, 10, 16, 6, 0)
     assert quiet.active() is False
-    quiet.apply({"household.quiet_hours.from": "garbage"})
-    assert quiet.active() is False
+    quiet.apply({"household.quiet_hours.from": "garbage", "other": 1})
+    clock["now"] = datetime(2026, 10, 16, 23, 30)
+    assert quiet.active() is True, "a malformed value keeps the last good one"
+    quiet.apply({"household.quiet_hours.from": "08:00", "household.quiet_hours.to": "08:00"})
+    assert quiet.active() is False, "equal bounds mean never"
 
 
 def test_the_luma_reader_never_reads_the_camera_at_level_off():

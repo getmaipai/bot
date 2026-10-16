@@ -71,16 +71,23 @@ def _parse_clock(value: object) -> dtime | None:
         return None
 
 
+DEFAULT_QUIET_FROM = dtime(21, 0)  # the registry defaults of household.quiet_hours.*
+DEFAULT_QUIET_TO = dtime(7, 0)
+
+
 class QuietHours:
     """The household quiet-hours window, from the hub's settings frame.
 
-    Unset until both ``household.quiet_hours.from`` and ``.to`` arrive; a window
-    that crosses midnight (21:00 to 07:00) is handled; equal bounds mean never."""
+    ``household.quiet_hours.from`` and ``.to`` are registry keys honoured by ``bot``
+    (spec-v0.1.151). Until the hub sends them the registry defaults apply (21:00 to
+    07:00), so a settings frame that only carries changes still gives the right window.
+    A window that crosses midnight is handled; equal bounds mean never; a malformed
+    value keeps the last good one."""
 
     def __init__(self, now: Callable[[], datetime] = datetime.now) -> None:
         self._now = now
-        self._from: dtime | None = None
-        self._to: dtime | None = None
+        self._from: dtime = DEFAULT_QUIET_FROM
+        self._to: dtime = DEFAULT_QUIET_TO
 
     def apply(self, values: Mapping[str, object]) -> None:
         start = _parse_clock(values.get("household.quiet_hours.from"))
@@ -91,7 +98,7 @@ class QuietHours:
             self._to = end
 
     def active(self) -> bool:
-        if self._from is None or self._to is None or self._from == self._to:
+        if self._from == self._to:
             return False
         now = self._now().time()
         if self._from < self._to:

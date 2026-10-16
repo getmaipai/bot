@@ -177,9 +177,14 @@ def test_sleep_auto_is_off_unless_gated_and_takes_its_settings_from_the_frame():
     sleep = app_module._build_sleep_auto(
         FakeReachyMiniClient(), MagicMock(device_level="presence"), {"MAIPAI_BOT_SLEEP_AUTO": "1"}
     )
+    assert sleep.policy.auto_enabled is True, "the registry default of robot.sleep.auto is on"
+    sleep.apply_settings({"robot.sleep.auto": False})
     assert sleep.policy.auto_enabled is False
     sleep.apply_settings({"robot.sleep.auto": True})
     assert sleep.policy.auto_enabled is True
+    sleep.apply_settings(
+        {"household.quiet_hours.from": "08:00", "household.quiet_hours.to": "08:00"}
+    )
     assert sleep.quiet.active() is False
 
 
@@ -196,3 +201,16 @@ def test_the_unmute_spotter_failing_to_load_leaves_the_hub_to_unmute(tmp_path, m
 
     monkeypatch.setattr(kws, "ensure_kws_model", boom)
     assert app_module._build_unmute_listener(tmp_path, {"MAIPAI_BOT_UNMUTE_SPOTTER": "1"}) is None
+
+
+def test_the_eyes_read_the_household_quiet_hours_from_the_settings_frame():
+    from maipai_body.app import _EYES_VALUES, _eyes_settings
+
+    try:
+        _EYES_VALUES.update(
+            {"household.quiet_hours.from": "20:00", "household.quiet_hours.to": "05:30"}
+        )
+        got = _eyes_settings()
+        assert (got.night_from, got.night_to) == (20 * 60, 5 * 60 + 30)
+    finally:
+        _EYES_VALUES.clear()

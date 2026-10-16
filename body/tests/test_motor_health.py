@@ -22,6 +22,8 @@ TARGET = Commanded(
     settle_until=0.0,
 )
 
+CLEAN = {"motors_latched": [], "motors_stuck": False, "motors_reboot_offer": []}
+
 
 def _rig(**overrides):
     clock = ManualClock(10.0)
@@ -58,7 +60,7 @@ def test_a_healthy_body_does_nothing():
     health, bus, clock, offers, repairs, _ = _rig()
     _run(health, clock, 30)
     assert bus.calls == []
-    assert health.status() == {"motors_latched": [], "motors_stuck": False}
+    assert health.status() == CLEAN
 
 
 def test_a_fake_that_ignores_enabled_after_a_fault_is_recovered_by_the_cycle():
@@ -71,7 +73,7 @@ def test_a_fake_that_ignores_enabled_after_a_fault_is_recovered_by_the_cycle():
     assert bus.calls.count("set_motor_mode:disabled") == 1
     assert bus.calls.index("set_motor_mode:disabled") < bus.calls.index("set_motor_mode:enabled")
     _run(health, clock, 1.0)
-    assert health.status() == {"motors_latched": [], "motors_stuck": False}
+    assert health.status() == CLEAN
     assert [r["helped"] for r in repairs] == ["cycle"]
     assert repairs[0]["resolved"] is True and repairs[0]["tried"] == ["cycle"]
 
@@ -80,14 +82,18 @@ def test_a_latched_servo_is_reported_and_reboot_waits_for_the_hubs_command():
     health, bus, clock, offers, repairs, _ = _rig()
     bus.plant_fault(cleared_by="reboot", latched=("head_1",))
     _run(health, clock, 6.0)
-    assert health.status() == {"motors_latched": ["head_1"], "motors_stuck": True}
+    assert health.status() == {
+        "motors_latched": ["head_1"],
+        "motors_stuck": True,
+        "motors_reboot_offer": ["head_1"],
+    }
     assert offers == [["head_1"]], "offered once, through the hub's card"
     assert not any(c.startswith("reboot_motor") for c in bus.calls)
     assert "restart_daemon" not in bus.calls, "waits for the owner's answer first"
     assert health.confirm_reboot("head_1") is True
     assert bus.calls.count("reboot_motor:head_1") == 1
     _run(health, clock, 2.0)
-    assert health.status() == {"motors_latched": [], "motors_stuck": False}
+    assert health.status() == CLEAN
     assert repairs[-1]["helped"] == "reboot"
 
 
@@ -176,3 +182,58 @@ def test_a_brief_lag_that_catches_up_never_trips_the_watchdog():
     bus.faulted = False
     _run(health, clock, 10.0)
     assert bus.calls == []
+
+
+def test_the_offer_is_empty_until_the_ladder_waits_on_the_hub():
+    health, bus, clock, offers, repairs, _ = _rig()
+    bus.plant_fault(cleared_by="reboot", latched=("head_1",))
+    _run(health, clock, STUCK_AFTER_S + 0.5)
+    assert health.status()["motors_reboot_offer"] == [], "cycled, registers not read yet"
+    _run(health, clock, 3.0)
+    assert health.status()["motors_reboot_offer"] == ["head_1"]
+
+
+def test_a_motor_reboot_command_reboots_exactly_the_named_motors():
+    health, bus, clock, offers, repairs, _ = _rig()
+    bus.registers["head_2"] = 0
+    bus.plant_fault(cleared_by="reboot", latched=("head_1", "head_2"))
+    _run(health, clock, 6.0)
+    assert health.status()["motors_reboot_offer"] == ["head_1", "head_2"]
+    result = health.reboot_motors(["head_1"])
+    assert result == {"rebooted": ["head_1"], "failed": []}
+    assert [c for c in bus.calls if c.startswith("reboot_motor")] == ["reboot_motor:head_1"]
+
+
+def test_a_command_naming_a_motor_that_was_not_offered_does_not_touch_the_bus():
+    health, bus, clock, offers, repairs, _ = _rig()
+    bus.plant_fault(cleared_by="reboot", latched=("head_1",))
+    _run(health, clock, 6.0)
+    result = health.reboot_motors(["body_yaw", "head_1"])
+    assert result == {"rebooted": ["head_1"], "failed": ["body_yaw"]}
+    assert [c for c in bus.calls if c.startswith("reboot_motor")] == ["reboot_motor:head_1"]
+
+
+def test_a_command_with_no_offer_standing_reboots_nothing():
+    health, bus, clock, offers, repairs, _ = _rig()
+    assert health.reboot_motors(["head_1"]) == {"rebooted": [], "failed": ["head_1"]}
+    assert not any(c.startswith("reboot_motor") for c in bus.calls)
+
+
+def test_a_failed_reboot_leaves_the_offer_standing_for_the_next_state_frame():
+    health, bus, clock, offers, repairs, _ = _rig()
+    bus.plant_fault(cleared_by="restart", latched=("head_1",))
+    bus.reboot_fails = {"head_1"}
+    _run(health, clock, 6.0)
+    assert health.reboot_motors(["head_1"]) == {"rebooted": [], "failed": ["head_1"]}
+    assert health.status()["motors_reboot_offer"] == ["head_1"]
+
+
+def test_a_partly_failed_command_keeps_the_offer_for_the_motors_that_failed():
+    health, bus, clock, offers, repairs, _ = _rig()
+    bus.registers["head_2"] = 0
+    bus.plant_fault(cleared_by="restart", latched=("head_1", "head_2"))
+    bus.reboot_fails = {"head_2"}
+    _run(health, clock, 6.0)
+    result = health.reboot_motors(["head_1", "head_2"])
+    assert result == {"rebooted": ["head_1"], "failed": ["head_2"]}
+    assert health.status()["motors_reboot_offer"] == ["head_2"]

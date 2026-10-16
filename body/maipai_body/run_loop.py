@@ -158,6 +158,13 @@ class StateTransition:
     at_monotonic: float
 
 
+_CLEAN_MOTORS: dict[str, object] = {
+    "motors_latched": [],
+    "motors_stuck": False,
+    "motors_reboot_offer": [],
+}
+
+
 @dataclass
 class RunLoopState:
     """The funnel's own live state, read by G10's future device-state
@@ -242,6 +249,8 @@ class ConversationLoop:
         # MOTOR-RECOVER-01 / THERMAL-01: optional, ticked from the presence tick,
         # and neither may ever break it.
         self._motor_health = motor_health
+        self._held_now = False
+        self._last_reboot_offer: list[str] = []
         self._thermal = thermal
         self._thermal_state = ThermalState()
         self._expression = expression_engine
@@ -488,17 +497,32 @@ class ConversationLoop:
 
     def motor_status(self) -> dict[str, object]:
         if self._motor_health is None:
-            return {"motors_latched": [], "motors_stuck": False}
+            return dict(_CLEAN_MOTORS)
         try:
             return self._motor_health.status()
         except Exception:
             logger.warning("motor status failed", exc_info=True)
-            return {"motors_latched": [], "motors_stuck": False}
+            return dict(_CLEAN_MOTORS)
 
     def confirm_motor_reboot(self, name: str, *, person_touching: bool = False) -> bool:
         if self._motor_health is None:
             return False
         return bool(self._motor_health.confirm_reboot(name, person_touching=person_touching))
+
+    def reboot_motors(self, names: list[str]) -> dict[str, list[str]]:
+        """The hub's `motor_reboot` command: only the named, offered motors, only on this
+        command, and never while the body is held (a person may be touching the head).
+        The next state frame reports the outcome, so a change is pushed right away."""
+        if self._motor_health is None:
+            return {"rebooted": [], "failed": list(names)}
+        try:
+            result = self._motor_health.reboot_motors(names, person_touching=self._held_now)
+        except Exception:
+            logger.warning("motor reboot failed", exc_info=True)
+            result = {"rebooted": [], "failed": list(names)}
+        if self._on_change is not None:
+            self._on_change()
+        return result
 
     @property
     def motion_state(self) -> MotionState:
@@ -1540,6 +1564,7 @@ class ConversationLoop:
 
     def _safety_ticks(self, held: bool) -> None:
         """Motor watchdog and thermal governor; a bug in either is logged, never raised."""
+        self._held_now = held
         if self._motor_health is not None:
             try:
                 self._motor_health.tick(held=held)
@@ -1579,6 +1604,13 @@ class ConversationLoop:
             logger.warning("motor status failed", exc_info=True)
             return
         fault = bool(status.get("motors_stuck")) or bool(status.get("motors_latched"))
+        offer = list(status.get("motors_reboot_offer") or [])
+        if offer != self._last_reboot_offer:
+            # A new or withdrawn offer is a state-frame change: push it now so the hub
+            # shows (or drops) the card without waiting for the next heartbeat.
+            self._last_reboot_offer = offer
+            if self._on_change is not None:
+                self._on_change()
         with self._lock:
             if self._state.fault == fault:
                 return

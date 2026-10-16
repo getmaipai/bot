@@ -1,4 +1,4 @@
-"""EYES-02: the seven robot-only settings keys the eyes honour.
+"""EYES-02: the five robot-only settings keys the eyes honour.
 
 Robot-only: declared on the ``hello``, no spec record, no ``keys.json``
 entry. Every key carries the schema-required ``label`` and ``lives_in``
@@ -12,9 +12,10 @@ UNVERIFIED against spec-v0.1.74's ``settings-key.schema.json``, which this
 clone cannot reach (``tests/test_indicator_settings.py`` validates against
 it when ``MAIPAI_SPEC_SETTINGS_KEY_SCHEMA`` points at the file).
 
-Quiet hours are owned by Home and this bot has no settings transport yet.
-The robot-only time keys are ``night_from`` and ``night_to`` pending that
-transport; retire them if Home later supplies a shared quiet-hours setting.
+Night is the household's quiet hours: ``household.quiet_hours.from`` and ``.to``
+from the registry (honoured by ``bot`` since spec-v0.1.151), delivered in the
+settings frame. The temporary robot-only ``night_from`` and ``night_to`` keys are
+retired, so only five keys are declared here.
 """
 
 from __future__ import annotations
@@ -35,8 +36,8 @@ SLEEP_EYES_OPTIONS = ["off", "dim"]
 KEY_ENABLED = "robot.indicator.enabled"
 KEY_BRIGHTNESS = "robot.indicator.brightness"
 KEY_NIGHT_BRIGHTNESS = "robot.indicator.night_brightness"
-KEY_NIGHT_FROM = "robot.indicator.night_from"
-KEY_NIGHT_TO = "robot.indicator.night_to"
+KEY_QUIET_FROM = "household.quiet_hours.from"
+KEY_QUIET_TO = "household.quiet_hours.to"
 KEY_SLEEP_EYES = "robot.indicator.sleep_eyes"
 KEY_ALARM = "robot.indicator.alarm"
 
@@ -80,8 +81,8 @@ def parse_settings(values: Mapping[str, object]) -> IndicatorSettings:
         night_brightness=_parse_level(
             values.get(KEY_NIGHT_BRIGHTNESS), looks.NIGHT_LEVEL_RANGE, d.night_brightness
         ),
-        night_from=_parse_time(values.get(KEY_NIGHT_FROM), d.night_from),
-        night_to=_parse_time(values.get(KEY_NIGHT_TO), d.night_to),
+        night_from=_parse_time(values.get(KEY_QUIET_FROM), d.night_from),
+        night_to=_parse_time(values.get(KEY_QUIET_TO), d.night_to),
         sleep_eyes=sleep if sleep in SLEEP_EYES_OPTIONS else d.sleep_eyes,
         alarm=alarm if isinstance(alarm, bool) else d.alarm,
     )
@@ -113,8 +114,6 @@ def _specs() -> list[dict[str, Any]]:
             "Eye brightness at night",
             list(looks.NIGHT_LEVEL_RANGE),
         ),
-        _spec(KEY_NIGHT_FROM, "time", _time_text(d.night_from), "Night starts at"),
-        _spec(KEY_NIGHT_TO, "time", _time_text(d.night_to), "Night ends at"),
         _spec(
             KEY_SLEEP_EYES,
             "select",
@@ -130,5 +129,5 @@ INDICATOR_KEYS: tuple[str, ...] = tuple(spec["key"] for spec in _specs())
 
 
 def eyes_settings_declaration(needs: str) -> list[dict[str, Any]]:
-    """The seven declarations for a body whose capability id is ``needs``."""
+    """The five declarations for a body whose capability id is ``needs``."""
     return [{**spec, "needs": [needs]} for spec in _specs()]

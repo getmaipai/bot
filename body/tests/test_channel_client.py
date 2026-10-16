@@ -175,3 +175,47 @@ def test_send_frame_needs_an_open_socket_and_drop_listeners_fire():
     assert channel.send_frame(frame) is False
     stop.set()
     thread.join(timeout=3)
+
+
+class _RebootLoop:
+    def __init__(self):
+        self.asked: list[list[str]] = []
+
+    def reboot_motors(self, names):
+        self.asked.append(list(names))
+        return {"rebooted": [n for n in names if n == "stewart_3"], "failed": []}
+
+
+def test_motor_reboot_is_acked_with_the_outcome_and_reaches_only_the_named_motors():
+    from maipai_body.app import motor_reboot_handler
+
+    loop = _RebootLoop()
+    channel = CommandChannel(
+        "http://hub.test", "token", handlers={"motor_reboot": motor_reboot_handler(loop)}
+    )
+    ws = FakeWebSocket()
+
+    channel._handle_text(_command("e1", "motor_reboot", {"motors": ["stewart_3"]}), ws)
+    channel._handle_text(_command("e1", "motor_reboot", {"motors": ["stewart_3"]}), ws)
+
+    assert loop.asked == [["stewart_3"]], "a replayed command reboots nothing twice"
+    assert ws.sent[0] == {
+        "type": "ack",
+        "id": "e1",
+        "state": {"rebooted": ["stewart_3"], "failed": []},
+    }
+
+
+def test_a_malformed_motor_reboot_reboots_nothing():
+    from maipai_body.app import motor_reboot_handler
+
+    loop = _RebootLoop()
+    channel = CommandChannel(
+        "http://hub.test", "token", handlers={"motor_reboot": motor_reboot_handler(loop)}
+    )
+    ws = FakeWebSocket()
+
+    for n, payload in enumerate(({}, {"motors": []}, {"motors": [3]}, {"motors": "all"})):
+        channel._handle_text(_command(f"bad{n}", "motor_reboot", payload), ws)
+
+    assert loop.asked == []

@@ -31,6 +31,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import reachy_mini
 from reachy_mini import ReachyMini, ReachyMiniApp
@@ -605,11 +606,16 @@ def _attach_eyes(
     return tap, director
 
 
-def _eyes_settings():
-    """Until the hello settings transport exists, use declared defaults."""
-    from maipai_body.indicator.settings import IndicatorSettings
+# The latest settings frame values the eyes read (their own keys plus the household
+# quiet hours); empty until the hub sends any, which parses to the declared defaults.
+_EYES_VALUES: dict[str, object] = {}
 
-    return IndicatorSettings()
+
+def _eyes_settings():
+    """The eyes' settings from the hub's settings frame; declared defaults before it."""
+    from maipai_body.indicator.settings import parse_settings
+
+    return parse_settings(_EYES_VALUES)
 
 
 def _eyes_presence():
@@ -757,6 +763,7 @@ def _build_conversation_loop(
         if level in ("off", "presence", "identify"):
             loop.set_watch_level(level)
         if isinstance(values, dict):
+            _EYES_VALUES.update(values)
             alarm.apply_settings(values)
         if sleep is not None and isinstance(values, dict):
             sleep.apply_settings(values)
@@ -775,6 +782,7 @@ def _build_conversation_loop(
             "mute": lambda _payload: set_muted({"muted": True}),
             "unmute": lambda _payload: set_muted({"muted": False}),
             "asset_changed": refresh_assets,
+            "motor_reboot": motor_reboot_handler(loop),
             "offer": loop.offer.receive,
             "alarm": alarm.handle_command,
         },
@@ -817,6 +825,24 @@ def _build_conversation_loop(
     return loop
 
 
+def motor_reboot_handler(loop: Any) -> Callable[[dict], dict]:
+    """The hub's `motor_reboot` (spec-v0.1.151): sent only after an adult said yes on the
+    Devices card, and it reboots only the motors named. The ack carries the outcome and
+    the next state frame shows what is still latched."""
+
+    def handle(payload: dict) -> dict:
+        motors = payload.get("motors")
+        if (
+            not isinstance(motors, list)
+            or not motors
+            or not all(isinstance(name, str) and name for name in motors)
+        ):
+            raise ValueError("motor_reboot requires a non-empty motors list of names")
+        return loop.reboot_motors(motors)
+
+    return handle
+
+
 def _build_attention(engine: ExpressionEngine, env: Mapping[str, str]) -> object | None:
     """S-EXPR-04: our own gaze and idle layers instead of the daemon's tracker.
     Off unless MAIPAI_BOT_ATTENTION=1: every number in it is an UNMEASURED design
@@ -846,15 +872,16 @@ class _SleepAuto:
 
 def _build_sleep_auto(camera: object, vision_watch: VisionWatch, env: Mapping[str, str]):
     """SLEEP-AUTO-01: dark-and-quiet and quiet-hours sleep. Off unless
-    MAIPAI_BOT_SLEEP_AUTO=1. The dark rule stays off until the hub sends
-    `robot.sleep.auto` (not yet in the settings registry), and quiet hours need the
-    household bounds in the settings frame."""
+    MAIPAI_BOT_SLEEP_AUTO=1 (its thresholds are UNMEASURED). `robot.sleep.auto` and
+    `household.quiet_hours.from`/`.to` are registry keys since spec-v0.1.151; the
+    registry default for the first is on, so the policy starts enabled and a
+    `settings_changed` only ever turns it off or back on."""
     if env.get("MAIPAI_BOT_SLEEP_AUTO") != "1":
         return None
     from maipai_body.presence.sleep_auto import QuietHours, SleepAutoPolicy, luma_reader
 
     return _SleepAuto(
-        policy=SleepAutoPolicy(auto_enabled=False),
+        policy=SleepAutoPolicy(auto_enabled=True),
         luma=luma_reader(camera, level=lambda: vision_watch.device_level),
         quiet=QuietHours(),
     )

@@ -56,6 +56,10 @@ class MotorHealthLike(Protocol):
 
     def confirm_reboot(self, name: str, *, person_touching: bool = False) -> bool: ...
 
+    def reboot_motors(
+        self, names: list[str], *, person_touching: bool = False
+    ) -> dict[str, list[str]]: ...
+
 
 def follow_error_rad(commanded: Commanded, present: PresentPose) -> float:
     """The largest angular gap between the commanded and the present pose, on the axes commanded."""
@@ -110,7 +114,14 @@ class MotorHealth:
 
     def status(self) -> dict[str, Any]:
         with self._lock:
-            return {"motors_latched": list(self._latched), "motors_stuck": self._stage != "healthy"}
+            return {
+                "motors_latched": list(self._latched),
+                "motors_stuck": self._stage != "healthy",
+                # spec-v0.1.151: the latched motors the hub should offer a reboot for;
+                # only while the ladder waits on the hub's word, and always a subset of
+                # `motors_latched`. A reboot that failed leaves the offer standing.
+                "motors_reboot_offer": list(self._latched) if self._stage == "offered" else [],
+            }
 
     # -- the watchdog --
 
@@ -188,22 +199,53 @@ class MotorHealth:
             self._on_offer(list(latched))
 
     def confirm_reboot(self, name: str, *, person_touching: bool = False) -> bool:
-        """The hub's command. Never silent, never while a person may be touching the head."""
+        """One motor, on the hub's word; never silent, never while a person may touch the head."""
+        return name in self.reboot_motors([name], person_touching=person_touching)["rebooted"]
+
+    def reboot_motors(
+        self, names: list[str], *, person_touching: bool = False
+    ) -> dict[str, list[str]]:
+        """The hub's `motor_reboot` command: reboot exactly the named, offered motors.
+
+        Returns ``{"rebooted": [...], "failed": [...]}``. A name that is not currently
+        offered, or any name while a person may be touching the head or outside the
+        offer stage, fails without touching the bus. A motor whose reboot raises stays
+        latched and offered, so the next state frame still carries it."""
         with self._lock:
-            if person_touching or self._stage != "offered" or name not in self._latched:
-                return False
-            now = self._clock()
+            names = list(dict.fromkeys(names))
+            if person_touching or self._stage != "offered":
+                return {"rebooted": [], "failed": names}
+            rebooted: list[str] = []
+            failed: list[str] = []
+            for name in names:
+                if name not in self._latched:
+                    failed.append(name)
+                    continue
+                try:
+                    self._bus.reboot_motor(name)
+                except Exception:
+                    logger.warning("reboot of %s failed", name, exc_info=True)
+                    failed.append(name)
+                    continue
+                rebooted.append(name)
+            if not rebooted:
+                return {"rebooted": [], "failed": failed}
             try:
-                self._bus.reboot_motor(name)
                 self._bus.set_motor_mode("enabled")
             except Exception:
-                logger.warning("reboot of %s failed", name, exc_info=True)
-                return False
+                logger.warning("re-enabling after the reboot failed", exc_info=True)
             self._tried.append("reboot")
-            self._stage = "rebooted"
-            self._step_at = now
+            still = [n for n in failed if n in self._latched]
+            if still:
+                # Part of the command failed: the offer stands for those motors only,
+                # so the next state frame shows the hub exactly what is left.
+                self._latched = still
+                self._offer_at = self._clock()
+            else:
+                self._stage = "rebooted"
+                self._step_at = self._clock()
             self._stepped()
-            return True
+            return {"rebooted": rebooted, "failed": failed}
 
     def _restart(self, now: float) -> None:
         try:
