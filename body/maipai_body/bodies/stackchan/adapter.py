@@ -6,10 +6,10 @@ import asyncio
 import math
 import time
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
-from maipai_body.hal.errors import BodyLost, NotSupported
+from maipai_body.hal.errors import BodyLost, EstopEngaged, NotSupported
 from maipai_body.hal.seam import BodyProfile, HeadPose
 from maipai_body.robot import Robot, load_robot_api
 
@@ -280,11 +280,23 @@ class _CameraAdapter:
         self.avatar_server: Any = None
         self.device_id: str | None = None
         self._stream_indicator_active = False
+        self.silent_capture_allowed: Callable[[], bool] = lambda: False
 
     def command(self, verb: str, *args: Any, **kwargs: Any) -> object:
         if verb == "frame":
-            if args or kwargs:
+            if args or kwargs.keys() - {"silent"}:
                 raise TypeError("camera.frame takes no arguments")
+            silent = kwargs.get("silent", False)
+            if type(silent) is not bool:
+                raise TypeError("camera.frame silent must be a boolean")
+            if silent:
+                if not self.silent_capture_allowed():
+                    raise PermissionError(
+                        "silent capture is off; turn on ambient vision in settings first"
+                    )
+                if self.robot.estop.engaged:
+                    raise EstopEngaged("silent capture refused while the emergency stop is engaged")
+                return self.client.take_photo()
             self._light_on()
             try:
                 return self.client.take_photo()
@@ -322,7 +334,6 @@ class _CameraAdapter:
         enabled = kwargs.get("enabled", args[0] if args else True)
         if type(enabled) is not bool:
             raise TypeError("camera.stream enabled must be a boolean")
-        from maipai_body.hal.errors import EstopEngaged
 
         if enabled and self.robot.estop.engaged:
             raise EstopEngaged("camera stream refused while the emergency stop is engaged")
