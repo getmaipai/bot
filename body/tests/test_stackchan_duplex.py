@@ -82,12 +82,15 @@ class Offline:
     pass
 
 
-def test_playback_uses_five_frame_prebuffer_wall_clock_and_drain(monkeypatch):
+def test_playback_leads_by_1_8_seconds_then_paces_and_drains(monkeypatch):
+    # 2026-10-19 unit bench: a 5-frame lead stuttered over Wi-Fi.
     clock = Clock()
     sent = []
+    prebuffers = []
 
     async def send_audio(device, frames, **kwargs):
         sent.extend(frames)
+        prebuffers.append(kwargs.get("prebuffer"))
 
     async def stop_audio(device):
         sent.append("stop")
@@ -99,10 +102,11 @@ def test_playback_uses_five_frame_prebuffer_wall_clock_and_drain(monkeypatch):
     playback = StackChanAudioPlayback(
         server, "device", clock=clock.monotonic, sleeper=clock.sleep, async_sleep=clock.async_sleep
     )
-    playback._frames = [bytes([i]) for i in range(7)]
+    playback._frames = [bytes([i]) for i in range(32)]
     playback._samples = np.zeros(0, dtype=np.float32)
     playback.stop_playing()
-    assert len(sent) == 7
+    assert len(sent) == 32
+    assert prebuffers[0] == 30
     assert clock.sleeps == pytest.approx([0.06, 0.06])
     playback.end()
     assert sent[-1] == "stop"

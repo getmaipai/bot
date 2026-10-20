@@ -134,3 +134,10 @@ The StackChan voice-turn tests use local fake peers and documentation-only addre
 The StackChan turn bridge accepts uplink while its reply is speaking only when the active session reports `features.aec: true`. Without that capability it drops uplink during speech and for a 180 ms post-speech guard. An incoming start/detect event cancels the prior capture and reply before opening the replacement capture, so one session cannot retain two active turns. Abort clears encoded and partial PCM buffers, cancels the turn and emits `tts stop`; playback checks cancellation at frame boundaries. Sentence audio uses a five-frame prebuffer, 60 ms wall-clock frame pacing, and a 420 ms drain before `tts stop`. Clock and sleeper injection support deterministic unit measurement.
 
 The bridge exposes `latency_counters` with `abort_to_silence_ms` and `first_audio_ms`, plus uplink live/drop counts for local diagnostics. These are software measurements; no physical StackChan latency or AEC quality has been verified. The current xiaozhi service does not yet retain device hello features on its session, so its integration must provide the hello AEC flag to the turn bridge before duplex uplink is enabled.
+
+## Bench control page
+
+`body/scripts/stackchan_control.py` drives one paired robot by hand: LED, head,
+faces, volume and speech, from `http://127.0.0.1:8790`. Speech uses the same
+`StackChanAudioPlayback` path as voice turns. Run and findings:
+[stackchan-unit-measurements.md](stackchan-unit-measurements.md).

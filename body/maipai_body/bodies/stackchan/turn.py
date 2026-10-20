@@ -23,6 +23,10 @@ from maipai_body.speech.tts_playback import TtsAuthFailed, TtsPlaybackClient
 from maipai_body.speech.turn_client import TurnAuthFailed, TurnClient, TurnLinkLost
 
 LOG = logging.getLogger(__name__)
+# Frames sent ahead of playback: 1.8 s rides out the Wi-Fi stalls measured on the
+# 2026-10-19 unit bench (ping peaks of 1.3 s) and stays under the firmware's
+# 40-frame (2.4 s) decode queue, which drops packets once full.
+LEAD_FRAMES = 30
 
 
 class StackChanAudioCapture:
@@ -124,7 +128,11 @@ class StackChanAudioPlayback(AudioPlayback):
         encoder.sample_rate = 24000
         encoder.layout = "mono"
         encoder.format = "s16"
-        encoder.options = {"application": "audio", "frame_duration": "60"}
+        # Speech-mode SILK wideband: one 60 ms frame per packet at 24 kbps. The default
+        # music mode sent 64 kbps packets of three CELT frames, which the ESP32-S3
+        # decoded slower than real time (choppy speech on the 2026-10-19 unit bench).
+        encoder.bit_rate = 24000
+        encoder.options = {"application": "voip", "frame_duration": "60", "cutoff": "8000"}
         encoder.open()
         return encoder
 
@@ -185,13 +193,14 @@ class StackChanAudioPlayback(AudioPlayback):
                     return
                 await self._server.send_audio(
                     self._device_id,
-                    frames[:5],
+                    frames[:LEAD_FRAMES],
                     sentence_start=True,
                     start=self._sentence_start,
                     stop=False,
+                    prebuffer=LEAD_FRAMES,
                 )
                 deadline = self._clock()
-                for frame in frames[5:]:
+                for frame in frames[LEAD_FRAMES:]:
                     if self._cancel_event is not None and self._cancel_event.is_set():
                         break
                     deadline += 0.06

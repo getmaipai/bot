@@ -101,6 +101,56 @@ Open:
   response timeout" and retried every 10 to 15 s. The server closes the socket
   without logging why.
 
+## Remote control and speech bench, 2026-10-19
+
+`body/scripts/stackchan_control.py` runs the three robot listeners plus a page
+on `http://127.0.0.1:8790` (this computer only) with LED color, head yaw and
+pitch, nod, shake, the six faces, volume and a say box. Stop the Bot app
+first; both bind 8765 to 8767.
+
+    cd body
+    uv run --extra voice python scripts/stackchan_control.py --host 192.0.2.10
+
+`--host` is the address the robot already connects to. Head moves are offsets
+from the angle read at the first status and stay within `--limit` degrees
+(default 10), so a plugged-in USB cable is not pulled.
+
+| Control | Result |
+|---|---|
+| LED | Red, green, blue, off; owner saw each. Channels above 168 are refused by the firmware, so the page scales 0 to 255 down to 0 to 168 |
+| Head | Nod, shake and an 8 degree turn and back; owner saw each |
+| Faces | Neutral, happy, angry, sad, doubt, sleepy; owner saw each change |
+| Speech | 4 to 5 s of macOS `say` audio; owner rated the last run "pretty good" |
+
+Findings:
+
+- **Faces need the voice channel in AI Agent mode.** The avatar socket (8766)
+  only opens inside the firmware's avatar app. In AI Agent mode the face is
+  set with a xiaozhi `{"type": "llm", "emotion": ...}` frame, which the
+  StackChan display maps onto the avatar (`doubt` is sent as `doubtful`).
+  `XiaozhiServer.send_emotion` sends it; the page uses the avatar socket only
+  when it is connected.
+- **Speech stuttered for three reasons, fixed in order:**
+  1. Frames sent right after `tts start` arrived while the firmware was still
+     listening and were dropped (it queues audio only in the speaking state).
+     The server now waits 150 ms after `tts start`.
+  2. The default Opus music mode sent 64 kbps fullband packets of three CELT
+     frames; the robot took 9.6 s to play 4 s of audio. The encoder now sends
+     24 kbps SILK wideband, one 60 ms frame per packet (TOC `0x58`); the same
+     clip then took 5.3 s.
+  3. The robot's Wi-Fi is jittery: ping averaged 280 to 400 ms with peaks of
+     1.3 s while the server's own send gaps stayed under 215 ms. Playback now
+     leads by 30 frames (1.8 s), under the firmware's 40-frame (2.4 s) decode
+     queue, which drops packets once full. A 1 s lead still stuttered.
+- **Upstream reports match.** M5's issue tracker has choppy agent speech
+  tied to weak Wi-Fi and to firmware 1.3.1 and later (m5stack/StackChan
+  issue 54); one reporter heard clean speech near the access point. Place the
+  robot near the access point when judging audio.
+- **Head readback trails moves.** A status read right after a move returned
+  yaw 3, pitch 40 for a 0, 45 target.
+- **Owner wants a cuter face.** The six built-in faces work but look plain;
+  the look is the firmware's avatar skin.
+
 ## Before connecting the unit
 
 1. Put the robot and Bot host on a trusted isolated LAN. Use a documentation

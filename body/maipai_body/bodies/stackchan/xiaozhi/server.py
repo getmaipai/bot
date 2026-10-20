@@ -23,6 +23,17 @@ from maipai_body.hal.errors import BodyLost, EstopEngaged, NotSupported, OutOfEn
 from .pairing import PairingStore
 
 LOG = logging.getLogger(__name__)
+# Time the firmware needs to enter its speaking state after tts start.
+SPEAK_SETTLE_S = 0.15
+# Face names the StackChan display's SetEmotion accepts (stackchan_display.cc).
+FIRMWARE_EMOTIONS = {
+    "neutral": "neutral",
+    "happy": "happy",
+    "angry": "angry",
+    "sad": "sad",
+    "doubt": "doubtful",
+    "sleepy": "sleepy",
+}
 MAX_EARLY_DEVICE_REPLIES = 32
 
 
@@ -703,8 +714,9 @@ class XiaozhiServer:
         sentence_start: bool = False,
         start: bool = True,
         stop: bool = True,
+        prebuffer: int = 3,
     ) -> None:
-        """Send encoded 24 kHz Opus frames; codec and pacing belong upstream."""
+        """Send encoded 24 kHz Opus frames; the first `prebuffer` go at once, the rest paced."""
         websocket = self._sessions.get(device_id)
         if self._sessions.get(device_id) is not websocket or not self._session_authorized(
             device_id
@@ -716,12 +728,14 @@ class XiaozhiServer:
         if start:
             self._speaking.add(device_id)
             await self._json(websocket, self._session_ids[device_id], "tts", {"state": "start"})
+            # The firmware drops audio until it has switched from listening to speaking;
+            # frames sent right behind tts start were lost (stutter heard on 2026-10-19).
+            await asyncio.sleep(SPEAK_SETTLE_S)
         if sentence_start:
             await self._json(
                 websocket, self._session_ids[device_id], "tts", {"state": "sentence_start"}
             )
         interval = 0.06
-        prebuffer = 3
         deadline = time.monotonic()
         try:
             for index, frame in enumerate(frames):
@@ -854,6 +868,21 @@ class XiaozhiServer:
         # 1b48ebd7863695bf80d384c6c09af6299a6d7d0e documents hello features;
         # its source has no notify handler, so the notify frame is gated by hello.
         await self._json(websocket, session_id, "notify", {"audio_url": audio_url})
+
+    async def send_emotion(self, expression: str) -> str:
+        """Set the face over the voice channel, which works in AI Agent mode.
+
+        xiaozhi-esp32 application.cc hands an `llm` frame's emotion to the
+        display; the StackChan display maps it onto the avatar.
+        """
+        emotion = FIRMWARE_EMOTIONS.get(expression)
+        if emotion is None:
+            raise ValueError(f"Pick one of: {', '.join(FIRMWARE_EMOTIONS)}.")
+        if len(self._sessions) != 1:
+            raise ConnectionError("A single paired StackChan session is required")
+        device_id, websocket = next(iter(self._sessions.items()))
+        await self._json(websocket, self._session_ids[device_id], "llm", {"emotion": emotion})
+        return emotion
 
     async def _serve_notify_audio(self, request: web.Request) -> web.Response:
         device_id = request.match_info["device_id"]
