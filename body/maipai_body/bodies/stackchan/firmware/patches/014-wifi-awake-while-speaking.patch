@@ -1,0 +1,24 @@
+# Intent: keep Wi-Fi out of modem sleep while the robot speaks; MAX_MODEM delayed audio packets by seconds and the voice stuttered.
+# Upstream: 78/xiaozhi-esp32 main/application.cc (MIT), via m5stack/StackChan firmware.
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -869,6 +869,9 @@
+             display->SetEmotion("neutral"); // Then set emotion (wechat mode checks child count)
+             audio_service_.EnableVoiceProcessing(false);
+             audio_service_.EnableWakeWordDetection(true);
++            // The host speaks over the persistent socket without opening an audio channel, so the
++            // channel callbacks never raise Wi-Fi power. Drop back to power save once speech ends.
++            Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+             break;
+         case kDeviceStateConnecting:
+             display->SetStatus(Lang::Strings::CONNECTING);
+@@ -908,6 +911,8 @@
+             break;
+         case kDeviceStateSpeaking:
+             display->SetStatus(Lang::Strings::SPEAKING);
++            // Keep the radio awake while audio streams in; modem sleep delays packets by seconds.
++            Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+ 
+             if (listening_mode_ != kListeningModeRealtime) {
+                 audio_service_.EnableVoiceProcessing(false);

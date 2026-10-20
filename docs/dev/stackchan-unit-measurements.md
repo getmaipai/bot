@@ -151,7 +151,35 @@ Findings:
 - **Owner wants a cuter face.** The six built-in faces work but look plain;
   the look is the firmware's avatar skin.
 
-## Before connecting the unit
+## Mint face and speech stutter, 2026-10-20
+
+Each run played the same 11.5 s macOS `say` line through `/api/say` while
+`ping` sent 40 probes at 0.5 s from the host (`192.0.2.10`) to the robot.
+Free SRAM is the firmware's own `SystemInfo` log line.
+
+| Build | Owner heard | Ping during speech (avg / max) | Lost | SRAM low point |
+|---|---|---|---|---|
+| Original mint skin | stutter | 2.2 s / not recorded | not recorded | 28 KB |
+| Mint, redraw fix | stutter | 1.0 s / 3.35 s | not recorded | 43 KB |
+| Old face, no patch 013 | stutter "bad" | 1.39 s / 3.04 s | 9 | 51.8 KB |
+| Mint plus patch 014 | "a little at the beginning and end" | 0.57 s / 2.49 s | 5 | 43.3 KB |
+
+Findings:
+
+- **The face was not the cause.** The old face stuttered as badly as mint in
+  the same spot. One earlier clean old-face run (252 ms average ping) was a
+  quiet Wi-Fi moment, not a property of the face.
+- **Wi-Fi slept through speech.** After activation the firmware sets
+  `MAX_MODEM` power save (serial: `Setting WiFi power save level: LOW_POWER`)
+  and only raises it in the audio channel open callback, which our
+  persistent-socket host never triggers. No log line ever showed
+  `PERFORMANCE` until patch 014, which sets it on entering speaking.
+- **Host sends are steady.** The largest gap between frame sends stayed at
+  212 ms in every run, so the delays are on the radio side.
+- **Still open:** stutter at the start and end of a line. See the mint face
+  design note for the two suspected firmware races.
+
+
 
 1. Put the robot and Bot host on a trusted isolated LAN. Use a documentation
    address such as `192.0.2.10` in examples and replace it with the host's
