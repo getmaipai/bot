@@ -1,0 +1,146 @@
+# Intent: a plain connecting screen and the ring the firmware owns before the host connects. The face stays hidden under a black cover until the first Standby: "Connecting to Wi-Fi..." then "Connecting to Home...", with the standard blue slow pulse on the ring (cyan for Wi-Fi setup, which keeps the existing instructions visible). At Standby the cover goes, the ring settles to idle white (dim), and the host owns the ring from then on: the three single-pixel ring writes in SetStatus (listening green, standby off, speaking blue) are removed.
+# Upstream: m5stack/StackChan firmware/main/hal/board/stackchan_display.cc, stackchan_display.h (MIT). Applies after 013 and 017 with --unidiff-zero.
+# Check after a flash: power on shows the connecting text with a blue pulse and no face; the face appears at ready and the ring settles white.
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index 3b679b0..7eda4bb 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -205,0 +206,5 @@ StackChanAvatarDisplay::~StackChanAvatarDisplay()
++    if (boot_ring_timer_ != nullptr) {
++        lv_timer_delete(boot_ring_timer_);
++        boot_ring_timer_ = nullptr;
++    }
++
+@@ -289,0 +295,20 @@ void StackChanAvatarDisplay::SetupUI()
++    // Boot cover: hides the screen until the device is ready
++    boot_cover_ = lv_obj_create(lv_screen_active());
++    lv_obj_set_size(boot_cover_, lv_pct(100), lv_pct(100));
++    lv_obj_set_style_bg_color(boot_cover_, lv_color_black(), 0);
++    lv_obj_set_style_bg_opa(boot_cover_, LV_OPA_COVER, 0);
++    lv_obj_set_style_border_width(boot_cover_, 0, 0);
++    lv_obj_set_style_radius(boot_cover_, 0, 0);
++    lv_obj_set_style_pad_all(boot_cover_, 0, 0);
++    lv_obj_remove_flag(boot_cover_, LV_OBJ_FLAG_SCROLLABLE);
++
++    boot_label_ = lv_label_create(boot_cover_);
++    lv_obj_set_style_text_font(boot_label_, &BUILTIN_TEXT_FONT, 0);
++    lv_obj_set_style_text_color(boot_label_, lv_color_white(), 0);
++    lv_label_set_long_mode(boot_label_, LV_LABEL_LONG_WRAP);
++    lv_obj_set_width(boot_label_, lv_pct(90));
++    lv_obj_set_style_text_align(boot_label_, LV_TEXT_ALIGN_CENTER, 0);
++    lv_obj_center(boot_label_);
++    lv_label_set_text(boot_label_, "Connecting to Wi-Fi...");
++    ShowBootCover("Connecting to Wi-Fi...", 1);
++
+@@ -292,0 +318,60 @@ void StackChanAvatarDisplay::SetupUI()
++void StackChanAvatarDisplay::ShowBootCover(const char* text, int ring_kind)
++{
++    if (boot_label_ != nullptr) {
++        lv_label_set_text(boot_label_, text);
++    }
++    if (boot_cover_ != nullptr) {
++        lv_obj_remove_flag(boot_cover_, LV_OBJ_FLAG_HIDDEN);
++        lv_obj_move_foreground(boot_cover_);
++    }
++    boot_ring_kind_     = ring_kind;
++    boot_ring_start_ms_ = GetHAL().millis();
++    if (boot_ring_timer_ == nullptr) {
++        boot_ring_timer_ = lv_timer_create(BootRingTick, 100, this);
++    }
++}
++
++void StackChanAvatarDisplay::HideBootCover()
++{
++    if (boot_cover_ != nullptr) {
++        lv_obj_add_flag(boot_cover_, LV_OBJ_FLAG_HIDDEN);
++    }
++    if (boot_ring_timer_ != nullptr) {
++        lv_timer_delete(boot_ring_timer_);
++        boot_ring_timer_ = nullptr;
++    }
++    boot_done_         = true;
++    boot_ring_last_on_ = false;
++    for (int i = 0; i < 12; i++) {
++        GetHAL().setRgbColor(i, 35, 35, 31);
++    }
++    GetHAL().refreshRgb();
++}
++
++void StackChanAvatarDisplay::BootRingTick(lv_timer_t* timer)
++{
++    auto* display = static_cast<StackChanAvatarDisplay*>(lv_timer_get_user_data(timer));
++    uint32_t t    = (GetHAL().millis() - display->boot_ring_start_ms_) % 2000;
++    bool on       = t < 250;
++    if (on == display->boot_ring_last_on_) {
++        return;
++    }
++    display->boot_ring_last_on_ = on;
++    int r = 0, g = 0, b = 0;
++    if (on) {
++        if (display->boot_ring_kind_ == 2) {
++            r = 0;
++            g = 91;
++            b = 101;
++        } else {
++            r = 0;
++            g = 17;
++            b = 84;
++        }
++    }
++    for (int i = 0; i < 12; i++) {
++        GetHAL().setRgbColor(i, r, g, b);
++    }
++    GetHAL().refreshRgb();
++}
++
+@@ -535,0 +621,21 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
++    // Before the host takes over, the firmware owns the ring and the boot cover
++    if (!boot_done_) {
++        if (strcmp(status, Lang::Strings::STANDBY) == 0) {
++            HideBootCover();
++        } else if (strcmp(status, Lang::Strings::WIFI_CONFIG_MODE) == 0 || strcmp(status, Lang::Strings::CONNECT_TO_HOTSPOT) == 0 ||
++                   strcmp(status, Lang::Strings::ENTERING_WIFI_CONFIG_MODE) == 0) {
++            if (boot_cover_ != nullptr) {
++                lv_obj_add_flag(boot_cover_, LV_OBJ_FLAG_HIDDEN);
++            }
++            boot_ring_kind_ = 2;
++            if (boot_ring_timer_ == nullptr) {
++                boot_ring_timer_ = lv_timer_create(BootRingTick, 100, this);
++            }
++        } else if (strcmp(status, Lang::Strings::LOADING_PROTOCOL) == 0 || strcmp(status, Lang::Strings::CONNECTING) == 0 ||
++                   strcmp(status, Lang::Strings::ACTIVATION) == 0) {
++            ShowBootCover("Connecting to Home...", 1);
++        } else {
++            ShowBootCover("Connecting to Wi-Fi...", 1);
++        }
++    }
++
+@@ -547,3 +652,0 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
+-        GetHAL().setRgbColor(0, 0, 50, 0);
+-        GetHAL().refreshRgb();
+-
+@@ -562,3 +664,0 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
+-        GetHAL().setRgbColor(0, 0, 0, 0);
+-        GetHAL().refreshRgb();
+-
+@@ -569,3 +668,0 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
+-
+-        GetHAL().setRgbColor(0, 0, 0, 50);
+-        GetHAL().refreshRgb();
+diff --git a/firmware/main/hal/board/stackchan_display.h b/firmware/main/hal/board/stackchan_display.h
+index 1167b5f..9915e2c 100644
+--- a/firmware/main/hal/board/stackchan_display.h
++++ b/firmware/main/hal/board/stackchan_display.h
+@@ -28,0 +29,8 @@ private:
++    lv_obj_t*   boot_cover_         = nullptr;
++    lv_obj_t*   boot_label_         = nullptr;
++    lv_timer_t* boot_ring_timer_    = nullptr;
++    bool        boot_done_          = false;
++    uint32_t    boot_ring_start_ms_ = 0;
++    int         boot_ring_kind_     = 0;
++    bool        boot_ring_last_on_  = false;
++
+@@ -29,0 +38,3 @@ private:
++    void ShowBootCover(const char* text, int ring_kind);
++    void HideBootCover();
++    static void BootRingTick(lv_timer_t* timer);

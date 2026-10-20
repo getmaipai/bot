@@ -254,6 +254,7 @@ apply_repo_patch 021-device-events-tool.patch "$SRC"
 apply_repo_patch 023-wifi-saved-networks-tools.patch "$SRC"
 apply_repo_patch 030-load-local-assets.patch "$SRC"
 apply_repo_patch 032-wake-word-with-persistent-socket.patch "$SRC"
+apply_repo_patch 033-connecting-screen-and-boot-ring.patch "$SRC"
 
 cat > "$FW/sdkconfig.defaults.local" <<CFG
 CONFIG_STACKCHAN_SERVER_URL="$AVATAR_SERVER_URL"
