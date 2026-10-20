@@ -30,6 +30,8 @@ class StackChanFirmware:
         persistent_channel: bool = True,
         idle_timeout: float = 0.1,
         backoff: tuple[float, float] = (0.01, 0.05),
+        tool_latency_s: float = 0.0,
+        drop_tool_replies: frozenset[str] = frozenset(),
     ) -> None:
         self.url = url
         self.token = token
@@ -38,6 +40,8 @@ class StackChanFirmware:
         self.persistent_channel = persistent_channel
         self.idle_timeout = idle_timeout
         self.backoff = backoff
+        self.tool_latency_s = tool_latency_s
+        self.drop_tool_replies = drop_tool_replies
         self.websocket: ClientConnection | None = None
         self.server_hello: dict[str, Any] | None = None
         self.head_angles = {"yaw": 0.0, "pitch": 45.0}
@@ -56,6 +60,8 @@ class StackChanFirmware:
         self.audio_downlink: list[bytes] = []
         self.uplink_log: list[tuple[float, int]] = []
         self.tts_frames: list[dict[str, Any]] = []
+        self.tts_events: list[tuple[float, dict[str, Any]]] = []
+        self.downlink_log: list[tuple[float, int]] = []
         self.mcp_responses: dict[int, dict[str, Any]] = {}
         self.device_mcp_responses: dict[int, dict[str, Any]] = {}
         self.close_reasons: list[tuple[int, str]] = []
@@ -300,6 +306,7 @@ class StackChanFirmware:
                 return
             if isinstance(message, bytes):
                 self.audio_downlink.append(message)
+                self.downlink_log.append((time.monotonic(), len(message)))
                 continue
             data = json.loads(message)
             kind = data.get("type")
@@ -317,12 +324,17 @@ class StackChanFirmware:
                     await self._serve_mcp_method(ws, payload)
             elif kind == "tts":
                 self.tts_frames.append(data)
+                self.tts_events.append((time.monotonic(), data))
 
     async def _serve_tool_call(self, ws: ClientConnection, request: dict[str, Any]) -> None:
         params = request.get("params", {})
         name = params.get("name", "")
         arguments = params.get("arguments", {})
         self.tool_calls.append((name, dict(arguments)))
+        if self.tool_latency_s > 0:
+            await asyncio.sleep(self.tool_latency_s)
+        if name in self.drop_tool_replies:
+            return
         result = self._run_tool(name, arguments)
         await self._send_json(
             {
