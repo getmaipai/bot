@@ -249,6 +249,8 @@ apply_repo_patch 016-speech-open-at-tts-start.patch "$SRC"
 apply_repo_patch 017-face-palette-idle-light.patch "$SRC"
 apply_repo_patch 018-hello-token-handoff.patch "$FW/xiaozhi-esp32"
 apply_repo_patch 019-avatar-nvs-config.patch "$SRC"
+apply_repo_patch 020-dance-mcp-tools.patch "$SRC"
+apply_repo_patch 021-device-events-tool.patch "$SRC"
 
 cat > "$FW/sdkconfig.defaults.local" <<CFG
 CONFIG_STACKCHAN_SERVER_URL="$AVATAR_SERVER_URL"

@@ -48,3 +48,26 @@ tests and `scripts/check.sh --pre`. Claude only designs, maps and reviews.
 3. Firmware patches 020 to 024, each checked with `STACKCHAN_CHECK_ONLY=1 recipe.sh` (patch applies, Kconfig reconfigures).
 4. BOT-SC-VISION-01, BOT-SC-NIGHT-01, BOT-SC-WIFI-01 host halves.
 5. Hub items (whisper TTS style, fingerprint endpoint, weather and Frigate renders) filed in the `home` and `stack` backlogs.
+
+## Firmware facts found 2026-10-20 (pinned M5 commit 1b57655)
+
+- The built-in dances are four keyframe sequences in `stackchan/modifiers/dance.h` (`Happy`, `Robot`, `Panic`, `LookAround`),
+  started with `GetStackChan().addModifier(DanceModifier)` and stopped with `removeModifier(id)`. No MCP tool exposes them
+  (patch 020 adds `self.robot.dance` and `self.robot.stop_dance`). The firmware's `AppDance` is only a phone-driven BLE mode.
+- Already in firmware and unused by us: `HeadPetModifier` (head swipe), `ImuEventModifier` (shake), emotion decorators (heart, shy,
+  dizzy, sweat, angry), `BlinkModifier`, `BreathModifier`, `IdleExpressionModifier`, `IdleMotionModifier` (3 levels), the `sleepy`
+  emotion with "Zzz". Not in firmware: pick-up or tilt (commented out), on-device face detection, any event channel for touch or IMU.
+- Wi-Fi: `hal_network.cpp` has the hotspot config mode and `app_setup` a "Change Wi-Fi" entry; the xiaozhi library keeps a list of saved networks.
+- Photo has no firmware-side shutter sound, flash or ring: the ring and indicator are host choices, so silent capture is a host decision.
+
+## More candidates (surveyed 2026-10-20), best first
+
+1. Touch, pet, shake and pick-up reactions: firmware already reacts locally; add a small event channel to the host (patch 021) so the
+   hub knows (BOT `TOUCH-01`, `MOVE-CARRY-01` have host code with no StackChan source).
+2. Full emotion-to-face reply mapping with the decorators (BOT `REACT-MAP-01`, Dotty's emoji-to-face idea): add `self.robot.set_emotion`.
+3. Privacy cues tied to real capture (Dotty, stackchan-local-llm): hardware-truth mic and camera mute from the face menu, persisted.
+4. Alarm, timer and medicine reminders on StackChan (BOT `ALARM-PLAY-01` is Reachy only; `MEDS-01` unbuilt); reminders tool exists.
+5. A single mode state (idle, talking, story, security, sleep, dance) shown on the LED ring, so routines never fight (Dotty).
+6. Later: bedtime stories, games (Simon, rock-paper-scissors), Home Assistant control, ambient status on the ring and idle screen,
+   sentry mode, charging low-battery event, mmWave presence (needs added hardware).
+Sources: Dotty (MIT), stackchan-local-llm (MIT), reachy_mini_conversation_app (Apache-2.0), the repo's own backlog.

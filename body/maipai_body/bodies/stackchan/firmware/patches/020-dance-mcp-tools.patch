@@ -1,0 +1,72 @@
+# Intent: expose the firmware built-in dances (Happy, Robot, Panic, LookAround) as MCP tools so the host can start and stop a dance.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_mcp.cpp, stackchan/modifiers/dance.h (MIT).
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index f4da564..6d55be6 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -7,6 +7,7 @@
+ #include <mooncake_log.h>
+ #include <mcp_server.h>
+ #include <stackchan/stackchan.h>
++#include <stackchan/modifiers/dance.h>
+ #include <apps/common/common.h>
+ #include <driver/i2c_master.h>
+ #include <esp_log.h>
+@@ -23,6 +24,7 @@ constexpr uint8_t kLtr553AlsContr = 0x80;
+ constexpr uint8_t kLtr553AlsData  = 0x88;  // CH1 low, CH1 high, CH0 low, CH0 high
+ 
+ i2c_master_dev_handle_t ltr553 = nullptr;
++int s_dance_modifier_id        = -1;
+ 
+ void ltr553_init()
+ {
+@@ -285,4 +287,49 @@ void Hal::xiaozhi_mcp_init()
+                            tools::stop_reminder(id);
+                            return true;
+                        });
++
++    mclog::tagInfo(_tag, "add robot.dance tool");
++    mcp_server.AddTool("self.robot.dance",
++                       "Play one of the robot's built-in dances once, then return to normal. Names: happy, robot, panic, look_around.",
++                       PropertyList({Property("name", kPropertyTypeString, std::string("happy"))}),
++                       [this](const PropertyList& properties) -> ReturnValue {
++                           auto name = properties["name"].value<std::string>();
++                           mclog::tagInfo(_tag, "dance: {}", name);
++
++                           const animation::KeyframeSequence* sequence = nullptr;
++                           if (name == "happy") {
++                               sequence = &DanceModifier::Happy;
++                           } else if (name == "robot") {
++                               sequence = &DanceModifier::Robot;
++                           } else if (name == "panic") {
++                               sequence = &DanceModifier::Panic;
++                           } else if (name == "look_around") {
++                               sequence = &DanceModifier::LookAround;
++                           }
++                           if (!sequence) {
++                               return false;
++                           }
++
++                           LvglLockGuard lock;
++
++                           if (s_dance_modifier_id >= 0) {
++                               GetStackChan().removeModifier(s_dance_modifier_id);
++                               s_dance_modifier_id = -1;
++                           }
++                           s_dance_modifier_id = GetStackChan().addModifier(std::make_unique<DanceModifier>(*sequence));
++
++                           return true;
++                       });
++
++    mclog::tagInfo(_tag, "add robot.stop_dance tool");
++    mcp_server.AddTool("self.robot.stop_dance", "Stop the current built-in dance if one is running.", std::vector<Property>{},
++                       [this](const PropertyList& properties) -> ReturnValue {
++                           mclog::tagInfo(_tag, "stop_dance");
++                           LvglLockGuard lock;
++                           if (s_dance_modifier_id >= 0) {
++                               GetStackChan().removeModifier(s_dance_modifier_id);
++                               s_dance_modifier_id = -1;
++                           }
++                           return true;
++                       });
+ }
