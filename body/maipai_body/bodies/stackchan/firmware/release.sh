@@ -25,21 +25,27 @@ done
 if [[ "$CHECK_PINS" != "1" ]]; then
   [[ -n "$SIGNING_KEY" ]] || { echo "Pass --signing-key PATH to sign the flash manifest." >&2; exit 2; }
 fi
-python3 - "$PINS" <<'PY'
-import sys, tomllib
+USE_CONTAINER=0
+if command -v "$CONTAINER" >/dev/null 2>&1; then USE_CONTAINER=1; fi
+python3 - "$PINS" "$USE_CONTAINER" <<'PY'
+import re, sys, tomllib
 from pathlib import Path
 p = tomllib.loads(Path(sys.argv[1]).read_text())
-missing=[]
-for section, key in (("stackchan", "repos_json_sha256"), ("stackchan", "dependencies_lock_sha256"), ("toolchain", "container_sha256")):
-    value=p.get(section, {}).get(key)
-    if not value or len(value) != 64 or any(c not in "0123456789abcdefABCDEF" for c in value):
+use_container = sys.argv[2] == "1"
+missing = []
+checks = [("stackchan", "repos_json_sha256")] + [("stackchan", "dependencies_lock_sha256")]
+# The container image is pinned by digest only when the build runs in it; the local toolchain is checked by version in recipe.sh.
+if use_container:
+    checks.append(("toolchain", "container_sha256"))
+for section, key in checks:
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", str(p.get(section, {}).get(key, ""))):
         missing.append(f"{section}.{key}")
-for name, row in p.get("dependencies", {}).items():
-    digest=row.get("sha256")
-    if not digest or len(digest) != 64 or any(c not in "0123456789abcdefABCDEF" for c in digest):
-        missing.append(f"dependencies.{name}.sha256")
+# Git dependencies are content-addressed by their full commit, which recipe.sh checks after checkout.
+for section, row in [("stackchan", p.get("stackchan", {}))] + [(f"dependencies.{n}", r) for n, r in p.get("dependencies", {}).items()]:
+    if not re.fullmatch(r"[0-9a-f]{40}", str(row.get("commit", ""))):
+        missing.append(f"{section}.commit")
 if missing:
-    raise SystemExit("Missing or invalid pin checksum(s): " + ", ".join(missing))
+    raise SystemExit("Missing or invalid pin checksum(s): " + ", ".join(missing) + ". Fill them in pins.toml and run the release again.")
 PY
 if [[ "$CHECK_PINS" == "1" ]]; then exit 0; fi
 source "$ROOT/scripts/signing-key.sh"
@@ -47,8 +53,9 @@ resolve_signing_key "$SIGNING_KEY"
 [[ -n "$BUILD_DATE" ]] || { echo "Pass --date YYYY-MM-DD for reproducible release metadata." >&2; exit 2; }
 if [[ -z "$OUT" ]]; then OUT="$ROOT/dist/stackchan-release-$BUILD_DATE"; fi
 mkdir -p "$OUT"
-if command -v "$CONTAINER" >/dev/null 2>&1; then
-  "$CONTAINER" run --rm -v "$ROOT:/work" -w /work "$CONTAINER_IMAGE" \
+if [[ "$USE_CONTAINER" == "1" ]]; then
+  CONTAINER_DIGEST=$(python3 -c 'import sys,tomllib; print(tomllib.load(open(sys.argv[1],"rb"))["toolchain"]["container_sha256"])' "$PINS")
+  "$CONTAINER" run --rm -v "$ROOT:/work" -w /work "$CONTAINER_IMAGE@sha256:$CONTAINER_DIGEST" \
     bash body/maipai_body/bodies/stackchan/firmware/recipe.sh
 else
   echo "Container engine unavailable; documented local-toolchain fallback: run recipe.sh with ESP-IDF 5.5.4 exported." >&2

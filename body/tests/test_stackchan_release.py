@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -60,7 +61,15 @@ def _write_signed_manifest(out: Path, image: Path) -> None:
 
 
 class StackChanReleaseTests(unittest.TestCase):
-    def run_script(self, script: Path, *args: str, env: dict[str, str] | None = None):
+    def run_script(
+        self,
+        script: Path,
+        *args: str,
+        env: dict[str, str] | None = None,
+        env_extra: dict[str, str] | None = None,
+    ):
+        if env_extra:
+            env = {**(env or os.environ), **env_extra}
         return subprocess.run(["bash", str(script), *args], capture_output=True, text=True, env=env)
 
     def test_verify_rejects_a_tampered_image(self) -> None:
@@ -128,14 +137,42 @@ class StackChanReleaseTests(unittest.TestCase):
             self.assertNotEqual(unsigned.returncode, 0)
             self.assertIn("not signed", (unsigned.stderr + unsigned.stdout).lower())
 
+    def test_release_pin_check_accepts_shipped_pins_on_the_local_toolchain(self) -> None:
+        # No container engine: dependencies are pinned by commit; no container digest needed.
+        result = self.run_script(
+            RELEASE, "--check-pins", env_extra={"STACKCHAN_CONTAINER": "maipai-no-such-engine"}
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_release_refuses_a_pin_without_checksum(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             fake = Path(temp)
-            shutil.copy2(FIRMWARE / "pins.toml", fake / "pins.toml")
+            pins = (FIRMWARE / "pins.toml").read_text()
+            pins = pins.replace(
+                'commit = "572a7e488641f1c3f22e85d65c27f095ecf27d12"', 'commit = "572a7e4"'
+            )
+            (fake / "pins.toml").write_text(pins)
             # Checksum policy validation runs before Docker or any network access.
-            result = self.run_script(RELEASE, "--check-pins", "--pins", str(fake / "pins.toml"))
+            result = self.run_script(
+                RELEASE,
+                "--check-pins",
+                "--pins",
+                str(fake / "pins.toml"),
+                env_extra={"STACKCHAN_CONTAINER": "maipai-no-such-engine"},
+            )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("checksum", (result.stderr + result.stdout).lower())
+            self.assertIn("dependencies.mooncake.commit", result.stderr + result.stdout)
+            # A container build also needs the image digest.
+            shutil.copy2(FIRMWARE / "pins.toml", fake / "pins.toml")
+            result = self.run_script(
+                RELEASE,
+                "--check-pins",
+                "--pins",
+                str(fake / "pins.toml"),
+                env_extra={"STACKCHAN_CONTAINER": "true"},
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("toolchain.container_sha256", result.stderr + result.stdout)
 
     def test_vendor_host_scan_rejects_synthetic_image_strings(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
