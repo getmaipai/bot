@@ -88,3 +88,15 @@ The ring must not show expression colours. StackChan's expression map currently 
 Camera is pink with a flash style (distinct from all other colours). Wake-word listening shows nothing special. Charging is a slow green
 breathe while docked and low battery is an amber pulse. Other proposed rows and all periods are defaults he can change.
 EOF
+
+## Status 2026-10-20
+
+Built: the look table rows, styles and periods (`indicator/looks.py`), pink in the palette, `Look.style` and `Look.period_s`, the StackChan ring
+renderer (`bodies/stackchan/ring.py`), the camera cue as two pink flashes then steady pink, expression no longer touching the ring,
+and `StackChanRingIndicator` (`bodies/stackchan/ring_indicator.py`), an `Indicator` the existing director can drive.
+
+Not built yet, in order: (1) wire the director and `StackChanRingIndicator` into the StackChan service, with a 50 ms `tick()` thread, so
+the live (green), connection, offline, charging and low battery rows reach the ring; this needs a "voice is going to the hub" fact from
+the xiaozhi uplink and the battery and connection facts from the device client; (2) the light flags for pairing, updating and dancing in
+the callers; (3) the Reachy Eyes protocol gaining a pink word; (4) the grep and conformance tests extended to every future body; (5) the
+architect review of this note. Silent ambient capture remains the one cue-less capture.
