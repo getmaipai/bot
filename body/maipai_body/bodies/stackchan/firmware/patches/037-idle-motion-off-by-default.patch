@@ -1,0 +1,29 @@
+# Intent: stillness is the default (owner request 2026-10-20: "it is constantly moving"). The idle head movement now starts OFF at boot and the host choice (self.robot.set_idle_motion) is saved in NVS, read again at boot and written only when it changes. A reboot, a reconnect or a lost host message can no longer start the head wandering.
+# Upstream: m5stack/StackChan firmware/main/hal/board/stackchan_display.cc, stackchan_display.h (MIT). Applies after 036 with --unidiff-zero.
+# Check after a flash: after a reboot the head does not move until the host sends set_idle_motion true; the serial log shows no idle motion modifier at idle.
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index 3fa42ee..78593d0 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -300,0 +301,6 @@ void StackChanAvatarDisplay::SetupUI()
++    {
++        // Stillness is the default: a reboot, a reconnect or a lost host message must never
++        // start the head wandering. The host's set_idle_motion choice is saved here.
++        Settings motion_settings("xiaozhi", false);
++        idle_motion_enabled_ = motion_settings.GetInt("idle_motion", 0) != 0;
++    }
+@@ -642 +648,6 @@ void StackChanAvatarDisplay::SetIdleMotionEnabled(bool enabled)
+-    // A runtime gate: the stored idle_lv is not touched.
++    // A runtime gate: the stored idle_lv is not touched. The choice is saved (only when it
++    // changes, to spare the flash) and read again at boot.
++    if (idle_motion_enabled_ != enabled) {
++        Settings motion_settings("xiaozhi", true);
++        motion_settings.SetInt("idle_motion", enabled ? 1 : 0);
++    }
+diff --git a/firmware/main/hal/board/stackchan_display.h b/firmware/main/hal/board/stackchan_display.h
+index a347f0d..ff8b901 100644
+--- a/firmware/main/hal/board/stackchan_display.h
++++ b/firmware/main/hal/board/stackchan_display.h
+@@ -24 +24 @@ private:
+-    bool idle_motion_enabled_           = true;
++    bool idle_motion_enabled_           = false;  // still by default; the saved choice is read at boot
