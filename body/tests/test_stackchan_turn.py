@@ -485,6 +485,7 @@ def test_the_first_audio_of_an_utterance_is_kept_when_no_reply_was_playing(monke
     server = FakeServer()
     server._loop = loop
     monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    now = [100.0]
     bridge = StackChanTurnBridge(
         server,
         Link(),
@@ -493,11 +494,13 @@ def test_the_first_audio_of_an_utterance_is_kept_when_no_reply_was_playing(monke
         turn_factory=FakeTurn,
         tts_factory=FakeTts,
         side_executor=InlineExecutor(),
+        clock=lambda: now[0],
     )
     loop.run_until_complete(bridge.listen("session-first-audio", "device", "start"))
     assert "session-first-audio" not in bridge._speech_ended  # nothing was playing: no echo tail
+    now[0] += 0.31  # past the pop-up hold
     loop.run_until_complete(bridge.on_audio("session-first-audio", b"\x01\x02"))
-    assert bridge._uplink_dropped == 0
+    assert bridge._uplink_dropped == 0 and bridge._popup_dropped == 0
     loop.run_until_complete(bridge._tasks["session-first-audio"])
     loop.close()
 
@@ -514,3 +517,109 @@ def test_a_real_playback_still_leaves_an_echo_tail_to_ignore(monkeypatch):
     bridge._cancel_turn("session-echo", send_stop=False)
     assert "session-echo" in bridge._speech_ended
     loop.close()
+
+
+def test_uplink_right_after_the_listening_tone_is_held_back_from_recognition(monkeypatch):
+    import maipai_body.bodies.stackchan.turn as turn_module
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    now = [10.0]
+    bridge = StackChanTurnBridge(
+        server,
+        Link(),
+        Offline(),
+        stt_factory=FakeStt,
+        turn_factory=FakeTurn,
+        tts_factory=FakeTts,
+        side_executor=InlineExecutor(),
+        clock=lambda: now[0],
+    )
+    loop.run_until_complete(bridge.listen("session-tone", "device", "detect"))
+    now[0] += 0.1
+    loop.run_until_complete(bridge.on_audio("session-tone", b"\x01\x02"))  # the tone
+    now[0] += 0.3
+    loop.run_until_complete(bridge.on_audio("session-tone", b"\x03\x04"))  # the person
+    assert bridge._popup_dropped == 1
+    loop.run_until_complete(bridge._tasks["session-tone"])
+    loop.close()
+
+
+class _SequencedStt:
+    """Answers each stream with the next result; records the patience each was given."""
+
+    results: list = []
+    patiences: list = []
+    hook = None
+
+    def __init__(self, base, cookie):
+        pass
+
+    def run(self, capture, *, patience_s=None):
+        type(self).patiences.append(patience_s)
+        if type(self).hook is not None:
+            type(self).hook()
+        return type(self).results.pop(0)
+
+
+def _bridge_for_no_speech(monkeypatch, results, *, closed=False, clock=None):
+    import maipai_body.bodies.stackchan.turn as turn_module
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    _SequencedStt.results = list(results)
+    _SequencedStt.patiences = []
+    _SequencedStt.hook = None
+    FakeTurn.streams = []
+    FakeTts.sentences = []
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    bridge = StackChanTurnBridge(
+        server,
+        Link(),
+        Offline(),
+        stt_factory=_SequencedStt,
+        turn_factory=FakeTurn,
+        tts_factory=FakeTts,
+        side_executor=InlineExecutor(),
+        clock=clock or (lambda: 0.0),
+    )
+    capture = FakeCapture()
+    capture.closed = closed
+    errors: list[str] = []
+    bridge._speak_plain_error = lambda playback, base, cookie: errors.append("error line")
+    return loop, bridge, capture, errors
+
+
+def test_early_no_speech_keeps_listening_and_then_answers(monkeypatch):
+    results = [SttStreamResult(kind="no_speech"), SttStreamResult(kind="final", text="hello")]
+    loop, bridge, capture, errors = _bridge_for_no_speech(monkeypatch, results)
+    loop.run_until_complete(bridge._run("session", "device", capture))
+    loop.close()
+    assert errors == []
+    assert FakeTurn.streams and FakeTurn.streams[0][0] == "hello"
+    assert _SequencedStt.patiences[0] is None and _SequencedStt.patiences[1] >= 0.5
+
+
+def test_no_speech_after_the_patience_is_over_ends_the_turn_with_the_error_line(monkeypatch):
+    now = [0.0]
+    results = [SttStreamResult(kind="no_speech")]
+    loop, bridge, capture, errors = _bridge_for_no_speech(
+        monkeypatch, results, clock=lambda: now[0]
+    )
+    _SequencedStt.hook = lambda: now.__setitem__(0, 6.0)  # the patience runs out while listening
+    loop.run_until_complete(bridge._run("session", "device", capture))
+    loop.close()
+    assert errors == ["error line"] and len(_SequencedStt.patiences) == 1
+
+
+def test_no_speech_once_the_device_has_stopped_listening_is_not_retried(monkeypatch):
+    results = [SttStreamResult(kind="no_speech")]
+    loop, bridge, capture, errors = _bridge_for_no_speech(monkeypatch, results, closed=True)
+    loop.run_until_complete(bridge._run("session", "device", capture))
+    loop.close()
+    assert errors == ["error line"] and len(_SequencedStt.patiences) == 1

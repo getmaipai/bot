@@ -19,7 +19,7 @@ from maipai_body.speaker_evidence import SpeakerEvidenceError, speaker_evidence
 from maipai_body.speech.capture import BLOCK_SAMPLES
 from maipai_body.speech.offline_clips import UNREACHABLE
 from maipai_body.speech.playback import AudioPlayback
-from maipai_body.speech.stt_stream import SttStreamClient
+from maipai_body.speech.stt_stream import WAKE_PATIENCE_S, SttStreamClient
 from maipai_body.speech.tts_playback import TtsAuthFailed, TtsPlaybackClient
 from maipai_body.speech.turn_client import TurnAuthFailed, TurnClient, TurnLinkLost
 
@@ -29,6 +29,10 @@ LOG = logging.getLogger(__name__)
 # 40-frame (2.4 s) decode queue, which drops packets once full. The lead goes out at
 # PREBUFFER_GAP_S per frame, so about 1.7 s is still queued when pacing starts.
 LEAD_FRAMES = 38
+# The listening pop-up tone plays right after a wake word or a tap and the microphone hears it;
+# uplink frames this soon after a listen start are not sent on, so the tone never reaches speech
+# recognition (the hub answers one short voiced burst with no_speech). UNMEASURED default.
+POPUP_HOLD_S = 0.3
 FRAME_S = 0.06
 # Decode and speaker delay after the last frame's play time, before the stop.
 STOP_TAIL_S = 0.12
@@ -45,6 +49,10 @@ class StackChanAudioCapture:
         self._resampler = av.AudioResampler(format="flt", layout="mono", rate=16000)
         self._leftover = np.zeros(0, dtype=np.float32)
         self.peak = 0.0  # loudest sample seen (0..1); a level, never audio
+
+    @property
+    def closed(self) -> bool:
+        return self._closed.is_set()
 
     def feed_opus(self, data: bytes) -> None:
         if self._closed.is_set():
@@ -303,6 +311,7 @@ class StackChanTurnBridge:
         self._settled_sessions: set[str] = set()
         # Voice diagnostics (counts only, never audio or words): frames and bytes per session.
         self._audio_stats: dict[str, list[int]] = {}
+        self._popup_dropped = 0
 
     async def on_audio(self, session_id: str, data: bytes) -> None:
         stats = self._audio_stats.setdefault(session_id, [0, 0])
@@ -324,6 +333,9 @@ class StackChanTurnBridge:
             self._uplink_live += 1
         elif now - self._speech_ended.get(session_id, float("-inf")) < 0.18:
             self._uplink_dropped += 1
+            return
+        if capture is not None and now - self._capture_started.get(session_id, -1e9) < POPUP_HOLD_S:
+            self._popup_dropped += 1
             return
         if capture is not None:
             started = self._capture_started.get(session_id, now)
@@ -403,6 +415,38 @@ class StackChanTurnBridge:
             "abort_to_silence_ms": self._abort_to_silence_ms,
             "first_audio_ms": self._first_audio_ms,
         }
+
+    async def _recognise(self, base, cookie, capture, started_at):
+        """Speech to text, listening on while the wake patience lasts.
+
+        The hub answers a short burst with no speech (a pop-up tone, a click) as ``no_speech``. If
+        the person has had less than the wake patience to speak and the device has not stopped,
+        open a fresh stream on the same capture instead of ending the turn with an apology.
+        """
+        deadline = started_at + WAKE_PATIENCE_S
+        first = True
+        while True:
+            stt = self.stt_factory(base, cookie)
+            self._set_live(True)
+            try:
+                if first:
+                    result = await asyncio.to_thread(stt.run, capture)
+                else:
+                    remaining = max(0.5, deadline - self._clock())
+                    result = await asyncio.to_thread(stt.run, capture, patience_s=remaining)
+            finally:
+                self._set_live(False)
+            first = False
+            if (
+                result.kind != "no_speech"
+                or getattr(capture, "closed", False)
+                or self._clock() >= deadline - 0.5
+            ):
+                return result
+            LOG.info(
+                "StackChan voice: no speech yet; listening on (%.1f s of patience left)",
+                deadline - self._clock(),
+            )
 
     def _record_uplink(self, nbytes: int, peak: float, *, detect: bool = False) -> None:
         if self.uplink_stats is None:
@@ -518,12 +562,7 @@ class StackChanTurnBridge:
                 self._emit_expression("thinking")
                 await asyncio.to_thread(self._offline_line, playback)
                 return
-            stt = self.stt_factory(base, cookie)
-            self._set_live(True)
-            try:
-                result = await asyncio.to_thread(stt.run, capture)
-            finally:
-                self._set_live(False)
+            result = await self._recognise(base, cookie, capture, started_at)
             LOG.info(
                 "StackChan voice: speech-to-text ended (%s, %d characters)",
                 result.kind,
