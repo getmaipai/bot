@@ -295,7 +295,8 @@ def test_an_unreachable_hub_at_real_boot_is_reconnecting_and_a_wake_takes_the_of
         assert stack.machine.phase is LinkPhase.RECONNECTING
 
         release_first_redeem.set()  # the first redeem fails, the wake's retry fails too
-        _wait_for(lambda: speaker.said)
+        # The wake's retry walks real connect back-offs; a loaded machine needs more than 3 s.
+        _wait_for(lambda: speaker.said, timeout=15.0)
         retries_after_boot = len(client.refreshed_at)
         assert retries_after_boot >= 1
 
