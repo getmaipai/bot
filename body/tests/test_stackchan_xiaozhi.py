@@ -113,6 +113,8 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("session_id", start)
             self.assertEqual(await ws.recv(), b"opus-frame-1")
             self.assertEqual(await ws.recv(), b"opus-frame-2")
+            neutral = json.loads(await ws.recv())  # the face resets in order before the stop
+            self.assertEqual((neutral["type"], neutral["emotion"]), ("llm", "neutral"))
             self.assertEqual(json.loads(await ws.recv())["state"], "stop")
         self.assertEqual(self.audio[0][1], b"fake-opus-uplink")
 

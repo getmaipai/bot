@@ -15,6 +15,7 @@ import av
 import numpy as np
 import numpy.typing as npt
 
+from maipai_body.bodies.stackchan.error_line import ErrorLineBreaker
 from maipai_body.speaker_evidence import SpeakerEvidenceError, speaker_evidence
 from maipai_body.speech.capture import BLOCK_SAMPLES
 from maipai_body.speech.offline_clips import UNREACHABLE
@@ -325,7 +326,8 @@ class StackChanTurnBridge:
         self._last_turn_end: dict[str, float] = {}
         self._followup: dict[str, bool] = {}
         self.follow_up_s = FOLLOW_UP_S
-        self._error_line_spoken = False  # the apology was the last thing said: never twice in a row
+        self._breaker = ErrorLineBreaker(clock=clock)
+        self._quiet_streak = 0
 
     async def on_audio(self, session_id: str, data: bytes) -> None:
         stats = self._audio_stats.setdefault(session_id, [0, 0])
@@ -593,6 +595,9 @@ class StackChanTurnBridge:
                 len(result.text or ""),
             )
             outcome = self._classify(result)
+            if outcome == "speech":
+                self._breaker.note_real_final()
+                self._quiet_streak = 0
             if outcome == "silence":
                 # Nobody spoke (or it was not speech): end quietly and let the device go idle.
                 await self._end_quietly(session_id, device_id)
@@ -613,6 +618,7 @@ class StackChanTurnBridge:
                     line = confirmation(command, before, after)
                     if line:
                         await asyncio.to_thread(self._say, playback, base, cookie, line)
+                        self._breaker.note_speech()
                     return
             turn = self.turn_factory(base, cookie)
             chat_started = self._clock()
@@ -666,7 +672,7 @@ class StackChanTurnBridge:
                     self._states[session_id] = "listening"
                     self._speech_ended[session_id] = self._clock()
                 await asyncio.to_thread(playback.end)
-                self._error_line_spoken = False
+                self._breaker.note_speech()
                 LOG.info("StackChan voice: reply finished playing")
             else:
                 await asyncio.to_thread(self._speak_plain_error, playback, base, cookie)
@@ -706,6 +712,8 @@ class StackChanTurnBridge:
             )
 
     def _offline_line(self, playback) -> None:
+        if not self._breaker.allow():  # a canned error line: same loop breaker as the apology
+            return
         try:
             from pathlib import Path
 
@@ -730,7 +738,13 @@ class StackChanTurnBridge:
         return "failed" if (result.speech_s or 0.0) >= MIN_SPEECH_S else "silence"
 
     async def _end_quietly(self, session_id: str, device_id: str) -> None:
-        LOG.info("StackChan voice: no speech to answer; ending quietly and going idle")
+        self._quiet_streak += 1
+        LOG.info(
+            "StackChan voice: no speech to answer (%d quiet turn%s in a row); going idle%s",
+            self._quiet_streak,
+            "" if self._quiet_streak == 1 else "s",
+            " and waiting for the wake word" if self._quiet_streak >= 2 else "",
+        )
         send_idle = getattr(self.server, "send_idle", None)
         if callable(send_idle):
             try:
@@ -748,10 +762,8 @@ class StackChanTurnBridge:
             LOG.warning("StackChan voice: could not speak %r", text, exc_info=True)
 
     def _speak_plain_error(self, playback, base: str, cookie: str) -> None:
-        if self._error_line_spoken:
-            LOG.info("StackChan voice: the apology was just spoken; staying quiet this time")
+        if not self._breaker.allow():
             return
-        self._error_line_spoken = True
         try:
             self.tts_factory(base, cookie, playback).speak(
                 "I couldn't understand that. Please try again."
