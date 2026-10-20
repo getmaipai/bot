@@ -3,6 +3,7 @@ set -eu
 exec python3 - "$@" <<'PY'
 import argparse
 import ipaddress
+import re
 import shutil
 import subprocess
 import sys
@@ -70,8 +71,12 @@ def main():
         except OSError as exc:
             print(f"ERROR: Could not read strings list: {exc}", file=sys.stderr)
             return 2
-        vendors = ("tenclass", "m5stack", "ezdata2", "uiflow2", "pool.ntp.org", "time.google.com")
-        found = [host for host in vendors if host in text]
+        # Hostnames only: the image legitimately carries board and class names such as M5StackCoreS3Board.
+        vendors = (
+            r"tenclass", r"m5stack\.(?:com|cn|io|net)", r"ezdata2", r"uiflow2",
+            r"pool\.ntp\.org", r"time\.google\.com",
+        )
+        found = [match.group(0) for pattern in vendors if (match := re.search(pattern, text))]
         if found:
             print("FAIL: vendor host string(s) found in built image:")
             for host in found:

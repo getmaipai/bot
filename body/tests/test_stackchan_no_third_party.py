@@ -54,6 +54,17 @@ class StackChanNoThirdPartyTests(unittest.TestCase):
         self.assertIn("203.0.113.42", rejected.stdout)
         self.assertIn("capture again", rejected.stdout)
 
+    def test_strings_scan_flags_vendor_hosts_but_not_board_names(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            strings = Path(directory) / "strings.txt"
+            strings.write_text("M5StackCoreS3Board\nM5Stack-StackChan-Board\ncom.m5stack.stackchan\n")
+            ok = subprocess.run(["bash", str(SCRIPT), "--strings", str(strings)], check=False, capture_output=True, text=True)
+            self.assertEqual(ok.returncode, 0, ok.stderr + ok.stdout)
+            strings.write_text("https://api.m5stack.com/v1\n")
+            bad = subprocess.run(["bash", str(SCRIPT), "--strings", str(strings)], check=False, capture_output=True, text=True)
+            self.assertEqual(bad.returncode, 1, bad.stderr + bad.stdout)
+            self.assertIn("m5stack.com", bad.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
