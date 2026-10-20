@@ -363,3 +363,32 @@ def test_a_missing_hub_session_is_logged_as_a_warning_with_the_fix(monkeypatch, 
         loop.run_until_complete(bridge._run("session", "device", FakeCapture()))
         loop.close()
     assert any("no hub session (cookie missing" in record.getMessage() for record in caplog.records)
+
+
+def test_the_bridge_counts_uplink_frames_and_wake_detects_without_keeping_audio(monkeypatch):
+    import maipai_body.bodies.stackchan.turn as turn_module
+    from maipai_body.bodies.stackchan.uplink_stats import UplinkStats
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    stats = UplinkStats(sleep=lambda seconds: None)
+    bridge = StackChanTurnBridge(
+        server,
+        Link(),
+        Offline(),
+        stt_factory=FakeStt,
+        turn_factory=FakeTurn,
+        tts_factory=FakeTts,
+        uplink_stats=stats,
+    )
+    loop.run_until_complete(bridge.listen("session-abcdef012345", "device", "detect"))
+    loop.run_until_complete(bridge.on_audio("session-abcdef012345", b"\x01\x02\x03\x04"))
+    loop.run_until_complete(bridge.on_audio("session-abcdef012345", b"\x05\x06"))
+    loop.run_until_complete(bridge._tasks["session-abcdef012345"])
+    loop.close()
+    assert stats.total_frames == 2
+    assert stats.total_bytes == 6
+    assert stats.total_detects == 1

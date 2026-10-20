@@ -43,6 +43,7 @@ class StackChanAudioCapture:
         self._decoder = av.CodecContext.create("opus", "r")
         self._resampler = av.AudioResampler(format="flt", layout="mono", rate=16000)
         self._leftover = np.zeros(0, dtype=np.float32)
+        self.peak = 0.0  # loudest sample seen (0..1); a level, never audio
 
     def feed_opus(self, data: bytes) -> None:
         if self._closed.is_set():
@@ -51,6 +52,8 @@ class StackChanAudioCapture:
         for frame in self._decoder.decode(packet):
             for converted in self._resampler.resample(frame):
                 samples = converted.to_ndarray().reshape(-1).astype(np.float32)
+                if samples.size:
+                    self.peak = max(self.peak, min(1.0, float(np.max(np.abs(samples)))))
                 self._queue_blocks(samples)
 
     def _queue_blocks(self, samples: npt.NDArray[np.float32]) -> None:
@@ -257,11 +260,14 @@ class StackChanTurnBridge:
         person_attribution=None,
         expression_sink=None,
         live_sink=None,
+        uplink_stats=None,
         clock=time.monotonic,
     ) -> None:
         self.server, self.link, self.offline = server, link, offline
         # The light standard's live cue: green while the voice is being sent to the hub.
         self.live_sink = live_sink
+        # BOT-SELF-TEST-01: counts of uplink frames and wake detects (never audio).
+        self.uplink_stats = uplink_stats
         self._clock = clock
         self.cache_dir = cache_dir
         self.stt_factory, self.turn_factory, self.tts_factory = (
@@ -301,6 +307,7 @@ class StackChanTurnBridge:
                 session_id[:8],
             )
         capture = self._captures.get(session_id)
+        self._record_uplink(len(data), getattr(capture, "peak", 0.0))
         now = self._clock()
         if self._states.get(session_id) == "speaking":
             if not self._aec.get(session_id, False):
@@ -325,6 +332,8 @@ class StackChanTurnBridge:
         if aec is not None:
             self._aec[session_id] = bool(aec)
         LOG.info("StackChan voice: listen %s (mode %s) for session %s", state, mode, session_id[:8])
+        if state == "detect":
+            self._record_uplink(0, 0.0, detect=True)
         if state in {"start", "detect"}:
             self._audio_stats[session_id] = [0, 0]
             self._cancel_turn(session_id, send_stop=True)
@@ -382,6 +391,17 @@ class StackChanTurnBridge:
             "abort_to_silence_ms": self._abort_to_silence_ms,
             "first_audio_ms": self._first_audio_ms,
         }
+
+    def _record_uplink(self, nbytes: int, peak: float, *, detect: bool = False) -> None:
+        if self.uplink_stats is None:
+            return
+        try:
+            if detect:
+                self.uplink_stats.record_detect()
+            else:
+                self.uplink_stats.record_frame(nbytes, peak)
+        except Exception:  # a counter must never break the voice path
+            LOG.warning("StackChan uplink counter failed", exc_info=True)
 
     def _set_live(self, active: bool) -> None:
         if self.live_sink is None:

@@ -271,6 +271,9 @@ class XiaozhiServer:
         self.vision_host = vision_host
         self.vision_port = vision_port
         self.max_photo_bytes = max_photo_bytes
+        # BOT-SELF-TEST-01: set by the app; both are None until a robot is attached.
+        self.selftest_checks: Callable[[], list[dict[str, str]]] | None = None
+        self.selftest_runner: Callable[[list[str] | None], list[dict[str, object]]] | None = None
         self.advertised_vision_url = advertised_vision_url
         self.notification_audio_handler = notification_audio_handler
         self._vision_runner: web.AppRunner | None = None
@@ -314,6 +317,8 @@ class XiaozhiServer:
         app = web.Application(client_max_size=self.max_photo_bytes)
         app.router.add_post("/vision/{device_id}", self._receive_photo)
         app.router.add_get("/notify/{device_id}/{audio_id}.ogg", self._serve_notify_audio)
+        app.router.add_get("/selftest/checks", self._selftest_list)
+        app.router.add_post("/selftest/run", self._selftest_run)
         self._vision_runner = web.AppRunner(app)
         await self._vision_runner.setup()
         self._vision_site = web.TCPSite(self._vision_runner, self.vision_host, self.vision_port)
@@ -610,6 +615,59 @@ class XiaozhiServer:
         if host in {"0.0.0.0", "::"}:
             host = "127.0.0.1"
         return f"http://{host}:{self.vision_port}/vision/{device_id}"
+
+    @staticmethod
+    def _selftest_refusal(request: web.Request) -> web.Response | None:
+        """Self-test is a local administrator action, never a LAN API."""
+        if request.remote not in {"127.0.0.1", "::1"}:
+            return web.json_response(
+                {
+                    "error": "The self-test runs only from this computer. "
+                    "Run python -m maipai_body.selftest on the Bot host."
+                },
+                status=403,
+            )
+        return None
+
+    async def _selftest_list(self, request: web.Request) -> web.Response:
+        refused = self._selftest_refusal(request)
+        if refused is not None:
+            return refused
+        if self.selftest_checks is None:
+            return web.json_response(
+                {"error": "No robot is attached yet. Wait for the StackChan to connect."},
+                status=503,
+            )
+        return web.json_response({"checks": self.selftest_checks()})
+
+    async def _selftest_run(self, request: web.Request) -> web.Response:
+        refused = self._selftest_refusal(request)
+        if refused is not None:
+            return refused
+        origin = request.headers.get("Origin")
+        if origin is not None and origin.split("://", 1)[-1] != request.host:
+            return web.json_response({"error": "cross-origin request refused"}, status=403)
+        if request.content_type != "application/json":
+            return web.json_response({"error": "send application/json"}, status=415)
+        if self.selftest_runner is None:
+            return web.json_response(
+                {"error": "No robot is attached yet. Wait for the StackChan to connect."},
+                status=503,
+            )
+        try:
+            body = await request.json() if request.can_read_body else {}
+        except ValueError:
+            return web.json_response({"error": "the body must be a JSON object"}, status=400)
+        only = body.get("only") if isinstance(body, dict) else None
+        if only is not None and not (
+            isinstance(only, list) and all(isinstance(item, str) for item in only)
+        ):
+            return web.json_response({"error": "only must be a list of check names"}, status=400)
+        try:
+            results = await asyncio.to_thread(self.selftest_runner, only)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response({"results": results})
 
     async def _receive_photo(self, request: web.Request) -> web.Response:
         device_id = request.match_info["device_id"]

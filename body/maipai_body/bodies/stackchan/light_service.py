@@ -17,6 +17,7 @@ break the voice or camera path.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 import time
@@ -81,6 +82,7 @@ class StackChanLightService:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._indicator = indicator
+        self._suspended = False
         self._settings = settings
         self._presence = presence
         self._minute = minute
@@ -103,6 +105,23 @@ class StackChanLightService:
         """Re-resolve the current facts (night edge, cue holds ending)."""
         self._release_due_cues()
         self._apply()
+
+    @contextlib.contextmanager
+    def suspended(self):
+        """Hold the ring for a person-driven check (the self-test); the facts apply again after."""
+        self._suspended = True
+        try:
+            yield self
+        finally:
+            self._suspended = False
+            self._apply()
+
+    def show(self, look) -> None:
+        """Show one look (or dark) directly; for use inside ``suspended()`` only."""
+        if look is None:
+            self._indicator.off()
+        else:
+            self._indicator.set_look(look)
 
     def tick(self) -> None:
         """Advance the ring's style clock and let a finished cue hold end."""
@@ -159,6 +178,8 @@ class StackChanLightService:
             self.cue_camera(False)
 
     def _apply(self) -> None:
+        if self._suspended:
+            return
         facts = self._facts
         request = looks.LookRequest(
             funnel=facts.funnel,

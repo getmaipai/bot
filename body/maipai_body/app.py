@@ -429,6 +429,9 @@ async def _serve_stackchan_channels(
         daemon=True,
     ).start()
     voice.robot.robot._driver("camera").cue_sink = light.cue_camera
+    from maipai_body.bodies.stackchan.uplink_stats import UplinkStats
+
+    uplink = UplinkStats()
     if link is not None and offline is not None:
         bridge = StackChanTurnBridge(
             voice,
@@ -441,9 +444,24 @@ async def _serve_stackchan_channels(
             person_attribution=lambda result: getattr(result, "speaker_evidence", None),
             expression_sink=behavior.render_turn_state,
             live_sink=light.cue_live,
+            uplink_stats=uplink,
         )
         voice.audio_handler = bridge.on_audio
         voice.turn_handler = bridge.listen
+        from maipai_body.selftest.stackchan_wiring import build_context, build_service_hooks
+        from maipai_body.speech.turn_client import TurnClient
+
+        voice.selftest_checks, voice.selftest_runner = build_service_hooks(
+            build_context(
+                robot=voice.robot.robot,
+                client=voice.robot.client,
+                light=light,
+                uplink=uplink,
+                link=link,
+                turn_factory=TurnClient,
+            ),
+            light,
+        )
     await voice.start(host, xiaozhi_port, ssl=tls_context)
     try:
         await avatar.start(avatar_host, avatar_port, ssl=tls_context)
