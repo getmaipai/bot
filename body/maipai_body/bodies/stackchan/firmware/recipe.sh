@@ -256,6 +256,7 @@ apply_repo_patch 030-load-local-assets.patch "$SRC"
 apply_repo_patch 032-wake-word-with-persistent-socket.patch "$SRC"
 apply_repo_patch 033-connecting-screen-and-boot-ring.patch "$SRC"
 apply_repo_patch 034-host-idle-command.patch "$SRC"
+apply_repo_patch 036-swipe-gestures-and-quick-settings.patch "$SRC"
 
 cat > "$FW/sdkconfig.defaults.local" <<CFG
 CONFIG_STACKCHAN_SERVER_URL="$AVATAR_SERVER_URL"

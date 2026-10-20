@@ -1,0 +1,262 @@
+# Intent: swipe gestures on the face and a quick-settings screen (owner request 2026-10-20). Swipe left lowers the volume by 10, right raises it by 10 (20 to 100, saved by the codec), down stops any talking, up opens quick settings: volume and brightness sliders, the saved Wi-Fi networks to switch to, and Done. Gestures are ignored until the boot cover has gone. A microphone mute switch is deliberately not here: a mute must cut the audio for real and needs its own design.
+# Upstream: m5stack/StackChan firmware/main/hal/board/stackchan_display.cc, stackchan_display.h (MIT). Applies after 033 with --unidiff-zero.
+# Check after a flash: swipe left/right shows a Volume N toast and changes the level; swipe down while it speaks stops it; swipe up shows the quick-settings screen.
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index 7eda4bb..3fa42ee 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -12,0 +13,2 @@
++#include <cstdio>
++#include <algorithm>
+@@ -13,0 +16,4 @@
++#include <board.h>
++#include <application.h>
++#include <ssid_manager.h>
++#include <esp_wifi.h>
+@@ -277,0 +284 @@ void StackChanAvatarDisplay::SetupUI()
++    lv_obj_add_event_cb(avatar->getPanel()->get(), &StackChanAvatarDisplay::OnGesture, LV_EVENT_GESTURE, this);
+@@ -377,0 +385,226 @@ void StackChanAvatarDisplay::BootRingTick(lv_timer_t* timer)
++void StackChanAvatarDisplay::OnGesture(lv_event_t* event)
++{
++    auto* self = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
++    if (self == nullptr) {
++        return;
++    }
++    if (!self->boot_done_ || self->quick_panel_ != nullptr) {
++        return;
++    }
++
++    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
++    if (dir == LV_DIR_LEFT) {
++        self->ChangeVolume(-10);
++    } else if (dir == LV_DIR_RIGHT) {
++        self->ChangeVolume(+10);
++    } else if (dir == LV_DIR_BOTTOM) {
++        Application::GetInstance().Schedule([]() {
++            Application::GetInstance().AbortSpeaking(kAbortReasonNone);
++        });
++    } else if (dir == LV_DIR_TOP) {
++        self->ToggleQuickSettings();
++    }
++}
++
++void StackChanAvatarDisplay::ChangeVolume(int delta)
++{
++    auto codec = Board::GetInstance().GetAudioCodec();
++    if (codec == nullptr) {
++        return;
++    }
++
++    int volume = std::clamp(codec->output_volume() + delta, 20, 100);
++    codec->SetOutputVolume(volume);
++
++    char buffer[32];
++    snprintf(buffer, sizeof(buffer), "Volume %d", volume);
++    ShowToast(buffer);
++}
++
++void StackChanAvatarDisplay::ShowToast(const char* text)
++{
++    if (toast_label_ == nullptr) {
++        toast_label_ = lv_label_create(lv_layer_top());
++        lv_obj_set_style_text_font(toast_label_, &BUILTIN_TEXT_FONT, 0);
++        lv_obj_set_style_text_color(toast_label_, lv_color_white(), 0);
++        lv_obj_set_style_bg_color(toast_label_, lv_color_hex(0x222222), 0);
++        lv_obj_set_style_bg_opa(toast_label_, LV_OPA_COVER, 0);
++        lv_obj_set_style_radius(toast_label_, 8, 0);
++        lv_obj_set_style_pad_hor(toast_label_, 8, 0);
++        lv_obj_set_style_pad_ver(toast_label_, 4, 0);
++        lv_obj_align(toast_label_, LV_ALIGN_BOTTOM_MID, 0, -16);
++        lv_obj_add_flag(toast_label_, LV_OBJ_FLAG_HIDDEN);
++    }
++
++    lv_label_set_text(toast_label_, text);
++    lv_obj_remove_flag(toast_label_, LV_OBJ_FLAG_HIDDEN);
++
++    if (toast_timer_ != nullptr) {
++        lv_timer_delete(toast_timer_);
++        toast_timer_ = nullptr;
++    }
++    toast_timer_ = lv_timer_create(
++        [](lv_timer_t* timer) {
++            auto* display = static_cast<StackChanAvatarDisplay*>(lv_timer_get_user_data(timer));
++            if (display != nullptr && display->toast_label_ != nullptr) {
++                lv_obj_add_flag(display->toast_label_, LV_OBJ_FLAG_HIDDEN);
++            }
++        },
++        1200, this);
++}
++
++static StackChanAvatarDisplay* _quick_settings_display_ = nullptr;
++
++void StackChanAvatarDisplay::ToggleQuickSettings()
++{
++    if (quick_panel_ != nullptr) {
++        CloseQuickSettings();
++    } else {
++        OpenQuickSettings();
++    }
++}
++
++void StackChanAvatarDisplay::OpenQuickSettings()
++{
++    if (quick_panel_ != nullptr) {
++        return;
++    }
++
++    quick_panel_ = lv_obj_create(lv_layer_top());
++    lv_obj_set_size(quick_panel_, lv_pct(100), lv_pct(100));
++    lv_obj_set_style_bg_color(quick_panel_, lv_color_black(), 0);
++    lv_obj_set_style_bg_opa(quick_panel_, LV_OPA_COVER, 0);
++    lv_obj_set_style_border_width(quick_panel_, 0, 0);
++    lv_obj_set_style_radius(quick_panel_, 0, 0);
++    lv_obj_set_style_pad_all(quick_panel_, 8, 0);
++    lv_obj_remove_flag(quick_panel_, LV_OBJ_FLAG_SCROLLABLE);
++    lv_obj_set_flex_flow(quick_panel_, LV_FLEX_FLOW_COLUMN);
++    lv_obj_set_flex_align(quick_panel_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
++    lv_obj_set_style_pad_row(quick_panel_, 6, 0);
++
++    auto make_label = [](lv_obj_t* parent, const char* text) {
++        lv_obj_t* label = lv_label_create(parent);
++        lv_obj_set_style_text_font(label, &BUILTIN_TEXT_FONT, 0);
++        lv_obj_set_style_text_color(label, lv_color_white(), 0);
++        lv_label_set_text(label, text);
++        return label;
++    };
++
++    lv_obj_t* title = make_label(quick_panel_, "Quick settings");
++    lv_obj_set_width(title, LV_PCT(100));
++    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
++
++    lv_obj_t* volume_row = lv_obj_create(quick_panel_);
++    lv_obj_remove_flag(volume_row, LV_OBJ_FLAG_SCROLLABLE);
++    lv_obj_set_size(volume_row, LV_PCT(100), LV_SIZE_CONTENT);
++    lv_obj_set_flex_flow(volume_row, LV_FLEX_FLOW_ROW);
++    lv_obj_set_flex_align(volume_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
++    lv_obj_set_style_pad_column(volume_row, 6, 0);
++    lv_obj_add_flag(volume_row, LV_OBJ_FLAG_FLEX_IN_NEW_TRACK);
++
++    make_label(volume_row, "Volume");
++
++    lv_obj_t* volume_slider = lv_slider_create(volume_row);
++    lv_obj_set_width(volume_slider, 160);
++    lv_slider_set_range(volume_slider, 20, 100);
++    auto codec = Board::GetInstance().GetAudioCodec();
++    lv_slider_set_value(volume_slider, codec != nullptr ? codec->output_volume() : 80, LV_ANIM_OFF);
++    lv_obj_add_event_cb(volume_slider,
++                        [](lv_event_t* event) {
++                            auto c = Board::GetInstance().GetAudioCodec();
++                            if (c != nullptr) {
++                                c->SetOutputVolume(lv_slider_get_value(lv_event_get_target_obj(event)));
++                            }
++                        },
++                        LV_EVENT_VALUE_CHANGED, nullptr);
++
++    lv_obj_t* brightness_row = lv_obj_create(quick_panel_);
++    lv_obj_remove_flag(brightness_row, LV_OBJ_FLAG_SCROLLABLE);
++    lv_obj_set_size(brightness_row, LV_PCT(100), LV_SIZE_CONTENT);
++    lv_obj_set_flex_flow(brightness_row, LV_FLEX_FLOW_ROW);
++    lv_obj_set_flex_align(brightness_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
++    lv_obj_set_style_pad_column(brightness_row, 6, 0);
++    lv_obj_add_flag(brightness_row, LV_OBJ_FLAG_FLEX_IN_NEW_TRACK);
++
++    make_label(brightness_row, "Brightness");
++
++    lv_obj_t* brightness_slider = lv_slider_create(brightness_row);
++    lv_obj_set_width(brightness_slider, 160);
++    lv_slider_set_range(brightness_slider, 10, 100);
++    auto* backlight = Board::GetInstance().GetBacklight();
++    lv_slider_set_value(brightness_slider, backlight != nullptr ? backlight->brightness() : 80, LV_ANIM_OFF);
++    lv_obj_add_event_cb(brightness_slider,
++                        [](lv_event_t* event) {
++                            auto* backlight = Board::GetInstance().GetBacklight();
++                            if (backlight != nullptr) {
++                                backlight->SetBrightness(lv_slider_get_value(lv_event_get_target_obj(event)), true);
++                            }
++                        },
++                        LV_EVENT_VALUE_CHANGED, nullptr);
++
++    lv_obj_t* wifi_title = make_label(quick_panel_, "Wi-Fi");
++    lv_obj_add_flag(wifi_title, LV_OBJ_FLAG_FLEX_IN_NEW_TRACK);
++
++    const auto& ssids = SsidManager::GetInstance().GetSsidList();
++    size_t ssid_count = ssids.size();
++    if (ssid_count > 4) {
++        ssid_count = 4;
++    }
++    for (size_t i = 0; i < ssid_count; i++) {
++        lv_obj_t* button = lv_button_create(quick_panel_);
++        lv_obj_set_width(button, LV_PCT(100));
++        lv_obj_add_flag(button, LV_OBJ_FLAG_FLEX_IN_NEW_TRACK);
++        lv_obj_t* ssid_label = make_label(button, ssids[i].ssid.c_str());
++        lv_obj_center(ssid_label);
++        lv_obj_add_event_cb(button,
++                            [](lv_event_t* event) {
++                                int index = static_cast<int>(reinterpret_cast<intptr_t>(lv_event_get_user_data(event)));
++                                SsidManager::GetInstance().SetDefaultSsid(index);
++                                esp_wifi_disconnect();
++                                if (_quick_settings_display_ != nullptr) {
++                                    _quick_settings_display_->ShowToast("Switching Wi-Fi");
++                                }
++                            },
++                            LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<intptr_t>(i)));
++    }
++
++    lv_obj_t* done_button = lv_button_create(quick_panel_);
++    lv_obj_set_width(done_button, LV_PCT(100));
++    lv_obj_add_flag(done_button, LV_OBJ_FLAG_FLEX_IN_NEW_TRACK);
++    lv_obj_t* done_label = make_label(done_button, "Done");
++    lv_obj_center(done_label);
++    lv_obj_add_event_cb(done_button,
++                        [](lv_event_t* event) {
++                            (void)event;
++                            if (_quick_settings_display_ != nullptr) {
++                                _quick_settings_display_->CloseQuickSettings();
++                            }
++                        },
++                        LV_EVENT_CLICKED, nullptr);
++
++    lv_obj_add_event_cb(quick_panel_,
++                        [](lv_event_t* event) {
++                            auto* display = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
++                            if (display == nullptr) {
++                                return;
++                            }
++                            lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
++                            if (dir == LV_DIR_BOTTOM || dir == LV_DIR_TOP) {
++                                display->CloseQuickSettings();
++                            }
++                        },
++                        LV_EVENT_GESTURE, this);
++
++    _quick_settings_display_ = this;
++}
++
++void StackChanAvatarDisplay::CloseQuickSettings()
++{
++    if (quick_panel_ != nullptr) {
++        // Async: this runs from the panel's own button and gesture callbacks.
++        lv_obj_delete_async(quick_panel_);
++        quick_panel_ = nullptr;
++    }
++    _quick_settings_display_ = nullptr;
++}
++
+diff --git a/firmware/main/hal/board/stackchan_display.h b/firmware/main/hal/board/stackchan_display.h
+index 9915e2c..a347f0d 100644
+--- a/firmware/main/hal/board/stackchan_display.h
++++ b/firmware/main/hal/board/stackchan_display.h
+@@ -11,0 +12 @@
++#include <algorithm>
+@@ -36,0 +38,4 @@ private:
++    lv_obj_t*   quick_panel_   = nullptr;
++    lv_obj_t*   toast_label_   = nullptr;
++    lv_timer_t* toast_timer_   = nullptr;
++
+@@ -40,0 +46,6 @@ private:
++    static void OnGesture(lv_event_t* event);
++    void ChangeVolume(int delta);
++    void ShowToast(const char* text);
++    void ToggleQuickSettings();
++    void OpenQuickSettings();
++    void CloseQuickSettings();
