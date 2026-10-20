@@ -7,6 +7,22 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-20
+
+### Fixed
+
+- StackChan firmware patch 030 loads the assets already on the flash (the wake word model, fonts and emoji) without any vendor download; patch 002 had skipped the only call that does it, so "Hi, StackChan" could not trigger and the boot log showed `MODEL_LOADER: Can not find model in partition table` (BOT-STACKCHAN-WAKE-01).
+- A hosted body never sets the host computer's clock or runs `sudo` (523 failed `date -s` attempts on a live hub), and the night light read uses the camera driver's `stream_frame`.
+- A stop caused by a lost StackChan link is released about 3 seconds after the device answers again; a stop a person pressed is never released by itself.
+- Health-check connections that send no bytes log nothing, and a face detector that cannot import in the hub bundle is one quiet log line, not a traceback.
+- `XiaozhiDeviceClient.set_led_colors` exists for the per-pixel LED tool.
+
+### Added
+
+- The StackChan voice session logs every stage at INFO with counts only, never audio or words: listen start, first audio frame, turn start and end, speech-to-text result length, chat result length, and a warning when the hosted bot has no hub session.
+- StackChan stays still while charging or on USB power: the battery poll feeds a power rule that switches the firmware idle motion off, and the configured level returns on battery.
+- StackChan firmware patches 020 (dance tools), 021 (touch and shake event queue) and 023 (saved Wi-Fi tools); the camera cue is two pink flashes then steady pink; a light service drives the ring (live, offline, charging and low-battery looks).
+
 ## [0.2.0] - 2026-10-20
 
 ### Changed
