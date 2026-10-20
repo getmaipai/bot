@@ -258,6 +258,7 @@ apply_repo_patch 033-connecting-screen-and-boot-ring.patch "$SRC"
 apply_repo_patch 034-host-idle-command.patch "$SRC"
 apply_repo_patch 036-swipe-gestures-and-quick-settings.patch "$SRC"
 apply_repo_patch 037-idle-motion-off-by-default.patch "$SRC"
+apply_repo_patch 038-head-move-cap.patch "$SRC"
 
 cat > "$FW/sdkconfig.defaults.local" <<CFG
 CONFIG_STACKCHAN_SERVER_URL="$AVATAR_SERVER_URL"

@@ -4,17 +4,22 @@ The unit kept moving because several sources could move the head (the idle settl
 dance, look-at-speaker, expression gestures) and each decided for itself. ``HeadMotionGate`` is the
 single answer to "may the head move now?": ambient sources are refused while the robot must be
 still (power unknown, charging, night, ``robot.idle.level`` still, resting). A move that answers a
-person during a turn is a response, not wandering, and always passes. Every decision is logged at
-INFO, once per source and decision every ``log_every_s`` so the log names who moved the head.
+person during a turn is a response, not wandering, and passes unless the per-minute cap is hit.
+Every decision is logged at INFO, once per source and decision every ``log_every_s`` so the log
+names who moved the head.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from collections import deque
 from collections.abc import Callable
 
 logger = logging.getLogger("maipai_body.bodies.stackchan.head_gate")
+
+# A conversation needs about three head moves a turn; 12 a minute is far above any real use.
+MAX_MOVES_PER_MIN = 12
 
 
 class HeadMotionGate:
@@ -25,12 +30,15 @@ class HeadMotionGate:
         resting: Callable[[], bool] = lambda: False,
         clock: Callable[[], float] = time.monotonic,
         log_every_s: float = 30.0,
+        max_moves_per_min: int = MAX_MOVES_PER_MIN,
     ) -> None:
         self._must_be_still = must_be_still
         self._resting = resting
         self._clock = clock
         self._log_every_s = log_every_s
         self._last_logged: dict[tuple[str, bool], float] = {}
+        self._max_moves = max_moves_per_min
+        self._recent: deque[float] = deque()
         self.allowed = 0
         self.denied = 0
 
@@ -44,6 +52,15 @@ class HeadMotionGate:
             verdict, reason = False, "resting"
         else:
             verdict, reason = True, "free to move"
+        if verdict:
+            # Last-resort servo protection: even answers to a person are capped per minute.
+            now = self._clock()
+            while self._recent and now - self._recent[0] >= 60.0:
+                self._recent.popleft()
+            if len(self._recent) >= self._max_moves:
+                verdict, reason = False, f"more than {self._max_moves} head moves in a minute"
+            else:
+                self._recent.append(now)
         if verdict:
             self.allowed += 1
         else:

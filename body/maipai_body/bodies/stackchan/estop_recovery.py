@@ -16,6 +16,11 @@ from maipai_body.robot import Robot
 
 LOG = logging.getLogger("maipai_body.bodies.stackchan.estop_recovery")
 _FAILURE_LOG_INTERVAL_S = 60.0
+# A stop that comes back within this long of a release means the "answer" did not mean the head
+# could move; each such round doubles the settle time (up to the cap) so a flaky link cannot
+# engage and release the stop every few seconds.
+_RELATCH_WINDOW_S = 120.0
+_MAX_SETTLE_S = 120.0
 
 
 class EstopRecovery:
@@ -34,7 +39,14 @@ class EstopRecovery:
         self._clock = clock
         self._settle_s = settle_s
         self._seen_since: float | None = None
+        self._released_at: float | None = None
+        self._relatches = 0
         self._last_failure_log_at: float | None = None
+
+    @property
+    def required_settle_s(self) -> float:
+        """The settle time now: doubled for every quick re-latch in a row, capped."""
+        return min(_MAX_SETTLE_S, self._settle_s * (2**self._relatches))
 
     def tick(self) -> bool:
         """Check once; return True only when this call released the latch."""
@@ -50,8 +62,14 @@ class EstopRecovery:
         now = self._clock()
         if self._seen_since is None:
             self._seen_since = now
+            if self._released_at is not None:
+                if now - self._released_at < _RELATCH_WINDOW_S:
+                    self._relatches += 1
+                else:
+                    self._relatches = 0
+                self._released_at = None
             return False
-        if now - self._seen_since < self._settle_s:
+        if now - self._seen_since < self.required_settle_s:
             return False
         try:
             self._robot.estop.release()
@@ -64,6 +82,8 @@ class EstopRecovery:
                 self._last_failure_log_at = now
             self._seen_since = now
             return False
+        self._released_at = now
+        self._seen_since = None  # a new latch is watched from scratch, never released at once
         LOG.info("StackChan answered again; the stop caused by the lost link was released")
         return True
 

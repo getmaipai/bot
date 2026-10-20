@@ -1,0 +1,32 @@
+# Intent: a last-resort limit on the host's head moves (owner request 2026-10-20: servo wear from constant movement). self.robot.set_head_angles refuses more than 20 calls in any 60 seconds and logs a warning; the tool returns false. A looping or confused host can wear the gears for a minute at most. The idle wander is already off by default (patch 037) and the servos already release torque at rest (Servo auto torque release, on by default upstream).
+# Upstream: m5stack/StackChan firmware/main/hal/hal_mcp.cpp (MIT). Applies after 037 with --unidiff-zero.
+# Check after a flash: send 25 set_head_angles calls within a minute; the first 20 move the head and the rest return false with a "refused" warning in the serial log.
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index 74b93e2..f58823f 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -33,0 +34,17 @@ int s_dance_modifier_id        = -1;
++// Last-resort servo protection: the host may move the head at most kMaxHeadMovesPerMinute times a
++// minute. A looping or confused host can then wear the gears for a minute at most.
++constexpr int kMaxHeadMovesPerMinute = 20;
++uint32_t s_head_move_times_ms[kMaxHeadMovesPerMinute] = {};
++int s_head_move_next                                   = 0;
++
++bool head_move_allowed(uint32_t now_ms)
++{
++    uint32_t oldest = s_head_move_times_ms[s_head_move_next];
++    if (oldest != 0 && now_ms - oldest < 60000) {
++        return false;
++    }
++    s_head_move_times_ms[s_head_move_next] = now_ms == 0 ? 1 : now_ms;
++    s_head_move_next                       = (s_head_move_next + 1) % kMaxHeadMovesPerMinute;
++    return true;
++}
++
+@@ -188,0 +206,6 @@ void Hal::xiaozhi_mcp_init()
++                           if (!head_move_allowed(static_cast<uint32_t>(esp_timer_get_time() / 1000))) {
++                               mclog::tagWarn(_tag, "set_head_angles refused: more than {} moves in a minute",
++                                              kMaxHeadMovesPerMinute);
++                               return false;
++                           }
++

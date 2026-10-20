@@ -173,8 +173,11 @@ class StackChanBehavior:
         self.night_active: Callable[[], bool] = lambda: False
         # Charging or on USB power: no wandering. Set by the power rule (power_idle.py).
         self.idle_still: Callable[[], bool] = lambda: False
-        # robot.idle.level from the settings frame (still, calm, lively); calm until told.
-        self.idle_level = "calm"
+        # robot.idle.level from the settings frame (still, calm, lively). Still until the hub says
+        # otherwise: a fresh or lost-settings unit never wanders (owner request 2026-10-20).
+        self.idle_level = "still"
+        # True once any move left the head off centre; the post-turn settle only runs then.
+        self._head_off_centre = False
         self.on_idle_level: Callable[[], None] = lambda: None
         # BOT-SC-ANIM-01: drowsy and asleep stages so an idle robot does not sit smiling for hours.
         from maipai_body.bodies.stackchan.profile import STACKCHAN_PROFILE as _profile
@@ -218,20 +221,23 @@ class StackChanBehavior:
         # Ambient moves (the idle settle, face following) go through the one head-motion gate.
         if not self.head_gate.allow(f"ambient:{primitive}", response=self._active.is_set()):
             return False
+        self._head_off_centre = True
         return self._with_lease(
             lambda: self._expression.render_ambient(primitive, SuppressionContext())
         )
 
     def render_turn_state(self, state: str, *, mood: str | None = None) -> None:
         self._active.set()
-        self.head_gate.allow(f"turn:{state}", response=True)  # logged, always a response
+        may_move = self.head_gate.allow(f"turn:{state}", response=True)
         if self.night_active():
             # One head turn to face whoever speaks, then rest; no other gestures.
             if state == "listening" and not self._night_turned:
                 self._night_turned = True
-                self._with_lease(
-                    lambda: self._expression.render_ambient("attend", SuppressionContext())
-                )
+                if may_move:
+                    self._head_off_centre = True
+                    self._with_lease(
+                        lambda: self._expression.render_ambient("attend", SuppressionContext())
+                    )
             if state == "settle":
                 self._night_turned = False
                 self._active.clear()
@@ -245,10 +251,15 @@ class StackChanBehavior:
 
         def render() -> None:
             if state == "settle":
-                self._expression.render_ambient("settle", SuppressionContext())
+                # Only a head that actually left centre is brought back: a quiet turn that moved
+                # nothing must not move the head again (the unit was settling after every turn).
+                if self._head_off_centre and may_move:
+                    self._head_off_centre = False
+                    self._expression.render_ambient("settle", SuppressionContext())
                 return
             self._expression.render_turn_state(state, mood=mood)
-            if primitive is not None:
+            if primitive is not None and may_move:
+                self._head_off_centre = True
                 self._expression.render_ambient(primitive, SuppressionContext())
             elif state == "reply_mood":
                 self._expression.render_turn_state("reply_mood", mood=mood)
