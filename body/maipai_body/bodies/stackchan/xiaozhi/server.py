@@ -8,6 +8,7 @@ import inspect
 import itertools
 import json
 import logging
+import re
 import ssl
 import time
 import uuid
@@ -359,6 +360,8 @@ class XiaozhiServer:
         app.router.add_get("/notify/{device_id}/{audio_id}.ogg", self._serve_notify_audio)
         app.router.add_get("/selftest/checks", self._selftest_list)
         app.router.add_post("/selftest/run", self._selftest_run)
+        app.router.add_post("/robot/updating", self._robot_updating)
+        app.router.add_post("/robot/updated", self._robot_updated)
         self._vision_runner = web.AppRunner(app)
         await self._vision_runner.setup()
         self._vision_site = web.TCPSite(self._vision_runner, self.vision_host, self.vision_port)
@@ -671,6 +674,68 @@ class XiaozhiServer:
                 status=403,
             )
         return None
+
+    async def send_system(self, command: str, **fields: object) -> None:
+        """Send ``{"type": "system", "command": ...}`` to the one connected device."""
+        if len(self._sessions) != 1:
+            raise ConnectionError(
+                "No StackChan is connected. Wait for the robot to join, then retry."
+            )
+        device_id, websocket = next(iter(self._sessions.items()))
+        payload = {"command": command, **{k: v for k, v in fields.items() if v is not None}}
+        await self._json(websocket, self._session_ids[device_id], "system", payload)
+
+    async def _robot_command_guard(self, request: web.Request) -> web.Response | None:
+        """Loopback only, JSON only, same origin: Home's backend is the only caller."""
+        refused = self._selftest_refusal(request)
+        if refused is not None:
+            return refused
+        origin = request.headers.get("Origin")
+        if origin is not None and origin.split("://", 1)[-1] != request.host:
+            return web.json_response({"error": "cross-origin request refused"}, status=403)
+        if request.content_type != "application/json":
+            return web.json_response({"error": "send application/json"}, status=415)
+        return None
+
+    async def _robot_updating(self, request: web.Request) -> web.Response:
+        refused = await self._robot_command_guard(request)
+        if refused is not None:
+            return refused
+        try:
+            body = await request.json() if request.can_read_body else {}
+        except ValueError:
+            return web.json_response({"error": "the body must be a JSON object"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "the body must be a JSON object"}, status=400)
+        version = body.get("version")
+        progress = body.get("progress")
+        if version is not None and not (
+            isinstance(version, str) and re.fullmatch(r"[0-9A-Za-z.+\-]{1,32}", version)
+        ):
+            return web.json_response(
+                {"error": "version must be a short text such as 0.2.7, or null"}, status=400
+            )
+        if progress is not None and not (
+            isinstance(progress, int) and not isinstance(progress, bool) and 0 <= progress <= 100
+        ):
+            return web.json_response(
+                {"error": "progress must be a whole number from 0 to 100, or null"}, status=400
+            )
+        try:
+            await self.send_system("updating", version=version, progress=progress)
+        except ConnectionError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        return web.json_response({"ok": True})
+
+    async def _robot_updated(self, request: web.Request) -> web.Response:
+        refused = await self._robot_command_guard(request)
+        if refused is not None:
+            return refused
+        try:
+            await self.send_system("updated")
+        except ConnectionError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        return web.json_response({"ok": True})
 
     async def _selftest_list(self, request: web.Request) -> web.Response:
         refused = self._selftest_refusal(request)
