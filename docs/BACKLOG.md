@@ -3008,8 +3008,9 @@ STACKCHAN-INSTALL-01 and ROBOT-FACE-NIGHT-01. Flashing a unit is Jesse's call.
   Device-Id and the Client-Id read NVS the way the xiaozhi URL already does (namespace `websocket`, key `url`), so one signed binary
   serves every household. Acceptance: the manifest validates against the spec schema; offsets match `flasher_args.json`; a test
   build with no NVS values falls back to today's compiled values. No flashing in the row; the bench flash waits for Jesse.
-- [ ] **BOT-STACKCHAN-ENROLL-01: a single-use enrollment code instead of a token in the flash image** (M; 2026-10-20; T2:
-  credentials). Objective: `PairingStore` issues a single-use enrollment code valid 24 hours; `provision.py` writes that code into
+- [x] **BOT-STACKCHAN-ENROLL-01: a single-use enrollment code instead of a token in the flash image** (M; 2026-10-20; T2:
+  credentials). Built 2026-10-20: host half here (`provision enroll-image` / `revoke-enroll`, `maipai_token` in the hello reply),
+  firmware half in patches 018 and 019; not yet run on a robot (bench flash waits on the owner). Objective: `PairingStore` issues a single-use enrollment code valid 24 hours; `provision.py` writes that code into
   NVS, never the long-lived token; the firmware sends the code on first connection, receives the long-lived token
   (`token_urlsafe(32)` as today) and stores it in NVS, and the code is spent. The provision command creates the code itself, writes
   the image to a 0600 file and takes no secret on its command line (architect build note). Acceptance: tests that a used or

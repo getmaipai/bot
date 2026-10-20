@@ -55,7 +55,7 @@ maipai-bot-host = "maipai_body.hub_host:main"
 # run reachy-mini-daemon` this repo's docstrings used to show.
 [project.optional-dependencies]
 reachy = ["reachy-mini==1.11.0"]
-hub = ["onnxruntime==1.30.0", "scipy>=1.14,<2", "num2words>=0.5.13,<1"]
+hub = ["onnxruntime==1.30.0", "scipy>=1.14,<2", "num2words>=0.5.13,<1", "esp-idf-nvs-partition-gen==0.3.0"]
 sim = ["reachy-mini[mujoco]==1.11.0"]
 # G2: wake-word scoring. Pulls onnxruntime, scikit-learn, scipy, requests
 # and tqdm transitively - real weight on a CM4, so it's opt-in like `sim`,

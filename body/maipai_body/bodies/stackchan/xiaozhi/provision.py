@@ -13,10 +13,86 @@ import stat
 import subprocess
 import sys
 import tempfile
+from datetime import UTC, datetime
+from importlib.util import find_spec
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
+from .pairing import PairingStore
 from .tls import generate_local_ca
+
+
+def _enrollment_command(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="maipai-bot-host provision")
+    commands = parser.add_subparsers(dest="action", required=True)
+    enroll = commands.add_parser("enroll-image")
+    enroll.add_argument("--data-dir", type=Path, required=True)
+    enroll.add_argument("--ws-url", required=True)
+    enroll.add_argument("--avatar-url", required=True)
+    enroll.add_argument("--out", type=Path, required=True)
+    revoke = commands.add_parser("revoke-enroll")
+    revoke.add_argument("--data-dir", type=Path, required=True)
+    revoke.add_argument("--code-id", required=True)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return int(exc.code)
+    try:
+        store = PairingStore(args.data_dir / "stackchan-pairing.json")
+        if args.action == "revoke-enroll":
+            store.revoke_enrollment(args.code_id)
+            return 0
+        if not args.ws_url.startswith(("ws://", "wss://")):
+            raise ValueError("--ws-url must start with ws:// or wss://")
+        parsed_avatar = urlsplit(args.avatar_url)
+        if parsed_avatar.scheme not in {"http", "https"} or not parsed_avatar.netloc:
+            raise ValueError("--avatar-url must be an http:// or https:// URL")
+        if args.out.exists():
+            raise FileExistsError(f"Output file already exists: {args.out}. Remove it, then retry.")
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        code_id, code = store.issue_enrollment()
+        try:
+            fd = os.open(args.out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.close(fd)
+            generate_image(
+                args.out,
+                websocket_url=args.ws_url,
+                token=code,
+                version="1",
+                ota_url="",
+                avatar_url=args.avatar_url,
+            )
+        except Exception:
+            args.out.unlink(missing_ok=True)
+            store.revoke_enrollment(code_id)
+            raise RuntimeError(
+                "Could not generate the enrollment image. Check the output path and "
+                "NVS generator, then retry."
+            ) from None
+        record = store.enrollment(code_id)
+        print(
+            json.dumps(
+                {
+                    "code_id": code_id,
+                    "expires_at": datetime.fromtimestamp(record["expires_at"], UTC).isoformat(),
+                }
+            )
+        )
+        return 0
+    except ValueError as exc:
+        print(f"{exc}. Fix the argument, then retry.", file=sys.stderr)
+        return 2
+    except (RuntimeError, FileExistsError) as exc:
+        # These messages are written here and never carry the code.
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception:
+        print(
+            "Provision command failed. Check the data directory, arguments and NVS generator, "
+            "then retry.",
+            file=sys.stderr,
+        )
+        return 1
 
 
 def _tool(name: str) -> str:
@@ -28,8 +104,22 @@ def _tool(name: str) -> str:
     return found
 
 
+def _nvs_generator() -> str:
+    if find_spec("esp_idf_nvs_partition_gen") is None:
+        return _tool("nvs_partition_gen.py")
+    from esp_idf_nvs_partition_gen import nvs_partition_gen
+
+    return str(Path(nvs_partition_gen.__file__).with_name("nvs_partition_gen.py"))
+
+
 def _tool_python(tool: str) -> str:
     """Use ESP-IDF's Python environment (set by export.sh) or one beside the tool."""
+    if find_spec("esp_idf_nvs_partition_gen") is not None:
+        from esp_idf_nvs_partition_gen import nvs_partition_gen
+
+        installed_generator = Path(nvs_partition_gen.__file__).with_name("nvs_partition_gen.py")
+        if Path(tool).resolve() == installed_generator.resolve():
+            return sys.executable
     idf_env = os.environ.get("IDF_PYTHON_ENV_PATH")
     if idf_env and (Path(idf_env) / "bin" / "python").is_file():
         return str(Path(idf_env) / "bin" / "python")
@@ -61,6 +151,7 @@ def generate_image(
     client_id: str = "",
     partition_size: int = 0x4000,
     generator: str | None = None,
+    avatar_url: str = "",
 ) -> Path:
     """Generate an NVS binary using ESP-IDF's nvs_partition_gen.py.
 
@@ -73,7 +164,7 @@ def generate_image(
         )
     if not token or not version:
         raise ValueError("Token and firmware version are required. Supply both values and retry.")
-    generator_path = generator or _tool("nvs_partition_gen.py")
+    generator_path = generator or _nvs_generator()
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="stackchan-nvs-") as temp_dir:
         temp = Path(temp_dir)
@@ -87,6 +178,8 @@ def generate_image(
                 ["token", "data", "string", token],
                 ["version", "data", "i32", version],
             ]
+            if avatar_url:
+                rows.append(["avatar_url", "data", "string", avatar_url])
             if ota_url:
                 rows.extend([["wifi", "namespace", "", ""], ["ota_url", "data", "string", ota_url]])
             if client_id:
@@ -142,6 +235,8 @@ def write_image(
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv and argv[0] in {"enroll-image", "revoke-enroll"}:
+        return _enrollment_command(argv)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--url", help="LAN WebSocket URL; defaults from --host and configured TLS mode"

@@ -316,9 +316,21 @@ class XiaozhiServer:
         device_id = websocket.request.headers.get("Device-Id", "")
         client_id = websocket.request.headers.get("Client-Id", "")
         protocol_version = websocket.request.headers.get("Protocol-Version", "1")
+        if protocol_version != "1":
+            await websocket.close(
+                code=1002,
+                reason="Protocol-Version is unsupported. Set it to 1 in NVS and reconnect.",
+            )
+            return
         auth = websocket.request.headers.get("Authorization", "")
         token = auth[7:] if auth.startswith("Bearer ") else None
-        if not self.pairing.authorize(device_id, client_id, token):
+        enrollment_token = None
+        authorized = self.pairing.authorize(device_id, client_id, token)
+        if not authorized:
+            enrollment_token = self.pairing.redeem_enrollment(device_id, client_id, token)
+        else:
+            self.pairing.spend_enrollment(device_id)
+        if not authorized and enrollment_token is None:
             try:
                 source = websocket.remote_address[0] if websocket.remote_address else "unknown"
                 if not self.pairing.recognizes_device(device_id, client_id) and not (
@@ -349,20 +361,13 @@ class XiaozhiServer:
             )
             return
 
-        if protocol_version != "1":
-            await websocket.close(
-                code=1002,
-                reason="Protocol-Version is unsupported. Set it to 1 in NVS and reconnect.",
-            )
-            return
-
         session_id = uuid.uuid4().hex
         stale = self._sessions.get(device_id)
         if stale is not None:
             asyncio.create_task(self._close_stale_session(stale))
         self._sessions[device_id] = websocket
         self._session_ids[device_id] = session_id
-        self._session_credentials[device_id] = (client_id, token or "")
+        self._session_credentials[device_id] = (client_id, enrollment_token or token or "")
         bind_camera = getattr(self.robot, "bind_avatar_camera", None)
         if callable(bind_camera) and self._avatar_frame_sender is not None:
             avatar_server = getattr(self._avatar_frame_sender, "__self__", None)
@@ -429,22 +434,21 @@ class XiaozhiServer:
                     self._session_features[device_id] = (
                         dict(features) if isinstance(features, dict) else {}
                     )
-                    await websocket.send(
-                        json.dumps(
-                            {
-                                "type": "hello",
-                                "version": 1,
-                                "transport": "websocket",
-                                "session_id": session_id,
-                                "audio_params": {
-                                    "format": "opus",
-                                    "sample_rate": 24000,
-                                    "channels": 1,
-                                    "frame_duration": 60,
-                                },
-                            }
-                        )
-                    )
+                    hello_reply = {
+                        "type": "hello",
+                        "version": 1,
+                        "transport": "websocket",
+                        "session_id": session_id,
+                        "audio_params": {
+                            "format": "opus",
+                            "sample_rate": 24000,
+                            "channels": 1,
+                            "frame_duration": 60,
+                        },
+                    }
+                    if enrollment_token is not None:
+                        hello_reply["maipai_token"] = enrollment_token
+                    await websocket.send(json.dumps(hello_reply))
                 elif kind == "listen":
                     state = data.get("state")
                     if state in {"start", "detect", "stop"} and self.turn_handler is not None:

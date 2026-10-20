@@ -94,7 +94,7 @@ def main() -> int:
     if args.command == "provision":
         from maipai_body.bodies.stackchan.xiaozhi.provision import main as provision_main
 
-        return provision_main(args.args)
+        return provision_main(args.args if args.args else None)
     if not args.hub_url.strip():
         print("hub URL is missing; provide --hub-url URL", file=sys.stderr)
         return 2

@@ -18,6 +18,7 @@ from unittest.mock import patch
 from aiohttp import ClientSession, FormData, web
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
+from websockets.exceptions import ConnectionClosed
 
 from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
 from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
@@ -114,6 +115,65 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await ws.recv(), b"opus-frame-2")
             self.assertEqual(json.loads(await ws.recv())["state"], "stop")
         self.assertEqual(self.audio[0][1], b"fake-opus-uplink")
+
+    async def test_enrollment_code_returns_token_once_and_real_token_spends_code(self) -> None:
+        enrollment_id, enrollment_code = self.pairing.issue_enrollment()
+        headers = {
+            "Device-Id": "02:00:00:00:00:88",
+            "Client-Id": "00000000-0000-4000-8000-000000000088",
+            "Protocol-Version": "1",
+            "Authorization": f"Bearer {enrollment_code}",
+        }
+        async with await connect(f"ws://127.0.0.1:{self.port}", additional_headers=headers) as ws:
+            await ws.send(json.dumps({"type": "hello", "version": 1}))
+            hello = json.loads(await ws.recv())
+            issued_token = hello["maipai_token"]
+        real_token_headers = {**headers, "Authorization": f"Bearer {issued_token}"}
+        async with await connect(
+            f"ws://127.0.0.1:{self.port}", additional_headers=real_token_headers
+        ) as ws:
+            await ws.send(json.dumps({"type": "hello", "version": 1}))
+            self.assertNotIn("maipai_token", json.loads(await ws.recv()))
+        self.assertTrue(self.pairing.enrollment(enrollment_id)["spent"])
+        self.assertIsNone(
+            self.pairing.redeem_enrollment(
+                headers["Device-Id"], headers["Client-Id"], enrollment_code
+            )
+        )
+
+    async def test_bad_protocol_does_not_redeem_enrollment(self) -> None:
+        enrollment_id, code = self.pairing.issue_enrollment()
+        headers = {
+            "Device-Id": "02:00:00:00:00:88",
+            "Client-Id": "00000000-0000-4000-8000-000000000088",
+            "Protocol-Version": "99",
+            "Authorization": f"Bearer {code}",
+        }
+        url = f"ws://127.0.0.1:{self.port}"
+        async with await connect(url, additional_headers=headers) as websocket:
+            with self.assertRaises(ConnectionClosed) as caught:
+                await asyncio.wait_for(websocket.recv(), timeout=2)
+        self.assertEqual(caught.exception.rcvd.code, 1002)
+        self.assertIsNone(self.pairing.enrollment(enrollment_id)["bound_device"])
+
+    async def test_second_authorized_connect_does_not_save_spent_enrollment(self) -> None:
+        enrollment_id, code = self.pairing.issue_enrollment()
+        device, client = "02:00:00:00:00:88", "00000000-0000-4000-8000-000000000088"
+        token = self.pairing.redeem_enrollment(device, client, code)
+        self.pairing.spend_enrollment(device)
+        before = self.pairing._save
+        with patch.object(self.pairing, "_save", wraps=before) as save:
+            async with await connect(
+                f"ws://127.0.0.1:{self.port}",
+                additional_headers={
+                    "Device-Id": device,
+                    "Client-Id": client,
+                    "Protocol-Version": "1",
+                    "Authorization": f"Bearer {token}",
+                },
+            ):
+                pass
+            self.assertEqual(save.call_count, 0)
 
     async def test_initialize_advertises_authenticated_vision_url_and_token(self) -> None:
         from unittest.mock import AsyncMock
@@ -419,6 +479,125 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ProvisioningTests(unittest.TestCase):
+    def test_enrollment_retry_binding_spend_expiry_and_revoke(self):
+        store = PairingStore()
+        code_id, code = store.issue_enrollment()
+        device, client = "02:00:00:00:00:88", "00000000-0000-4000-8000-000000000088"
+        token = store.redeem_enrollment(device, client, code)
+        self.assertTrue(token)
+        self.assertIsNone(store.redeem_enrollment("02:00:00:00:00:89", client, code))
+        retry_token = store.redeem_enrollment(device, client, code)
+        self.assertTrue(retry_token)
+        self.assertFalse(store.authorize(device, client, token))
+        self.assertTrue(store.authorize(device, client, retry_token))
+        store.spend_enrollment(device)
+        self.assertIsNone(store.redeem_enrollment(device, client, code))
+        self.assertTrue(store.revoke_enrollment(code_id))
+        expired_id, expired_code = store.issue_enrollment()
+        store._enrollments[expired_id]["expires_at"] = time.time() - 1
+        self.assertIsNone(store.redeem_enrollment(device, client, expired_code))
+        revoked_id, revoked_code = store.issue_enrollment()
+        store.revoke_enrollment(revoked_id)
+        self.assertIsNone(store.redeem_enrollment(device, client, revoked_code))
+        self.assertFalse(store.revoke_enrollment("does-not-exist"))
+
+    def test_enrollment_cannot_replace_approved_device(self):
+        store = PairingStore()
+        device, client = "02:00:00:00:00:91", "00000000-0000-4000-8000-000000000091"
+        store.request(device, client)
+        old_token = store.approve(device, client)
+        _, code = store.issue_enrollment()
+        self.assertIsNone(store.redeem_enrollment(device, client, code))
+        self.assertTrue(store.authorize(device, client, old_token))
+
+    def test_enrollment_capacity_pruning_and_corrupt_entries(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "pairing.json"
+            store = PairingStore(path)
+            for _ in range(32):
+                store.issue_enrollment()
+            with self.assertRaisesRegex(RuntimeError, "unfinished install"):
+                store.issue_enrollment()
+            payload = json.loads(path.read_text())
+            payload["enrollments"]["bad-object"] = 42
+            payload["enrollments"]["bad-expiry"] = {"expires_at": "oops"}
+            payload["enrollments"]["expired"] = {"expires_at": time.time() - 1}
+            payload["enrollments"]["orphan-spent"] = {"expires_at": time.time() + 50, "spent": True}
+            path.write_text(json.dumps(payload))
+            refreshed = PairingStore(path)
+            self.assertNotIn("bad-object", refreshed._enrollments)
+            self.assertNotIn("bad-expiry", refreshed._enrollments)
+            self.assertNotIn("expired", refreshed._enrollments)
+            self.assertNotIn("orphan-spent", refreshed._enrollments)
+
+    def test_revoke_enrollment_only_removes_its_own_device_record(self):
+        store = PairingStore()
+        device, client = "02:00:00:00:00:92", "00000000-0000-4000-8000-000000000092"
+        code_id, code = store.issue_enrollment()
+        store.redeem_enrollment(device, client, code)
+        store.request(device, client)
+        approved = store.approve(device, client)
+        self.assertTrue(store.revoke_enrollment(code_id))
+        self.assertTrue(store.authorize(device, client, approved))
+
+    def test_enroll_image_hides_code_and_omits_long_lived_token(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            generator = root / "generator.py"
+            generator.write_text(
+                "import csv, pathlib, sys\n"
+                "rows = list(csv.reader(open(sys.argv[2], newline='')))\n"
+                "output = repr(rows).encode().ljust(int(sys.argv[4], 0), b'x')\n"
+                "pathlib.Path(sys.argv[3]).write_bytes(output)\n"
+            )
+            image = root / "flash.bin"
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                with patch(
+                    "maipai_body.bodies.stackchan.xiaozhi.provision._nvs_generator",
+                    return_value=str(generator),
+                ):
+                    result = main(
+                        [
+                            "enroll-image",
+                            "--data-dir",
+                            str(root / "data"),
+                            "--ws-url",
+                            "ws://192.0.2.10:8765",
+                            "--avatar-url",
+                            "http://192.0.2.10:8766",
+                            "--out",
+                            str(image),
+                        ]
+                    )
+            self.assertEqual(result, 0)
+            lines = stdout.getvalue().splitlines()
+            self.assertEqual(len(lines), 1)
+            result_json = json.loads(lines[0])
+            self.assertEqual(set(result_json), {"code_id", "expires_at"})
+            self.assertEqual(image.stat().st_mode & 0o777, 0o600)
+            image_bytes = image.read_bytes()
+            self.assertIn(b"avatar_url", image_bytes)
+            store = PairingStore(root / "data" / "stackchan-pairing.json")
+            code = next(
+                row[3]
+                for row in ast.literal_eval(image_bytes.rstrip(b"x").decode())
+                if row[:3] == ["token", "data", "string"]
+            )
+            long_lived_token = store.redeem_enrollment(
+                "02:00:00:00:00:88", "00000000-0000-4000-8000-000000000088", code
+            )
+            self.assertIsNotNone(long_lived_token)
+            pairing_json = (root / "data" / "stackchan-pairing.json").read_bytes()
+            self.assertNotIn(long_lived_token.encode(), image_bytes)
+            self.assertNotIn(long_lived_token.encode(), pairing_json)
+            self.assertNotIn(code, stdout.getvalue())
+            self.assertNotIn(code, (root / "data" / "stackchan-pairing.json").read_text())
+
+    def test_revoke_enroll_unknown_code_exits_zero(self):
+        with tempfile.TemporaryDirectory() as temp:
+            self.assertEqual(main(["revoke-enroll", "--data-dir", temp, "--code-id", "missing"]), 0)
+
     def test_generator_uses_the_esp_idf_python_environment(self) -> None:
         # Regression: on the first unit the NVS generator ran under the Bot's Python,
         # which lacks ESP-IDF's generator module; export.sh names the right one.
