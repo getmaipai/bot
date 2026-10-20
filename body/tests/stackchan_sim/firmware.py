@@ -54,6 +54,7 @@ class StackChanFirmware:
         self.angle_reads: list[dict[str, int]] = []
         self.audio_uplink: list[bytes] = []
         self.audio_downlink: list[bytes] = []
+        self.uplink_log: list[tuple[float, int]] = []
         self.tts_frames: list[dict[str, Any]] = []
         self.mcp_responses: dict[int, dict[str, Any]] = {}
         self.device_mcp_responses: dict[int, dict[str, Any]] = {}
@@ -159,6 +160,54 @@ class StackChanFirmware:
         await self._send_json({"type": "listen", "state": "stop"})
         if not self.persistent_channel:
             await self.websocket.close()  # type: ignore[union-attr]
+
+    async def send_listen(self, state: str, mode: str = "auto", *, aec: bool | None = None) -> None:
+        payload: dict[str, Any] = {"type": "listen", "state": state, "mode": mode}
+        if aec is not None:
+            payload["aec"] = aec
+        await self._send_json(payload)
+
+    async def stream_opus(
+        self, frames: int = 20, *, frame_ms: int = 60, realtime: bool = False
+    ) -> None:
+        import av
+        import numpy as np
+
+        try:
+            encoder = av.CodecContext.create("libopus", "w")
+        except av.FFmpegError:
+            encoder = av.CodecContext.create("opus", "w")
+        encoder.sample_rate = 16000
+        encoder.layout = "mono"
+        encoder.format = "s16"
+        encoder.bit_rate = 24000
+        encoder.open()
+
+        packets: list[bytes] = []
+        for _ in range(frames):
+            t = np.arange(frame_ms * 16) / 16000.0
+            samples = (8000 * np.sin(2 * np.pi * 440 * t)).astype(np.int16)
+            audio_frame = av.AudioFrame.from_ndarray(
+                samples.reshape(1, -1), format="s16", layout="mono"
+            )
+            audio_frame.sample_rate = 16000
+            for packet in encoder.encode(audio_frame):
+                packets.append(bytes(packet))
+        for packet in encoder.encode(None):
+            packets.append(bytes(packet))
+
+        if len(packets) >= frames:
+            packets = packets[:frames]
+        else:
+            while len(packets) < frames:
+                packets.extend(packets)
+            packets = packets[:frames]
+
+        for packet in packets:
+            self.uplink_log.append((time.monotonic(), len(packet)))
+            if realtime:
+                await asyncio.sleep(frame_ms / 1000)
+            await self._send_binary(packet)
 
     async def send_mcp_request(
         self, method: str, params: Mapping[str, Any] | None = None
