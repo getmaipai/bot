@@ -64,11 +64,11 @@ def test_firmware_patch_series_has_valid_hunk_counts():
 
 def test_expression_map_names_missing_face_in_plain_import_error(tmp_path, monkeypatch):
     data = json.loads((PACKAGE / "face_set.json").read_text())
-    data["faces"].remove("doubt")
+    data["faces"].remove("happy")
     (tmp_path / "face_set.json").write_text(json.dumps(data))
     monkeypatch.setenv("MAIPAI_STACKCHAN_FACE_SET", str(tmp_path / "face_set.json"))
     sys.modules.pop("maipai_body.bodies.stackchan.expression_map", None)
-    with pytest.raises(ValueError, match="unsupported StackChan face: doubt"):
+    with pytest.raises(ValueError, match="unsupported StackChan face: happy"):
         importlib.import_module("maipai_body.bodies.stackchan.expression_map")
     sys.modules.pop("maipai_body.bodies.stackchan.expression_map", None)
     monkeypatch.delenv("MAIPAI_STACKCHAN_FACE_SET", raising=False)

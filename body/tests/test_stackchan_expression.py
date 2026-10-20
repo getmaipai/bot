@@ -113,3 +113,19 @@ def test_camera_photo_requires_indicator_first_and_clears_it_on_capture_error():
     with pytest.raises(RuntimeError, match="capture failed"):
         asyncio.run(failing.take_photo())
     assert failing.client.led_colors == ((168, 42, 92),) * 12
+
+
+def test_thinking_and_attention_faces_never_read_as_doubt_or_sadness():
+    # Owner, 2026-10-20: the thinking face looked confused or disgusted. The firmware doubt face
+    # draws one flat eye with a raised brow and a wavy mouth; sad draws a brow and a flat mouth.
+    from maipai_body.bodies.stackchan.expression_map import (
+        CUE_FACE_MAP,
+        PRIMITIVE_BODY_MAP,
+        REPLY_MOOD_FACE_MAP,
+    )
+
+    assert CUE_FACE_MAP["thinking"].expression == "neutral"
+    for name in ("listen", "glance", "tilt", "attend", "settle"):
+        assert PRIMITIVE_BODY_MAP[name].face in {"neutral", "happy"}, name
+    assert REPLY_MOOD_FACE_MAP["doubt"] == "neutral"
+    assert REPLY_MOOD_FACE_MAP["wry"] == "neutral"

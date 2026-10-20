@@ -26,8 +26,9 @@ from maipai_body.hal.errors import BodyLost, EstopEngaged, NotSupported, OutOfEn
 from .pairing import PairingStore
 
 LOG = logging.getLogger(__name__)
-# Time the firmware needs to enter its speaking state after tts start.
-SPEAK_SETTLE_S = 0.15
+# Patch 016 opens the firmware's audio gate on the tts start message itself, so only the
+# state-machine hop remains. No audio is sent before this passes.
+SPEAK_SETTLE_S = 0.03
 # Spacing between prebuffered frames. The robot has 9 Wi-Fi receive buffers and a 3-packet
 # block-ack window; 30 frames sent back to back overflowed them, and the lost packet stalled
 # the stream for a 1.5 s retransmit (gap heard mid-line on the 2026-10-20 bench).

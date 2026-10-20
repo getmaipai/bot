@@ -25,11 +25,16 @@ from maipai_body.speech.tts_playback import TtsAuthFailed, TtsPlaybackClient
 from maipai_body.speech.turn_client import TurnAuthFailed, TurnClient, TurnLinkLost
 
 LOG = logging.getLogger(__name__)
-# Frames sent ahead of playback: 2.28 s rides out the Wi-Fi stalls measured on the
-# 2026-10-19 unit bench (ping peaks of 1.3 s) and stays under the firmware's
-# 40-frame (2.4 s) decode queue, which drops packets once full. The lead goes out at
-# PREBUFFER_GAP_S per frame, so about 1.7 s is still queued when pacing starts.
-LEAD_FRAMES = 38
+# Frames sent ahead of playback. The firmware's decode queue holds 40 frames (2.4 s) and silently
+# drops any packet that arrives when it is full, and a burst that catches up after a late frame
+# lands on top of what is queued. A short lead (14 frames, 0.84 s, sent in about 0.2 s) keeps the
+# queue near 10 of 40 so even a catch-up cannot overflow it. UNMEASURED on the unit.
+LEAD_FRAMES = 14
+# More than this many frames behind the schedule: do not burst to catch up, re-base the schedule.
+MAX_BEHIND_FRAMES = 2
+# Frames in flight (sent minus played at real time) above this are counted as over the soft cap.
+IN_FLIGHT_SOFT_CAP = 30
+STREAM_POLL_S = 0.01
 # The listening pop-up tone plays right after a wake word or a tap and the microphone hears it;
 # uplink frames this soon after a listen start are not sent on, so the tone never reaches speech
 # recognition (the hub answers one short voiced burst with no_speech). UNMEASURED default.
@@ -136,6 +141,14 @@ class StackChanAudioPlayback(AudioPlayback):
         # The selected voice's pitch offset in semitones (0 leaves the audio untouched).
         self._pitch_semitones = pitch_semitones
         self._pitch_buffer: list[npt.NDArray[np.float32]] = []
+        # Streaming sender state (one sentence at a time).
+        self._sender_future: concurrent.futures.Future | None = None
+        self._finished = False
+        self._sent_frames = 0
+        self._lateness: list[float] = []
+        self._behind_events = 0
+        self._max_in_flight = 0.0
+        self._over_cap = 0
         self._encoder = self._new_encoder()
         self._samples = np.zeros(0, dtype=np.float32)
         self._frames: list[bytes] = []
@@ -202,6 +215,108 @@ class StackChanAudioPlayback(AudioPlayback):
             )
             frame.sample_rate = 24000
             self._frames.extend(bytes(packet) for packet in self._encoder.encode(frame))
+        self._kick_locked()
+
+    def _cancelled(self) -> bool:
+        return self._aborted.is_set() or (
+            self._cancel_event is not None and self._cancel_event.is_set()
+        )
+
+    def _kick_locked(self) -> None:
+        """Start sending as soon as the lead exists, while the sentence is still synthesizing."""
+        if (
+            self._sender_future is None
+            and len(self._frames) >= LEAD_FRAMES
+            and getattr(self._server, "_loop", None) is not None
+            and not self._cancelled()
+        ):
+            self._sender_future = asyncio.run_coroutine_threadsafe(
+                self._sender(), self._server._loop
+            )
+
+    async def _sender(self) -> None:
+        """Send the lead at once, then the rest at real time; never burst to catch up."""
+        with self._lock:
+            lead = self._frames[:LEAD_FRAMES]
+            del self._frames[:LEAD_FRAMES]
+        if not lead or self._cancelled():
+            return
+        first_sentence = self._sentence_start
+        self._sentence_start = False
+        began = self._clock()
+        self._play_until = max(self._clock(), self._play_until) + len(lead) * FRAME_S
+        await self._server.send_audio(
+            self._device_id,
+            lead,
+            sentence_start=True,
+            start=first_sentence,
+            stop=False,
+            prebuffer=len(lead),
+        )
+        sent = len(lead)
+        self._note_flight(sent, began)
+        deadline = self._clock()
+        while not self._cancelled():
+            with self._lock:
+                frame = self._frames.pop(0) if self._frames else None
+                finished = self._finished
+            if frame is None:
+                if finished:
+                    break
+                await self._async_sleep(STREAM_POLL_S)
+                deadline = max(deadline, self._clock())  # a stalled producer: no burst after it
+                continue
+            deadline += FRAME_S
+            now = self._clock()
+            behind = (now - deadline) / FRAME_S
+            if behind > MAX_BEHIND_FRAMES:
+                self._behind_events += 1
+                LOG.warning(
+                    "StackChan playback behind by %d frames; re-basing the schedule", int(behind)
+                )
+                deadline = now
+            else:
+                await self._async_sleep(max(0.0, deadline - now))
+            if self._cancelled():
+                break
+            self._lateness.append(max(0.0, self._clock() - deadline))
+            await self._server.send_audio(
+                self._device_id, [frame], sentence_start=False, start=False, stop=False
+            )
+            sent += 1
+            self._play_until = max(self._play_until, self._clock()) + FRAME_S
+            self._note_flight(sent, began)
+        self._sent_frames += sent
+
+    def _note_flight(self, sent: int, began: float) -> None:
+        in_flight = sent - (self._clock() - began) / FRAME_S
+        self._max_in_flight = max(self._max_in_flight, in_flight)
+        if in_flight > IN_FLIGHT_SOFT_CAP:
+            self._over_cap += 1
+
+    def _log_sentence_stats(self) -> None:
+        late = sorted(self._lateness)
+        p95 = late[int(0.95 * (len(late) - 1))] if late else 0.0
+        LOG.info(
+            "StackChan playback: %d frames, lateness p95 %.0f ms max %.0f ms, behind %d times, "
+            "max in flight %.0f, over %d in flight %d times",
+            self._sent_frames,
+            p95 * 1000,
+            (late[-1] if late else 0.0) * 1000,
+            self._behind_events,
+            self._max_in_flight,
+            IN_FLIGHT_SOFT_CAP,
+            self._over_cap,
+        )
+
+    def _reset_sentence(self) -> None:
+        self._sender_future = None
+        self._finished = False
+        self._sent_frames = 0
+        self._lateness = []
+        self._behind_events = 0
+        self._max_in_flight = 0.0
+        self._over_cap = 0
 
     def stop_playing(self) -> None:
         with self._lock:
@@ -221,42 +336,28 @@ class StackChanAudioPlayback(AudioPlayback):
                 frame.sample_rate = 24000
                 self._frames.extend(bytes(packet) for packet in self._encoder.encode(frame))
             self._frames.extend(bytes(packet) for packet in self._encoder.encode(None))
-            frames, self._frames = self._frames, []
             self._samples = np.zeros(0, dtype=np.float32)
             self._encoder = self._new_encoder()
-        if (
-            frames
-            and not self._aborted.is_set()
-            and not (self._cancel_event is not None and self._cancel_event.is_set())
-        ):
-
-            async def paced_send():
-                if self._aborted.is_set() or (self._cancel_event and self._cancel_event.is_set()):
-                    return
-                start = max(self._clock(), self._play_until)
-                self._play_until = start + len(frames) * FRAME_S
-                await self._server.send_audio(
-                    self._device_id,
-                    frames[:LEAD_FRAMES],
-                    sentence_start=True,
-                    start=self._sentence_start,
-                    stop=False,
-                    prebuffer=LEAD_FRAMES,
+            self._finished = True
+            if self._sender_future is None and self._frames and not self._cancelled():
+                # A short sentence: fewer frames than the lead, so nothing has been sent yet.
+                self._sender_future = asyncio.run_coroutine_threadsafe(
+                    self._sender(), self._server._loop
                 )
-                deadline = self._clock()
-                for frame in frames[LEAD_FRAMES:]:
-                    if self._cancel_event is not None and self._cancel_event.is_set():
-                        break
-                    deadline += FRAME_S
-                    await self._async_sleep(max(0.0, deadline - self._clock()))
-                    if self._cancel_event is not None and self._cancel_event.is_set():
-                        break
-                    await self._server.send_audio(
-                        self._device_id, [frame], sentence_start=False, start=False, stop=False
-                    )
-
-            asyncio.run_coroutine_threadsafe(paced_send(), self._server._loop).result(timeout=30)
-            self._sentence_start = False
+            future = self._sender_future
+            remaining = len(self._frames)
+        try:
+            if future is not None:
+                try:
+                    future.result(timeout=remaining * FRAME_S + 10.0)
+                except concurrent.futures.TimeoutError:
+                    future.cancel()  # the coroutine must not keep sending in the background
+                    raise
+            if future is not None:
+                self._log_sentence_stats()
+        finally:
+            with self._lock:
+                self._reset_sentence()
 
     def end(self) -> None:
         # The robot holds up to LEAD_FRAMES of audio when the last frame is sent. Stopping
@@ -271,6 +372,9 @@ class StackChanAudioPlayback(AudioPlayback):
         with self._lock:
             self._samples = np.zeros(0, dtype=np.float32)
             self._frames.clear()
+            self._pitch_buffer = []
+            if self._sender_future is not None:
+                self._sender_future.cancel()
             self._encoder = self._new_encoder()
         if send_stop:
             return asyncio.run_coroutine_threadsafe(
@@ -377,7 +481,9 @@ class StackChanTurnBridge:
             if self._first_audio_ms is None:
                 self._first_audio_ms = max(0.0, (now - started) * 1000)
             try:
-                capture.feed_opus(data)
+                # Decoding and resampling run off the event loop (one frame at a time, in order):
+                # inline they delayed the paced send's wake-ups.
+                await asyncio.to_thread(capture.feed_opus, data)
             except Exception:
                 LOG.exception("StackChan Opus input could not be decoded")
 

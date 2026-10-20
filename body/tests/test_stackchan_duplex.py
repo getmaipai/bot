@@ -82,9 +82,9 @@ class Offline:
     pass
 
 
-def test_playback_leads_by_38_frames_then_paces_and_drains(monkeypatch):
-    # 2026-10-19 unit bench: a 5-frame lead stuttered over Wi-Fi; 38 frames (2.28 s) stays
-    # under the firmware's 40-frame decode queue.
+def test_playback_leads_by_14_frames_then_paces_and_drains(monkeypatch):
+    # The firmware drops packets once 40 frames are queued, and a burst on top of the lead
+    # overflowed it; a 14-frame lead (0.84 s) leaves room for a late frame.
     clock = Clock()
     sent = []
     prebuffers = []
@@ -107,12 +107,13 @@ def test_playback_leads_by_38_frames_then_paces_and_drains(monkeypatch):
     playback._samples = np.zeros(0, dtype=np.float32)
     playback.stop_playing()
     assert len(sent) == 40
-    assert prebuffers[0] == 38
-    assert clock.sleeps == pytest.approx([0.06, 0.06])
+    assert prebuffers[0] == 14
+    assert clock.sleeps == pytest.approx([0.06] * 26)
     playback.end()
     assert sent[-1] == "stop"
-    # The stop waits until the 40 frames (2.4 s) have played, plus the 0.12 s tail.
-    assert clock.sleeps == pytest.approx([0.06, 0.06, 2.4])
+    # The paced sends took 1.56 s of the 2.4 s of audio, so the stop waits for the 0.84 s still
+    # queued on the unit, plus the 0.12 s tail.
+    assert clock.sleeps == pytest.approx([0.06] * 26 + [0.96])
     server._loop.call_soon_threadsafe(server._loop.stop)
     worker.join(timeout=1)
     server._loop.close()

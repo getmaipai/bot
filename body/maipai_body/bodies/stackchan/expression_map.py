@@ -53,7 +53,7 @@ class BodyAction:
 # Turn-state cues are selected by the expression layer. Model text is never a token.
 CUE_FACE_MAP = {
     "listening": FaceFrame("neutral", mouth=False),
-    "thinking": FaceFrame("doubt", mouth=False),
+    "thinking": FaceFrame("neutral", mouth=False),  # friendly attention, never doubt
     "speaking": FaceFrame("neutral"),  # the firmware animates the mouth while it speaks
     "reply_mood": FaceFrame("neutral"),
 }
@@ -64,19 +64,19 @@ REPLY_MOOD_FACE_MAP = {
     "anger": "angry",
     "sadness": "sad",
     "fear": "surprised",
-    "doubt": "doubt",
+    "doubt": "neutral",  # the doubt face reads as confusion
     "sleepiness": "sleepy",
-    "wry": "doubt",
+    "wry": "neutral",
 }
 
 # These deliberately small moves work within the two measured profile axes.
 PRIMITIVE_BODY_MAP = {
     "listen": BodyAction("neutral", yaw_fraction=0.08),
-    "glance": BodyAction("doubt", yaw_fraction=0.12),
-    "tilt": BodyAction("doubt", pitch_fraction=0.08),
+    "glance": BodyAction("neutral", yaw_fraction=0.12),
+    "tilt": BodyAction("neutral", pitch_fraction=0.08),
     "nod": BodyAction("happy", pitch_fraction=0.06),
     "perk": BodyAction("happy", pitch_fraction=-0.06),
-    "attend": BodyAction("sad", pitch_fraction=0.04),
+    "attend": BodyAction("neutral", pitch_fraction=0.04),
     "settle": BodyAction("neutral"),
     "speak": BodyAction("happy", pitch_fraction=-0.03),
 }

@@ -118,7 +118,7 @@ updating and dancing flags have no caller yet. Nothing here has run on a unit.
 | Ready (hub session open) | the face appears | settles to idle white, dim | one short soft chime (the firmware's success sound) | face and chime: firmware; ring: host (the `connecting` fact clears when the device session opens) |
 | Wake word heard or a tap opens a turn | head lifts and the face brightens (`perk`) | blue steady | the firmware's rising pop-up tone | host: ring and `perk`; tone: firmware (already plays) |
 | Audio streaming to the hub | listening face | green steady (the live cue outranks blue and is held 0.5 s) | none | host |
-| Thinking | `doubt` face, head attends | magenta slow breathe | none | host |
+| Thinking | `neutral` face (round eyes, soft smile), head attends | magenta slow breathe | none | host |
 | Speaking | speaking face | white steady | the reply | host |
 | Turn over | settle | idle white, dim | none | host |
 | Hub unreachable after ready | face stays | amber double pulse, two short pulses every 10 s | none | host |
@@ -126,3 +126,23 @@ updating and dancing flags have no caller yet. Nothing here has run on a unit.
 Notes: the firmware has no wide-eyed emotion (its six are neutral, happy, angry, sad, doubt, sleepy), so "it heard you" is the head lift
 with the brighter face, not wider eyes; wide eyes would need a face skin change in the firmware (patch 033 can add one). Wake-word
 scoring alone shows nothing; the detected wake word is a state change to listening and does show. `double` joined the closed style set.
+
+## Faces as drawn on the unit (owner request 2026-10-20)
+
+Source: the mint skin in the firmware (`mint.cpp`, patch 013) and `SetEmotion` in `stackchan_display.cc`. The firmware has no
+"thinking" emotion; the thinking cue sends `neutral`. The "gaze up and to one side" option needs a look-direction frame the display
+does not have, so it would be a firmware change; none is made.
+
+| Face sent | Eyes | Mouth | Reads as | Host use |
+|---|---|---|---|---|
+| `neutral` | two round dots | soft smile | friendly attention | listening, thinking, speaking, settle, listen, glance, tilt, attend; moods neutral, doubt, wry |
+| `happy` | two "^" arcs | wide open smile | glad | nod, perk, speak; mood happiness |
+| `sad` | round dots with inner brows raised | small flat mouth | sad | mood sadness only |
+| `angry` | ">" and "<" slants | teeth | cross | mood anger only |
+| `surprised` | larger round dots | open oval | startled | mood fear only |
+| `sleepy` | "u" arcs | small oval | drowsy | mood sleepiness, night |
+| `doubtful` | left dot, right flat line with a raised brow | wavy line | confused or disgusted | not sent by any cue, primitive or mood since 2026-10-20 |
+| `winking` | left dot, right "^" | smile with tongue | playful | only on an explicit wink |
+
+The thinking cue used `doubtful` until 2026-10-20; the owner read it as confused or disgusted. The `doubt` and `wry` reply moods and the
+`glance`, `tilt` and `attend` primitives now also send `neutral`, so no automatic cue draws the one-eye-flat or raised-brow shapes.
