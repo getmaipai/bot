@@ -48,6 +48,13 @@ def test_face_goes_over_voice_channel_as_llm_emotion():
         asyncio.run(server.send_emotion("smug"))
 
 
+def test_mint_skin_faces_use_the_display_names():
+    log: list = []
+    server = _server(log)
+    assert asyncio.run(server.send_emotion("surprised")) == "surprised"
+    assert asyncio.run(server.send_emotion("wink")) == "winking"
+
+
 def test_face_needs_one_connected_robot():
     server = XiaozhiServer(AllowPairing(), robot=None)
     with pytest.raises(ConnectionError):

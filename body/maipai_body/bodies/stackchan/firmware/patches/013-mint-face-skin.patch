@@ -1,0 +1,601 @@
+# Intent: draw a softer face (mint skin) with surprised and wink faces; the default avatar stays for other apps.
+# Upstream: m5stack/StackChan firmware/main/hal/board/stackchan_display.cc, firmware/main/stackchan/avatar/ (MIT).
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index 7459888..577c1a9 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -251,7 +251,7 @@ void StackChanAvatarDisplay::SetupUI()
+ 
+     ESP_LOGI(TAG, "Creating Stack-chan Avatar...");
+ 
+-    auto avatar = std::make_unique<DefaultAvatar>();
++    auto avatar = std::make_unique<MintAvatar>();
+     avatar->init(lv_screen_active());
+     avatar->getPanel()->onClick().connect([]() {
+         static uint32_t last_toggle_tick = 0;
+@@ -366,6 +366,10 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
+ 
+     } else if (strcmp(emotion, "doubtful") == 0) {
+         avatar.setEmotion(Emotion::Doubt);
++    } else if (strcmp(emotion, "surprised") == 0 || strcmp(emotion, "shocked") == 0) {
++        avatar.setEmotion(Emotion::Surprised);
++    } else if (strcmp(emotion, "winking") == 0) {
++        avatar.setEmotion(Emotion::Wink);
+     } else {
+         ESP_LOGW(TAG, "Unknown emotion: %s, using NEUTRAL", emotion);
+         avatar.setEmotion(Emotion::Neutral);
+diff --git a/firmware/main/stackchan/avatar/avatar.h b/firmware/main/stackchan/avatar/avatar.h
+index fa1d7fe..ff5e2e7 100644
+--- a/firmware/main/stackchan/avatar/avatar.h
++++ b/firmware/main/stackchan/avatar/avatar.h
+@@ -5,4 +5,5 @@
+  */
+ #pragma once
+ #include "skins/default/default.h"
++#include "skins/mint/mint.h"
+ #include "decorators/decorators.h"
+diff --git a/firmware/main/stackchan/avatar/avatar/elements/emotion.h b/firmware/main/stackchan/avatar/avatar/elements/emotion.h
+index 5b1ad27..1cfa762 100644
+--- a/firmware/main/stackchan/avatar/avatar/elements/emotion.h
++++ b/firmware/main/stackchan/avatar/avatar/elements/emotion.h
+@@ -14,6 +14,8 @@ enum class Emotion {
+     Sad,
+     Doubt,
+     Sleepy,
++    Surprised,
++    Wink,
+ };
+ 
+ }  // namespace stackchan::avatar
+diff --git a/firmware/main/stackchan/avatar/skins/mint/mint.cpp b/firmware/main/stackchan/avatar/skins/mint/mint.cpp
+new file mode 100644
+index 0000000..18bf563
+--- /dev/null
++++ b/firmware/main/stackchan/avatar/skins/mint/mint.cpp
+@@ -0,0 +1,456 @@
++/*
++ * SPDX-FileCopyrightText: 2026 MaiPai contributors
++ *
++ * SPDX-License-Identifier: MIT
++ */
++#include "mint.h"
++#include <cmath>
++
++using namespace uitk;
++using namespace uitk::lvgl_cpp;
++using namespace stackchan::avatar;
++
++// Shapes are drawn in mockup units (the owner-approved sheet) and scaled up to the 320x240 panel.
++static constexpr float kScale       = 1.35f;
++static const lv_color_t kBg         = lv_color_hex(0xC4F0DA);
++static const lv_color_t kInk        = lv_color_hex(0x18241F);
++static const lv_color_t kFill       = lv_color_hex(0x3E9E6B);
++static const lv_color_t kTongue     = lv_color_hex(0x8ED6A4);
++static const lv_color_t kTeeth      = lv_color_hex(0xFFFFFF);
++static constexpr int kStroke        = 7;
++static constexpr int kThinStroke    = 5;
++static constexpr int kEyeX          = 78;
++static constexpr int kEyeY          = -23;
++static constexpr int kEyeBox        = 80;
++static constexpr int kMouthY        = 39;
++static constexpr int kMouthBoxW     = 160;
++static constexpr int kMouthBoxH     = 110;
++static constexpr int kOffsetRange   = 16;
++static constexpr int kClosedEyeAt   = 50;
++static constexpr int kOpenMouthAt   = 20;
++
++static int px(float mockup)
++{
++    return static_cast<int>(std::lround(mockup * kScale));
++}
++
++static int lerp(int value, int inMin, int inMax, int outMin, int outMax)
++{
++    value = clamp(value, inMin, inMax);
++    return outMin + (value - inMin) * (outMax - outMin) / (inMax - inMin);
++}
++
++template <size_t N>
++static uint32_t quad(std::array<lv_point_precise_t, N>& out, uint32_t start, uint32_t count, float x0, float y0,
++                     float cx, float cy, float x1, float y1, int originX, int originY)
++{
++    for (uint32_t i = 0; i < count; ++i) {
++        float t        = static_cast<float>(i) / static_cast<float>(count - 1);
++        float u        = 1.0f - t;
++        float x        = u * u * x0 + 2 * u * t * cx + t * t * x1;
++        float y        = u * u * y0 + 2 * u * t * cy + t * t * y1;
++        out[start + i] = {static_cast<lv_value_precise_t>(originX + px(x)),
++                          static_cast<lv_value_precise_t>(originY + px(y))};
++    }
++    return start + count;
++}
++
++static lv_obj_t* make_box(lv_obj_t* parent)
++{
++    lv_obj_t* obj = lv_obj_create(parent);
++    lv_obj_remove_style_all(obj);
++    lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
++    lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE);
++    lv_obj_add_flag(obj, LV_OBJ_FLAG_EVENT_BUBBLE);
++    return obj;
++}
++
++static lv_obj_t* make_line(lv_obj_t* parent, int width, int height, int stroke)
++{
++    lv_obj_t* line = lv_line_create(parent);
++    lv_obj_set_size(line, width, height);
++    lv_obj_set_pos(line, 0, 0);
++    lv_obj_set_style_line_width(line, stroke, 0);
++    lv_obj_set_style_line_color(line, kInk, 0);
++    lv_obj_set_style_line_rounded(line, true, 0);
++    lv_obj_remove_flag(line, LV_OBJ_FLAG_CLICKABLE);
++    lv_obj_add_flag(line, LV_OBJ_FLAG_EVENT_BUBBLE);
++    return line;
++}
++
++static lv_obj_t* make_blob(lv_obj_t* parent, lv_color_t fill, int border)
++{
++    lv_obj_t* obj = make_box(parent);
++    lv_obj_set_style_radius(obj, LV_RADIUS_CIRCLE, 0);
++    lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
++    lv_obj_set_style_bg_color(obj, fill, 0);
++    lv_obj_set_style_border_width(obj, border, 0);
++    lv_obj_set_style_border_color(obj, kInk, 0);
++    lv_obj_set_style_border_post(obj, true, 0);
++    lv_obj_set_style_clip_corner(obj, true, 0);
++    return obj;
++}
++
++static void set_hidden(lv_obj_t* obj, bool hidden)
++{
++    if (hidden) {
++        lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
++    } else {
++        lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
++    }
++}
++
++/* --------------------------------- Avatar -------------------------------- */
++
++void MintAvatar::init(lv_obj_t* parent, const lv_font_t* font)
++{
++    _panel = std::make_unique<Container>(parent);
++    _panel->align(LV_ALIGN_CENTER, 0, 0);
++    _panel->setSize(320, 240);
++    _panel->setRadius(0);
++    _panel->setBorderWidth(0);
++    _panel->setBgColor(kBg);
++    _panel->removeFlag(LV_OBJ_FLAG_SCROLLABLE);
++
++    _key_elements.leftEye      = std::make_unique<MintEye>(_panel->get(), true);
++    _key_elements.rightEye     = std::make_unique<MintEye>(_panel->get(), false);
++    _key_elements.mouth        = std::make_unique<MintMouth>(_panel->get());
++    _key_elements.speechBubble = std::make_unique<DefaultSpeechBubble>(_panel->get(), kTeeth, kInk, font);
++}
++
++Container* MintAvatar::getPanel() const
++{
++    return _panel.get();
++}
++
++/* ---------------------------------- Eyes --------------------------------- */
++
++MintEye::MintEye(lv_obj_t* parent, bool isLeftEye) : _is_left_eye(isLeftEye)
++{
++    _container = make_box(parent);
++    lv_obj_set_size(_container, kEyeBox, kEyeBox);
++    lv_obj_add_flag(_container, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
++
++    _dot  = make_blob(_container, kInk, 0);
++    _line = make_line(_container, kEyeBox, kEyeBox, kStroke);
++    _brow = make_line(_container, kEyeBox, kEyeBox, kStroke);
++
++    _weight = 100;
++    setPosition(_position);
++    render();
++}
++
++MintEye::~MintEye()
++{
++    lv_obj_delete(_container);
++}
++
++void MintEye::setPosition(const Vector2i& position)
++{
++    Element::setPosition(position);
++    int x = (_is_left_eye ? -kEyeX : kEyeX) + lerp(_position.x, -100, 100, -kOffsetRange, kOffsetRange);
++    int y = kEyeY + lerp(_position.y, -100, 100, -kOffsetRange, kOffsetRange);
++    lv_obj_align(_container, LV_ALIGN_CENTER, x, y);
++}
++
++void MintEye::setWeight(int weight)
++{
++    Feature::setWeight(weight);
++    render();
++}
++
++void MintEye::setEmotion(const Emotion& emotion)
++{
++    if (getIgnoreEmotion()) {
++        return;
++    }
++    _emotion = emotion;
++    // The blink modifier reads this back as the open weight.
++    Feature::setWeight(100);
++    render();
++}
++
++Emotion MintEye::getEmotion() const
++{
++    return _emotion;
++}
++
++void MintEye::setVisible(bool visible)
++{
++    Element::setVisible(visible);
++    set_hidden(_container, !visible);
++}
++
++void MintEye::setSize(int size)
++{
++    Feature::setSize(size);
++    render();
++}
++
++void MintEye::render()
++{
++    const int c       = kEyeBox / 2;
++    const bool closed = _weight < kClosedEyeAt;
++    const float side  = _is_left_eye ? 1.0f : -1.0f;
++    uint32_t points   = 0;
++    float dot_radius  = 0;
++    bool brow         = false;
++
++    enum class Shape { Dot, Up, Down, Point, Flat } shape = Shape::Dot;
++    switch (_emotion) {
++        case Emotion::Happy:
++            shape = Shape::Up;
++            break;
++        case Emotion::Angry:
++            shape = Shape::Point;
++            break;
++        case Emotion::Sad:
++            dot_radius = 8;
++            brow       = true;
++            break;
++        case Emotion::Doubt:
++            if (_is_left_eye) {
++                dot_radius = 9;
++            } else {
++                shape = Shape::Flat;
++                brow  = true;
++            }
++            break;
++        case Emotion::Sleepy:
++            shape = Shape::Down;
++            break;
++        case Emotion::Surprised:
++            dot_radius = 11;
++            break;
++        case Emotion::Wink:
++            if (_is_left_eye) {
++                dot_radius = 8;
++            } else {
++                shape = Shape::Up;
++            }
++            break;
++        case Emotion::Neutral:
++        default:
++            dot_radius = 8;
++            break;
++    }
++    if (shape == Shape::Dot && closed) {
++        shape = Shape::Flat;
++    }
++
++    switch (shape) {
++        case Shape::Up:  // "^"
++            points = quad(_line_points, 0, 9, -13, 4, 0, -14, 13, 4, c, c);
++            break;
++        case Shape::Down:  // "u"
++            points = quad(_line_points, 0, 9, -13, -4, 0, 14, 13, -4, c, c);
++            break;
++        case Shape::Point:  // ">" on the left eye, "<" on the right
++            points = quad(_line_points, 0, 2, -11 * side, -10, 0, -5, 11 * side, 0, c, c);
++            points = quad(_line_points, points, 2, 11 * side, 0, 0, 5, -11 * side, 10, c, c);
++            break;
++        case Shape::Flat:
++            points = quad(_line_points, 0, 2, -12, 0, 0, 0, 12, 0, c, c);
++            break;
++        case Shape::Dot:
++            break;
++    }
++
++    set_hidden(_line, shape == Shape::Dot);
++    if (points > 0) {
++        lv_line_set_points(_line, _line_points.data(), points);
++    }
++
++    set_hidden(_dot, shape != Shape::Dot);
++    if (shape == Shape::Dot) {
++        int scale    = lerp(_size, -100, 100, 70, 130);
++        int diameter = px(dot_radius * 2) * scale / 100;
++        lv_obj_set_size(_dot, diameter, diameter);
++        lv_obj_align(_dot, LV_ALIGN_CENTER, 0, 0);
++    }
++
++    set_hidden(_brow, !brow);
++    if (brow) {
++        if (_emotion == Emotion::Sad) {  // inner end raised
++            float outer = _is_left_eye ? -12 : 12;
++            quad(_brow_points, 0, 2, outer, -13, 0, -18, -outer, -23, c, c);
++        } else {  // doubt: one raised brow
++            quad(_brow_points, 0, 2, -12, -22, 0, -19, 12, -16, c, c);
++        }
++        lv_line_set_points(_brow, _brow_points.data(), 2);
++    }
++}
++
++/* ---------------------------------- Mouth -------------------------------- */
++
++MintMouth::MintMouth(lv_obj_t* parent)
++{
++    _container = make_box(parent);
++    lv_obj_set_size(_container, kMouthBoxW, kMouthBoxH);
++    lv_obj_add_flag(_container, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
++
++    // Filled cap: a pill clipped to its upper or lower half; the straight edge is a line on top.
++    _cap_box = make_box(_container);
++    _cap     = make_blob(_cap_box, kFill, kStroke);
++    _cap_tongue = make_blob(_cap, kTongue, 0);
++
++    _oval        = make_blob(_container, kFill, kStroke);
++    _oval_tongue = make_blob(_oval, kTongue, 0);
++
++    _teeth = make_blob(_container, kTeeth, kStroke);
++    lv_obj_set_style_radius(_teeth, 8, 0);
++    for (auto& line : _teeth_lines) {
++        line = make_line(_container, kMouthBoxW, kMouthBoxH, kThinStroke);
++    }
++
++    _line        = make_line(_container, kMouthBoxW, kMouthBoxH, kStroke);
++    _wink_tongue = make_blob(_container, kTongue, 4);
++
++    setPosition(_position);
++    render();
++}
++
++MintMouth::~MintMouth()
++{
++    lv_obj_delete(_container);
++}
++
++void MintMouth::setPosition(const Vector2i& position)
++{
++    Element::setPosition(position);
++    int x = lerp(_position.x, -100, 100, -kOffsetRange, kOffsetRange);
++    int y = kMouthY + lerp(_position.y, -100, 100, -kOffsetRange, kOffsetRange);
++    lv_obj_align(_container, LV_ALIGN_CENTER, x, y);
++}
++
++void MintMouth::setWeight(int weight)
++{
++    Feature::setWeight(weight);
++    render();
++}
++
++void MintMouth::setEmotion(const Emotion& emotion)
++{
++    if (getIgnoreEmotion()) {
++        return;
++    }
++    _emotion = emotion;
++    render();
++}
++
++Emotion MintMouth::getEmotion() const
++{
++    return _emotion;
++}
++
++void MintMouth::setVisible(bool visible)
++{
++    Element::setVisible(visible);
++    set_hidden(_container, !visible);
++}
++
++void MintMouth::showCap(int width, int height, int top, bool lowerHalf, bool tongue)
++{
++    const int cx = kMouthBoxW / 2;
++    const int cy = kMouthBoxH / 2;
++    set_hidden(_cap_box, false);
++    lv_obj_set_size(_cap_box, width, height);
++    lv_obj_set_pos(_cap_box, cx - width / 2, cy + top);
++    lv_obj_set_size(_cap, width, height * 2);
++    lv_obj_set_pos(_cap, 0, lowerHalf ? -height : 0);
++
++    set_hidden(_cap_tongue, !tongue);
++    if (tongue) {
++        lv_obj_set_size(_cap_tongue, width * 53 / 100, px(14));
++        lv_obj_align(_cap_tongue, LV_ALIGN_BOTTOM_MID, 0, kStroke);
++    }
++
++    // The straight edge sits on the cut, so the stroke closes the shape.
++    float edge  = (lowerHalf ? top : top + height) / kScale;
++    float half  = (width / 2 - kStroke / 2) / kScale;
++    uint32_t n  = quad(_line_points, 0, 2, -half, edge, 0, edge, half, edge, cx, cy);
++    set_hidden(_line, false);
++    lv_line_set_points(_line, _line_points.data(), n);
++}
++
++void MintMouth::showOval(int width, int height, int centerY, bool tongue)
++{
++    set_hidden(_oval, false);
++    lv_obj_set_size(_oval, width, height);
++    lv_obj_align(_oval, LV_ALIGN_CENTER, 0, centerY);
++    set_hidden(_oval_tongue, !tongue);
++    if (tongue) {
++        lv_obj_set_size(_oval_tongue, px(20), px(12));
++        lv_obj_align(_oval_tongue, LV_ALIGN_BOTTOM_MID, 0, kStroke / 2);
++    }
++}
++
++void MintMouth::render()
++{
++    const int cx = kMouthBoxW / 2;
++    const int cy = kMouthBoxH / 2;
++    for (lv_obj_t* obj : {_line, _cap_box, _oval, _teeth, _wink_tongue}) {
++        set_hidden(obj, true);
++    }
++    for (lv_obj_t* line : _teeth_lines) {
++        set_hidden(line, true);
++    }
++
++    // Lip sync: the speaking modifier swings weight between 0..20 (closed) and 40..80 (open).
++    if (_weight > kOpenMouthAt) {
++        int height = lerp(_weight, kOpenMouthAt, 100, px(9), px(36));
++        int width  = lerp(_weight, kOpenMouthAt, 100, px(40), px(60));
++        showCap(width, height, px(-10), true, height >= px(26));
++        return;
++    }
++
++    uint32_t n = 0;
++    switch (_emotion) {
++        case Emotion::Happy:
++            showCap(px(60), px(36), px(-10), true, true);
++            return;
++        case Emotion::Angry: {
++            int w = px(56), h = px(22), y = px(3);
++            set_hidden(_teeth, false);
++            lv_obj_set_size(_teeth, w, h);
++            lv_obj_align(_teeth, LV_ALIGN_CENTER, 0, y);
++            _teeth_points[0][0] = {lv_value_precise_t(cx - w / 2), lv_value_precise_t(cy + y)};
++            _teeth_points[0][1] = {lv_value_precise_t(cx + w / 2), lv_value_precise_t(cy + y)};
++            for (int i = 0; i < 3; ++i) {
++                int x                   = cx + px(14) * (i - 1);
++                _teeth_points[i + 1][0] = {lv_value_precise_t(x), lv_value_precise_t(cy + y - h / 2)};
++                _teeth_points[i + 1][1] = {lv_value_precise_t(x), lv_value_precise_t(cy + y + h / 2)};
++            }
++            for (size_t i = 0; i < _teeth_lines.size(); ++i) {
++                set_hidden(_teeth_lines[i], false);
++                lv_line_set_points(_teeth_lines[i], _teeth_points[i].data(), 2);
++            }
++            return;
++        }
++        case Emotion::Sad:
++            showCap(px(48), px(13), px(-1), false, false);
++            return;
++        case Emotion::Doubt:  // a small wave
++            n = quad(_line_points, 0, 9, -22, 2, -11, -7, 0, 2, cx, cy);
++            n = quad(_line_points, n - 1, 9, 0, 2, 11, 11, 22, 2, cx, cy);
++            break;
++        case Emotion::Sleepy:
++            showOval(px(14), px(18), px(4), false);
++            return;
++        case Emotion::Surprised:
++            showOval(px(36), px(44), px(4), true);
++            return;
++        case Emotion::Wink:
++            n = quad(_line_points, 0, 9, -26, -4, 0, 14, 26, -4, cx, cy);
++            set_hidden(_wink_tongue, false);
++            lv_obj_set_size(_wink_tongue, px(13), px(13));
++            lv_obj_align(_wink_tongue, LV_ALIGN_CENTER, px(17), px(9));
++            break;
++        case Emotion::Neutral:
++        default:  // a soft smile
++            n = quad(_line_points, 0, 9, -26, -4, 0, 14, 26, -4, cx, cy);
++            break;
++    }
++    set_hidden(_line, false);
++    lv_line_set_points(_line, _line_points.data(), n);
++}
+diff --git a/firmware/main/stackchan/avatar/skins/mint/mint.h b/firmware/main/stackchan/avatar/skins/mint/mint.h
+new file mode 100644
+index 0000000..2af69c3
+--- /dev/null
++++ b/firmware/main/stackchan/avatar/skins/mint/mint.h
+@@ -0,0 +1,84 @@
++/*
++ * SPDX-FileCopyrightText: 2026 MaiPai contributors
++ *
++ * SPDX-License-Identifier: MIT
++ */
++#pragma once
++#include "../default/default.h"
++#include <array>
++#include <memory>
++
++namespace stackchan::avatar {
++
++/**
++ * @brief Mint face: pale mint screen, small dot eyes, thin ink lines, green filled mouths.
++ *
++ * Eyes and mouth draw a shape per emotion. Eye weight keeps the blink contract (below 50 is
++ * closed) and mouth weight keeps the lip sync contract (above 20 opens the mouth).
++ */
++class MintAvatar : public Avatar {
++public:
++    void init(lv_obj_t* parent, const lv_font_t* font = &lv_font_montserrat_16);
++    uitk::lvgl_cpp::Container* getPanel() const;
++
++private:
++    std::unique_ptr<uitk::lvgl_cpp::Container> _panel;
++};
++
++class MintEye : public Feature {
++public:
++    MintEye(lv_obj_t* parent, bool isLeftEye);
++    ~MintEye();
++
++    void setPosition(const uitk::Vector2i& position) override;
++    void setWeight(int weight) override;
++    void setEmotion(const Emotion& emotion) override;
++    Emotion getEmotion() const override;
++    void setVisible(bool visible) override;
++    void setSize(int size) override;
++
++private:
++    void render();
++
++    bool _is_left_eye = false;
++    Emotion _emotion  = Emotion::Neutral;
++    lv_obj_t* _container = nullptr;
++    lv_obj_t* _dot       = nullptr;
++    lv_obj_t* _line      = nullptr;
++    lv_obj_t* _brow      = nullptr;
++    std::array<lv_point_precise_t, 17> _line_points{};
++    std::array<lv_point_precise_t, 2> _brow_points{};
++};
++
++class MintMouth : public Feature {
++public:
++    explicit MintMouth(lv_obj_t* parent);
++    ~MintMouth();
++
++    void setPosition(const uitk::Vector2i& position) override;
++    void setWeight(int weight) override;
++    void setEmotion(const Emotion& emotion) override;
++    Emotion getEmotion() const override;
++    void setVisible(bool visible) override;
++
++private:
++    void render();
++    void showCap(int width, int height, int top, bool lowerHalf, bool tongue);
++    void showOval(int width, int height, int centerY, bool tongue);
++
++    Emotion _emotion     = Emotion::Neutral;
++    lv_obj_t* _container = nullptr;
++    lv_obj_t* _line      = nullptr;
++    lv_obj_t* _cap_box   = nullptr;
++    lv_obj_t* _cap       = nullptr;
++    lv_obj_t* _cap_tongue = nullptr;
++    lv_obj_t* _oval      = nullptr;
++    lv_obj_t* _oval_tongue = nullptr;
++    lv_obj_t* _teeth     = nullptr;
++    std::array<lv_obj_t*, 4> _teeth_lines{};
++    std::array<std::array<lv_point_precise_t, 2>, 4> _teeth_points{};
++    lv_obj_t* _wink_tongue = nullptr;
++    std::array<lv_point_precise_t, 17> _line_points{};
++};
++
++}  // namespace stackchan::avatar

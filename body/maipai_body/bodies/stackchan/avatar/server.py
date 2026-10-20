@@ -33,9 +33,29 @@ EXPRESSIONS = {
     "sad": "sad",
     "doubt": "doubt",
     "sleepy": "sleepy",
+    "surprised": "surprised",
+    "wink": "wink",
 }
-_EYE_WEIGHTS = {"neutral": 100, "happy": 72, "angry": 70, "sad": 70, "doubt": 75, "sleepy": 35}
-_EYE_ROTATIONS = {"neutral": 0, "happy": 1550, "angry": 450, "sad": -400, "doubt": 0, "sleepy": -50}
+_EYE_WEIGHTS = {
+    "neutral": 100,
+    "happy": 72,
+    "angry": 70,
+    "sad": 70,
+    "doubt": 75,
+    "sleepy": 35,
+    "surprised": 100,
+    "wink": 100,
+}
+_EYE_ROTATIONS = {
+    "neutral": 0,
+    "happy": 1550,
+    "angry": 450,
+    "sad": -400,
+    "doubt": 0,
+    "sleepy": -50,
+    "surprised": 0,
+    "wink": 0,
+}
 
 
 def control_avatar(expression: str, *, eyes: bool = True, mouth: bool = True) -> bytes:

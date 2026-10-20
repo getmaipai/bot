@@ -39,6 +39,7 @@ def test_stackchan_expression_maps_account_for_all_cues_and_primitives():
         "sad",
         "doubt",
         "sleepy",
+        "surprised",
     }
 
 

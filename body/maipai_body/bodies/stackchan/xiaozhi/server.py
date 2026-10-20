@@ -33,6 +33,8 @@ FIRMWARE_EMOTIONS = {
     "sad": "sad",
     "doubt": "doubtful",
     "sleepy": "sleepy",
+    "surprised": "surprised",
+    "wink": "winking",
 }
 MAX_EARLY_DEVICE_REPLIES = 32
 

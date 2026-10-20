@@ -26,6 +26,8 @@ The file must be a readable X.509 certificate in PEM format. The recipe writes i
 
 The default server URL remains unchanged. Provisioning selects the server URL and websocket scheme for the installed hub.
 
+Patch 013 replaces the voice screen's face with the mint skin (`skins/mint/`) and adds two faces, `surprised` and `wink` (display names `surprised` and `winking`). The upstream default face stays for the other apps. Design and contracts: [the mint face note](../../../../../docs/dev/design-stackchan-mint-face-2026-10-19.md).
+
 Patch 010 adds the `self.battery.get_status` MCP tool. It returns the PMIC battery level as `percent` and charging state as `charging`, using StackChan's existing HAL power-management methods.
 
 The default avatar server URL is empty. Pass `--avatar-server-url ws://192.0.2.10:8766` to build with `CONFIG_STACKCHAN_SERVER_URL` pointing to the Bot host. Use the Bot host's LAN address, not loopback, from the robot.
@@ -48,4 +50,4 @@ From the repository root, run `body/scripts/stackchan_flash.py` with `--port`, `
 
 ## Source verification
 
-The patch series was checked against the pinned M5 StackChan commit `1b5765599fba8aaad1811d9a79358ccc7051f5f3` using `STACKCHAN_CHECK_ONLY=1 recipe.sh`; patches 009 and 012 apply and Kconfig reconfigures successfully. Patch 009's hunk was regenerated from an edit to the pinned xiaozhi-esp32 source. The upstream avatar enum is in `firmware/main/stackchan/avatar/avatar/elements/emotion.h` and defines six faces: neutral, happy, angry, sad, doubt and sleepy. `face_set.json` is generated from that source. The ESP-IDF 5.5.4 recipe build completed and the host egress scan passed. This confirms a firmware build only; no hardware behavior is verified.
+The patch series was checked against the pinned M5 StackChan commit `1b5765599fba8aaad1811d9a79358ccc7051f5f3` using `STACKCHAN_CHECK_ONLY=1 recipe.sh`; patches 009 and 012 apply and Kconfig reconfigures successfully. Patch 009's hunk was regenerated from an edit to the pinned xiaozhi-esp32 source. The upstream avatar enum is in `firmware/main/stackchan/avatar/avatar/elements/emotion.h` and defines six faces: neutral, happy, angry, sad, doubt and sleepy; patch 013 adds surprised and wink. `face_set.json` is generated from the patched enum (eight faces). The ESP-IDF 5.5.4 recipe build completed and the host egress scan passed. This confirms a firmware build only; no hardware behavior is verified.

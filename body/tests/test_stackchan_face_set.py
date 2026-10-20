@@ -46,7 +46,7 @@ def test_checked_in_map_faces_exist_in_face_set():
 
 def test_upstream_emotion_enum_has_no_joy_face():
     faces = set(json.loads((PACKAGE / "face_set.json").read_text())["faces"])
-    assert faces == {"neutral", "happy", "angry", "sad", "doubt", "sleepy"}
+    assert faces == {"neutral", "happy", "angry", "sad", "doubt", "sleepy", "surprised", "wink"}
     from maipai_body.bodies.stackchan.avatar_frames import encode_face
 
     with pytest.raises(ValueError, match="unsupported StackChan face: joy"):

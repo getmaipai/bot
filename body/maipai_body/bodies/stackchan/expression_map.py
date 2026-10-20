@@ -64,7 +64,7 @@ REPLY_MOOD_FACE_MAP = {
     "happiness": "happy",
     "anger": "angry",
     "sadness": "sad",
-    "fear": "doubt",
+    "fear": "surprised",
     "doubt": "doubt",
     "sleepiness": "sleepy",
     "wry": "doubt",
