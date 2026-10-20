@@ -7,6 +7,20 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-20
+
+### Fixed
+
+- StackChan firmware patch 032: with the always-open websocket from patch 003, a detected wake word took the "channel already opened" branch and returned without leaving Idle, so "Hi, StackChan" was heard but never started listening. The device now enters Connecting first in both wake word paths (BOT-STACKCHAN-WAKE-01).
+- The hosted Bot app configures logging when it runs under the hub (INFO, timestamped, to stderr), so the voice session lines reach the hub's log.
+- The light poller reads the offline rungs that own the state machine instead of the link lifecycle, which had no such attribute and crashed on every poll; the "connecting" cue is a blue pulse.
+- A failed StackChan tool call logs its real exception type and message once a minute per tool.
+- The idle settle head move is skipped while the robot is on USB power.
+
+### Added
+
+- Per-part self-test (BOT-SELF-TEST-01): `python -m maipai_body.selftest --list` and `--only led,movement,camera,hearing,wakeword,speech,reply` run plain pass, fail or skip checks with a fix line against the live StackChan service, on loopback only; the voice bridge keeps frame, byte, peak level and wake counts, never audio or words.
+
 ## [0.2.1] - 2026-10-20
 
 ### Fixed
