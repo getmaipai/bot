@@ -1,0 +1,382 @@
+# Intent: add MCP tools to recolor the mint face (palettes and a night face, palette saved in NVS), gate idle head movement at runtime, and read the LTR-553 ambient light sensor.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_mcp.cpp, firmware/main/hal/board/ and firmware/main/stackchan/avatar/skins/mint/ (MIT).
+diff --git a/firmware/main/hal/board/hal_bridge.cc b/firmware/main/hal/board/hal_bridge.cc
+index 93eb639..bc85b40 100644
+--- a/firmware/main/hal/board/hal_bridge.cc
++++ b/firmware/main/hal/board/hal_bridge.cc
+@@ -87,6 +87,18 @@ lv_disp_t* display_get_lvgl_display()
+     return display->GetLvglDisplay();
+ }
+ 
++bool display_set_face_palette(const char* palette, bool night)
++{
++    auto display = static_cast<DISPLAY_TYPE*>(Board::GetInstance().GetDisplay());
++    return display->SetFacePalette(palette, night);
++}
++
++void display_set_idle_motion_enabled(bool enabled)
++{
++    auto display = static_cast<DISPLAY_TYPE*>(Board::GetInstance().GetDisplay());
++    display->SetIdleMotionEnabled(enabled);
++}
++
+ void disply_lvgl_lock()
+ {
+     auto display = static_cast<DISPLAY_TYPE*>(Board::GetInstance().GetDisplay());
+diff --git a/firmware/main/hal/board/hal_bridge.h b/firmware/main/hal/board/hal_bridge.h
+index aab08f0..bab456f 100644
+--- a/firmware/main/hal/board/hal_bridge.h
++++ b/firmware/main/hal/board/hal_bridge.h
+@@ -45,6 +45,8 @@ void toggle_xiaozhi_chat_state();
+ void disply_lvgl_lock();
+ void disply_lvgl_unlock();
+ lv_disp_t* display_get_lvgl_display();
++bool display_set_face_palette(const char* palette, bool night);
++void display_set_idle_motion_enabled(bool enabled);
+ 
+ void xiaozhi_board_init();
+ void start_xiaozhi_app();
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index 577c1a9..3b679b0 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -252,6 +252,11 @@ void StackChanAvatarDisplay::SetupUI()
+     ESP_LOGI(TAG, "Creating Stack-chan Avatar...");
+ 
+     auto avatar = std::make_unique<MintAvatar>();
++    {
++        // The saved palette (never night); an unknown or missing name leaves the default mint.
++        Settings face_settings("xiaozhi", false);
++        avatar->setPalette(face_settings.GetString("face_pal", "mint").c_str(), false);
++    }
+     avatar->init(lv_screen_active());
+     avatar->getPanel()->onClick().connect([]() {
+         static uint32_t last_toggle_tick = 0;
+@@ -297,6 +302,36 @@ void StackChanAvatarDisplay::LvglUnlock()
+     Unlock();
+ }
+ 
++bool StackChanAvatarDisplay::SetFacePalette(const char* palette, bool night)
++{
++    auto& stackchan = GetStackChan();
++    if (!stackchan.hasAvatar()) {
++        return false;
++    }
++    auto* avatar = dynamic_cast<MintAvatar*>(&stackchan.avatar());
++    if (!avatar || !avatar->setPalette(palette, night)) {
++        return false;
++    }
++    if (!night) {  // night is a mode, not a choice: only the palette name is saved
++        Settings settings("xiaozhi", true);
++        settings.SetString("face_pal", palette);
++    }
++    return true;
++}
++
++void StackChanAvatarDisplay::SetIdleMotionEnabled(bool enabled)
++{
++    // A runtime gate: the stored idle_lv is not touched.
++    idle_motion_enabled_ = enabled;
++    auto& stackchan      = GetStackChan();
++    if (!enabled && idle_motion_modifier_id_ >= 0) {
++        stackchan.removeModifier(idle_motion_modifier_id_);
++        idle_motion_modifier_id_ = -1;
++    } else if (enabled && idle_expression_modifier_id_ >= 0 && !is_sleeping_ && idle_motion_modifier_id_ < 0 && idle_motion_level_ > 0) {
++        CreateIdleMotionModifier();
++    }
++}
++
+ void StackChanAvatarDisplay::CreateIdleMotionModifier()
+ {
+     auto& stackchan = GetStackChan();
+@@ -356,6 +391,8 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
+         if (idle_motion_modifier_id_ >= 0) {
+             stackchan.removeModifier(idle_motion_modifier_id_);
+             idle_motion_modifier_id_ = -1;
++        }
++        if (idle_expression_modifier_id_ >= 0) {
+             stackchan.removeModifier(idle_expression_modifier_id_);
+             idle_expression_modifier_id_ = -1;
+         }
+@@ -539,10 +576,10 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
+     if (is_idle) {
+         // Start idle motion
+         ESP_LOGW(TAG, "Start idle motion");
+-        if (idle_motion_modifier_id_ < 0) {
+-            if (idle_motion_level_ > 0) {
+-                CreateIdleMotionModifier();
+-            }
++        if (idle_motion_modifier_id_ < 0 && idle_motion_enabled_ && idle_motion_level_ > 0) {
++            CreateIdleMotionModifier();
++        }
++        if (idle_expression_modifier_id_ < 0) {
+             idle_expression_modifier_id_ = stackchan.addModifier(std::make_unique<IdleExpressionModifier>());
+         }
+ 
+@@ -553,6 +590,8 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
+         if (idle_motion_modifier_id_ >= 0) {
+             stackchan.removeModifier(idle_motion_modifier_id_);
+             idle_motion_modifier_id_ = -1;
++        }
++        if (idle_expression_modifier_id_ >= 0) {
+             stackchan.removeModifier(idle_expression_modifier_id_);
+             idle_expression_modifier_id_ = -1;
+         }
+diff --git a/firmware/main/hal/board/stackchan_display.h b/firmware/main/hal/board/stackchan_display.h
+index f16f1f3..1167b5f 100644
+--- a/firmware/main/hal/board/stackchan_display.h
++++ b/firmware/main/hal/board/stackchan_display.h
+@@ -20,6 +20,7 @@ private:
+     int blink_modifier_id_              = -1;
+     bool is_sleeping_                   = false;
+     uint8_t idle_motion_level_          = 2;
++    bool idle_motion_enabled_           = true;
+ 
+     lv_obj_t* preview_image_                         = nullptr;
+     esp_timer_handle_t preview_timer_                = nullptr;
+@@ -52,4 +53,8 @@ public:
+     void LvglLock();
+     void LvglUnlock();
+     lv_disp_t* GetLvglDisplay();
++
++    // Both expect the LVGL lock held by the caller.
++    bool SetFacePalette(const char* palette, bool night);
++    void SetIdleMotionEnabled(bool enabled);
+ };
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index d18d123..f4da564 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -8,14 +8,73 @@
+ #include <mcp_server.h>
+ #include <stackchan/stackchan.h>
+ #include <apps/common/common.h>
++#include <driver/i2c_master.h>
++#include <esp_log.h>
++#include "board/hal_bridge.h"
+ 
+ using namespace stackchan;
+ 
+ static const std::string_view _tag = "HAL-MCP";
+ 
++// LTR-553ALS ambient light sensor on the CoreS3 internal I2C bus. Light channels only, no proximity.
++namespace {
++constexpr uint8_t kLtr553Address = 0x23;
++constexpr uint8_t kLtr553AlsContr = 0x80;
++constexpr uint8_t kLtr553AlsData  = 0x88;  // CH1 low, CH1 high, CH0 low, CH0 high
++
++i2c_master_dev_handle_t ltr553 = nullptr;
++
++void ltr553_init()
++{
++    auto bus = hal_bridge::board_get_i2c_bus();
++    i2c_device_config_t config = {};
++    config.dev_addr_length     = I2C_ADDR_BIT_LEN_7;
++    config.device_address      = kLtr553Address;
++    config.scl_speed_hz        = 400000;
++    const uint8_t enable[]     = {kLtr553AlsContr, 0x01};  // active, gain 1x
++    if (!bus || i2c_master_probe(bus, kLtr553Address, 100) != ESP_OK ||
++        i2c_master_bus_add_device(bus, &config, &ltr553) != ESP_OK ||
++        i2c_master_transmit(ltr553, enable, sizeof(enable), 100) != ESP_OK) {
++        ESP_LOGW("HAL-MCP", "ltr553 absent");
++        ltr553 = nullptr;
++    }
++}
++
++bool ltr553_read_lux(float& lux)
++{
++    if (!ltr553) {
++        return false;
++    }
++    const uint8_t reg = kLtr553AlsData;
++    uint8_t data[4]   = {};
++    if (i2c_master_transmit_receive(ltr553, &reg, 1, data, sizeof(data), 100) != ESP_OK) {
++        return false;
++    }
++    const float ch1 = data[0] | (data[1] << 8);
++    const float ch0 = data[2] | (data[3] << 8);
++    if (ch0 + ch1 <= 0) {
++        lux = 0;
++        return true;
++    }
++    // Datasheet ratio formula, gain 1x and 100 ms integration (the power-on default).
++    const float ratio = ch1 / (ch0 + ch1);
++    if (ratio < 0.45f) {
++        lux = 1.7743f * ch0 + 1.1059f * ch1;
++    } else if (ratio < 0.64f) {
++        lux = 4.2785f * ch0 - 1.9548f * ch1;
++    } else if (ratio < 0.85f) {
++        lux = 0.5926f * ch0 + 0.1185f * ch1;
++    } else {
++        lux = 0;
++    }
++    return true;
++}
++}  // namespace
++
+ void Hal::xiaozhi_mcp_init()
+ {
+     mclog::tagInfo(_tag, "init");
++    ltr553_init();
+ 
+     // https://github.com/78/xiaozhi-esp32/blob/main/docs/mcp-usage.md
+     auto& mcp_server = McpServer::GetInstance();
+@@ -130,6 +189,48 @@ void Hal::xiaozhi_mcp_init()
+             return true;
+         });
+ 
++    mclog::tagInfo(_tag, "add screen.set_face_background tool");
++    mcp_server.AddTool(
++        "self.screen.set_face_background",
++        "Recolor the face. palette is one of: mint, sky, peach, lavender, lemon, rose, cloud (saved across reboots). "
++        "night=true shows the black night face instead, whatever the palette, and does not change the saved palette.",
++        PropertyList({Property("palette", kPropertyTypeString, std::string("mint")),
++                      Property("night", kPropertyTypeBoolean, false)}),
++        [this](const PropertyList& properties) -> ReturnValue {
++            auto palette = properties["palette"].value<std::string>();
++            bool night   = properties["night"].value<bool>();
++            mclog::tagInfo(_tag, "set_face_background: palette={}, night={}", palette, night);
++
++            LvglLockGuard lock;
++            if (!hal_bridge::display_set_face_palette(palette.c_str(), night)) {
++                return fmt::format("Unknown palette '{}'. Allowed palettes: mint, sky, peach, lavender, lemon, rose, cloud.",
++                                   palette);
++            }
++            return true;
++        });
++
++    mclog::tagInfo(_tag, "add robot.set_idle_motion tool");
++    mcp_server.AddTool("self.robot.set_idle_motion",
++                       "Turn the idle random head movement on or off until the next reboot. Off stops it at once.",
++                       PropertyList({Property("enabled", kPropertyTypeBoolean, true)}),
++                       [this](const PropertyList& properties) -> ReturnValue {
++                           bool enabled = properties["enabled"].value<bool>();
++                           mclog::tagInfo(_tag, "set_idle_motion: {}", enabled);
++                           LvglLockGuard lock;
++                           hal_bridge::display_set_idle_motion_enabled(enabled);
++                           return true;
++                       });
++
++    mclog::tagInfo(_tag, "add screen.get_ambient_light tool");
++    mcp_server.AddTool("self.screen.get_ambient_light", "Returns the room brightness in lux from the light sensor.",
++                       std::vector<Property>{}, [this](const PropertyList& properties) -> ReturnValue {
++                           float lux = 0;
++                           if (!ltr553_read_lux(lux)) {
++                               return std::string("The ambient light sensor is not available on this unit.");
++                           }
++                           return fmt::format(R"({{"lux": {:.1f}}})", lux);
++                       });
++
+     mclog::tagInfo(_tag, "add robot.create_reminder tool");
+     mcp_server.AddTool("self.robot.create_reminder",
+                        "Create a reminder. Duration is in seconds. Message is what to say when time is up. Set repeat "
+diff --git a/firmware/main/stackchan/avatar/skins/mint/mint.cpp b/firmware/main/stackchan/avatar/skins/mint/mint.cpp
+index 9a63bda..78a70eb 100644
+--- a/firmware/main/stackchan/avatar/skins/mint/mint.cpp
++++ b/firmware/main/stackchan/avatar/skins/mint/mint.cpp
+@@ -6,6 +6,7 @@
+ #include "mint.h"
+ #include <algorithm>
+ #include <cmath>
++#include <cstring>
+ 
+ using namespace uitk;
+ using namespace uitk::lvgl_cpp;
+@@ -13,10 +14,23 @@ using namespace stackchan::avatar;
+ 
+ // Shapes are drawn in mockup units (the owner-approved sheet) and scaled up to the 320x240 panel.
+ static constexpr float kScale       = 1.35f;
+-static const lv_color_t kBg         = lv_color_hex(0xC4F0DA);
+-static const lv_color_t kInk        = lv_color_hex(0x18241F);
+-static const lv_color_t kFill       = lv_color_hex(0x3E9E6B);
+-static const lv_color_t kTongue     = lv_color_hex(0x8ED6A4);
++
++// The live palette; MintAvatar::setPalette changes it and recolors the face that is already drawn.
++struct Palette {
++    const char* name;
++    uint32_t bg, ink, fill, tongue;
++};
++static constexpr Palette kPalettes[] = {
++    {"mint", 0xC4F0DA, 0x18241F, 0x3E9E6B, 0x8ED6A4},     {"sky", 0xC9E6FA, 0x172431, 0x3C7FB8, 0x9CC9EE},
++    {"peach", 0xFFE0CC, 0x2B1E18, 0xD9774A, 0xF4B08F},    {"lavender", 0xE2D8F7, 0x1F1A2E, 0x7A5FC0, 0xB9A6E8},
++    {"lemon", 0xFFF4BF, 0x2A2614, 0xC9A227, 0xEAD77A},    {"rose", 0xFBD3DE, 0x2E1820, 0xC8506E, 0xF29AB0},
++    {"cloud", 0xEEF1F4, 0x1C2126, 0x6C7A89, 0xB4BEC9},
++};
++static constexpr Palette kNightPalette = {"night", 0x000000, 0xD8E8DF, 0x2E7A52, 0x5FA37E};
++static lv_color_t kBg                  = lv_color_hex(kPalettes[0].bg);
++static lv_color_t kInk                 = lv_color_hex(kPalettes[0].ink);
++static lv_color_t kFill                = lv_color_hex(kPalettes[0].fill);
++static lv_color_t kTongue              = lv_color_hex(kPalettes[0].tongue);
+ static const lv_color_t kTeeth      = lv_color_hex(0xFFFFFF);
+ static constexpr int kStroke        = 7;
+ static constexpr int kThinStroke    = 5;
+@@ -153,6 +167,55 @@ static void set_points(lv_obj_t* line, std::array<lv_point_precise_t, N>& shown,
+ 
+ /* --------------------------------- Avatar -------------------------------- */
+ 
++// Teeth stay white; every other part is recognised by the palette color it was drawn with.
++static void recolor(lv_obj_t* obj, const lv_color_t& oldInk, const lv_color_t& oldFill, const lv_color_t& oldTongue)
++{
++    if (lv_obj_check_type(obj, &lv_line_class)) {
++        lv_obj_set_style_line_color(obj, kInk, 0);
++    } else {
++        lv_color_t bg = lv_obj_get_style_bg_color(obj, LV_PART_MAIN);
++        if (lv_color_eq(bg, oldInk)) {
++            lv_obj_set_style_bg_color(obj, kInk, 0);
++        } else if (lv_color_eq(bg, oldFill)) {
++            lv_obj_set_style_bg_color(obj, kFill, 0);
++        } else if (lv_color_eq(bg, oldTongue)) {
++            lv_obj_set_style_bg_color(obj, kTongue, 0);
++        }
++        if (lv_obj_get_style_border_width(obj, LV_PART_MAIN) > 0) {
++            lv_obj_set_style_border_color(obj, kInk, 0);
++        }
++    }
++    for (uint32_t i = 0; i < lv_obj_get_child_count(obj); ++i) {
++        recolor(lv_obj_get_child(obj, i), oldInk, oldFill, oldTongue);
++    }
++}
++
++bool MintAvatar::setPalette(const char* name, bool night)
++{
++    const Palette* next = night ? &kNightPalette : nullptr;
++    for (const auto& palette : kPalettes) {
++        if (!next && name && std::strcmp(palette.name, name) == 0) {
++            next = &palette;
++        }
++    }
++    if (!next) {
++        return false;
++    }
++    const lv_color_t oldInk = kInk, oldFill = kFill, oldTongue = kTongue;
++    kBg     = lv_color_hex(next->bg);
++    kInk    = lv_color_hex(next->ink);
++    kFill   = lv_color_hex(next->fill);
++    kTongue = lv_color_hex(next->tongue);
++    if (_panel) {  // before init() there is nothing drawn yet; init() reads the colors above
++        _panel->setBgColor(kBg);
++        for (uint32_t i = 0; i < lv_obj_get_child_count(_panel->get()); ++i) {
++            recolor(lv_obj_get_child(_panel->get(), i), oldInk, oldFill, oldTongue);
++        }
++        lv_obj_invalidate(_panel->get());
++    }
++    return true;
++}
++
+ void MintAvatar::init(lv_obj_t* parent, const lv_font_t* font)
+ {
+     (void)font;  // No speech bubble: the owner wants no text under the face.
+diff --git a/firmware/main/stackchan/avatar/skins/mint/mint.h b/firmware/main/stackchan/avatar/skins/mint/mint.h
+index ef29a0f..6f7845f 100644
+--- a/firmware/main/stackchan/avatar/skins/mint/mint.h
++++ b/firmware/main/stackchan/avatar/skins/mint/mint.h
+@@ -20,6 +20,9 @@ class MintAvatar : public Avatar {
+ public:
+     void init(lv_obj_t* parent, const lv_font_t* font = &lv_font_montserrat_16);
+     uitk::lvgl_cpp::Container* getPanel() const;
++    // Recolors the face (call with the LVGL lock held once drawn). False when the name is unknown;
++    // night ignores the name. Before init() it only picks the colors init() will draw with.
++    bool setPalette(const char* name, bool night);
+ 
+ private:
+     std::unique_ptr<uitk::lvgl_cpp::Container> _panel;

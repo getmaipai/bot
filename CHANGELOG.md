@@ -14,6 +14,8 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- StackChan firmware patch 017 (BOT-FACE-NIGHT-01): MCP tools `self.screen.set_face_background` (seven palettes and a night face, palette kept in NVS), `self.robot.set_idle_motion` and `self.screen.get_ambient_light` (LTR-553). Built, not flashed.
+
 - EYES-02, the Eyes director (Reachy Mini): one look table (`indicator/looks.py`,
   no red), a director that reads only the funnel's shown state and the
   live-capture facts, and `LiveCaptureTap`, which wraps the mic and camera so
