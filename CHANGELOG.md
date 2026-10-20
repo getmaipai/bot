@@ -7,6 +7,19 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-20
+
+### Fixed
+
+- The reply plays: after each sentence the turn stopped playback on the server's event loop, and sending the audio needed that same loop, so every reply deadlocked for exactly 30 seconds and failed with a timeout. Playback now stops on a worker thread (a test asserts it never runs on the loop thread).
+- The turn request leaves out `speaker_evidence` and `present` when they are empty instead of sending null, so older hubs accept it.
+- The voice session logs the speech out: each sentence started, synthesized and sent with timings, and when the reply finished playing; a failed turn logs the exception text.
+- The StackChan avatar channel logs every connection, each refusal with its reason, and the connected state; the hub command channel logs the exception and a traceback when it reconnects.
+
+### Added
+
+- The turn funnel drives the ring: blue the moment a turn opens, green while audio streams to the hub, magenta slow breathe while thinking, white while speaking.
+
 ## [0.2.3] - 2026-10-20
 
 ### Fixed
