@@ -7,6 +7,19 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-20
+
+### Fixed
+
+- A voice turn no longer freezes: the face and ring updates ran inline on the server's event loop and each device call blocked it for up to 5 seconds, which caused the slow turn start, the late first audio frame, the device call timeouts and the early "no speech" result. They now run on one worker thread, in order, and a slow device cannot delay the turn.
+- The StackChan stays still when it cannot tell: an unknown or stale (3 minutes) power state counts as plugged in, idle motion is turned off before any battery reading and retried every 5 seconds, `robot.idle.level` is read from the settings frame (Still turns idle motion off), and idle settling and face following are skipped while still.
+- The ring no longer sticks on the camera pink: local watching (face tracking, the night light read) shows no cue and follows `robot.camera.watch_level`, while a visible camera stream or photo still lights pink and clears.
+- Battery and head reads retry once.
+
+### Added
+
+- The StackChan sleeps when nothing happens: the presence loop runs the rest policy, so after quiet minutes it rests.
+
 ## [0.2.2] - 2026-10-20
 
 ### Fixed
