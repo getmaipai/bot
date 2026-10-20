@@ -167,6 +167,15 @@ class StackChanBehavior:
         self.night_active: Callable[[], bool] = lambda: False
         # Charging or on USB power: no wandering. Set by the power rule (power_idle.py).
         self.idle_still: Callable[[], bool] = lambda: False
+        # BOT-SC-ANIM-01: drowsy and asleep stages so an idle robot does not sit smiling for hours.
+        from maipai_body.bodies.stackchan.profile import STACKCHAN_PROFILE as _profile
+        from maipai_body.bodies.stackchan.routines import RestRenderer
+        from maipai_body.expression.rest import RestPolicy
+
+        self._rest = RestPolicy(time.monotonic(), quiet_hours_active=lambda: self.night_active())
+        self._rest_renderer = RestRenderer()
+        self._rest_profile = _profile
+        self._last_person_seen = float("-inf")
         self._night_turned = False
 
     @property
@@ -265,9 +274,25 @@ class StackChanBehavior:
                 try:
                     target = self._vision.track_stream_frame(deadline_s=0.4)
                     if target.detected:
+                        self._last_person_seen = now
                         self.render_primitive("attend")
                 except Exception:
                     logger.warning("StackChan anonymous tracking failed", exc_info=True)
+            try:
+                self.rest_step(now)
+            except Exception:
+                logger.warning("StackChan rest routine failed", exc_info=True)
+
+    def rest_step(self, now: float) -> str:
+        """One pass of the rest policy: drop the head and sleepy face after a long quiet spell."""
+        person = now - self._last_person_seen < 30.0
+        output = self._rest.update(now, person_present=person, turn_active=self._active.is_set())
+        self._with_lease(
+            lambda: self._rest_renderer.render(
+                output, self.robot._driver("head"), self._rest_profile
+            )
+        )
+        return output.stage
 
     def stop_presence(self) -> None:
         if self._presence_stop is not None:

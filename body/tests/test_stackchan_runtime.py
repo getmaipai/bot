@@ -43,3 +43,22 @@ def test_runtime_estop_blocks_motion_and_shutdown_joins_presence_worker():
         behavior.render_primitive("glance")
     behavior.close()
     assert behavior.robot.lease_holder is None
+
+
+def test_a_long_quiet_spell_drops_the_head_and_a_person_wakes_it():
+    from maipai_body.app import StackChanBehavior
+
+    device = FakeStackChanDeviceClient()
+    behavior = StackChanBehavior(StackChanRobotAdapter(device).robot)
+    try:
+        start = behavior._rest._quiet_since
+        assert behavior.rest_step(start + 1.0) == "awake"
+        assert behavior.rest_step(start + 601.0) == "drowsy"
+        frames = len(device.avatar_frames)
+        assert behavior.rest_step(start + 700.0) == "drowsy"
+        assert len(device.avatar_frames) == frames  # nothing new is sent for the same stage
+        assert behavior.rest_step(start + 1900.0) == "asleep"
+        behavior._last_person_seen = start + 1950.0
+        assert behavior.rest_step(start + 1951.0) == "awake"
+    finally:
+        behavior.close()
