@@ -199,6 +199,7 @@ def test_no_module_outside_the_seam_and_the_client_names_a_palette_member():
         PACKAGE / "bodies" / "reachy_mini" / "fake.py",
         # One palette-to-hardware map per body (the light standard); no colour name elsewhere.
         PACKAGE / "bodies" / "stackchan" / "ring.py",
+        PACKAGE / "bodies" / "stackchan" / "ring_indicator.py",
         PACKAGE / "indicator" / "looks.py",
     }
     offenders = [
