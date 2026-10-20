@@ -384,7 +384,7 @@ def _start_stackchan_night(
         channel = CommandChannel(
             "",
             "",
-            credentials=_hub_credentials_reader(link, ""),
+            credentials=_command_credentials(link),
             settings_handler=apply_settings,
             on_drop=link.channel_lost,
         )
@@ -509,8 +509,16 @@ async def _serve_stackchan_channels(
     )
     from maipai_body.bodies.stackchan.estop_recovery import EstopRecovery
 
+    def device_answers() -> bool:
+        """A real answer from the unit (a connected socket is not enough during a freeze)."""
+        try:
+            voice.robot.client.get_head_angles()
+        except Exception:
+            return False
+        return True
+
     threading.Thread(
-        target=EstopRecovery(voice.robot.robot, device_connected).run,
+        target=EstopRecovery(voice.robot.robot, device_answers).run,
         args=(stop_event,),
         name="stackchan-estop-recovery",
         daemon=True,
@@ -1298,6 +1306,21 @@ def _hub_credentials_reader(link: LinkLifecycle, base_url: str) -> Callable[[], 
         return link.hub_client.session_cookie or "", answered or last_known_good_url[0]
 
     return read
+
+
+def _command_credentials(link: LinkLifecycle) -> Callable[[], tuple[str, str]]:
+    """The command channel's reader: ``(base_url, session_cookie)``, in that order.
+
+    ``_hub_credentials_reader`` answers ``(cookie, url)``; the channel unpacks the other way, so
+    the cookie was used as the URL and the channel failed with a ValueError every 30 s.
+    """
+    read = _hub_credentials_reader(link, "")
+
+    def credentials() -> tuple[str, str]:
+        cookie, url = read()
+        return url, cookie
+
+    return credentials
 
 
 def _has_stored_pairing(link: LinkLifecycle) -> bool:

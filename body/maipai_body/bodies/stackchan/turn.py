@@ -370,6 +370,7 @@ class StackChanTurnBridge:
         if cancel:
             cancel.set()
         playback = self._playbacks.get(session_id)
+        flushed = bool(playback)
         if playback:
             stopped_at = self._clock()
             try:
@@ -389,7 +390,10 @@ class StackChanTurnBridge:
             task.cancel()
         self._states[session_id] = "idle"
         self._speaking_since.pop(session_id, None)
-        self._speech_ended[session_id] = self._clock()
+        if flushed:
+            # Only a real playback leaves an echo tail to ignore; stamping on every listen start
+            # dropped the first 180 ms of each utterance.
+            self._speech_ended[session_id] = self._clock()
         self._settled_sessions.add(session_id)
         self._emit_expression("settle")
 
@@ -586,6 +590,7 @@ class StackChanTurnBridge:
             raise
         except Exception as exc:
             LOG.warning("StackChan voice turn failed: %s: %s", type(exc).__name__, str(exc)[:160])
+            LOG.debug("StackChan voice turn failure detail", exc_info=True)
             if isinstance(exc, (TurnAuthFailed, TurnLinkLost, TtsAuthFailed)):
                 await asyncio.to_thread(self._offline_line, playback)
             else:

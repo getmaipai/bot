@@ -60,6 +60,15 @@ _EYE_ROTATIONS = {
 }
 
 
+class ExpressionFrame(bytes):
+    """An encoded ControlAvatar frame that remembers which expression it shows.
+
+    The name lets the voice socket set the same face when the avatar channel is not connected.
+    """
+
+    expression: str = ""
+
+
 def control_avatar(expression: str, *, eyes: bool = True, mouth: bool = True) -> bytes:
     try:
         emotion = EXPRESSIONS[expression]
@@ -74,10 +83,14 @@ def control_avatar(expression: str, *, eyes: bool = True, mouth: bool = True) ->
         "rightEye": {"weight": weight, "rotation": -rotation} if eyes else {"size": -100},
         "mouth": mouth_feature,
     }
-    return encode_frame(
-        CONTROL_AVATAR,
-        json.dumps(payload, separators=(",", ":")).encode(),
+    frame = ExpressionFrame(
+        encode_frame(
+            CONTROL_AVATAR,
+            json.dumps(payload, separators=(",", ":")).encode(),
+        )
     )
+    frame.expression = expression
+    return frame
 
 
 class AvatarServer:

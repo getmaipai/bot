@@ -475,3 +475,42 @@ def test_playback_stop_never_runs_on_the_event_loop_thread(monkeypatch, caplog):
     text = "\n".join(record.getMessage() for record in caplog.records)
     assert "text-to-speech sentence 1 started" in text
     assert "synthesized in" in text and "reply finished playing" in text
+
+
+def test_the_first_audio_of_an_utterance_is_kept_when_no_reply_was_playing(monkeypatch):
+    import maipai_body.bodies.stackchan.turn as turn_module
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    bridge = StackChanTurnBridge(
+        server,
+        Link(),
+        Offline(),
+        stt_factory=FakeStt,
+        turn_factory=FakeTurn,
+        tts_factory=FakeTts,
+        side_executor=InlineExecutor(),
+    )
+    loop.run_until_complete(bridge.listen("session-first-audio", "device", "start"))
+    assert "session-first-audio" not in bridge._speech_ended  # nothing was playing: no echo tail
+    loop.run_until_complete(bridge.on_audio("session-first-audio", b"\x01\x02"))
+    assert bridge._uplink_dropped == 0
+    loop.run_until_complete(bridge._tasks["session-first-audio"])
+    loop.close()
+
+
+def test_a_real_playback_still_leaves_an_echo_tail_to_ignore(monkeypatch):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    bridge = StackChanTurnBridge(
+        server, Link(), Offline(), stt_factory=FakeStt, side_executor=InlineExecutor()
+    )
+    bridge._playbacks["session-echo"] = FakePlayback(server, "device")
+    bridge._cancel_turn("session-echo", send_stop=False)
+    assert "session-echo" in bridge._speech_ended
+    loop.close()

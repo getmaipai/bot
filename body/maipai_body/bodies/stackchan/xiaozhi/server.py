@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import inspect
 import itertools
 import json
 import logging
@@ -518,7 +519,9 @@ class XiaozhiServer:
                 elif kind == "listen":
                     state = data.get("state")
                     if state in {"start", "detect", "stop"} and self.turn_handler is not None:
-                        await self.turn_handler(session_id, device_id, state)
+                        await self._call_turn_handler(
+                            session_id, device_id, state, data.get("mode"), data.get("aec")
+                        )
                     if state in {"start", "detect"}:
                         if data.get("mode") == "realtime":
                             await self._json(websocket, session_id, "tts", {"state": "start"})
@@ -785,7 +788,39 @@ class XiaozhiServer:
         enabled = decoded.payload != b"\x00"
         await self.stream_camera(enabled)
 
+    async def _call_turn_handler(
+        self, session_id: str, device_id: str, state: str, mode: object, aec: object
+    ) -> None:
+        """Pass the device's listen mode and echo-cancel flag on when the handler takes them."""
+        handler = self.turn_handler
+        assert handler is not None
+        try:
+            parameters = inspect.signature(handler).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if "mode" in parameters and "aec" in parameters:
+            await handler(
+                session_id,
+                device_id,
+                state,
+                mode=mode if isinstance(mode, str) else "auto",
+                aec=aec if isinstance(aec, bool) else None,
+            )
+        else:
+            await handler(session_id, device_id, state)
+
     async def send_expression_frame(self, frame: bytes) -> None:
+        expression = getattr(frame, "expression", None)
+        try:
+            await self._send_expression_over_avatar(frame)
+        except ConnectionError:
+            # The avatar channel is not connected (AI-agent mode never starts it): set the face
+            # over the voice socket instead, quietly, when the frame names an expression.
+            if expression is None or expression not in FIRMWARE_EMOTIONS:
+                raise
+            await self.send_emotion(expression)
+
+    async def _send_expression_over_avatar(self, frame: bytes) -> None:
         if self._avatar_frame_sender is None:
             raise ConnectionError(
                 "StackChan avatar channel is unavailable. Connect the avatar service and retry."
