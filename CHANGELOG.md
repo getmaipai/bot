@@ -15,6 +15,7 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- StackChan releases take the signing key from the macOS Keychain (`--signing-key keychain:<item>`), `scripts/sign-release-sums.sh` signs `SHA256SUMS` into `SHA256SUMS.sig.json`, and `verify.sh --public-key` checks the flash manifest signature (BOT-RELEASE-FLASH-01).
 - StackChan firmware releases can be staged as `stackchan-firmware-<version>.tar.gz`, containing the signed flash manifest and its parts and listed in the release `SHA256SUMS` (BOT-RELEASE-FLASH-01, asset half).
 - StackChan releases now ship bootloader and partition table binaries with a signed flash manifest generated from ESP-IDF flash offsets (BOT-RELEASE-FLASH-01, release half).
 

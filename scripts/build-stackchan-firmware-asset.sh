@@ -92,4 +92,4 @@ if [ -f "$SUMS" ]; then
 fi
 (cd "$STAGE" && shasum -a 256 "$(basename "$ARCHIVE")" >> SHA256SUMS)
 echo "Built $ARCHIVE"
-echo "Reminder: SHA256SUMS.sig.json is made by the owner's signing step over the final SHA256SUMS, after all bundles and this asset are staged."
+echo "Reminder: sign the final SHA256SUMS with scripts/sign-release-sums.sh --signing-key keychain:<item> <stage-dir> after all bundles and this asset are staged."

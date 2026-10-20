@@ -42,6 +42,19 @@ def _write_signed_manifest(out: Path, image: Path) -> None:
         hlc="1792454400000:0:stackchan01",
     )
     signed = flash_manifest.sign_manifest(manifest, key)
+    subprocess.run(
+        [
+            "openssl",
+            "pkey",
+            "-in",
+            str(key),
+            "-pubout",
+            "-out",
+            str(out.parent / f"{out.name}-public.pem"),
+        ],
+        check=True,
+        capture_output=True,
+    )
     key.unlink()
     (out / "flash-manifest.json").write_text(json.dumps(signed, sort_keys=True, indent=2) + "\n")
 
@@ -56,16 +69,64 @@ class StackChanReleaseTests(unittest.TestCase):
             image = out / "stack-chan-maipai.bin"
             image.write_bytes(b"test image")
             _write_signed_manifest(out, image)
+            public_key = out.parent / f"{out.name}-public.pem"
             sums = ""
             for name in (image.name, "flash-manifest.json"):
                 sums += f"{hashlib.sha256((out / name).read_bytes()).hexdigest()}  {name}\n"
             (out / "SHA256SUMS").write_text(sums)
-            passed = self.run_script(VERIFY, str(out))
+            passed = self.run_script(VERIFY, "--public-key", str(public_key), str(out))
             self.assertEqual(passed.returncode, 0, passed.stderr + passed.stdout)
             image.write_bytes(b"tampered image")
-            failed = self.run_script(VERIFY, str(out))
+            failed = self.run_script(VERIFY, "--public-key", str(public_key), str(out))
             self.assertNotEqual(failed.returncode, 0)
             self.assertIn("checksum", (failed.stderr + failed.stdout).lower())
+
+    def test_verify_requires_and_checks_manifest_signature(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            out = root / "release"
+            out.mkdir()
+            image = out / "image.bin"
+            image.write_bytes(b"signed image")
+            _write_signed_manifest(out, image)
+            public_key = root / "release-public.pem"
+
+            def sums() -> str:
+                return "".join(
+                    f"{hashlib.sha256((out / n).read_bytes()).hexdigest()}  {n}\n"
+                    for n in ("image.bin", "flash-manifest.json")
+                )
+
+            (out / "SHA256SUMS").write_text(sums())
+            ok = self.run_script(VERIFY, str(out), "--public-key", str(public_key))
+            self.assertEqual(ok.returncode, 0, ok.stderr + ok.stdout)
+            wrong = root / "wrong.pem"
+            subprocess.run(
+                ["openssl", "genpkey", "-algorithm", "Ed25519", "-out", str(wrong)],
+                check=True,
+                capture_output=True,
+            )
+            wrong_pub = root / "wrong-public.pem"
+            subprocess.run(
+                ["openssl", "pkey", "-in", str(wrong), "-pubout", "-out", str(wrong_pub)],
+                check=True,
+                capture_output=True,
+            )
+            bad = self.run_script(VERIFY, "--public-key", str(wrong_pub), str(out))
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertIn("signature", (bad.stderr + bad.stdout).lower())
+            omitted = self.run_script(VERIFY, str(out))
+            self.assertEqual(omitted.returncode, 2)
+            self.assertIn("--public-key", omitted.stderr)
+            manifest = json.loads((out / "flash-manifest.json").read_text())
+            manifest.pop("signature")
+            (out / "flash-manifest.json").write_text(
+                json.dumps(manifest, sort_keys=True, indent=2) + "\n"
+            )
+            (out / "SHA256SUMS").write_text(sums())
+            unsigned = self.run_script(VERIFY, str(out), "--public-key", str(public_key))
+            self.assertNotEqual(unsigned.returncode, 0)
+            self.assertIn("not signed", (unsigned.stderr + unsigned.stdout).lower())
 
     def test_release_refuses_a_pin_without_checksum(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

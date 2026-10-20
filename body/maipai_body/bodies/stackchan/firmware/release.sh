@@ -19,12 +19,11 @@ while (($#)); do
     --signing-key) SIGNING_KEY="$2"; shift 2 ;;
     --container-image) CONTAINER_IMAGE="$2"; shift 2 ;;
     --check-pins) CHECK_PINS=1; shift ;;
-    *) echo "Usage: release.sh --date YYYY-MM-DD --signing-key PATH [--output DIR] [--pins FILE]" >&2; exit 2 ;;
+    *) echo "Usage: release.sh --date YYYY-MM-DD --signing-key PATH|keychain:ITEM [--output DIR] [--pins FILE]" >&2; exit 2 ;;
   esac
 done
 if [[ "$CHECK_PINS" != "1" ]]; then
   [[ -n "$SIGNING_KEY" ]] || { echo "Pass --signing-key PATH to sign the flash manifest." >&2; exit 2; }
-  [[ -f "$SIGNING_KEY" && -r "$SIGNING_KEY" ]] || { echo "Signing key is missing or unreadable: $SIGNING_KEY" >&2; exit 2; }
 fi
 python3 - "$PINS" <<'PY'
 import sys, tomllib
@@ -43,6 +42,8 @@ if missing:
     raise SystemExit("Missing or invalid pin checksum(s): " + ", ".join(missing))
 PY
 if [[ "$CHECK_PINS" == "1" ]]; then exit 0; fi
+source "$ROOT/scripts/signing-key.sh"
+resolve_signing_key "$SIGNING_KEY"
 [[ -n "$BUILD_DATE" ]] || { echo "Pass --date YYYY-MM-DD for reproducible release metadata." >&2; exit 2; }
 if [[ -z "$OUT" ]]; then OUT="$ROOT/dist/stackchan-release-$BUILD_DATE"; fi
 mkdir -p "$OUT"
@@ -62,7 +63,7 @@ strings "$OUT/stack-chan-maipai.bin" > "$OUT/image-strings.txt"
 bash "$ROOT/scripts/stackchan-no-third-party.sh" --strings "$OUT/image-strings.txt"
 (cd "$ROOT/body" && MAIPAI_SPEC_DIR="$(bash "$ROOT/scripts/spec-dir.sh")" uv run python -m maipai_body.bodies.stackchan.firmware.flash_manifest build \
   --build-dir "$BUILD_DIR" --release-dir "$OUT" --version "$VERSION" \
-  --date "$BUILD_DATE" --key "$SIGNING_KEY" --out "$OUT/flash-manifest.json")
+  --date "$BUILD_DATE" --key "$SIGNING_KEY_PATH" --out "$OUT/flash-manifest.json")
 python3 - "$HERE" "$ROOT" "$BUILD_DATE" "$OUT/manifest.json" <<'PY'
 import hashlib,json,subprocess,sys,tomllib
 from pathlib import Path
@@ -73,4 +74,11 @@ payload={"recipe_commit":subprocess.check_output(['git','-C',str(root),'rev-pars
 out.write_text(json.dumps(payload,sort_keys=True,indent=2)+'\n')
 PY
 (cd "$OUT" && shasum -a 256 stack-chan-maipai.bin generated_assets.bin ota_data_initial.bin bootloader.bin partition-table.bin flash-manifest.json manifest.json image-strings.txt > SHA256SUMS)
-"$HERE/verify.sh" "$OUT"
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/maipai-release-public.XXXXXX")
+chmod 700 "$TMP"
+trap 'rm -rf "$TMP"; signing_key_cleanup' EXIT
+trap 'rm -rf "$TMP"; signing_key_cleanup; exit 130' INT
+trap 'rm -rf "$TMP"; signing_key_cleanup; exit 143' TERM
+openssl pkey -in "$SIGNING_KEY_PATH" -pubout -out "$TMP/release-public.pem"
+chmod 600 "$TMP/release-public.pem"
+"$HERE/verify.sh" --public-key "$TMP/release-public.pem" "$OUT"
