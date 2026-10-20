@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from maipai_body.hal.seam import Look, Palette
+from maipai_body.hal.seam import Look, LookStyle, Palette
 from maipai_body.presence.carry_reaction import PresenceEntry
 from maipai_body.presence.funnel import FunnelState
 
@@ -57,26 +57,59 @@ class LookKey(StrEnum):
     SLEEP = "sleep"
     OFFER = "offer"
     ERROR = "error"
+    CONNECTING = "connecting"
+    OFFLINE = "offline"
+    PAIRING = "pairing"
+    CHARGING = "charging"
+    BATTERY_LOW = "battery_low"
+    UPDATING = "updating"
+    DANCING = "dancing"
 
 
-# row: (colour, weight). The weight is the share of the day or night level the
-# row uses; the cues and the alarm are not scaled by it (see ``resolve``).
-LOOKS: dict[LookKey, tuple[Palette, float]] = {
-    LookKey.LIVE: (Palette.GREEN, 1.0),
-    LookKey.CAMERA: (Palette.CYAN, 1.0),
-    LookKey.ALARM: (Palette.AMBER, 1.0),
-    LookKey.ALARM_DIM: (Palette.AMBER, 0.15),
-    LookKey.HELD: (Palette.MAGENTA, 0.5),
-    LookKey.MUTED: (Palette.AMBER, 0.4),
-    LookKey.IDLE: (Palette.WHITE, 0.35),
-    LookKey.LISTENING: (Palette.BLUE, 1.0),
-    LookKey.THINKING: (Palette.MAGENTA, 0.8),
-    LookKey.SPEAKING: (Palette.WHITE, 1.0),
-    LookKey.SLEEP: (Palette.BLUE, 0.3),
+# row: (colour, weight, style). The weight is the share of the day or night level
+# the row uses; the cues and the alarm are not scaled by it (see ``resolve``).
+LOOKS: dict[LookKey, tuple[Palette, float, LookStyle]] = {
+    LookKey.LIVE: (Palette.GREEN, 1.0, LookStyle.STEADY),
+    LookKey.CAMERA: (Palette.PINK, 1.0, LookStyle.FLASH),
+    LookKey.ALARM: (Palette.AMBER, 1.0, LookStyle.STEADY),
+    LookKey.ALARM_DIM: (Palette.AMBER, 0.15, LookStyle.STEADY),
+    LookKey.HELD: (Palette.MAGENTA, 0.5, LookStyle.STEADY),
+    LookKey.MUTED: (Palette.AMBER, 0.4, LookStyle.STEADY),
+    LookKey.IDLE: (Palette.WHITE, 0.35, LookStyle.STEADY),
+    LookKey.LISTENING: (Palette.BLUE, 1.0, LookStyle.STEADY),
+    LookKey.THINKING: (Palette.MAGENTA, 0.8, LookStyle.BREATHE),
+    LookKey.SPEAKING: (Palette.WHITE, 1.0, LookStyle.STEADY),
+    LookKey.SLEEP: (Palette.BLUE, 0.3, LookStyle.STEADY),
     # OFFER-01: the robot has asked and listens locally for a yes or no. Not green: nothing
     # is leaving for the hub. THERMAL-01/MOTOR-RECOVER-01: a real fault, steady amber (no red).
-    LookKey.OFFER: (Palette.BLUE, 0.6),
-    LookKey.ERROR: (Palette.AMBER, 0.7),
+    LookKey.OFFER: (Palette.BLUE, 0.6, LookStyle.STEADY),
+    LookKey.ERROR: (Palette.AMBER, 0.7, LookStyle.STEADY),
+    LookKey.CONNECTING: (Palette.BLUE, 0.5, LookStyle.PULSE),
+    LookKey.OFFLINE: (Palette.AMBER, 0.3, LookStyle.PULSE),
+    LookKey.PAIRING: (Palette.CYAN, 0.6, LookStyle.PULSE),
+    LookKey.CHARGING: (Palette.GREEN, 0.3, LookStyle.BREATHE),
+    LookKey.BATTERY_LOW: (Palette.AMBER, 0.3, LookStyle.PULSE),
+    LookKey.UPDATING: (Palette.WHITE, 0.5, LookStyle.PULSE),
+    LookKey.DANCING: (Palette.WHITE, 0.35, LookStyle.STEADY),
+}
+
+# The period each style runs at. UNMEASURED design defaults; a key named in
+# ``STYLE_PERIOD_S`` uses that value instead of its style's.
+PERIOD_S: dict[LookStyle, float] = {
+    LookStyle.BREATHE: 3.0,
+    LookStyle.PULSE: 2.0,
+    LookStyle.FLASH: 0.5,
+    LookStyle.BLINK: 1.0,
+    LookStyle.STEADY: 0.0,
+}
+# Per-key periods that differ from their style's default.
+STYLE_PERIOD_S: dict[LookKey, float] = {
+    LookKey.CHARGING: 4.0,
+    LookKey.CONNECTING: 2.0,
+    LookKey.UPDATING: 1.0,
+    LookKey.PAIRING: 2.0,
+    LookKey.OFFLINE: 10.0,
+    LookKey.BATTERY_LOW: 20.0,
 }
 
 _FUNNEL_ROWS = {
@@ -103,6 +136,13 @@ class LookRequest:
     muted: bool = False
     offer: bool = False
     fault: bool = False
+    connecting: bool = False
+    offline: bool = False
+    pairing: bool = False
+    charging: bool = False
+    battery_low: bool = False
+    updating: bool = False
+    dancing: bool = False
 
 
 def is_night(minute: int, start: int, end: int) -> bool:
@@ -129,45 +169,85 @@ def level(request: LookRequest) -> float:
     return night * LOWEST_NIGHT_FACTOR if _lowest_night(request.presence) else night
 
 
+def period_s(key: LookKey) -> float:
+    """The period for ``key``: a per-key override first, else its style's period."""
+    override = STYLE_PERIOD_S.get(key)
+    if override is not None:
+        return override
+    return PERIOD_S[LOOKS[key][2]]
+
+
 def _row(key: LookKey, brightness: float) -> Look | None:
-    colour, _ = LOOKS[key]
+    colour, _, style = LOOKS[key]
     if brightness <= 0.0:
         return None
-    return Look(colour=colour, brightness=min(1.0, brightness))
+    return Look(colour=colour, brightness=min(1.0, brightness), style=style)
 
 
 def _cue(key: LookKey, floor: float, settings: IndicatorSettings) -> Look:
-    colour, weight = LOOKS[key]
-    return Look(colour=colour, brightness=min(1.0, max(floor, weight * settings.brightness)))
+    colour, weight, style = LOOKS[key]
+    return Look(
+        colour=colour,
+        brightness=min(1.0, max(floor, weight * settings.brightness)),
+        style=style,
+    )
 
 
-def resolve(request: LookRequest) -> Look | None:
-    """The look to show, or ``None`` for dark. Priority, highest first: live,
-    camera, alarm, then (when enabled) held, muted, and the funnel state."""
+def resolve_key(request: LookRequest) -> LookKey | None:
+    """The winning table key, or ``None`` for dark. The single place the
+    priority order lives; ``resolve`` builds the look from it so the two
+    never disagree."""
     settings = request.settings
     if request.live:
-        return _cue(LookKey.LIVE, LIVE_FLOOR, settings)
+        return LookKey.LIVE
     if request.camera:
-        return _cue(LookKey.CAMERA, CAMERA_FLOOR, settings)
+        return LookKey.CAMERA
     if request.alarm and settings.alarm:
-        key = LookKey.ALARM if request.alarm_on else LookKey.ALARM_DIM
-        return Look(colour=LOOKS[key][0], brightness=LOOKS[key][1])
+        return LookKey.ALARM if request.alarm_on else LookKey.ALARM_DIM
     if not settings.enabled:
         return None
-    base = level(request)
     if request.fault:
-        return _row(LookKey.ERROR, LOOKS[LookKey.ERROR][1] * base)
+        return LookKey.ERROR
     if request.held:
-        return _row(LookKey.HELD, LOOKS[LookKey.HELD][1] * base)
+        return LookKey.HELD
     if request.muted:
-        return _row(LookKey.MUTED, LOOKS[LookKey.MUTED][1] * base)
+        return LookKey.MUTED
+    if request.updating:
+        return LookKey.UPDATING
+    if request.pairing:
+        return LookKey.PAIRING
+    if request.connecting:
+        return LookKey.CONNECTING
+    if request.offline:
+        return LookKey.OFFLINE
+    if request.battery_low:
+        return LookKey.BATTERY_LOW
     if request.offer and request.funnel is FunnelState.IDLE:
-        return _row(LookKey.OFFER, LOOKS[LookKey.OFFER][1] * base)
+        return LookKey.OFFER
+    if request.charging and request.funnel is FunnelState.IDLE:
+        return LookKey.CHARGING
     if request.funnel is FunnelState.IDLE and is_night(
         request.minute, settings.night_from, settings.night_to
     ):
         if settings.sleep_eyes == "off":
             return None
-        return _row(LookKey.SLEEP, LOOKS[LookKey.SLEEP][1] * base)
-    key = _FUNNEL_ROWS[request.funnel]
-    return _row(key, LOOKS[key][1] * base)
+        return LookKey.SLEEP
+    if request.dancing and request.funnel is FunnelState.IDLE:
+        return LookKey.DANCING
+    return _FUNNEL_ROWS[request.funnel]
+
+
+def resolve(request: LookRequest) -> Look | None:
+    """The look to show, or ``None`` for dark. Built from ``resolve_key``."""
+    settings = request.settings
+    key = resolve_key(request)
+    if key is None:
+        return None
+    if key is LookKey.LIVE:
+        return _cue(LookKey.LIVE, LIVE_FLOOR, settings)
+    if key is LookKey.CAMERA:
+        return _cue(LookKey.CAMERA, CAMERA_FLOOR, settings)
+    if key in (LookKey.ALARM, LookKey.ALARM_DIM):
+        colour, weight, style = LOOKS[key]
+        return Look(colour=colour, brightness=weight, style=style)
+    return _row(key, LOOKS[key][1] * level(request))

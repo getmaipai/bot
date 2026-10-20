@@ -82,7 +82,7 @@ def test_robot_indicator_enabled_false_never_turns_off_the_live_cue():
     assert _colour(eyes) is Palette.GREEN
     clock.now += looks.CUE_HOLD_S
     director.on_capture(CaptureFacts(mic_live=False, camera_tracking=True, camera_read_at=None))
-    assert _colour(eyes) is Palette.CYAN
+    assert _colour(eyes) is Palette.PINK
 
 
 def test_a_short_cue_is_held_for_the_cue_floor_time():
@@ -101,10 +101,10 @@ def test_a_camera_frame_read_shows_the_camera_cue_for_the_hold():
     director.on_capture(
         CaptureFacts(mic_live=False, camera_tracking=False, camera_read_at=clock.now)
     )
-    assert _colour(eyes) is Palette.CYAN
+    assert _colour(eyes) is Palette.PINK
     clock.now += looks.CUE_HOLD_S + 0.01
     director.tick()
-    assert _colour(eyes) is not Palette.CYAN
+    assert _colour(eyes) is not Palette.PINK
 
 
 def test_the_alarm_blinks_amber_no_faster_than_the_alarm_period():
