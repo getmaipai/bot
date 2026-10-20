@@ -359,6 +359,7 @@ class Look(BaseModel):
     colour: Palette
     brightness: float = Field(default=1.0, ge=0.0, le=1.0)
     style: LookStyle = LookStyle.STEADY
+    period_s: float = Field(default=0.0, ge=0.0)  # 0 for steady; the table sets it per row
 
 
 class IndicatorSpec(BaseModel):

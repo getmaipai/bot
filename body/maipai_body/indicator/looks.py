@@ -181,7 +181,7 @@ def _row(key: LookKey, brightness: float) -> Look | None:
     colour, _, style = LOOKS[key]
     if brightness <= 0.0:
         return None
-    return Look(colour=colour, brightness=min(1.0, brightness), style=style)
+    return Look(colour=colour, brightness=min(1.0, brightness), style=style, period_s=period_s(key))
 
 
 def _cue(key: LookKey, floor: float, settings: IndicatorSettings) -> Look:
@@ -190,6 +190,7 @@ def _cue(key: LookKey, floor: float, settings: IndicatorSettings) -> Look:
         colour=colour,
         brightness=min(1.0, max(floor, weight * settings.brightness)),
         style=style,
+        period_s=period_s(key),
     )
 
 
