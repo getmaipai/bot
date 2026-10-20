@@ -3014,7 +3014,7 @@ STACKCHAN-INSTALL-01 and ROBOT-FACE-NIGHT-01. Flashing a unit is Jesse's call.
   (`token_urlsafe(32)` as today) and stores it in NVS, and the code is spent. The provision command creates the code itself, writes
   the image to a 0600 file and takes no secret on its command line (architect build note). Acceptance: tests that a used or
   expired code is refused, that the image bytes never contain a token, that a revoked code (Home's "Cancel install") is refused.
-- [ ] **BOT-HUB-BUILD-01: a self-contained Bot app build per hub platform** (M; 2026-10-20). Objective: the release carries a Bot app
+- [x] **BOT-HUB-BUILD-01: a self-contained Bot app build per hub platform** (M; 2026-10-20). Built 2026-10-20; release upload waits on the owner. Objective: the release carries a Bot app
   build for macOS arm64, Linux x86_64 and Linux arm64 that runs with no system Python, takes its data directory, its two ports and
   the hub address as arguments, exposes the `provision` command above, and on Quick Connect create presents the single-use pairing
   secret Home wrote (0600) into its data directory, then deletes it. It reports `no_vendor_login`. Acceptance: each build starts on
