@@ -36,6 +36,14 @@ class StackChanDeviceClient(Protocol):
 
     def set_volume(self, volume: int) -> object: ...
 
+    def set_brightness(self, brightness: int) -> object: ...
+
+    def set_face_background(self, palette: str, night: bool) -> object: ...
+
+    def set_idle_motion(self, enabled: bool) -> object: ...
+
+    def get_ambient_light(self) -> float | None: ...
+
     def cancel_pending(self) -> None: ...
 
     def take_photo(self) -> bytes | None: ...
@@ -533,6 +541,18 @@ class StackChanRobotAdapter:
 
     async def set_volume(self, volume: int) -> object:
         return await asyncio.to_thread(self.robot.audio.speaker.volume, volume)
+
+    async def set_brightness(self, brightness: int) -> object:
+        return await asyncio.to_thread(self.client.set_brightness, brightness)
+
+    async def set_face_background(self, palette: str, night: bool) -> object:
+        return await asyncio.to_thread(self.client.set_face_background, palette, night)
+
+    async def set_idle_motion(self, enabled: bool) -> object:
+        return await asyncio.to_thread(self.client.set_idle_motion, enabled)
+
+    async def get_ambient_light(self) -> float | None:
+        return await asyncio.to_thread(self.client.get_ambient_light)
 
     async def take_photo(self) -> bytes | None:
         return await asyncio.to_thread(self.robot.camera.frame)

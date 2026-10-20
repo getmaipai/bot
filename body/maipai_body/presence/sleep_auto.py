@@ -29,6 +29,8 @@ from datetime import datetime
 from datetime import time as dtime
 from typing import Literal
 
+from maipai_body.settings_keys import QUIET_FROM_KEY, QUIET_TO_KEY
+
 DARK_LUMA = 25.0  # of 255; UNMEASURED
 QUIET_FOR_S = 600.0
 
@@ -90,8 +92,8 @@ class QuietHours:
         self._to: dtime = DEFAULT_QUIET_TO
 
     def apply(self, values: Mapping[str, object]) -> None:
-        start = _parse_clock(values.get("household.quiet_hours.from"))
-        end = _parse_clock(values.get("household.quiet_hours.to"))
+        start = _parse_clock(values.get(QUIET_FROM_KEY))
+        end = _parse_clock(values.get(QUIET_TO_KEY))
         if start is not None:
             self._from = start
         if end is not None:

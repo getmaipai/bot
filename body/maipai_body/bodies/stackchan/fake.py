@@ -20,6 +20,8 @@ class FakeStackChanDeviceClient:
         self.connected = True
         self.head_angles = {"yaw": 0, "pitch": 45}
         self.volume = 50
+        self.ambient_lux: float | None = None
+        self.brightness = 100
         self.led_color = (0, 0, 0)
         self.led_colors = ((0, 0, 0),) * 12
         self._camera_indicator_active = False
@@ -112,6 +114,30 @@ class FakeStackChanDeviceClient:
         arguments = {"volume": volume}
         self.calls.append(FakeToolCall("self.audio_speaker.set_volume", arguments))
         return arguments
+
+    def set_brightness(self, brightness: int) -> dict[str, int]:
+        self._require_link()
+        self.brightness = brightness
+        arguments = {"brightness": brightness}
+        self.calls.append(FakeToolCall("self.screen.set_brightness", arguments))
+        return arguments
+
+    def set_face_background(self, palette: str, night: bool) -> dict[str, object]:
+        self._require_link()
+        arguments = {"palette": palette, "night": night}
+        self.calls.append(FakeToolCall("self.screen.set_face_background", arguments))
+        return arguments
+
+    def set_idle_motion(self, enabled: bool) -> dict[str, bool]:
+        self._require_link()
+        arguments = {"enabled": enabled}
+        self.calls.append(FakeToolCall("self.robot.set_idle_motion", arguments))
+        return arguments
+
+    def get_ambient_light(self) -> float | None:
+        self._require_link()
+        self.calls.append(FakeToolCall("self.screen.get_ambient_light", {}))
+        return self.ambient_lux
 
     def get_battery_status(self) -> dict[str, object]:
         self._require_link()

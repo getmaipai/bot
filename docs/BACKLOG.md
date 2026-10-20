@@ -3019,7 +3019,7 @@ STACKCHAN-INSTALL-01 and ROBOT-FACE-NIGHT-01. Flashing a unit is Jesse's call.
   the hub address as arguments, exposes the `provision` command above, and on Quick Connect create presents the single-use pairing
   secret Home wrote (0600) into its data directory, then deletes it. It reports `no_vendor_login`. Acceptance: each build starts on
   its platform in a test that passes ports and a data directory; with no secret file it falls back to code approval.
-- [ ] **BOT-FACE-NIGHT-01: face color and night mode on the StackChan** (M; 2026-10-20; after commons SPEC-ROBOT-FACE-NIGHT-01 and
+- [x] **BOT-FACE-NIGHT-01: face color and night mode on the StackChan** (M; 2026-10-20; after commons SPEC-ROBOT-FACE-NIGHT-01 and
   the stutter patch). Objective: one firmware patch (015 or later) adding `self.screen.set_face_background` (a palette entry, kept
   in NVS; today patch 013 hard-codes background `0xC4F0DA` and ink `0x18241F`), `self.robot.set_idle_motion`, and a new LTR-553 I2C
   driver behind `self.screen.get_ambient_light`; the Bot app maps `robot.face.color` and `robot.night.mode` from `settings_changed`
@@ -3030,6 +3030,11 @@ STACKCHAN-INSTALL-01 and ROBOT-FACE-NIGHT-01. Flashing a unit is Jesse's call.
   alarm or other fixed safety clip (home RULES.md rule 6); the camera fallback is never read at watch level `off`; both thresholds
   are constants marked pending measurement on the unit. Acceptance: unit tests for the night rule (quiet hours, dark for 2
   minutes, hysteresis, watch level off), the settings mapping, and the alarm keeping full volume. No flashing in the row.
+  Done 2026-10-20 (Bot app half): the night controller (`presence/night.py`) polls the light every 10 s while night mode is on and
+  sets face, backlight (upstream `self.screen.set_brightness`), 40% volume, LEDs and idle motion; the StackChan service now runs a
+  `CommandChannel` for `settings_changed`; the alarm's volume seam bypasses night volume. Night thresholds and backlight level are
+  pending measurement on the unit and nothing is flashed. Not wired: the alarm player itself on StackChan (the alarm controller
+  is built only for the Reachy body), so only its volume seam is in place.
 
 ## Each robot's own memories (2026-10-20)
 

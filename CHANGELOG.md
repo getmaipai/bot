@@ -14,6 +14,8 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- StackChan face color and night mode in the Bot app (BOT-FACE-NIGHT-01): `robot.face.color` and `robot.night.mode` arrive on the existing command channel; the night rule (quiet hours, light hysteresis, camera fallback unless watch is off) dims the screen, drops the voice to 40%, turns LEDs and idle motion off, and never lowers an alarm. Thresholds pending measurement on the unit; nothing flashed.
+
 - StackChan firmware patch 017 (BOT-FACE-NIGHT-01): MCP tools `self.screen.set_face_background` (seven palettes and a night face, palette kept in NVS), `self.robot.set_idle_motion` and `self.screen.get_ambient_light` (LTR-553). Built, not flashed.
 
 - EYES-02, the Eyes director (Reachy Mini): one look table (`indicator/looks.py`,

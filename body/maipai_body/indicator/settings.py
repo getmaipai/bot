@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from maipai_body.indicator import looks
+from maipai_body.settings_keys import QUIET_FROM_KEY, QUIET_TO_KEY
 
 ROBOT_DEVICE_PAGE = "Devices, this robot"
 _LIVES_IN = f"{ROBOT_DEVICE_PAGE}, Lights"
@@ -36,8 +37,8 @@ SLEEP_EYES_OPTIONS = ["off", "dim"]
 KEY_ENABLED = "robot.indicator.enabled"
 KEY_BRIGHTNESS = "robot.indicator.brightness"
 KEY_NIGHT_BRIGHTNESS = "robot.indicator.night_brightness"
-KEY_QUIET_FROM = "household.quiet_hours.from"
-KEY_QUIET_TO = "household.quiet_hours.to"
+KEY_QUIET_FROM = QUIET_FROM_KEY
+KEY_QUIET_TO = QUIET_TO_KEY
 KEY_SLEEP_EYES = "robot.indicator.sleep_eyes"
 KEY_ALARM = "robot.indicator.alarm"
 

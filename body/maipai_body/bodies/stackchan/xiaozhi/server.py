@@ -79,6 +79,25 @@ class XiaozhiDeviceClient:
     def set_volume(self, volume: int) -> object:
         return self._call("self.audio_speaker.set_volume", {"volume": volume})
 
+    def set_brightness(self, brightness: int) -> object:
+        # Upstream xiaozhi tool (mcp_server.cc), present because the board has a backlight.
+        return self._call("self.screen.set_brightness", {"brightness": brightness})
+
+    def set_face_background(self, palette: str, night: bool) -> object:
+        return self._call("self.screen.set_face_background", {"palette": palette, "night": night})
+
+    def set_idle_motion(self, enabled: bool) -> object:
+        return self._call("self.robot.set_idle_motion", {"enabled": enabled})
+
+    def get_ambient_light(self) -> float | None:
+        try:
+            result = self._call("self.screen.get_ambient_light", {})
+        except Exception:
+            return None
+        if isinstance(result, dict) and isinstance(result.get("lux"), (int, float)):
+            return float(result["lux"])
+        return None
+
     def get_battery_status(self) -> dict[str, object]:
         """Read battery status using the firmware's read-only MCP tool."""
         result = self._call("self.battery.get_status", {})

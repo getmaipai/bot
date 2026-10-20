@@ -65,6 +65,7 @@ from maipai_body.link.timesync import ClockSync, system_clock_setter
 from maipai_body.moves.react import build_react_hook
 from maipai_body.presence.entries import presence_entries_from
 from maipai_body.presence.motor_health import MotorHealth
+from maipai_body.presence.night import NightController
 from maipai_body.presence.thermal import ThermalMonitor
 from maipai_body.run_loop import ConversationLoop
 from maipai_body.speech.capture import AudioCapture
@@ -118,6 +119,9 @@ class StackChanBehavior:
         self._idle_interval_s = idle_interval_s
         self._last_idle = 0.0
         self._expression = ExpressionEngine(robot._driver("head"), STACKCHAN_PROFILE)
+        # BOT-FACE-NIGHT-01: at night no idle or tracking gestures; set by the night rule.
+        self.night_active: Callable[[], bool] = lambda: False
+        self._night_turned = False
 
     @property
     def presence_thread_alive(self) -> bool:
@@ -138,12 +142,26 @@ class StackChanBehavior:
             return True
 
     def render_primitive(self, primitive: str) -> bool:
+        if self.night_active():
+            return False
         return self._with_lease(
             lambda: self._expression.render_ambient(primitive, SuppressionContext())
         )
 
     def render_turn_state(self, state: str, *, mood: str | None = None) -> None:
         self._active.set()
+        if self.night_active():
+            # One head turn to face whoever speaks, then rest; no other gestures.
+            if state == "listening" and not self._night_turned:
+                self._night_turned = True
+                self._with_lease(
+                    lambda: self._expression.render_ambient("attend", SuppressionContext())
+                )
+            if state == "settle":
+                self._night_turned = False
+                self._active.clear()
+            return
+        self._night_turned = False
         primitive = {
             "listening": "glance",
             "thinking": "attend",
@@ -224,6 +242,69 @@ class StackChanBehavior:
             self.robot.lease.release(holder=holder)
 
 
+def _start_stackchan_night(
+    voice, behavior: StackChanBehavior, link: LinkLifecycle | None, stop_event: threading.Event
+) -> NightController:
+    """BOT-FACE-NIGHT-01: the face color and night rule on a StackChan.
+
+    The hub's `settings_changed` reaches it through the same `CommandChannel` the
+    Reachy body uses, started here because this body has no conversation loop."""
+    from maipai_body.link.channel import CommandChannel
+    from maipai_body.presence.sleep_auto import QuietHours, luma_reader
+
+    quiet = QuietHours()
+    watch = ["identify"]  # the default until the hub says otherwise
+
+    class _StreamCamera:
+        def get_frame(self):
+            data = voice.robot.robot.camera.stream_frame(0.4)
+            if not data:
+                return None
+            from maipai_body.bodies.stackchan.vision_bridge import _decode_jpeg
+
+            return _decode_jpeg(data)
+
+    def leds(on: bool) -> None:
+        if not on:  # back on: the expression engine repaints the ring itself
+            voice.robot.robot.leds.many([{"index": i, "rgb": [0, 0, 0]} for i in range(12)])
+
+    night = NightController(
+        voice.robot.client,
+        clock=time.monotonic,
+        quiet_hours=quiet.active,
+        watch_level=lambda: watch[0],
+        camera_luma=luma_reader(_StreamCamera(), level=lambda: watch[0]),
+        leds=leds,
+    )
+    behavior.night_active = lambda: night.night
+
+    def apply_settings(payload: dict) -> None:
+        values = payload.get("values")
+        if not isinstance(values, dict):
+            return
+        quiet.apply(values)
+        level = values.get("robot.camera.watch_level")
+        if level in ("off", "presence", "identify"):
+            watch[0] = level
+        night.apply_settings(values)
+
+    if link is not None:
+        channel = CommandChannel(
+            "",
+            "",
+            credentials=_hub_credentials_reader(link, ""),
+            settings_handler=apply_settings,
+            on_drop=link.channel_lost,
+        )
+        threading.Thread(
+            target=channel.run, args=(stop_event,), name="stackchan-command-channel", daemon=True
+        ).start()
+    threading.Thread(
+        target=night.run, args=(stop_event,), name="stackchan-night", daemon=True
+    ).start()
+    return night
+
+
 async def _serve_stackchan_channels(
     stop_event: threading.Event,
     host: str,
@@ -272,6 +353,7 @@ async def _serve_stackchan_channels(
     except Exception:
         logger.warning("StackChan anonymous tracking is unavailable", exc_info=True)
     behavior = StackChanBehavior(voice.robot.robot, vision_bridge=vision)
+    _start_stackchan_night(voice, behavior, link, stop_event)
     if link is not None and offline is not None:
         bridge = StackChanTurnBridge(
             voice,
