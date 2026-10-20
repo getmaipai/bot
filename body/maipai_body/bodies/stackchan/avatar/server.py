@@ -13,6 +13,8 @@ from typing import Any
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
+from maipai_body.bodies.stackchan.ws_logging import listener_logger
+
 from ..xiaozhi.pairing import PairingStore
 from .codec import MAX_FRAME_SIZE, decode_frame, encode_frame
 
@@ -102,6 +104,7 @@ class AvatarServer:
             max_size=MAX_FRAME_SIZE + 5,
             ping_interval=20,
             ping_timeout=20,
+            logger=listener_logger(),
             **kwargs,
         )
 

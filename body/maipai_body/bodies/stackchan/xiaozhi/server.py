@@ -18,6 +18,7 @@ from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 from maipai_body.bodies.stackchan.avatar_frames import AvatarCommand, decode_frame
+from maipai_body.bodies.stackchan.ws_logging import listener_logger
 from maipai_body.hal.errors import BodyLost, EstopEngaged, NotSupported, OutOfEnvelope
 
 from .pairing import PairingStore
@@ -79,6 +80,17 @@ class XiaozhiDeviceClient:
 
     def set_led_color(self, red: int, green: int, blue: int) -> object:
         return self._call("self.robot.set_led_color", {"red": red, "green": green, "blue": blue})
+
+    def set_led_colors(self, colors: list[tuple[int, int, int]]) -> object:
+        """All 12 pixels in one call (firmware patch 012, ``self.robot.set_led_colors``)."""
+        if len(colors) != 12:
+            raise ValueError("StackChan LED tool needs exactly 12 colors")
+        arguments: dict[str, object] = {}
+        for index, (red, green, blue) in enumerate(colors):
+            arguments[f"led_{index}_red"] = red
+            arguments[f"led_{index}_green"] = green
+            arguments[f"led_{index}_blue"] = blue
+        return self._call("self.robot.set_led_colors", arguments)
 
     def set_volume(self, volume: int) -> object:
         return self._call("self.audio_speaker.set_volume", {"volume": volume})
@@ -297,6 +309,7 @@ class XiaozhiServer:
             ping_interval=20,
             ping_timeout=20,
             ssl=ssl,
+            logger=listener_logger(),
         )
         app = web.Application(client_max_size=self.max_photo_bytes)
         app.router.add_post("/vision/{device_id}", self._receive_photo)

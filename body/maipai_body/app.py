@@ -303,7 +303,7 @@ def _start_stackchan_night(
 
     class _StreamCamera:
         def get_frame(self):
-            data = voice.robot.robot.camera.stream_frame(0.4)
+            data = voice.robot.robot._driver("camera").stream_frame(0.4)
             if not data:
                 return None
             from maipai_body.bodies.stackchan.vision_bridge import _decode_jpeg
@@ -1363,6 +1363,11 @@ def run_paired_body(
         _log_state(_STATE_STOPPED)
 
 
+def _clock_setter(hosted: bool):
+    """A hosted body (StackChan) never sets its host computer's clock and never runs sudo."""
+    return None if hosted else system_clock_setter()
+
+
 class MaiPaiBody(ReachyMiniApp):
     """The MaiPai body, run by the daemon as its one app."""
 
@@ -1377,7 +1382,7 @@ class MaiPaiBody(ReachyMiniApp):
             store,
             HubLinkClient(
                 store,
-                clock_sync=ClockSync(system_clock_setter()),
+                clock_sync=ClockSync(_clock_setter(hosted)),
                 discover=discover,
             ),
             discover=discover,
