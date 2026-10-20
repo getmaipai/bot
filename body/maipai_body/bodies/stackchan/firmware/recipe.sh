@@ -244,6 +244,7 @@ apply_repo_patch 011-avatar-auth-headers.patch "$SRC"
 apply_repo_patch 012-per-pixel-led-tool.patch "$SRC"
 apply_repo_patch 013-mint-face-skin.patch "$SRC"
 apply_repo_patch 014-wifi-awake-while-speaking.patch "$SRC"
+apply_repo_patch 015-speech-edges.patch "$SRC"
 
 cat > "$FW/sdkconfig.defaults.local" <<CFG
 CONFIG_STACKCHAN_SERVER_URL="$AVATAR_SERVER_URL"

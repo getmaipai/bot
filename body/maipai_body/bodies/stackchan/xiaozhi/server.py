@@ -25,6 +25,10 @@ from .pairing import PairingStore
 LOG = logging.getLogger(__name__)
 # Time the firmware needs to enter its speaking state after tts start.
 SPEAK_SETTLE_S = 0.15
+# Spacing between prebuffered frames. The robot has 9 Wi-Fi receive buffers and a 3-packet
+# block-ack window; 30 frames sent back to back overflowed them, and the lost packet stalled
+# the stream for a 1.5 s retransmit (gap heard mid-line on the 2026-10-20 bench).
+PREBUFFER_GAP_S = 0.015
 # Face names the StackChan display's SetEmotion accepts (stackchan_display.cc).
 FIRMWARE_EMOTIONS = {
     "neutral": "neutral",
@@ -718,7 +722,7 @@ class XiaozhiServer:
         stop: bool = True,
         prebuffer: int = 3,
     ) -> None:
-        """Send encoded 24 kHz Opus frames; the first `prebuffer` go at once, the rest paced."""
+        """Send encoded 24 kHz Opus frames; the first `prebuffer` go fast, the rest paced."""
         websocket = self._sessions.get(device_id)
         if self._sessions.get(device_id) is not websocket or not self._session_authorized(
             device_id
@@ -750,6 +754,8 @@ class XiaozhiServer:
                     await asyncio.sleep(max(0.0, deadline - time.monotonic()))
                     if device_id not in self._speaking:
                         break
+                elif index > 0:
+                    await asyncio.sleep(PREBUFFER_GAP_S)
                 await websocket.send(frame)
         finally:
             if stop:

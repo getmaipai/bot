@@ -23,10 +23,11 @@ from maipai_body.speech.tts_playback import TtsAuthFailed, TtsPlaybackClient
 from maipai_body.speech.turn_client import TurnAuthFailed, TurnClient, TurnLinkLost
 
 LOG = logging.getLogger(__name__)
-# Frames sent ahead of playback: 1.8 s rides out the Wi-Fi stalls measured on the
+# Frames sent ahead of playback: 2.28 s rides out the Wi-Fi stalls measured on the
 # 2026-10-19 unit bench (ping peaks of 1.3 s) and stays under the firmware's
-# 40-frame (2.4 s) decode queue, which drops packets once full.
-LEAD_FRAMES = 30
+# 40-frame (2.4 s) decode queue, which drops packets once full. The lead goes out at
+# PREBUFFER_GAP_S per frame, so about 1.7 s is still queued when pacing starts.
+LEAD_FRAMES = 38
 FRAME_S = 0.06
 # Decode and speaker delay after the last frame's play time, before the stop.
 STOP_TAIL_S = 0.12

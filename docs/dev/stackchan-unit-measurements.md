@@ -176,8 +176,40 @@ Findings:
   `PERFORMANCE` until patch 014, which sets it on entering speaking.
 - **Host sends are steady.** The largest gap between frame sends stayed at
   212 ms in every run, so the delays are on the radio side.
-- **Still open:** stutter at the start and end of a line. See the mint face
-  design note for the two suspected firmware races.
+- **Start and end stutter, measured.** See the next section.
+
+## Speech edges, 2026-10-20
+
+Patch 015 logs frames lost at a line's edges: frames dropped before the
+speaking state, frames cleared by a decoder reset, and playback gaps over
+30 ms. The host also polled its own send queue to the robot every 100 ms.
+Each run played three numbered lines ("Sentence one of three...") about
+10 s apart.
+
+| Run | Owner heard | Serial log | Host send queue |
+|---|---|---|---|
+| 30-frame burst | lines 2 and 3 stuttered | line 3: reset cleared 12 frames, then an 851 ms gap; line 2: 557 ms gap near the end | 2.9 KB unacknowledged for 1.45 s during line 2 |
+| Same, earlier | line 2 played 30 s late, line 3 lost | nothing reached the robot for 30 s | not recorded |
+| Spaced burst (15 ms), 38-frame lead | first half of "Sentence" missing on line 1 only | line 1: reset cleared 6 frames; lines 2 and 3: no loss, 78 ms worst gap | drained, no stall |
+
+Findings:
+
+- **Start: a decoder reset cut the first frames.** `tts start` switches the
+  robot to speaking on its main task, and the speaking entry clears the
+  decode queue 100 to 110 ms later. Audio that arrived in between (6 to 12
+  frames, 360 to 720 ms) was thrown away. Nothing was dropped before the
+  state change: the host's 150 ms settle covers that.
+- **Middle and end: Wi-Fi stalls.** The robot has 9 Wi-Fi receive buffers
+  and a 3-packet block-ack window. Thirty tiny frames sent back to back
+  overflowed them; the lost packet stalled the stream for about 1.5 s (one
+  TCP retransmit), longer than the lead could cover. A worse case backed
+  off for 30 s.
+- **Host fix, landed:** the lead goes out 15 ms per frame and is 38 frames
+  (2.28 s, under the 40-frame decode queue), so about 1.7 s is queued when
+  pacing starts. The send-queue stall did not recur.
+- **Firmware fix, built, not yet on the robot:** accept a line's audio from
+  `tts start` and keep the queue on a reset while the line is open. It
+  needs a flash with the owner present, then three clean numbered lines.
 
 
 

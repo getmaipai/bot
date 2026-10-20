@@ -1,0 +1,170 @@
+# Intent: count and log audio frames lost at the start and end of a spoken line (dropped before speaking, cleared on a state change, playback gaps).
+# Upstream: 78/xiaozhi-esp32 main/application.cc and main/audio/audio_service.cc (MIT), via m5stack/StackChan firmware.
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index b6da32d..e18e41b 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -501,7 +501,11 @@ void Application::InitializeProtocol() {
+     
+     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
+         if (GetDeviceState() == kDeviceStateSpeaking) {
++            speech_frames_in_++;
+             audio_service_.PushPacketToDecodeQueue(std::move(packet));
++        } else if (speech_frames_dropped_++ == 0) {
++            ESP_LOGW(TAG, "speech: audio frame dropped in state %s",
++                DeviceStateMachine::GetStateName(GetDeviceState()));
+         }
+     });
+     
+@@ -528,12 +532,28 @@ void Application::InitializeProtocol() {
+         if (strcmp(type->valuestring, "tts") == 0) {
+             auto state = cJSON_GetObjectItem(root, "state");
+             if (strcmp(state->valuestring, "start") == 0) {
++                ESP_LOGI(TAG, "speech: tts start received");
+                 Schedule([this]() {
++                    ESP_LOGI(TAG, "speech: tts start applied in state %s, %lu frames dropped before it",
++                        DeviceStateMachine::GetStateName(GetDeviceState()),
++                        (unsigned long)speech_frames_dropped_.exchange(0));
++                    speech_frames_in_ = 0;
+                     aborted_ = false;
+                     SetDeviceState(kDeviceStateSpeaking);
+                 });
+             } else if (strcmp(state->valuestring, "stop") == 0) {
++                ESP_LOGI(TAG, "speech: tts stop received");
+                 Schedule([this]() {
++                    size_t decode = 0, playback = 0;
++                    uint32_t gaps = 0;
++                    int gap_max_ms = 0;
++                    audio_service_.GetQueueDepths(decode, playback);
++                    audio_service_.TakePlaybackGaps(gaps, gap_max_ms);
++                    ESP_LOGI(TAG, "speech: tts stop applied in state %s, mode %d, %lu frames in, "
++                        "%u + %u still queued, %lu gaps (max %d ms)",
++                        DeviceStateMachine::GetStateName(GetDeviceState()), (int)listening_mode_,
++                        (unsigned long)speech_frames_in_.load(), (unsigned)decode, (unsigned)playback,
++                        (unsigned long)gaps, gap_max_ms);
+                     if (GetDeviceState() == kDeviceStateSpeaking) {
+                         if (listening_mode_ == kListeningModeManualStop) {
+                             SetDeviceState(kDeviceStateIdle);
+diff --git a/firmware/xiaozhi-esp32/main/application.h b/firmware/xiaozhi-esp32/main/application.h
+index 7ca7af4..2e08d78 100644
+--- a/firmware/xiaozhi-esp32/main/application.h
++++ b/firmware/xiaozhi-esp32/main/application.h
+@@ -10,6 +10,7 @@
+ #include <mutex>
+ #include <deque>
+ #include <memory>
++#include <atomic>
+ 
+ #include "protocol.h"
+ #include "ota.h"
+@@ -138,6 +139,9 @@ private:
+ 
+     bool has_server_time_ = false;
+     bool aborted_ = false;
++    // MaiPai speech diagnostics for the start and end stutter (patch 015).
++    std::atomic<uint32_t> speech_frames_in_{0};
++    std::atomic<uint32_t> speech_frames_dropped_{0};
+     bool assets_version_checked_ = false;
+     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
+     int clock_ticks_ = 0;
+diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.cc b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
+index 350ac58..3ca7ff4 100644
+--- a/firmware/xiaozhi-esp32/main/audio/audio_service.cc
++++ b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
+@@ -290,10 +290,25 @@ void AudioService::AudioInputTask() {
+ void AudioService::AudioOutputTask() {
+     while (true) {
+         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
++        auto wait_start = std::chrono::steady_clock::now();
+         audio_queue_cv_.wait(lock, [this]() { return !audio_playback_queue_.empty() || service_stopped_; });
+         if (service_stopped_) {
+             break;
+         }
++        {
++            // A wait mid-stream is an audible gap: the speaker ran dry between two frames.
++            auto now = std::chrono::steady_clock::now();
++            int waited = std::chrono::duration_cast<std::chrono::milliseconds>(now - wait_start).count();
++            int silent = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_output_time_).count();
++            if (waited > 30 && silent < 2000) {
++                playback_gap_count_++;
++                if (silent > playback_gap_max_ms_) {
++                    playback_gap_max_ms_ = silent;
++                }
++                ESP_LOGW(TAG, "speech: playback gap %d ms after frame %lu", silent,
++                    (unsigned long)debug_statistics_.playback_count);
++            }
++        }
+ 
+         auto task = std::move(audio_playback_queue_.front());
+         audio_playback_queue_.pop_front();
+@@ -509,6 +524,7 @@ bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> pa
+         if (wait) {
+             audio_queue_cv_.wait(lock, [this]() { return audio_decode_queue_.size() < MAX_DECODE_PACKETS_IN_QUEUE; });
+         } else {
++            ESP_LOGW(TAG, "speech: decode queue full, frame dropped");
+             return false;
+         }
+     }
+@@ -672,6 +688,10 @@ void AudioService::ResetDecoder() {
+         esp_opus_dec_reset(opus_decoder_);
+     }
+     decoder_lock.unlock();
++    size_t cleared = audio_decode_queue_.size() + audio_playback_queue_.size();
++    if (cleared > 0) {
++        ESP_LOGW(TAG, "speech: decoder reset cleared %u queued frames", (unsigned)cleared);
++    }
+     timestamp_queue_.clear();
+     audio_decode_queue_.clear();
+     audio_playback_queue_.clear();
+@@ -679,6 +699,20 @@ void AudioService::ResetDecoder() {
+     audio_queue_cv_.notify_all();
+ }
+ 
++void AudioService::GetQueueDepths(size_t& decode, size_t& playback) {
++    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
++    decode = audio_decode_queue_.size();
++    playback = audio_playback_queue_.size();
++}
++
++void AudioService::TakePlaybackGaps(uint32_t& count, int& max_ms) {
++    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
++    count = playback_gap_count_;
++    max_ms = playback_gap_max_ms_;
++    playback_gap_count_ = 0;
++    playback_gap_max_ms_ = 0;
++}
++
+ void AudioService::CheckAndUpdateAudioPowerState() {
+     auto now = std::chrono::steady_clock::now();
+     auto input_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_input_time_).count();
+diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.h b/firmware/xiaozhi-esp32/main/audio/audio_service.h
+index 99db546..5f74d90 100644
+--- a/firmware/xiaozhi-esp32/main/audio/audio_service.h
++++ b/firmware/xiaozhi-esp32/main/audio/audio_service.h
+@@ -5,6 +5,7 @@
+ #include <deque>
+ #include <condition_variable>
+ #include <chrono>
++#include <atomic>
+ #include <mutex>
+ 
+ #include <freertos/FreeRTOS.h>
+@@ -132,6 +133,9 @@ public:
+     void PlaySound(const std::string_view& sound);
+     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
+     void ResetDecoder();
++    // MaiPai speech diagnostics: frames waiting to play, and playback gaps since the last call.
++    void GetQueueDepths(size_t& decode, size_t& playback);
++    void TakePlaybackGaps(uint32_t& count, int& max_ms);
+     void SetModelsList(srmodel_list_t* models_list);
+ 
+ private:
+@@ -156,6 +160,8 @@ private:
+     int decoder_duration_ms_ = OPUS_FRAME_DURATION_MS;
+     int decoder_frame_size_ = 0;
+     DebugStatistics debug_statistics_;
++    uint32_t playback_gap_count_ = 0;
++    int playback_gap_max_ms_ = 0;
+     srmodel_list_t* models_list_ = nullptr;
+ 
+     EventGroupHandle_t event_group_;

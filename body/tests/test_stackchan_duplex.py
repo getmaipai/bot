@@ -82,8 +82,9 @@ class Offline:
     pass
 
 
-def test_playback_leads_by_1_8_seconds_then_paces_and_drains(monkeypatch):
-    # 2026-10-19 unit bench: a 5-frame lead stuttered over Wi-Fi.
+def test_playback_leads_by_38_frames_then_paces_and_drains(monkeypatch):
+    # 2026-10-19 unit bench: a 5-frame lead stuttered over Wi-Fi; 38 frames (2.28 s) stays
+    # under the firmware's 40-frame decode queue.
     clock = Clock()
     sent = []
     prebuffers = []
@@ -102,16 +103,16 @@ def test_playback_leads_by_1_8_seconds_then_paces_and_drains(monkeypatch):
     playback = StackChanAudioPlayback(
         server, "device", clock=clock.monotonic, sleeper=clock.sleep, async_sleep=clock.async_sleep
     )
-    playback._frames = [bytes([i]) for i in range(32)]
+    playback._frames = [bytes([i]) for i in range(40)]
     playback._samples = np.zeros(0, dtype=np.float32)
     playback.stop_playing()
-    assert len(sent) == 32
-    assert prebuffers[0] == 30
+    assert len(sent) == 40
+    assert prebuffers[0] == 38
     assert clock.sleeps == pytest.approx([0.06, 0.06])
     playback.end()
     assert sent[-1] == "stop"
-    # The stop waits until the 32 frames (1.92 s) have played, plus the 0.12 s tail.
-    assert clock.sleeps == pytest.approx([0.06, 0.06, 1.92])
+    # The stop waits until the 40 frames (2.4 s) have played, plus the 0.12 s tail.
+    assert clock.sleeps == pytest.approx([0.06, 0.06, 2.4])
     server._loop.call_soon_threadsafe(server._loop.stop)
     worker.join(timeout=1)
     server._loop.close()

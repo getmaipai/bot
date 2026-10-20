@@ -28,7 +28,11 @@ from maipai_body.bodies.stackchan.xiaozhi.provision import (
     main,
     write_image,
 )
-from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient, XiaozhiServer
+from maipai_body.bodies.stackchan.xiaozhi.server import (
+    PREBUFFER_GAP_S,
+    XiaozhiDeviceClient,
+    XiaozhiServer,
+)
 
 
 class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
@@ -353,7 +357,12 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([frame for frame, _ in sent], [f"frame-{i}".encode() for i in range(7)])
         stamps = [stamp for _, stamp in sent]
-        self.assertEqual([round(stamps[i + 1] - stamps[i], 3) for i in range(2)], [0.025, 0.025])
+        # Prebuffered frames are spaced, never back to back: a 30-frame burst overflowed the
+        # robot's Wi-Fi receive buffers and stalled the line for a 1.5 s retransmit.
+        self.assertEqual(
+            [round(stamps[i + 1] - stamps[i], 3) for i in range(2)],
+            [round(0.025 + PREBUFFER_GAP_S, 3)] * 2,
+        )
         self.assertAlmostEqual(stamps[3] - stamps[2], 0.085)
         self.assertAlmostEqual(stamps[6] - stamps[5], 0.06)
 

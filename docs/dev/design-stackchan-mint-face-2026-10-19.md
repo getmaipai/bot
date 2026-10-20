@@ -92,8 +92,9 @@ when the robot opens its own audio channel. The host speaks over the persistent 
 through speech. Patch 014 sets `PERFORMANCE` when the robot enters speaking and `LOW_POWER` when it returns to idle. With it,
 ping during speech averaged 0.57 s (5 of 40 lost) and Jesse heard only a little stutter at the start and end.
 
-**Left open:** the stutter at the start and end. Two firmware races fit, neither proven: audio that arrives before the
-speaking state is dropped (and entering speaking clears the decode queue), and `tts stop` moves the robot to listening,
-which clears any audio still queued.
+**Left open:** the stutter at the start. Measured on 2026-10-20 (unit measurements, "Speech edges"): entering speaking
+clears the decode queue about 100 ms after `tts start`, cutting the first 6 to 12 frames. Gaps mid-line and at the end
+were Wi-Fi stalls from a 30-frame burst; the host now spaces its lead. The firmware start fix is built and waits for a
+flash.
 
 **No speech bubble.** The text under the face is gone, as Jesse asked.
