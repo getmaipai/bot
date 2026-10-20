@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -33,14 +34,16 @@ def test_install_dry_run_prints_the_full_plan_without_syncing_or_ssh(tmp_path):
 
 
 def test_release_builder_stages_wheel_and_sha256_without_publishing(tmp_path):
-    stage = ROOT / "dist/bot-release/v0.1.0"
+    pyproject = (ROOT / "body/pyproject.toml").read_text()
+    version = re.search(r'^version = "([^"]+)"', pyproject, re.M)[1]
+    stage = ROOT / f"dist/bot-release/v{version}"
     try:
         subprocess.run(
-            [str(SCRIPTS / "prepare-bot-release.sh"), "v0.1.0"],
+            [str(SCRIPTS / "prepare-bot-release.sh"), f"v{version}"],
             check=True,
             env={**os.environ, "MAIPAI_SKIP_WHEELHOUSE": "1"},
         )
-        wheel = stage / "maipai_bot-0.1.0-py3-none-any.whl"
+        wheel = stage / f"maipai_bot-{version}-py3-none-any.whl"
         checksum = stage / f"{wheel.name}.sha256"
         assert wheel.is_file()
         assert checksum.read_text().split()[0] == hashlib.sha256(wheel.read_bytes()).hexdigest()
