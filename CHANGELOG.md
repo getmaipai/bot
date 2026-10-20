@@ -7,6 +7,13 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-10-20
+
+### Fixed
+
+- StackChan holds still: the idle level defaults to still, the post-turn settle runs only when an earlier move left the head off centre, every head move is capped at 12 a minute on the host, and stop recovery backs off when it re-latches within 120 seconds.
+- StackChan firmware patch 038 refuses more than 20 `set_head_angles` calls in 60 seconds. Patches to flash since 0.2.2: 030, 032, 033, 034, 037, 038.
+
 ## [0.2.6] - 2026-10-20
 
 ### Fixed
