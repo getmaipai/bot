@@ -54,6 +54,7 @@ class XiaozhiDeviceClient:
     def __init__(self, server: XiaozhiServer, *, timeout: float = 5.0) -> None:
         self.server = server
         self.timeout = timeout
+        self._failure_logged: dict[str, float] = {}
 
     def get_head_angles(self) -> dict[str, int]:
         result = self._call("self.robot.get_head_angles", {})
@@ -182,6 +183,25 @@ class XiaozhiDeviceClient:
         return StackChanCompanion(self._call)
 
     def _call(self, name: str, arguments: dict[str, object]) -> object:
+        try:
+            return self._call_raw(name, arguments)
+        except Exception as exc:
+            self._log_call_failure(name, exc)
+            raise
+
+    def _log_call_failure(self, name: str, exc: Exception) -> None:
+        """Say why a device tool call failed, once a minute per tool (the raised text is generic)."""
+        now = time.monotonic()
+        last = self._failure_logged.get(name, float("-inf"))
+        if now - last < 60.0:
+            return
+        self._failure_logged[name] = now
+        cause = exc.__cause__ or exc
+        LOG.warning(
+            "StackChan tool %s failed: %s: %s", name, type(cause).__name__, str(cause)[:200]
+        )
+
+    def _call_raw(self, name: str, arguments: dict[str, object]) -> object:
         try:
             return self.server.call_device_tool(name, arguments, timeout=self.timeout)
         except (BodyLost, EstopEngaged, NotSupported, OutOfEnvelope):

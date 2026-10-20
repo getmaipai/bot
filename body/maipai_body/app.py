@@ -251,7 +251,11 @@ class StackChanBehavior:
             if self._closed.is_set():
                 return
             now = time.monotonic()
-            if not self._active.is_set() and now - self._last_idle >= self._idle_interval_s:
+            if (
+                not self._active.is_set()
+                and not self.idle_still()
+                and now - self._last_idle >= self._idle_interval_s
+            ):
                 self._last_idle = now
                 try:
                     self.render_primitive("settle")
@@ -415,7 +419,7 @@ async def _serve_stackchan_channels(
 
     light = start_stackchan_light(
         voice.robot,
-        link,
+        offline,
         stop_event,
         device_connected=device_connected,
         on_battery=power.on_battery_status,
@@ -1415,6 +1419,9 @@ class MaiPaiBody(ReachyMiniApp):
         super().__init__(*args, **kwargs)
         store = PairingStore(_default_pairing_path())
         hosted = os.environ.get("MAIPAI_HUB_HOST") == "1"
+        from maipai_body.logging_setup import configure_logging
+
+        configure_logging(hosted)
         discover = _no_hub_discovery if hosted else discover_hub
         self._stack = _build_link_stack(
             store,

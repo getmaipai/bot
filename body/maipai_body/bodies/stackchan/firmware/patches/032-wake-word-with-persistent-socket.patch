@@ -1,0 +1,19 @@
+# Intent: act on the wake word with the persistent websocket. The channel is always open, so HandleWakeWordDetectedEvent() and WakeWordInvoke() took the "already opened" branch and called ContinueWakeWordInvoke() from Idle; that function returns at once unless the state is Connecting, so the wake word was detected and dropped (live log 2026-10-20: "Wake word detected" with no StateMachine change). Set Connecting first.
+# Upstream: 78/xiaozhi-esp32 main/application.cc (MIT), via m5stack/StackChan firmware. Applies after 002, 014, 015, 016, 030 with --unidiff-zero.
+# Check after a flash: saying the wake word moves idle -> connecting -> listening in the serial log and the host log shows "StackChan voice: listen detect".
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index dfbb6f0..aa0c00f 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -841 +841,4 @@ void Application::HandleWakeWordDetectedEvent() {
+-        // Channel already opened, continue directly
++        // Channel already opened, continue directly. With the persistent websocket the channel is
++        // always open, and ContinueWakeWordInvoke() returns at once unless the state is Connecting,
++        // so the wake word would be heard and then dropped without a state change.
++        SetDeviceState(kDeviceStateConnecting);
+@@ -1086 +1089,4 @@ void Application::WakeWordInvoke(const std::string& wake_word) {
+-        // Channel already opened, continue directly
++        // Channel already opened, continue directly. With the persistent websocket the channel is
++        // always open, and ContinueWakeWordInvoke() returns at once unless the state is Connecting,
++        // so the wake word would be heard and then dropped without a state change.
++        SetDeviceState(kDeviceStateConnecting);

@@ -91,3 +91,62 @@ def test_a_missing_face_detector_package_is_one_quiet_line_without_a_traceback()
     assert "face tracking is unavailable in the hub bundle" in source
     quiet = source.split("except ImportError:")[1].split("except Exception:")[0]
     assert "exc_info" not in quiet
+
+
+def test_a_hosted_bot_logs_the_voice_session_at_info_and_setup_is_idempotent():
+    import logging
+
+    from maipai_body.logging_setup import configure_logging
+
+    root = logging.Logger("test-root")
+    original = logging.getLogger("maipai_body").level
+    try:
+        configure_logging(True, root=root)
+        configure_logging(True, root=root)
+        assert len(root.handlers) == 1
+        assert logging.getLogger("maipai_body").level == logging.INFO
+        assert logging.getLogger("maipai_body.bodies.stackchan.turn").isEnabledFor(logging.INFO)
+    finally:
+        logging.getLogger("maipai_body").setLevel(original)
+
+
+def test_the_light_poller_is_given_the_offline_rungs_that_own_the_link_machine():
+    import inspect
+
+    from maipai_body import app
+
+    source = inspect.getsource(app._serve_stackchan_channels)
+    call = source.split("start_stackchan_light(")[1].split(")")[0]
+    assert "offline" in call and "link" not in call.replace("light", "")
+
+
+def test_the_presence_loop_skips_the_idle_settle_while_still():
+    import inspect
+
+    from maipai_body import app
+
+    source = inspect.getsource(app.StackChanBehavior._presence_loop)
+    assert "not self.idle_still()" in source.split("self._vision")[0]
+
+
+def test_a_failed_device_tool_call_logs_the_real_cause_once_a_minute(caplog):
+    import logging
+
+    from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient
+
+    class _Server:
+        def call_device_tool(self, name, arguments, timeout):
+            raise RuntimeError("tool rejected: led_3_red out of range")
+
+    client = XiaozhiDeviceClient(_Server())
+    with caplog.at_level(logging.WARNING, logger="maipai_body.bodies.stackchan.xiaozhi.server"):
+        for _ in range(3):
+            try:
+                client.set_led_color(1, 2, 3)
+            except Exception:
+                pass
+    lines = [
+        r.getMessage() for r in caplog.records if "tool self.robot.set_led_color" in r.getMessage()
+    ]
+    assert len(lines) == 1
+    assert "RuntimeError" in lines[0] and "out of range" in lines[0]
