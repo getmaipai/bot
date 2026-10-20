@@ -190,7 +190,7 @@ class XiaozhiDeviceClient:
             raise
 
     def _log_call_failure(self, name: str, exc: Exception) -> None:
-        """Say why a device tool call failed, once a minute per tool (the raised text is generic)."""
+        """Say why a device tool call failed, once a minute per tool (the raised text is vague)."""
         now = time.monotonic()
         last = self._failure_logged.get(name, float("-inf"))
         if now - last < 60.0:
