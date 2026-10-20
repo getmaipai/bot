@@ -11,7 +11,7 @@ import ssl
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from aiohttp import web
 from websockets.asyncio.server import ServerConnection, serve
@@ -41,6 +41,10 @@ FIRMWARE_EMOTIONS = {
     "wink": "winking",
 }
 MAX_EARLY_DEVICE_REPLIES = 32
+
+
+if TYPE_CHECKING:
+    from maipai_body.bodies.stackchan.companion import StackChanCompanion
 
 
 class XiaozhiDeviceClient:
@@ -158,6 +162,12 @@ class XiaozhiDeviceClient:
 
     def cancel_pending(self) -> None:
         self.server.cancel_device_calls("self.robot.set_head_angles")
+
+    def companion(self) -> StackChanCompanion:
+        """Dance, touch events and saved Wi-Fi: the firmware tools of patches 020, 021, 023."""
+        from maipai_body.bodies.stackchan.companion import StackChanCompanion
+
+        return StackChanCompanion(self._call)
 
     def _call(self, name: str, arguments: dict[str, object]) -> object:
         try:

@@ -71,3 +71,35 @@ tests and `scripts/check.sh --pre`. Claude only designs, maps and reviews.
 6. Later: bedtime stories, games (Simon, rock-paper-scissors), Home Assistant control, ambient status on the ring and idle screen,
    sentry mode, charging low-battery event, mmWave presence (needs added hardware).
 Sources: Dotty (MIT), stackchan-local-llm (MIT), reachy_mini_conversation_app (Apache-2.0), the repo's own backlog.
+
+## Status 2026-10-20 (end of day)
+
+Built and landed or committed (host halves have fake-peer tests; firmware patches apply to the pinned source and `hal_mcp.cpp`
+compiles under ESP-IDF 5.5.4; nothing has run on a unit):
+
+| Id | State |
+|---|---|
+| BOT-SC-ANIM-01 | host policy and renderer built (`expression/rest.py`, `stackchan/routines.py`); not yet wired into the idle worker |
+| BOT-SC-GAZE-01 | controller built (`stackchan/speaker_gaze.py`); not yet wired; setting `robot.look_at_speaker` not registered |
+| BOT-SC-DANCE-01 | music detector, auto-dance policy, firmware patch 020, host `StackChanCompanion.dance`; not yet wired to the mic; song id is BOT-SC-DANCE-02 |
+| BOT-SC-SCREEN-01 | pure router built (`robot/display.py`); no surface declarations on any profile yet; hub image rendering not started |
+| BOT-SC-TOUCH-01 | firmware patch 021 (pollable events) and `StackChanCompanion.poll_events`; no reaction code consumes them yet |
+| BOT-SC-WIFI-01 | firmware patch 023 (list, add, forget, switch over the robot's NVS list) and `StackChanCompanion.wifi_*`; the swipe-to-open screen is not built |
+| BOT-SC-VISION-01 | `camera.frame(silent=True)`, `AmbientVisionPolicy` and `AmbientVisionWorker` built; not yet wired to the funnel, the describe call or Memory |
+| BOT-SC-NIGHT-01 | not started |
+
+## Owner decision recorded: silent capture (Jesse, 2026-10-20)
+
+The earlier ruling lit the whole LED ring red around every photo (`design-stackchan-pieces-and-gaps-2026-10-14.md` section 4). Jesse
+asked for continuous ambient vision with no indication to the user. It is allowed ONLY as an opt-in setting
+(`robot.ambient_vision`, default off), through `camera.frame(silent=True)`, which refuses unless the setting allows it and refuses
+under the emergency stop. Visible capture and the camera stream still light the ring. The firmware has no shutter sound, flash or
+screen change of its own on `take_photo`, so silence needs no firmware patch. The picture is dropped in the same call; only a text
+note of at most 280 characters is kept. The hub's settings page must show the setting plainly when it is on.
+
+## Working notes
+
+- The release session owns patch number 030 (privacy card). Patch 022 is reserved for the emotion tool (not written).
+- Compile check recipe: `export PATH="/opt/homebrew/opt/python@3.12/libexec/bin:$PATH"; . ~/esp/esp-idf/export.sh`, work in a scratch copy
+  of the build tree, never in `~/esp/stackchan-build/stackchan-02-run/build`. Gate: put `/opt/homebrew/bin` first on PATH (LibreSSL has no Ed25519).
+- A `local-lane dispatch` into a worktree removes files it was not told about: commit before dispatching, write your own files after.
