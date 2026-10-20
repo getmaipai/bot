@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -114,12 +115,14 @@ class StackChanFlashDryRunTests(unittest.TestCase):
                 "--avatar-url",
                 "ws://192.0.2.10:8766",
             ]
-            result = subprocess.run(args, capture_output=True, text=True, check=False)
+            # An empty build root keeps the dry run off whatever build the machine left in ~/esp.
+            env = {**os.environ, "STACKCHAN_BUILD_ROOT": str(base / "build")}
+            result = subprocess.run(args, capture_output=True, text=True, check=False, env=env)
             self.assertEqual(result.returncode, 2)
             self.assertIn("backup", result.stderr.lower())
             with backup.open("wb") as stream:
                 stream.truncate(16 * 1024 * 1024)
-            result = subprocess.run(args, capture_output=True, text=True, check=False)
+            result = subprocess.run(args, capture_output=True, text=True, check=False, env=env)
             self.assertEqual(result.returncode, 0, result.stderr)
             lines = result.stdout.splitlines()
             self.assertLess(
