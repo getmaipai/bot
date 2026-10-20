@@ -13,7 +13,12 @@ useDefault = true
 # rule; every future fixture recording will produce a different hash in
 # the same spot, so this allowlists the file, not today's specific
 # value.
+#
+# `gitleaks dir` scans the filesystem, not git, so it also reads the git-ignored data-scratch/. Found 2026-10-20: a wt.sh
+# gate stamp there lists changed files with their blob shas, and an entry like "body/maipai_body/settings_keys.py": "<sha>"
+# reads as a generic API key. Same fix as commons 5253ac5; the pattern is anchored to a path segment.
 [allowlist]
 paths = [
+  '''(^|/)data-scratch(/|$)''',
   '''(^|/)bodies/reachy_mini/fixtures/README\.md$''',
 ]
