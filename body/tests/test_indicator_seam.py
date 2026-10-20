@@ -16,7 +16,7 @@ from maipai_body.hal import seam
 from maipai_body.hal.errors import BodyLost
 from maipai_body.hal.seam import Indicator, IndicatorSpec, Look, NullIndicator, Palette
 
-_PALETTE = {"WHITE", "GREEN", "BLUE", "AMBER", "CYAN", "MAGENTA", "OFF"}
+_PALETTE = {"WHITE", "GREEN", "BLUE", "AMBER", "CYAN", "MAGENTA", "PINK", "OFF"}  # PINK: owner, 2026-10-20
 
 
 def test_the_palette_is_exactly_the_approved_set():
