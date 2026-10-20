@@ -7,6 +7,8 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-20
+
 ### Changed
 
 - StackChan firmware patches 018 and 019 take the long-lived token from the hub's hello, save it to NVS, and have the avatar channel read its token and address from NVS (BOT-STACKCHAN-ENROLL-01, firmware half).
@@ -15,6 +17,7 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- `scripts/cut-release.sh` stages the three hub bundles and signed StackChan firmware asset, signs the complete `SHA256SUMS`, and prints the owner's publish command without uploading (BOT-RELEASE-FLASH-01).
 - StackChan releases take the signing key from the macOS Keychain (`--signing-key keychain:<item>`), `scripts/sign-release-sums.sh` signs `SHA256SUMS` into `SHA256SUMS.sig.json`, and `verify.sh --public-key` checks the flash manifest signature (BOT-RELEASE-FLASH-01).
 - StackChan firmware releases can be staged as `stackchan-firmware-<version>.tar.gz`, containing the signed flash manifest and its parts and listed in the release `SHA256SUMS` (BOT-RELEASE-FLASH-01, asset half).
 - StackChan releases now ship bootloader and partition table binaries with a signed flash manifest generated from ESP-IDF flash offsets (BOT-RELEASE-FLASH-01, release half).
