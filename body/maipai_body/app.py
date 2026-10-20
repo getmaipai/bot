@@ -399,6 +399,10 @@ async def _serve_stackchan_channels(
         logger.warning("StackChan anonymous tracking is unavailable", exc_info=True)
     behavior = StackChanBehavior(voice.robot.robot, vision_bridge=vision)
     _start_stackchan_night(voice, behavior, link, stop_event)
+    from maipai_body.bodies.stackchan.light_wiring import start_stackchan_light
+
+    light = start_stackchan_light(voice.robot, link, stop_event)
+    voice.robot.robot._driver("camera").cue_sink = light.cue_camera
     if link is not None and offline is not None:
         bridge = StackChanTurnBridge(
             voice,
@@ -410,6 +414,7 @@ async def _serve_stackchan_channels(
             # results remain anonymous on this turn.
             person_attribution=lambda result: getattr(result, "speaker_evidence", None),
             expression_sink=behavior.render_turn_state,
+            live_sink=light.cue_live,
         )
         voice.audio_handler = bridge.on_audio
         voice.turn_handler = bridge.listen

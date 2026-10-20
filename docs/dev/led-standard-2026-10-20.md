@@ -100,3 +100,10 @@ the live (green), connection, offline, charging and low battery rows reach the r
 the xiaozhi uplink and the battery and connection facts from the device client; (2) the light flags for pairing, updating and dancing in
 the callers; (3) the Reachy Eyes protocol gaining a pink word; (4) the grep and conformance tests extended to every future body; (5) the
 architect review of this note. Silent ambient capture remains the one cue-less capture.
+
+## Wiring status 2026-10-20 (later)
+
+Wired on StackChan: `StackChanLightService` and `LightPoller` (`light_service.py`, `light_wiring.py`) start with the StackChan channels in
+`app.py`. The camera cue reaches the service from the camera adapter (`cue_sink`), the live (green) cue from the turn bridge around the
+hub speech stream (`live_sink`), and connecting, offline, charging and low battery are polled once a second (battery once a minute). Pairing,
+updating and dancing flags have no caller yet. Nothing here has run on a unit.

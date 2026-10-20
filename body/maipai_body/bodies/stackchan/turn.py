@@ -256,9 +256,12 @@ class StackChanTurnBridge:
         tts_factory=TtsPlaybackClient,
         person_attribution=None,
         expression_sink=None,
+        live_sink=None,
         clock=time.monotonic,
     ) -> None:
         self.server, self.link, self.offline = server, link, offline
+        # The light standard's live cue: green while the voice is being sent to the hub.
+        self.live_sink = live_sink
         self._clock = clock
         self.cache_dir = cache_dir
         self.stt_factory, self.turn_factory, self.tts_factory = (
@@ -367,6 +370,14 @@ class StackChanTurnBridge:
             "first_audio_ms": self._first_audio_ms,
         }
 
+    def _set_live(self, active: bool) -> None:
+        if self.live_sink is None:
+            return
+        try:
+            self.live_sink(active)
+        except Exception:  # a light must never break the voice path
+            LOG.warning("StackChan live cue failed", exc_info=True)
+
     def _emit_expression(self, state: str, *, mood: str | None = None) -> None:
         if self.expression_sink is None:
             return
@@ -445,7 +456,11 @@ class StackChanTurnBridge:
                 await asyncio.to_thread(self._offline_line, playback)
                 return
             stt = self.stt_factory(base, cookie)
-            result = await asyncio.to_thread(stt.run, capture)
+            self._set_live(True)
+            try:
+                result = await asyncio.to_thread(stt.run, capture)
+            finally:
+                self._set_live(False)
             self._emit_expression("thinking")
             if result.kind != "final" or not result.text:
                 await asyncio.to_thread(self._speak_plain_error, playback, base, cookie)

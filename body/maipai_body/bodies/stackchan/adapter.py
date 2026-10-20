@@ -294,6 +294,8 @@ class _CameraAdapter:
         self.device_id: str | None = None
         self._stream_indicator_active = False
         self.silent_capture_allowed: Callable[[], bool] = lambda: False
+        # The light standard's camera cue also goes to the light service, when one is attached.
+        self.cue_sink: Callable[[bool], None] | None = None
 
     def command(self, verb: str, *args: Any, **kwargs: Any) -> object:
         if verb == "frame":
@@ -382,6 +384,7 @@ class _CameraAdapter:
         driver = self.robot._driver("leds")
         first = not driver.camera_indicator_active
         driver.camera_indicator_active = True
+        self._cue(True)
         if first:
             # The light standard's camera cue: two quick flashes, then steady pink.
             for rgb, seconds in camera_flash_frames(_camera_look()):
@@ -391,11 +394,19 @@ class _CameraAdapter:
             [{"index": index, "rgb": list(_camera_rgb())} for index in range(LED_COUNT)]
         )
 
+    def _cue(self, active: bool) -> None:
+        if self.cue_sink is not None:
+            try:
+                self.cue_sink(active)
+            except Exception:  # a light must never break the camera path
+                pass
+
     def _light_off(self) -> None:
         try:
             self.robot.leds.many([{"index": index, "rgb": [0, 0, 0]} for index in range(LED_COUNT)])
         finally:
             self.robot._driver("leds").camera_indicator_active = False
+            self._cue(False)
 
 
 class _ExpressionDevice:
