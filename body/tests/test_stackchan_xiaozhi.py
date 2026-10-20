@@ -22,7 +22,12 @@ from websockets.asyncio.server import serve
 from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
 from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
 from maipai_body.bodies.stackchan.xiaozhi.pairing import PairingStore
-from maipai_body.bodies.stackchan.xiaozhi.provision import generate_image, main, write_image
+from maipai_body.bodies.stackchan.xiaozhi.provision import (
+    _tool_python,
+    generate_image,
+    main,
+    write_image,
+)
 from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient, XiaozhiServer
 
 
@@ -405,6 +410,16 @@ class StackChanXiaozhiTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ProvisioningTests(unittest.TestCase):
+    def test_generator_uses_the_esp_idf_python_environment(self) -> None:
+        # Regression: on the first unit the NVS generator ran under the Bot's Python,
+        # which lacks ESP-IDF's generator module; export.sh names the right one.
+        with tempfile.TemporaryDirectory() as temp:
+            python = Path(temp) / "bin" / "python"
+            python.parent.mkdir()
+            python.write_text("")
+            with patch.dict("os.environ", {"IDF_PYTHON_ENV_PATH": temp}):
+                self.assertEqual(_tool_python("/elsewhere/nvs_partition_gen.py"), str(python))
+
     def test_provisioning_image_uses_firmware_namespaces_and_integer_version(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -462,6 +477,7 @@ class ProvisioningTests(unittest.TestCase):
             )
             rows = ast.literal_eval(output.with_suffix(".bin.csv").read_text())
             self.assertFalse(any(row[0] == "wifi" or row[0] == "ota_url" for row in rows[1:]))
+            self.assertFalse(any(row[0] == "board" for row in rows[1:]))
 
     def test_real_esp_idf_generator_writes_namespaced_values(self) -> None:
         python_env = Path.home() / ".espressif/python_env/idf5.5_py3.12_env"
@@ -481,6 +497,7 @@ class ProvisioningTests(unittest.TestCase):
                 token="unit-token",
                 version="1",
                 ota_url="http://192.0.2.10:8765/ota",
+                client_id="00000000-0000-4000-8000-000000000028",
                 generator=str(generator),
             )
             dump = (
@@ -498,6 +515,8 @@ class ProvisioningTests(unittest.TestCase):
                 "websocket:token=unit-token",
                 "websocket:version=1",
                 "wifi:ota_url=http://192.0.2.10:8765/ota",
+                # The unit's Client-Id comes from board:uuid; found on the bench 2026-10-19.
+                "board:uuid=00000000-0000-4000-8000-000000000028",
             ):
                 self.assertIn(entry, dump)
 
@@ -592,6 +611,22 @@ class ProvisioningTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(raised.exception.code, 2)
+
+
+class StackChanDefaultPortTests(unittest.TestCase):
+    def test_vision_and_avatar_listeners_default_to_different_ports(self) -> None:
+        # Both defaulted to 8766 on the same host; found on the bench 2026-10-19.
+        import inspect
+
+        from maipai_body.bodies.stackchan.avatar.server import AvatarServer
+        from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiServer
+
+        vision = inspect.signature(XiaozhiServer.__init__).parameters["vision_port"].default
+        avatar = inspect.signature(AvatarServer.start).parameters["port"].default
+        self.assertNotEqual(vision, avatar)
+        app_source = Path(__file__).parents[1].joinpath("maipai_body/app.py").read_text()
+        self.assertIn('"MAIPAI_VISION_PORT", "8767"', app_source)
+        self.assertIn('"MAIPAI_STACKCHAN_AVATAR_PORT", "8766"', app_source)
 
 
 if __name__ == "__main__":

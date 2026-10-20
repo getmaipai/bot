@@ -198,7 +198,7 @@ class XiaozhiServer:
         server_name: str = "MaiPai Bot",
         idle_timeout: float = 30.0,
         vision_host: str = "127.0.0.1",
-        vision_port: int = 8766,
+        vision_port: int = 8767,
         max_photo_bytes: int = 2 * 1024 * 1024,
         advertised_vision_url: str | None = None,
         notification_audio_handler: Callable[[str], Awaitable[str]] | None = None,

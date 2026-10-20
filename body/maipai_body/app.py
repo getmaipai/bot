@@ -242,7 +242,7 @@ async def _serve_stackchan_channels(
 
     vision_host = os.environ.get("MAIPAI_VISION_HOST", host)
     try:
-        vision_port = int(os.environ.get("MAIPAI_VISION_PORT", "8766"))
+        vision_port = int(os.environ.get("MAIPAI_VISION_PORT", "8767"))
     except ValueError as exc:
         raise ValueError("MAIPAI_VISION_PORT must be a TCP port number.") from exc
     pairing = PairingStore(default_pairing_path())

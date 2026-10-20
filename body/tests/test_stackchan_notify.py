@@ -34,19 +34,19 @@ def test_notify_frame_shape_and_hello_feature_gate():
     assert client.device_supports("notify")
 
     async def exercise_notify():
-        await server.send_notify("http://192.0.2.10:8766/notify/device/audio.ogg")
+        await server.send_notify("http://192.0.2.10:8767/notify/device/audio.ogg")
 
     server._loop.run_until_complete(exercise_notify())
     assert socket.message == {
         "session_id": "session",
         "type": "notify",
-        "audio_url": "http://192.0.2.10:8766/notify/device/audio.ogg",
+        "audio_url": "http://192.0.2.10:8767/notify/device/audio.ogg",
     }
 
     server._session_features["device"] = {}
     try:
         server._loop.run_until_complete(
-            server.send_notify("http://192.0.2.10:8766/notify/device/audio.ogg")
+            server.send_notify("http://192.0.2.10:8767/notify/device/audio.ogg")
         )
     except Exception as exc:
         assert "did not advertise notify" in str(exc)
@@ -61,7 +61,7 @@ def test_audio_url_is_host_route_and_requires_paired_bearer_token():
     server._session_credentials["device"] = ("client", "pair-token")
     server._notification_audio[("device", "audio")] = b"ogg-bytes"
     url = server._notify_audio_url("device", "audio")
-    assert url == "http://127.0.0.1:8766/notify/device/audio.ogg"
+    assert url == "http://127.0.0.1:8767/notify/device/audio.ogg"
 
     request = SimpleNamespace(
         match_info={"device_id": "device", "audio_id": "audio"},

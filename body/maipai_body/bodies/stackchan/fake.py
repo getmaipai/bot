@@ -42,7 +42,7 @@ class FakeStackChanDeviceClient:
             "listen_window",
         }
         self.notify_feature = False
-        self.notification_audio_url = "http://192.0.2.10:8766/notify/fake/audio.ogg"
+        self.notification_audio_url = "http://192.0.2.10:8767/notify/fake/audio.ogg"
         self.reminders: list[dict[str, object]] = []
 
         self.measurement_data = {
