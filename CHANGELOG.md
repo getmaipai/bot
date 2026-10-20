@@ -7,6 +7,20 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-10-20
+
+### Fixed
+
+- Silence, a timeout and an empty transcript end a StackChan turn quietly, with no spoken line, and the host sends a `system idle` command so the device leaves Listening instead of re-opening the microphone in a loop. A listen the device re-opens within 2 seconds of a turn end gets an 8 second follow-up window; an early "no speech" inside the 6 second patience opens a fresh recognition stream instead of ending the turn; the first 0.3 seconds after a listen start (the pop-up tone) is not sent to recognition; the apology needs at least 0.5 seconds of speech detected by the hub.
+- A loop breaker for the canned error and offline lines: at most once per 60 seconds, never twice in a row, never within 3 seconds of other speech, and silent after more than 3 requests in 2 minutes until the next real transcript.
+- The face is reset in order with speech: `llm neutral` goes out right before every speech stop, the speaking cue is neutral, a face watchdog resends the idle face after 5 quiet seconds and every 30 seconds after (skipped while resting or at night), and an abnormal end while speaking sends a speech stop. The thinking ring light is violet.
+
+### Added
+
+- Volume by voice on the robot: "louder", "quieter", "turn it up", "turn it down", "volume to N", "maximum volume" and "mute", handled before the hub in steps of 15 (minimum 20, mute is 0), answered with "Volume N."
+- A plain per-voice pitch offset (`speech/pitch.py`, -12 to 12 semitones; 0 returns the audio untouched) shared by the robot and Home.
+- StackChan firmware patch 034: a `system idle` command that returns the device to Idle from Listening or Speaking. Patches to flash since 0.2.2: 030, 032, 033, 034.
+
 ## [0.2.5] - 2026-10-20
 
 ### Fixed
