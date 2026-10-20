@@ -529,7 +529,9 @@ class XiaozhiServer:
                 LOG.warning("StackChan sent an MCP reply without a numeric id; ignoring it.")
                 return
             request_key = str(request_id)
-            call = self._pending_device_calls.pop(request_key, None)
+            # The waiter in _await_device_reply removes the entry; popping it here
+            # loses a reply that lands before the waiter looks it up.
+            call = self._pending_device_calls.get(request_key)
             pending = call[0] if call is not None else None
             if pending is None:
                 self._prune_early_device_replies()
