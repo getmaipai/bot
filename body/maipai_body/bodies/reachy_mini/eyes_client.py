@@ -60,6 +60,9 @@ class WireProtocol:
             Palette.AMBER: "AMBER",
             Palette.CYAN: "CYAN",
             Palette.MAGENTA: "MAGENTA",
+            # The Eyes protocol has no pink word yet; magenta is the nearest documented
+            # one until the Eyes firmware adds it. The camera cue keeps its meaning.
+            Palette.PINK: "MAGENTA",
         }
     )
     intensity: str = "INTENSITY {percent}"

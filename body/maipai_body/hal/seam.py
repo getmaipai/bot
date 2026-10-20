@@ -333,6 +333,7 @@ class Palette(StrEnum):
     AMBER = "amber"
     CYAN = "cyan"
     MAGENTA = "magenta"
+    PINK = "pink"  # the camera cue: a bright pink-white near 330 degrees, never red
     OFF = "off"
 
 
@@ -342,11 +343,22 @@ PulseName = Literal["blink", "ack"]
 PULSE_NAMES: tuple[str, ...] = ("blink", "ack")
 
 
+class LookStyle(StrEnum):
+    """How a look moves. A closed set; the periods live in the look table, not here."""
+
+    STEADY = "steady"
+    BREATHE = "breathe"  # slow sine
+    PULSE = "pulse"  # short on, long off
+    BLINK = "blink"  # the alarm only
+    FLASH = "flash"  # two quick flashes, the camera cue only
+
+
 class Look(BaseModel):
-    """A steady look for the eyes: one palette colour at one brightness."""
+    """A look for the eyes or ring: one palette colour, one brightness, one style."""
 
     colour: Palette
     brightness: float = Field(default=1.0, ge=0.0, le=1.0)
+    style: LookStyle = LookStyle.STEADY
 
 
 class IndicatorSpec(BaseModel):
