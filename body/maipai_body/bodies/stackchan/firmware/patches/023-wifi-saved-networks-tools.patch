@@ -1,0 +1,103 @@
+# Intent: list, add, forget and switch saved Wi-Fi networks through MCP tools backed by the robot SsidManager (NVS); passwords are never returned or logged.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_mcp.cpp; 78/esp-wifi-connect ssid_manager (MIT).
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index e324f72..74b93e2 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -12,6 +12,8 @@
+ #include <driver/i2c_master.h>
+ #include <esp_log.h>
+ #include <esp_timer.h>
++#include <esp_wifi.h>
++#include <ssid_manager.h>
+ #include <deque>
+ #include <mutex>
+ #include "board/hal_bridge.h"
+@@ -91,6 +93,18 @@ bool ltr553_read_lux(float& lux)
+     }
+     return true;
+ }
++
++std::string json_escape(const std::string& input)
++{
++    std::string out;
++    for (const char c : input) {
++        if (c == '"' || c == '\\') {
++            out += '\\';
++        }
++        out += c;
++    }
++    return out;
++}
+ }  // namespace
+ 
+ void Hal::xiaozhi_mcp_init()
+@@ -395,4 +409,68 @@ void Hal::xiaozhi_mcp_init()
+                             mclog::tagInfo(_tag, "get_events result: {}", result);
+                             return result;
+                        });
++
++    mclog::tagInfo(_tag, "add wifi.list_saved tool");
++    mcp_server.AddTool("self.wifi.list_saved",
++                       "List the saved Wi-Fi networks as a JSON array of {index, ssid}. Passwords are never included.",
++                       std::vector<Property>{}, [this](const PropertyList& properties) -> ReturnValue {
++                           const auto& ssids = SsidManager::GetInstance().GetSsidList();
++                           std::string result = "[";
++                           for (size_t i = 0; i < ssids.size(); ++i) {
++                               if (i > 0) {
++                                   result += ", ";
++                               }
++                               result += fmt::format(R"({{"index": {}, "ssid": "{}"}})", i, json_escape(ssids[i].ssid));
++                           }
++                           result += "]";
++                           mclog::tagInfo(_tag, "list_saved result: {}", result);
++                           return result;
++                       });
++
++    mclog::tagInfo(_tag, "add wifi.add tool");
++    mcp_server.AddTool(
++        "self.wifi.add",
++        "Save a Wi-Fi network. ssid must be 1 to 32 bytes, password at most 63 bytes. The robot joins saved networks in range.",
++        PropertyList({Property("ssid", kPropertyTypeString, std::string("")),
++                      Property("password", kPropertyTypeString, std::string(""))}),
++        [this](const PropertyList& properties) -> ReturnValue {
++            auto ssid     = properties["ssid"].value<std::string>();
++            auto password = properties["password"].value<std::string>();
++            if (ssid.empty() || ssid.size() > 32 || password.size() > 63) {
++                return false;
++            }
++            mclog::tagInfo(_tag, "wifi.add: ssid={}", ssid);
++            SsidManager::GetInstance().AddSsid(ssid, password);
++            return true;
++        });
++
++    mclog::tagInfo(_tag, "add wifi.forget tool");
++    mcp_server.AddTool("self.wifi.forget", "Forget a saved Wi-Fi network by its index from self.wifi.list_saved.",
++                       PropertyList({Property("index", kPropertyTypeInteger, -1)}),
++                       [this](const PropertyList& properties) -> ReturnValue {
++                           int index = properties["index"].value<int>();
++                           mclog::tagInfo(_tag, "wifi.forget: index={}", index);
++                           const auto& ssids = SsidManager::GetInstance().GetSsidList();
++                           if (index < 0 || static_cast<size_t>(index) >= ssids.size()) {
++                               return false;
++                           }
++                           SsidManager::GetInstance().RemoveSsid(index);
++                           return true;
++                       });
++
++    mclog::tagInfo(_tag, "add wifi.switch tool");
++    mcp_server.AddTool("self.wifi.switch",
++                       "Make a saved network the first choice and reconnect now. The robot joins the best saved network in range.",
++                       PropertyList({Property("index", kPropertyTypeInteger, -1)}),
++                       [this](const PropertyList& properties) -> ReturnValue {
++                           int index = properties["index"].value<int>();
++                           mclog::tagInfo(_tag, "wifi.switch: index={}", index);
++                           const auto& ssids = SsidManager::GetInstance().GetSsidList();
++                           if (index < 0 || static_cast<size_t>(index) >= ssids.size()) {
++                               return false;
++                           }
++                           SsidManager::GetInstance().SetDefaultSsid(index);
++                           esp_wifi_disconnect();
++                           return true;
++                       });
+ }
