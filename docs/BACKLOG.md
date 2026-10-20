@@ -2993,3 +2993,40 @@ queue". Seven "Redesign" rows wait on the owner's family-use verdict
 ## Row-Bot backlog addition (2026-10-06)
 
 - [ ] **MEDS-01: robot delivery for private medicine reminders** (M, after the catalog `PKG-MEDS-01`, ROBOT-NOTIFY-01 and the keyword set). Objective: deliver a tracker reminder to the robot through `deliver_on` and require a spoken confirmation; escalate according to the reminder package policy without speaking medicine details on the shared robot. Acceptance: a teen reminder stays private to that teen and is never visible to an admin; a child reminder is created and managed by a parent; the robot announces only “something is waiting” for a private reminder; no reminder is marked complete without confirmation. Reuse check: the existing offer and notification command paths. Privacy and age: no health content on a shared surface. Exit: `bash scripts/check.sh`.
+
+## StackChan install from Home, hub-hosted Bot app, face and night (2026-10-20)
+
+Design: `home/docs/design/robots-switch-and-install-2026-10-20.md` section 4 and
+`home/docs/design/robot-face-color-and-night-2026-10-20.md` (architect-approved in `home`). Home's halves are ROBOT-HOST-01,
+STACKCHAN-INSTALL-01 and ROBOT-FACE-NIGHT-01. Flashing a unit is Jesse's call.
+
+- [ ] **BOT-RELEASE-FLASH-01: the release ships a flashable StackChan set with a signed manifest** (M; 2026-10-20; after commons
+  SPEC-FLASH-MANIFEST-01). Objective: `release.sh` (today :49-62 ships `stack-chan-maipai.bin`, `generated_assets.bin`,
+  `ota_data_initial.bin`, `manifest.json`, `image-strings.txt`, `SHA256SUMS`, with no offsets, bootloader, partition table or
+  signature) also ships the bootloader and partition table and emits a signed spec `FirmwareFlashManifest` with each part's offset,
+  size and sha256 read from the build's `flasher_args.json`, never typed by hand. A firmware patch makes the avatar URL, the
+  Device-Id and the Client-Id read NVS the way the xiaozhi URL already does (namespace `websocket`, key `url`), so one signed binary
+  serves every household. Acceptance: the manifest validates against the spec schema; offsets match `flasher_args.json`; a test
+  build with no NVS values falls back to today's compiled values. No flashing in the row; the bench flash waits for Jesse.
+- [ ] **BOT-STACKCHAN-ENROLL-01: a single-use enrollment code instead of a token in the flash image** (M; 2026-10-20; T2:
+  credentials). Objective: `PairingStore` issues a single-use enrollment code valid 24 hours; `provision.py` writes that code into
+  NVS, never the long-lived token; the firmware sends the code on first connection, receives the long-lived token
+  (`token_urlsafe(32)` as today) and stores it in NVS, and the code is spent. The provision command creates the code itself, writes
+  the image to a 0600 file and takes no secret on its command line (architect build note). Acceptance: tests that a used or
+  expired code is refused, that the image bytes never contain a token, that a revoked code (Home's "Cancel install") is refused.
+- [ ] **BOT-HUB-BUILD-01: a self-contained Bot app build per hub platform** (M; 2026-10-20). Objective: the release carries a Bot app
+  build for macOS arm64, Linux x86_64 and Linux arm64 that runs with no system Python, takes its data directory, its two ports and
+  the hub address as arguments, exposes the `provision` command above, and on Quick Connect create presents the single-use pairing
+  secret Home wrote (0600) into its data directory, then deletes it. It reports `no_vendor_login`. Acceptance: each build starts on
+  its platform in a test that passes ports and a data directory; with no secret file it falls back to code approval.
+- [ ] **BOT-FACE-NIGHT-01: face color and night mode on the StackChan** (M; 2026-10-20; after commons SPEC-ROBOT-FACE-NIGHT-01 and
+  the stutter patch). Objective: one firmware patch (015 or later) adding `self.screen.set_face_background` (a palette entry, kept
+  in NVS; today patch 013 hard-codes background `0xC4F0DA` and ink `0x18241F`), `self.robot.set_idle_motion`, and a new LTR-553 I2C
+  driver behind `self.screen.get_ambient_light`; the Bot app maps `robot.face.color` and `robot.night.mode` from `settings_changed`
+  to those and to the existing `set_brightness`, `set_volume` and `set_led_colors`, and runs the night rule: night starts at
+  household quiet hours or when the light is below a threshold for 2 minutes (camera brightness where the sensor is missing), ends
+  above a higher threshold for 2 minutes; at night a black face with light ink, dimmed backlight, about 40% speaker volume, LEDs
+  off, idle motion off, no gestures, one slow head turn to face a speaker, then rest. Carry: the 40% night volume never lowers an
+  alarm or other fixed safety clip (home RULES.md rule 6); the camera fallback is never read at watch level `off`; both thresholds
+  are constants marked pending measurement on the unit. Acceptance: unit tests for the night rule (quiet hours, dark for 2
+  minutes, hysteresis, watch level off), the settings mapping, and the alarm keeping full volume. No flashing in the row.
