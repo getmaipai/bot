@@ -3030,3 +3030,18 @@ STACKCHAN-INSTALL-01 and ROBOT-FACE-NIGHT-01. Flashing a unit is Jesse's call.
   alarm or other fixed safety clip (home RULES.md rule 6); the camera fallback is never read at watch level `off`; both thresholds
   are constants marked pending measurement on the unit. Acceptance: unit tests for the night rule (quiet hours, dark for 2
   minutes, hysteresis, watch level off), the settings mapping, and the alarm keeping full volume. No flashing in the row.
+
+## Each robot's own memories (2026-10-20)
+
+Design: `home/docs/design/robot-own-name-and-memory-2026-10-20.md` (architect-approved in `home`, home main 7cadd27cc). Home's
+halves are ROBOT-NAME-01 and ROBOT-MEMORY-01; the spec field is commons SPEC-ROBOT-MEMORY-01.
+
+- [ ] **BOT-MEMORY-01: the Bot app keeps only its own robot's memories** (M; 2026-10-20, owner's ask; after home ROBOT-MEMORY-01
+  and RT-02). Objective: the Bot app's record store holds the records whose `device_id` is this robot (its rapport with each
+  person at person scope, its own facts at household scope) plus what it needs to recognize people, spec-shaped from first boot,
+  with standalone provenance while unlinked; when linked it syncs exactly those records with Home by `hlc` under the spec's merge
+  rule, and never receives or sends another robot's records. A hub-hosted Bot app keeps them in its own
+  `robots/<deviceId>/` directory. Acceptance (fail-first): two Bot apps linked to one hub each sync only their own `device_id`
+  records; a record bound to robot B offered to robot A's sync is refused; an unlinked robot's records carry standalone
+  provenance and merge on first link without duplicates; Pippa's rapport on Rover is never read on Oliver's turn on Rover.
+  Exit: `bash scripts/check.sh --pre` plus the tests beside the change.
