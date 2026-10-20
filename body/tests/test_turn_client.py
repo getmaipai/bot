@@ -155,8 +155,9 @@ def test_the_request_body_carries_the_robot_surface_and_the_text(ndjson_server):
     assert handler.request_body["surface"] == "robot"
     assert handler.request_body["text"] == "what time is it"
     assert handler.request_body["spoken"] is True
-    assert handler.request_body["speaker_evidence"] is None
-    assert handler.request_body["present"] is None
+    # Absent, never null: an older hub answers a null with 400 invalid_input.
+    assert "speaker_evidence" not in handler.request_body
+    assert "present" not in handler.request_body
 
 
 def test_ask_answer_rides_the_body_only_when_given(ndjson_server):

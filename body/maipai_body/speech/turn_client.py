@@ -104,13 +104,16 @@ class TurnClient:
         for a normal `{type:"error"}` event, which is still a CANCEL
         event, not an exception, since it's the hub's own considered
         answer, not a transport problem."""
-        body = {
+        body: dict[str, Any] = {
             "surface": "robot",
             "text": text,
             "spoken": True,
-            "speaker_evidence": speaker_evidence,
-            "present": present,
         }
+        # An absent field, never null: older hubs reject a null here with 400 invalid_input.
+        if speaker_evidence is not None:
+            body["speaker_evidence"] = speaker_evidence
+        if present is not None:
+            body["present"] = present
         if conversation_id:
             body["conversation_id"] = conversation_id
         if ask_answer is not None:
