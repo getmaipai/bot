@@ -315,3 +315,51 @@ def test_a_malformed_person_id_is_dropped_not_sent(monkeypatch):
     loop.run_until_complete(bridge._run("session", "device", FakeCapture()))
     loop.close()
     assert FakeTurn.streams == [("hello", {"speaker_evidence": None})]
+
+
+def test_the_voice_session_logs_each_stage_with_counts_and_never_the_words(monkeypatch, caplog):
+    import logging
+
+    import maipai_body.bodies.stackchan.turn as turn_module
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    FakeTurn.streams = []
+    FakeTts.sentences = []
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    bridge = StackChanTurnBridge(
+        server, Link(), Offline(), stt_factory=FakeStt, turn_factory=FakeTurn, tts_factory=FakeTts
+    )
+    with caplog.at_level(logging.INFO, logger="maipai_body.bodies.stackchan.turn"):
+        loop.run_until_complete(bridge.listen("session-0123456789", "device", "start"))
+        loop.run_until_complete(bridge.on_audio("session-0123456789", b"\x01\x02\x03"))
+        loop.run_until_complete(bridge._tasks["session-0123456789"])
+        loop.close()
+    text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "listen start" in text
+    assert "first audio frame (3 bytes)" in text
+    assert "turn started" in text
+    assert "speech-to-text ended (final, 5 characters)" in text
+    assert "chat ended" in text
+    assert "turn ended" in text and "1 audio frames, 3 bytes" in text
+    assert "hello" not in text.replace("hello there", "")  # the transcript is never logged
+
+
+def test_a_missing_hub_session_is_logged_as_a_warning_with_the_fix(monkeypatch, caplog):
+    import logging
+
+    import maipai_body.bodies.stackchan.turn as turn_module
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    bridge = StackChanTurnBridge(server, Link(cookie=None), Offline())
+    bridge._offline_line = lambda playback: None
+    with caplog.at_level(logging.WARNING, logger="maipai_body.bodies.stackchan.turn"):
+        loop.run_until_complete(bridge._run("session", "device", FakeCapture()))
+        loop.close()
+    assert any("no hub session (cookie missing" in record.getMessage() for record in caplog.records)

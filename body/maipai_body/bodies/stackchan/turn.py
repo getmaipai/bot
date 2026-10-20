@@ -287,8 +287,19 @@ class StackChanTurnBridge:
         self._playbacks: dict[str, StackChanAudioPlayback] = {}
         self._cancel_events: dict[str, threading.Event] = {}
         self._settled_sessions: set[str] = set()
+        # Voice diagnostics (counts only, never audio or words): frames and bytes per session.
+        self._audio_stats: dict[str, list[int]] = {}
 
     async def on_audio(self, session_id: str, data: bytes) -> None:
+        stats = self._audio_stats.setdefault(session_id, [0, 0])
+        stats[0] += 1
+        stats[1] += len(data)
+        if stats[0] == 1:
+            LOG.info(
+                "StackChan voice: first audio frame (%d bytes) for session %s",
+                len(data),
+                session_id[:8],
+            )
         capture = self._captures.get(session_id)
         now = self._clock()
         if self._states.get(session_id) == "speaking":
@@ -313,7 +324,9 @@ class StackChanTurnBridge:
     ) -> None:
         if aec is not None:
             self._aec[session_id] = bool(aec)
+        LOG.info("StackChan voice: listen %s (mode %s) for session %s", state, mode, session_id[:8])
         if state in {"start", "detect"}:
+            self._audio_stats[session_id] = [0, 0]
             self._cancel_turn(session_id, send_stop=True)
             capture = StackChanAudioCapture()
             self._captures[session_id] = capture
@@ -445,6 +458,8 @@ class StackChanTurnBridge:
         playback._cancel_event = cancel_event
         self._emit_expression("listening")
         self._settled_sessions.discard(session_id)
+        started_at = self._clock()
+        LOG.info("StackChan voice: turn started for session %s", session_id[:8])
         try:
             cookie = self.link.hub_client.session_cookie
             pairing = self.link.pairing_store.load()
@@ -452,6 +467,12 @@ class StackChanTurnBridge:
                 pairing.base_url if pairing else None
             )
             if not cookie or not base:
+                LOG.warning(
+                    "StackChan voice: no hub session (cookie %s, address %s); answering with the "
+                    "offline line. Pair the Bot with the hub or check that the hub is reachable.",
+                    "present" if cookie else "missing",
+                    "present" if base else "missing",
+                )
                 self._emit_expression("thinking")
                 await asyncio.to_thread(self._offline_line, playback)
                 return
@@ -461,6 +482,11 @@ class StackChanTurnBridge:
                 result = await asyncio.to_thread(stt.run, capture)
             finally:
                 self._set_live(False)
+            LOG.info(
+                "StackChan voice: speech-to-text ended (%s, %d characters)",
+                result.kind,
+                len(result.text or ""),
+            )
             self._emit_expression("thinking")
             if result.kind != "final" or not result.text:
                 await asyncio.to_thread(self._speak_plain_error, playback, base, cookie)
@@ -472,6 +498,11 @@ class StackChanTurnBridge:
                 )
             )
             reply = next((e.reply_text for e in reversed(events) if e.reply_text), None)
+            LOG.info(
+                "StackChan voice: chat ended (%d events, reply %d characters)",
+                len(events),
+                len(reply or ""),
+            )
             if reply:
                 tts = self.tts_factory(base, cookie, playback)
                 moods = [
@@ -513,6 +544,13 @@ class StackChanTurnBridge:
             self._tasks.pop(session_id, None)
             self._playbacks.pop(session_id, None)
             self._cancel_events.pop(session_id, None)
+            frames, size = self._audio_stats.pop(session_id, [0, 0])
+            LOG.info(
+                "StackChan voice: turn ended after %.1f s (%d audio frames, %d bytes)",
+                self._clock() - started_at,
+                frames,
+                size,
+            )
 
     def _offline_line(self, playback) -> None:
         try:
