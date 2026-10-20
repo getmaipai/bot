@@ -1,13 +1,105 @@
 # StackChan unit-arrival measurements
 
-Hardware has not arrived. This runbook is ready for a paired unit; current
-tests exercise the JSON path against simulator fixture data only. No result
-from `--sim` is a unit measurement.
+The first unit arrived on 2026-10-19. Our firmware is flashed and passed the
+basic bench below. The full measurement record (servo limits, camera timing,
+AEC, protocol fixtures, egress proof, idle-camera watch) is still to do; the
+procedures for it follow the bench record.
 
-Software checks passing on 2026-10-15: the StackChan pytest selection and
-`scripts/check.sh --pre`, including Ruff, runtime typecheck, standards core,
-secret scan, PII wordlist, prose lint and licence check. These checks do not
-measure physical behavior.
+## First unit bench, 2026-10-19
+
+Unit: M5Stack StackChan (CoreS3 base), USB-C to a macOS laptop, ESP-IDF 5.5.4.
+Real addresses, the MAC and the Wi-Fi name stay out of this file; examples use
+`192.0.2.10`.
+
+### Steps that worked
+
+1. Backed up the full 16 MiB flash with `esptool.py -b 2000000 read_flash`.
+   The default baud takes about 8 times longer. The flash tool now passes
+   `-b 2000000`.
+2. Paired before flashing: generated a Client-Id (any UUID), then ran
+   `PairingStore.request` and `approve_to_file` for the MAC and that Client-Id.
+   There is no user-facing command for this yet (see Findings).
+3. Ran `body/scripts/stackchan_flash.py`. It built the pinned firmware,
+   generated the NVS image and wrote both with one `esptool write_flash`; every
+   hash verified.
+4. Wi-Fi without the M5 app: on the first-boot screen, tap **Skip**, open
+   **AI Agent**. With no saved network the firmware starts its own hotspot
+   (`Xiaozhi-` plus four characters) and shows `http://192.168.4.1`. Join it
+   from a phone, pick the home network, type the password. The unit saves it,
+   leaves the hotspot and joins the network. Nothing goes to M5.
+5. Ran a bench server (xiaozhi on 8765, avatar on 8766, vision on 8767) and
+   called tools over the live session.
+
+### Results
+
+| Check | Result |
+|---|---|
+| Boot | App `maipai-stackchan` 1.5.1-maipai.1 from `ota_0`; 8 MB PSRAM |
+| Wi-Fi | Joined through the firmware hotspot page; DHCP address in about 4 s |
+| Session | Authenticated; hello features `{"mcp": true}` |
+| Battery | `self.battery.get_status` returned `{"percent": 100, "charging": false}` in 13 ms |
+| LED | `set_led_color` green 40 then off; owner saw the ring light |
+| Head yaw | 3 degree nudges right, left and back at speed 100; owner saw the moves |
+| Head pitch | 3 degree nudges up, down and back; owner saw the moves |
+| Head readback | `get_head_angles` returned the start angle (yaw -8, pitch 26) after each move; pitch read 25 once |
+| Tool latency | 13 to 834 ms per call; `get_head_angles` took up to 2040 ms |
+
+MCP tools registered at boot: `self.battery.get_status`,
+`self.robot.get_head_angles`, `self.robot.set_head_angles`,
+`self.robot.set_led_color`, `self.robot.set_led_colors`,
+`self.robot.create_reminder`, `self.robot.get_reminders`,
+`self.robot.stop_reminder`. No camera tool appeared in the boot log.
+
+Chips found at boot: GC0308 camera, AXP2101 power, AW9523 I/O expander,
+FT6336 touch, ILI9342C display, Si12T head touch, PCF8563 RTC (timezone GMT0),
+BMI270 IMU. Servo zero positions read from settings: id 1 = 460, id 2 = 620.
+Power save: sleep after 300 s, shutdown after 600 s.
+
+### Findings
+
+Fixed in this change (each has a regression test):
+
+- **Client-Id lost on flash.** The firmware sends NVS `board:uuid` as its
+  Client-Id. Our NVS image replaces the whole partition and did not write that
+  key, so the first boot made a random UUID and the server refused the unit as
+  unpaired. `provision.generate_image` now writes `board:uuid` from
+  `--client-id`.
+- **Port clash.** The vision listener and the avatar listener both defaulted
+  to 8766. Vision now defaults to 8767.
+- **`idf.py flash` failed after the build.** `recipe.sh` deletes its private
+  `sdkconfig.defaults.local`, so the reconfigure step in `idf.py flash` stops.
+  The flash tool now writes the images from `build/flash_args` with esptool.
+- **Token deleted before the flash.** `provision.py` removed the approval token
+  file before the flash step ran, so a failed flash could not be retried. The
+  flash tool now hands provision a private copy and deletes the original only
+  after a successful write.
+- **ESP-IDF needs Python 3.12** on `PATH`, and a `uv` virtualenv leaking into
+  the build breaks it; the flash tool sets both.
+- **Token in error output.** A failed recipe printed its argument list with the
+  token. Error output is now redacted; the leaked token was rotated.
+
+Open:
+
+- **No pairing command.** The setup guide said to wait for the robot to appear
+  in the pending list, but the stock firmware never contacts the Bot. Pairing
+  needs the MAC and a chosen Client-Id before flashing; today that is a
+  developer step.
+- **Wi-Fi password in the serial log.** The M5 BLE setup path logs
+  `get wifi config: <ssid> / <password>` in plain text. Anyone with the USB
+  cable sees it. Our bench capture dropped those lines. A firmware patch should
+  remove the password from the log.
+- **Rewriting NVS wipes Wi-Fi.** Any later NVS-only write (for example a new
+  token) erases the saved network, so the hotspot step runs again.
+- **Token visible in `ps`.** The recipe receives `--pairing-token` on its
+  command line.
+- **Head readback lags.** `get_head_angles` did not show a 3 degree move one
+  second later. It may report the synced target rather than the servo
+  position; measure before relying on it for closed-loop moves.
+- **M5 first-boot screen offers the cloud app.** **Start** leads to a QR code
+  for the M5 account app. Our setup uses **Skip** and the hotspot instead.
+- **Failed hello timeouts.** While unpaired, the unit showed "Waiting for
+  response timeout" and retried every 10 to 15 s. The server closes the socket
+  without logging why.
 
 ## Before connecting the unit
 
@@ -92,8 +184,7 @@ that the device only contacts the host.
    trigger and indicator state. This remains an unresolved firmware privacy gap
    until disabled or covered by a minimal tracked firmware patch.
 
-The checklist is ready for the unit; no camera watch or hardware verification
-has been performed.
+The checklist is ready for the unit; no camera watch has been performed yet.
 
 ## Duplex and speech latency rows
 
@@ -107,4 +198,4 @@ Record these rows for each paired unit and firmware build. Keep `source` as `sim
 | Mute guard | With AEC false, send uplink during speech and at 100, 180 and 250 ms after stop | frames accepted/dropped at each offset |
 | Turn handoff | Exercise auto, manual and realtime listening, then barge in and complete two back-to-back turns | mode, capture count, completed turn count, reply count (one per turn) |
 
-Hardware has not arrived; these rows define the measurement procedure and contain no unit results.
+These rows define the measurement procedure; no duplex rows have been recorded on the unit yet.

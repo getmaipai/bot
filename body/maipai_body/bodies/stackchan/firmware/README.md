@@ -43,7 +43,7 @@ Treat the token and build directory as private. The recipe does not print the to
 
 ## Household setup tool
 
-From the repository root, run `body/scripts/stackchan_flash.py` with `--port`, `--backup`, `--token-file`, `--device-id`, `--client-id`, `--xiaozhi-url`, and `--avatar-url`. The tool checks for the pinned ESP-IDF 5.5.4, saves the full 16 MiB flash before writing, builds the pinned firmware, creates the NVS image from the approval token file, then flashes firmware and NVS. It stops if the backup is missing or incomplete. Use `--dry-run` to print the steps without using a serial port; dry run needs an existing full-flash backup file. Example addresses should use the Bot host, such as `ws://192.0.2.10:8765` and `ws://192.0.2.10:8766`.
+From the repository root, run `body/scripts/stackchan_flash.py` with `--port`, `--backup`, `--token-file`, `--device-id`, `--client-id`, `--xiaozhi-url`, and `--avatar-url`. The tool checks for the pinned ESP-IDF 5.5.4, saves the full 16 MiB flash before writing, builds the pinned firmware, creates the NVS image from the approval token file, then flashes firmware and NVS. It stops if the backup is missing or incomplete. Use `--dry-run` to print the steps without using a serial port; dry run needs an existing full-flash backup file. Example addresses should use the Bot host, such as `ws://192.0.2.10:8765` and `ws://192.0.2.10:8766`. The tool writes the built images and the NVS image in one esptool pass from `build/flash_args`, and the NVS image carries `board:uuid` so the unit keeps its paired Client-Id. After the flash, tap **Skip** on the robot and open **AI Agent** to join Wi-Fi through its local hotspot.
 
 
 ## Source verification

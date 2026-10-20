@@ -10,7 +10,7 @@ The protocol implementation is in `body/maipai_body/bodies/stackchan/xiaozhi/`. 
 
 ## Camera
 
-The xiaozhi service also listens for on-demand photos on the vision listener, port `8766` by default. MCP `initialize` advertises `capabilities.vision` with a per-device URL and the paired bearer token. The device posts a multipart JPEG in an `image`, `file`, or `photo` field to that URL, using `Authorization: Bearer <token>`. The receiver caps the full upload at 2 MiB, keeps the latest photo only in process memory, and never writes or forwards the bytes. Set `MAIPAI_VISION_HOST`, `MAIPAI_VISION_PORT`, and `MAIPAI_VISION_URL` for a LAN reachable listener and advertised base URL; use a trusted LAN because the current transport is cleartext. If `MAIPAI_VISION_URL` is a base URL, append the device route `/vision/<Device-Id>`.
+The xiaozhi service also listens for on-demand photos on the vision listener, port `8767` by default (the avatar listener owns `8766`). MCP `initialize` advertises `capabilities.vision` with a per-device URL and the paired bearer token. The device posts a multipart JPEG in an `image`, `file`, or `photo` field to that URL, using `Authorization: Bearer <token>`. The receiver caps the full upload at 2 MiB, keeps the latest photo only in process memory, and never writes or forwards the bytes. Set `MAIPAI_VISION_HOST`, `MAIPAI_VISION_PORT`, and `MAIPAI_VISION_URL` for a LAN reachable listener and advertised base URL; use a trusted LAN because the current transport is cleartext. If `MAIPAI_VISION_URL` is a base URL, append the device route `/vision/<Device-Id>`.
 
 All camera captures and avatar stream starts go through the StackChan translator's Robot `camera` part. The xiaozhi `self.camera.take_photo` tool is routed through `Robot.camera.frame`, which lights the full RGB ring red before the request and clears it in `finally`, including capture errors. The fake device refuses capture if red is not lit, so the Bot API cannot capture around this indicator. Stream start is rejected while software estop is engaged. Stream starts also use the red ring and clear it on stop, command error, disconnect, or service shutdown.
 
@@ -54,7 +54,8 @@ The avatar listener also carries a software estop latch for ControlMotion `0x04`
 ## Known gaps
 
 The shared expression engine has a registered StackChan renderer and closed face cue tables for listening, thinking, speaking and reply mood. The app now wires those turn events and its idle/presence worker to the renderer after device authentication. It maps listen, glance, tilt, nod, perk, attend, settle and speak; breathe reports an explicit unsupported reason and idle therefore uses settle. Anonymous tracking is bounded to 400 ms corrections and runs only while no turn is active; it stops on service shutdown. Head moves use Robot commands, so profile clamping, lease checks and the estop latch remain in force. Face frames use the authenticated avatar channel. Patch 003 keeps the firmware xiaozhi WebSocket open between listening sessions and retries failed connections; patch 008 adds an optional CA bundle; patch 011 adds shared pairing identity to the avatar channel. The recipe options and CA input are documented in the [firmware guide](../../body/maipai_body/bodies/stackchan/firmware/README.md). Runtime checks use fake peers only; hardware verification remains pending.
-- StackChan setup has fake-peer and dry-run coverage only. Hardware has not arrived, so the backup read, flash commands, Wi-Fi onboarding and reboot have not been verified on a unit.
+- The first unit was flashed and bench-tested on 2026-10-19: backup read, flash, reboot, hotspot Wi-Fi onboarding, pairing, battery, LED and 3 degree head nudges all worked. Results and open findings are in [the unit runbook](stackchan-unit-measurements.md). Still open: no user-facing pairing command, the M5 BLE path logs the Wi-Fi password over serial, an NVS rewrite erases saved Wi-Fi, and `get_head_angles` did not reflect a 3 degree move one second later.
+- The NVS image writes `board:uuid` from `--client-id`. The firmware sends that key as its Client-Id; without it the first boot invents a new one and pairing fails.
 
 ### Idle server pushes
 
@@ -66,9 +67,9 @@ callable; the default denies them and the caller receives `NotSupported` with a
 plain fix line. Reminder create and stop operations are retained in a host
 queue when a send fails and can be retried with `flush_reminders()` after
 reconnect. The device profile tries the xiaozhi alert operation and falls back
-to the face/LED/spoken presentation supported by its client. The pinned base
-tool inventory and reminder argument schema still need confirmation on a real
-unit. Fake-peer tests cover the host contract only; hardware has not arrived.
+to the face/LED/spoken presentation supported by its client. The unit's boot log
+registers the three reminder tools; their argument schema still needs a live
+call on the unit. Fake-peer tests cover the host contract only.
 
 StackChan notify is disabled by default. Enabling `STACKCHAN_NOTIFY_ENABLED`
 allows an alert to use the xiaozhi `notify {audio_url}` frame only when the
@@ -86,9 +87,9 @@ fails unless the pinned source contains the notify handler and payload shape;
 then review the patch series with `firmware/bump.sh` before changing pins.
 This source inspection and fake-peer coverage are not hardware verification.
 
-Battery is now read through the firmware's read-only `self.battery.get_status` MCP tool, which returns `{ "percent": integer 0..100, "charging": boolean }`. Patch 009 makes failed AXP2101 I2C reads return a safe zero rather than aborting the firmware; its hunk was regenerated from the pinned translator source and the full patch series passes recipe check-only against that source; a host timeout or malformed tool result maps to `BodyLost`. Touch and IMU remain `NotSupported` because the pinned translator exposes no read-only MCP tools for them. Source-derived chip and register notes are in [the sensor map](stackchan-sensor-map.md); unit measurements are tracked in [the unit-arrival runbook](stackchan-unit-measurements.md). The unit-arrival fixture recorder and host-only egress proof are implemented; real-unit protocol capture and packet-capture results remain pending because hardware has not arrived.
+Battery is now read through the firmware's read-only `self.battery.get_status` MCP tool, which returns `{ "percent": integer 0..100, "charging": boolean }`. Patch 009 makes failed AXP2101 I2C reads return a safe zero rather than aborting the firmware; its hunk was regenerated from the pinned translator source and the full patch series passes recipe check-only against that source; a host timeout or malformed tool result maps to `BodyLost`. Touch and IMU remain `NotSupported` because the pinned translator exposes no read-only MCP tools for them. Source-derived chip and register notes are in [the sensor map](stackchan-sensor-map.md); unit measurements are tracked in [the unit-arrival runbook](stackchan-unit-measurements.md). The unit-arrival fixture recorder and host-only egress proof are implemented; real-unit protocol capture and packet-capture results are still pending. On the unit, `self.battery.get_status` returned `{"percent": 100, "charging": false}` in 13 ms (2026-10-19).
 
-Patch 012 adds `self.robot.set_led_colors`, which accepts one RGB triplet per pixel and writes all 12 pixels through the pinned HAL's existing per-index `setRgbColor` primitive before refreshing the strip once. The Robot `leds.many` adapter keeps the complete-ring update requirement and preserves the existing validation error shapes. Camera capture still uses the whole-ring `self.robot.set_led_color` operation for red; while capture is active, adapter and fake reject the effect of per-pixel writes by restoring red across the ring. The pinned base has per-index HAL writes but no per-pixel MCP tool. Source verification against the pinned M5 firmware confirms the patch applies. Fake-peer tests cover distinct colors and capture indicator protection. Hardware has not arrived, so this has no hardware verification.
+Patch 012 adds `self.robot.set_led_colors`, which accepts one RGB triplet per pixel and writes all 12 pixels through the pinned HAL's existing per-index `setRgbColor` primitive before refreshing the strip once. The Robot `leds.many` adapter keeps the complete-ring update requirement and preserves the existing validation error shapes. Camera capture still uses the whole-ring `self.robot.set_led_color` operation for red; while capture is active, adapter and fake reject the effect of per-pixel writes by restoring red across the ring. The pinned base has per-index HAL writes but no per-pixel MCP tool. Source verification against the pinned M5 firmware confirms the patch applies. Fake-peer tests cover distinct colors and capture indicator protection. The unit registers `set_led_colors` at boot, but only the whole-ring `set_led_color` has been exercised on it.
 
 ## Tests
 
@@ -96,13 +97,12 @@ The STACKCHAN-30 failure, soak and privacy suite is software-only and uses the
 fake xiaozhi and avatar peers. It checks bounded camera buffering with 10,000
 frames, pairing refusal and revocation, token rotation, turn dependency errors,
 camera indicator bracketing, and a compressed one-day event schedule. These are
-host-side checks; no hardware has arrived and no hardware verification is
-claimed. Unit measurements remain pending in
+host-side checks and do not claim hardware verification. Unit measurements remain pending in
 [`stackchan-unit-measurements.md`](stackchan-unit-measurements.md).
 
 `body/tests/test_stackchan_xiaozhi.py` exercises a fake device over a local WebSocket. The test covers pairing refusal, approval, hello, audio callback delivery and protocol tool handling without hardware. `body/tests/test_stackchan_avatar.py` uses the independent fake peer in `body/tests/stackchan_sim/`; it covers expression delivery, unpaired refusal, estop motion filtering, malformed-frame isolation, reconnect replacement and codec bounds. These are software fake-peer checks only; no hardware verification is claimed and no test writes to a physical serial port.
 
-`body/tests/test_stackchan_avatar.py` uses the independent fake peer in `body/tests/stackchan_sim/`. It covers expression-frame delivery, unpaired refusal, estop motion filtering, malformed-frame isolation, reconnect replacement and codec bounds. `body/tests/test_stackchan_sensors.py` checks battery tool results and the explicit touch and IMU gaps. These are fake-device protocol checks only; hardware has not arrived, so no unit verification is claimed.
+`body/tests/test_stackchan_avatar.py` uses the independent fake peer in `body/tests/stackchan_sim/`. It covers expression-frame delivery, unpaired refusal, estop motion filtering, malformed-frame isolation, reconnect replacement and codec bounds. `body/tests/test_stackchan_sensors.py` checks battery tool results and the explicit touch and IMU gaps. These are fake-device protocol checks only and do not claim unit verification.
 
 ## Host vision bridge
 
@@ -127,7 +127,7 @@ The xiaozhi `listen` callback starts one `StackChanTurnBridge` capture per authe
 
 StackChan playback resamples the existing TTS PCM to 24 kHz, encodes 60 ms mono Opus frames, and sends them only through the authenticated `XiaozhiServer.send_audio` session. Abort clears pending encoded frames, cancels the active task and sends `tts stop`. The bridge reads the active hub URL and current session cookie from the shared `LinkLifecycle` at each turn. Hub authentication or connection loss uses the verified offline `line.unreachable` clips. A recognition or turn error attempts the plain spoken line “I couldn't understand that. Please try again.” through the hub TTS path, with the offline line as fallback.
 
-The StackChan voice-turn tests use local fake peers and documentation-only addresses. Hardware has not arrived, so these checks do not claim hardware verification.
+The StackChan voice-turn tests use local fake peers and documentation-only addresses. No voice turn has run on the unit yet, so these checks do not claim hardware verification.
 
 ## Duplex and barge-in
 
