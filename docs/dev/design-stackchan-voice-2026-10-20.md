@@ -33,6 +33,21 @@ All candidates were played on the unit's speaker through the bench service, neve
 3. Wording carries most of the bounce. The robot persona's prompt asks for short, exclamatory, question-ending lines.
 4. Effects on top of a voice do not make it a different voice; Jesse heard every effect round as "the same voice".
 
+## A second voice: the clone ran high
+
+A second household voice was cloned the same way from a 12 s clip, played from a phone into the MacBook mic.
+
+| Round | Candidates | Result |
+|---|---|---|
+| 1 | 12 s reference, temperature 0.8 and 1.05 | "Higher pitch": measured 385 Hz against the clip's 348 Hz, about 2 semitones up |
+| 2 | 25 s reference; round 1's 1.05 take shifted down 2 semitones (formants kept) | Shifted take close, "a little too low" |
+| 3 | 1.05 take shifted down 1 semitone; temperature 1.25 takes shifted down 1 | The 1.05 take at -1 semitone picked |
+
+1. A clone can land 1 to 2 semitones off its reference. A voice record needs an optional pitch offset in semitones, applied
+   after generation with formants kept, set by ear.
+2. Raising the temperature to 1.25 raised the pitch too; 1.05 is the ceiling for liveliness without drift.
+3. Autocorrelation pitch reading is unreliable on lively takes (octave jumps); judge by ear on the robot.
+
 ## Open
 
 - VOICES-02 (per-voice conditioning in the Stack) and VOICES-04 (create a voice from a clip) are Home's; until they land the
