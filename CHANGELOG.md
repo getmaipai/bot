@@ -15,6 +15,7 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- StackChan firmware releases can be staged as `stackchan-firmware-<version>.tar.gz`, containing the signed flash manifest and its parts and listed in the release `SHA256SUMS` (BOT-RELEASE-FLASH-01, asset half).
 - StackChan releases now ship bootloader and partition table binaries with a signed flash manifest generated from ESP-IDF flash offsets (BOT-RELEASE-FLASH-01, release half).
 
 - StackChan face color and night mode in the Bot app (BOT-FACE-NIGHT-01): `robot.face.color` and `robot.night.mode` arrive on the existing command channel; the night rule (quiet hours, light hysteresis, camera fallback unless watch is off) dims the screen, drops the voice to 40%, turns LEDs and idle motion off, and never lowers an alarm. Thresholds pending measurement on the unit; nothing flashed.
