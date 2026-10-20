@@ -21,7 +21,7 @@ RING_RGB: dict[Palette, tuple[float, float, float]] = {
     Palette.BLUE: (0.0, 0.2, 1.0),
     Palette.AMBER: (1.0, 0.45, 0.0),
     Palette.CYAN: (0.0, 0.9, 1.0),
-    Palette.MAGENTA: (0.75, 0.0, 1.0),
+    Palette.MAGENTA: (0.45, 0.0, 1.0),  # violet, clearly apart from the camera's pink
     Palette.PINK: (1.0, 0.25, 0.55),
     Palette.OFF: (0.0, 0.0, 0.0),
 }

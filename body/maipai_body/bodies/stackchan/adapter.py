@@ -429,6 +429,8 @@ class _ExpressionDevice:
     def __init__(self, robot: Robot, client: StackChanDeviceClient) -> None:
         self.robot = robot
         self.client = client
+        self.last_expression = "neutral"
+        self.last_expression_ok = True
 
     def goto(self, *, pose: HeadPose, duration_s: float = 0.2) -> object:
         return self.robot.head.set(pose=pose, duration_s=duration_s)
@@ -437,7 +439,11 @@ class _ExpressionDevice:
         return self.robot.head.hold()
 
     def send_avatar_frame(self, frame: bytes) -> None:
+        # The face watchdog needs to know what the face last showed and whether it got there.
+        self.last_expression_ok = False
         self.client.send_avatar_frame(frame)
+        self.last_expression = getattr(frame, "expression", self.last_expression)
+        self.last_expression_ok = True
 
 
 class _UnsupportedSensorAdapter:

@@ -83,6 +83,7 @@ class StackChanLightService:
     ) -> None:
         self._indicator = indicator
         self._suspended = False
+        self._last_key: looks.LookKey | None = None
         self._settings = settings
         self._presence = presence
         self._minute = minute
@@ -203,6 +204,10 @@ class StackChanLightService:
             dancing=facts.dancing,
         )
         look = looks.resolve(request)
+        key = looks.resolve_key(request)
+        if key != self._last_key:
+            self._last_key = key
+            logger.info("StackChan ring look: %s", key.value if key is not None else "dark")
         try:
             if look is None:
                 self._indicator.off()

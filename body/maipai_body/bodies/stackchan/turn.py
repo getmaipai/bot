@@ -33,6 +33,12 @@ LEAD_FRAMES = 38
 # uplink frames this soon after a listen start are not sent on, so the tone never reaches speech
 # recognition (the hub answers one short voiced burst with no_speech). UNMEASURED default.
 POPUP_HOLD_S = 0.3
+# A listen the device re-opens by itself right after a reply is a follow-up: the person has this
+# long to speak before the turn ends quietly (robot.follow_up.seconds, default 8).
+FOLLOW_UP_S = 8.0
+FOLLOW_UP_AFTER_S = 2.0
+# Voiced audio the hub must have called speech before a failure is worth an apology.
+MIN_SPEECH_S = 0.5
 FRAME_S = 0.06
 # Decode and speaker delay after the last frame's play time, before the stop.
 STOP_TAIL_S = 0.12
@@ -312,6 +318,11 @@ class StackChanTurnBridge:
         # Voice diagnostics (counts only, never audio or words): frames and bytes per session.
         self._audio_stats: dict[str, list[int]] = {}
         self._popup_dropped = 0
+        self._current_session = ""
+        self._last_turn_end: dict[str, float] = {}
+        self._followup: dict[str, bool] = {}
+        self.follow_up_s = FOLLOW_UP_S
+        self._error_line_spoken = False  # the apology was the last thing said: never twice in a row
 
     async def on_audio(self, session_id: str, data: bytes) -> None:
         stats = self._audio_stats.setdefault(session_id, [0, 0])
@@ -356,6 +367,11 @@ class StackChanTurnBridge:
             self._record_uplink(0, 0.0, detect=True)
         if state in {"start", "detect"}:
             self._audio_stats[session_id] = [0, 0]
+            self._followup[session_id] = (
+                state == "start"
+                and self._clock() - self._last_turn_end.get(session_id, float("-inf"))
+                < FOLLOW_UP_AFTER_S
+            )
             self._cancel_turn(session_id, send_stop=True)
             capture = StackChanAudioCapture()
             self._captures[session_id] = capture
@@ -423,13 +439,17 @@ class StackChanTurnBridge:
         the person has had less than the wake patience to speak and the device has not stopped,
         open a fresh stream on the same capture instead of ending the turn with an apology.
         """
-        deadline = started_at + WAKE_PATIENCE_S
+        followup = self._followup.get(self._current_session, False)
+        window = self.follow_up_s if followup else WAKE_PATIENCE_S
+        deadline = started_at + window
         first = True
         while True:
             stt = self.stt_factory(base, cookie)
             self._set_live(True)
             try:
-                if first:
+                if first and followup:
+                    result = await asyncio.to_thread(stt.run, capture, patience_s=window)
+                elif first:
                     result = await asyncio.to_thread(stt.run, capture)
                 else:
                     remaining = max(0.5, deadline - self._clock())
@@ -562,17 +582,24 @@ class StackChanTurnBridge:
                 self._emit_expression("thinking")
                 await asyncio.to_thread(self._offline_line, playback)
                 return
+            self._current_session = session_id
             result = await self._recognise(base, cookie, capture, started_at)
             LOG.info(
                 "StackChan voice: speech-to-text ended (%s, %d characters)",
                 result.kind,
                 len(result.text or ""),
             )
+            outcome = self._classify(result)
+            if outcome == "silence":
+                # Nobody spoke (or it was not speech): end quietly and let the device go idle.
+                await self._end_quietly(session_id, device_id)
+                return
             self._emit_expression("thinking")
-            if result.kind != "final" or not result.text:
+            if outcome == "failed":
                 await asyncio.to_thread(self._speak_plain_error, playback, base, cookie)
                 return
             turn = self.turn_factory(base, cookie)
+            chat_started = self._clock()
             events = await asyncio.to_thread(
                 lambda: list(
                     turn.stream(result.text, speaker_evidence=self._speaker_evidence(result))
@@ -580,7 +607,8 @@ class StackChanTurnBridge:
             )
             reply = next((e.reply_text for e in reversed(events) if e.reply_text), None)
             LOG.info(
-                "StackChan voice: chat ended (%d events, reply %d characters)",
+                "StackChan voice: chat ended in %.1f s (%d events, reply %d characters)",
+                self._clock() - chat_started,
                 len(events),
                 len(reply or ""),
             )
@@ -622,6 +650,7 @@ class StackChanTurnBridge:
                     self._states[session_id] = "listening"
                     self._speech_ended[session_id] = self._clock()
                 await asyncio.to_thread(playback.end)
+                self._error_line_spoken = False
                 LOG.info("StackChan voice: reply finished playing")
             else:
                 await asyncio.to_thread(self._speak_plain_error, playback, base, cookie)
@@ -635,6 +664,15 @@ class StackChanTurnBridge:
             else:
                 await asyncio.to_thread(self._speak_plain_error, playback, base, cookie)
         finally:
+            if self._states.get(session_id) == "speaking":
+                # A reply that ended abnormally must not leave the mouth open.
+                try:
+                    await self.server.stop_audio(device_id)
+                except Exception:
+                    LOG.debug(
+                        "StackChan voice: tts stop after an abnormal end failed", exc_info=True
+                    )
+            self._last_turn_end[session_id] = self._clock()
             if session_id not in self._settled_sessions:
                 self._emit_expression("settle")
             self._states[session_id] = "idle"
@@ -665,7 +703,30 @@ class StackChanTurnBridge:
         except Exception:
             LOG.warning("StackChan offline line is unavailable; install the verified clip bundle")
 
+    def _classify(self, result) -> str:
+        """``silence`` (end quietly), ``failed`` (apologise once) or ``speech`` (go on)."""
+        text = (result.text or "").strip()
+        if result.kind in {"no_speech", "timeout"}:
+            return "silence"
+        if result.kind == "final":
+            return "speech" if text else "silence"
+        # kind == "error": only an apology if the hub really heard someone speak.
+        return "failed" if (result.speech_s or 0.0) >= MIN_SPEECH_S else "silence"
+
+    async def _end_quietly(self, session_id: str, device_id: str) -> None:
+        LOG.info("StackChan voice: no speech to answer; ending quietly and going idle")
+        send_idle = getattr(self.server, "send_idle", None)
+        if callable(send_idle):
+            try:
+                await send_idle(device_id)
+            except Exception:
+                LOG.debug("StackChan voice: idle request failed", exc_info=True)
+
     def _speak_plain_error(self, playback, base: str, cookie: str) -> None:
+        if self._error_line_spoken:
+            LOG.info("StackChan voice: the apology was just spoken; staying quiet this time")
+            return
+        self._error_line_spoken = True
         try:
             self.tts_factory(base, cookie, playback).speak(
                 "I couldn't understand that. Please try again."

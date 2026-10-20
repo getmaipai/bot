@@ -145,6 +145,12 @@ def _no_hub_discovery(timeout_s: float = 5.0):
     return None
 
 
+# The face watchdog (see StackChanBehavior.face_watchdog): quiet seconds before a stuck face is
+# repaired, and how often the idle face is resent while all is well.
+FACE_QUIET_S = 5.0
+FACE_REFRESH_S = 30.0
+
+
 class StackChanBehavior:
     """Shared expression and bounded anonymous tracking for an attached StackChan."""
 
@@ -179,6 +185,8 @@ class StackChanBehavior:
         self._rest_renderer = RestRenderer()
         self._rest_profile = _profile
         self._last_person_seen = float("-inf")
+        self._face_quiet_since: float | None = None
+        self._face_refreshed_at = float("-inf")
         self._night_turned = False
 
     @property
@@ -286,6 +294,40 @@ class StackChanBehavior:
                 self.rest_step(now)
             except Exception:
                 logger.warning("StackChan rest routine failed", exc_info=True)
+            try:
+                self.face_watchdog(now)
+            except Exception:
+                logger.warning("StackChan face watchdog failed", exc_info=True)
+
+    def face_watchdog(self, now: float) -> bool:
+        """Never leave the face stuck (eyes shut, mouth open) after a lost frame or an odd exit.
+
+        With no turn active for ``FACE_QUIET_S`` and the rest policy awake, resend the idle face
+        once if the last frame was not idle (or never arrived), then every ``FACE_REFRESH_S``.
+        """
+        if self._active.is_set():
+            self._face_quiet_since = None
+            return False
+        if self._face_quiet_since is None:
+            self._face_quiet_since = now
+            return False
+        if self._rest.stage != "awake" or self.night_active():
+            return False
+        device = self.robot._driver("head").expression_device
+        if device is None:
+            return False
+        stale = (
+            device.last_expression != "neutral"
+            or not device.last_expression_ok
+            or now - self._face_refreshed_at >= FACE_REFRESH_S
+        )
+        if not stale or now - self._face_quiet_since < FACE_QUIET_S:
+            return False
+        from maipai_body.bodies.stackchan.avatar.server import control_avatar
+
+        device.send_avatar_frame(control_avatar("neutral"))
+        self._face_refreshed_at = now
+        return True
 
     def rest_step(self, now: float) -> str:
         """One pass of the rest policy: drop the head and sleepy face after a long quiet spell."""

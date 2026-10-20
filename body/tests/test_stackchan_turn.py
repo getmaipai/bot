@@ -25,12 +25,16 @@ class FakeServer:
         self._loop = None
         self.sent = []
         self.stops = []
+        self.idles = []
 
     async def send_audio(self, device_id, frames, *, sentence_start=False):
         self.sent.append((device_id, frames, sentence_start))
 
     async def stop_audio(self, device_id):
         self.stops.append(device_id)
+
+    async def send_idle(self, device_id):
+        self.idles.append(device_id)
 
 
 class Link:
@@ -219,7 +223,7 @@ def test_abort_emits_settle_state():
     assert states == ["settle"]
 
 
-def test_stt_failure_speaks_plain_words_and_keeps_session_usable(monkeypatch):
+def test_a_hub_failure_after_real_speech_apologises_once_and_never_twice_in_a_row(monkeypatch):
     import maipai_body.bodies.stackchan.turn as turn_module
 
     loop = asyncio.new_event_loop()
@@ -230,7 +234,7 @@ def test_stt_failure_speaks_plain_words_and_keeps_session_usable(monkeypatch):
 
     class FailedStt(FakeStt):
         def run(self, capture):
-            return SttStreamResult(kind="error", error="recognition failed")
+            return SttStreamResult(kind="error", error="recognition failed", speech_s=1.2)
 
     FakeTts.sentences = []
     bridge = StackChanTurnBridge(
@@ -240,7 +244,34 @@ def test_stt_failure_speaks_plain_words_and_keeps_session_usable(monkeypatch):
     assert FakeTts.sentences == ["I couldn't understand that. Please try again."]
     loop.run_until_complete(bridge._run("session2", "02:00:00:00:00:15", FakeCapture()))
     loop.close()
-    assert len(FakeTts.sentences) == 2
+    assert len(FakeTts.sentences) == 1  # the apology is never spoken twice in a row
+
+
+def test_silence_ends_the_turn_quietly_and_sends_the_device_to_idle(monkeypatch):
+    import maipai_body.bodies.stackchan.turn as turn_module
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    for kind, text in (("timeout", None), ("final", "   "), ("error", None)):
+
+        class QuietStt(FakeStt):
+            result = SttStreamResult(kind=kind, text=text)
+
+            def run(self, capture, **kwargs):
+                return self.result
+
+        FakeTts.sentences = []
+        server.idles = []
+        bridge = StackChanTurnBridge(
+            server, Link(), Offline(), stt_factory=QuietStt, tts_factory=FakeTts
+        )
+        loop.run_until_complete(bridge._run("session", "02:00:00:00:00:15", FakeCapture()))
+        assert FakeTts.sentences == [], kind  # nothing is spoken
+        assert server.idles == ["02:00:00:00:00:15"], kind  # the device goes back to idle
+    loop.close()
 
 
 def test_abort_clears_audio_and_simulator_fixture_is_available():
@@ -605,7 +636,7 @@ def test_early_no_speech_keeps_listening_and_then_answers(monkeypatch):
     assert _SequencedStt.patiences[0] is None and _SequencedStt.patiences[1] >= 0.5
 
 
-def test_no_speech_after_the_patience_is_over_ends_the_turn_with_the_error_line(monkeypatch):
+def test_no_speech_after_the_patience_is_over_ends_the_turn_quietly(monkeypatch):
     now = [0.0]
     results = [SttStreamResult(kind="no_speech")]
     loop, bridge, capture, errors = _bridge_for_no_speech(
@@ -614,12 +645,84 @@ def test_no_speech_after_the_patience_is_over_ends_the_turn_with_the_error_line(
     _SequencedStt.hook = lambda: now.__setitem__(0, 6.0)  # the patience runs out while listening
     loop.run_until_complete(bridge._run("session", "device", capture))
     loop.close()
-    assert errors == ["error line"] and len(_SequencedStt.patiences) == 1
+    assert errors == [] and len(_SequencedStt.patiences) == 1  # silence is not an error
 
 
-def test_no_speech_once_the_device_has_stopped_listening_is_not_retried(monkeypatch):
+def test_no_speech_once_the_device_has_stopped_listening_is_not_retried_and_stays_quiet(
+    monkeypatch,
+):
     results = [SttStreamResult(kind="no_speech")]
     loop, bridge, capture, errors = _bridge_for_no_speech(monkeypatch, results, closed=True)
     loop.run_until_complete(bridge._run("session", "device", capture))
     loop.close()
-    assert errors == ["error line"] and len(_SequencedStt.patiences) == 1
+    assert errors == [] and len(_SequencedStt.patiences) == 1
+
+
+def test_a_listen_the_device_reopens_after_a_reply_gets_the_follow_up_window(monkeypatch):
+    import maipai_body.bodies.stackchan.turn as turn_module
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    now = [100.0]
+    patiences: list[object] = []
+
+    class SilentStt(FakeStt):
+        def run(self, capture, *, patience_s=None):
+            patiences.append(patience_s)
+            return SttStreamResult(kind="timeout")
+
+    bridge = StackChanTurnBridge(
+        server,
+        Link(),
+        Offline(),
+        stt_factory=SilentStt,
+        tts_factory=FakeTts,
+        side_executor=InlineExecutor(),
+        clock=lambda: now[0],
+    )
+    bridge.follow_up_s = 8.0
+    # A wake word opens a normal listen, which gets the default patience.
+    loop.run_until_complete(bridge.listen("s", "device", "detect"))
+    loop.run_until_complete(asyncio.sleep(0.2))  # let the turn run to its end
+    # The device re-opens listening 0.2 s after the turn ended: a follow-up.
+    now[0] += 0.2
+    loop.run_until_complete(bridge.listen("s", "device", "start"))
+    loop.run_until_complete(asyncio.sleep(0.2))  # let the turn run to its end
+    # Much later a tap opens a fresh normal listen.
+    now[0] += 60.0
+    loop.run_until_complete(bridge.listen("s", "device", "start"))
+    loop.run_until_complete(asyncio.sleep(0.2))  # let the turn run to its end
+    loop.close()
+    assert patiences == [None, 8.0, None]
+    assert server.idles == ["device", "device", "device"]  # every silent end goes idle
+
+
+def test_an_abnormal_end_while_speaking_sends_a_tts_stop_so_the_mouth_closes(monkeypatch):
+    import maipai_body.bodies.stackchan.turn as turn_module
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+
+    class ExplodingTts(FakeTts):
+        def speak(self, sentence, **kwargs):
+            raise RuntimeError("synthesis broke mid-sentence")
+
+    bridge = StackChanTurnBridge(
+        server,
+        Link(),
+        Offline(),
+        stt_factory=FakeStt,
+        turn_factory=FakeTurn,
+        tts_factory=ExplodingTts,
+        side_executor=InlineExecutor(),
+    )
+    bridge._speak_plain_error = lambda playback, base, cookie: None
+    loop.run_until_complete(bridge._run("session", "device", FakeCapture()))
+    loop.close()
+    assert server.stops == ["device"]

@@ -220,3 +220,48 @@ def test_the_listening_cue_perks_the_head_up_with_a_happy_face():
 
     source = inspect.getsource(app.StackChanBehavior.render_turn_state)
     assert '"listening": "perk"' in source
+
+
+def test_the_face_watchdog_restores_the_idle_face_after_a_lost_frame():
+    from maipai_body.app import FACE_QUIET_S, StackChanBehavior
+    from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
+    from maipai_body.bodies.stackchan.avatar.server import control_avatar
+    from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
+
+    device = FakeStackChanDeviceClient()
+    behavior = StackChanBehavior(StackChanRobotAdapter(device).robot)
+    try:
+        head = behavior.robot._driver("head").expression_device
+        head.send_avatar_frame(control_avatar("happy"))  # the last face shown was not idle
+        assert head.last_expression == "happy"
+        start = 1000.0
+        assert behavior.face_watchdog(start) is False  # quiet period begins
+        assert behavior.face_watchdog(start + FACE_QUIET_S - 1) is False
+        assert behavior.face_watchdog(start + FACE_QUIET_S + 1) is True  # idle face resent
+        assert head.last_expression == "neutral"
+        assert behavior.face_watchdog(start + FACE_QUIET_S + 2) is False  # nothing stale now
+        # A frame that never arrived is repaired too.
+        device.connected = False
+        try:
+            head.send_avatar_frame(control_avatar("sad"))
+        except Exception:
+            pass
+        device.connected = True
+        assert head.last_expression_ok is False
+        assert behavior.face_watchdog(start + 50.0) is True
+        assert head.last_expression_ok is True
+        # A turn in progress is never interrupted.
+        behavior._active.set()
+        head.send_avatar_frame(control_avatar("happy"))
+        assert behavior.face_watchdog(start + 100.0) is False
+    finally:
+        behavior.close()
+
+
+def test_thinking_violet_is_clearly_apart_from_the_camera_pink():
+    from maipai_body.bodies.stackchan.ring import RING_RGB
+    from maipai_body.hal.seam import Palette
+
+    violet, pink = RING_RGB[Palette.MAGENTA], RING_RGB[Palette.PINK]
+    assert violet[2] > violet[0] * 2  # more blue than red: violet
+    assert pink[0] > pink[2]  # pink leans red

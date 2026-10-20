@@ -945,6 +945,12 @@ class XiaozhiServer:
                 self._speaking.discard(device_id)
                 await self._json(websocket, self._session_ids[device_id], "tts", {"state": "stop"})
 
+    async def send_idle(self, device_id: str) -> None:
+        """Ask the device to leave Listening and go idle (firmware patch 034 understands it)."""
+        websocket = self._sessions.get(device_id)
+        if websocket is not None and self._session_authorized(device_id):
+            await self._json(websocket, self._session_ids[device_id], "idle", {})
+
     async def stop_audio(self, device_id: str) -> None:
         """Stop a current reply promptly; the sender observes this before its next frame."""
         self._speaking.discard(device_id)
