@@ -165,6 +165,8 @@ class StackChanBehavior:
         self._expression = ExpressionEngine(robot._driver("head"), STACKCHAN_PROFILE)
         # BOT-FACE-NIGHT-01: at night no idle or tracking gestures; set by the night rule.
         self.night_active: Callable[[], bool] = lambda: False
+        # Charging or on USB power: no wandering. Set by the power rule (power_idle.py).
+        self.idle_still: Callable[[], bool] = lambda: False
         self._night_turned = False
 
     @property
@@ -255,7 +257,7 @@ class StackChanBehavior:
                     self.render_primitive("settle")
                 except Exception:
                     logger.warning("StackChan idle expression failed", exc_info=True)
-            if self._vision is not None and not self._active.is_set():
+            if self._vision is not None and not self._active.is_set() and not self.idle_still():
                 try:
                     target = self._vision.track_stream_frame(deadline_s=0.4)
                     if target.detected:
@@ -398,10 +400,14 @@ async def _serve_stackchan_channels(
     except Exception:
         logger.warning("StackChan anonymous tracking is unavailable", exc_info=True)
     behavior = StackChanBehavior(voice.robot.robot, vision_bridge=vision)
-    _start_stackchan_night(voice, behavior, link, stop_event)
+    night = _start_stackchan_night(voice, behavior, link, stop_event)
+    from maipai_body.bodies.stackchan.power_idle import PowerIdle
+
+    power = PowerIdle(voice.robot.client.set_idle_motion, night_active=lambda: night.night)
+    behavior.idle_still = lambda: power.still
     from maipai_body.bodies.stackchan.light_wiring import start_stackchan_light
 
-    light = start_stackchan_light(voice.robot, link, stop_event)
+    light = start_stackchan_light(voice.robot, link, stop_event, on_battery=power.on_battery_status)
     voice.robot.robot._driver("camera").cue_sink = light.cue_camera
     if link is not None and offline is not None:
         bridge = StackChanTurnBridge(

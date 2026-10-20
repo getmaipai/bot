@@ -103,3 +103,12 @@ note of at most 280 characters is kept. The hub's settings page must show the se
 - Compile check recipe: `export PATH="/opt/homebrew/opt/python@3.12/libexec/bin:$PATH"; . ~/esp/esp-idf/export.sh`, work in a scratch copy
   of the build tree, never in `~/esp/stackchan-build/stackchan-02-run/build`. Gate: put `/opt/homebrew/bin` first on PATH (LibreSSL has no Ed25519).
 - A `local-lane dispatch` into a worktree removes files it was not told about: commit before dispatching, write your own files after.
+
+## Owner rule: still while charging (Jesse, 2026-10-20, relayed by the release session)
+
+While the StackChan is charging or on USB power it does not wander: the firmware idle motion is switched off (`set_idle_motion(False)`) and
+anonymous face-following head moves are skipped; on battery the configured level applies again (`stackchan/power_idle.py`, wired in `app.py`
+from the battery poll, so it can lag up to 60 s). No setting and no spec key. Night keeps its own stillness. Open, needs the unit: whether the
+power chip's `charging` flag stays true when the battery is full but the cable is still in. If it reads false there, the robot would wander
+again on a full dock; the fix is to treat a full battery that was charging a minute ago as still plugged in. `robot.idle.level` itself is not
+read yet on StackChan (the configured level defaults to calm).

@@ -54,8 +54,10 @@ class LightPoller:
         clock: Callable[[], float] = time.monotonic,
         battery_every_s: float = 60.0,
         low_percent: int = 15,
+        on_battery: Callable[[bool], object] | None = None,
     ) -> None:
         self._service = service
+        self._on_battery = on_battery
         self._link_phase = link_phase
         self._device_connected = device_connected
         self._battery = battery
@@ -121,6 +123,11 @@ class LightPoller:
         ):
             self._charging = charging
             self._battery_low = percent < self._low_percent and not charging
+            if self._on_battery is not None:
+                try:
+                    self._on_battery(charging)
+                except Exception:  # a power rule must never stop the light poll
+                    logger.warning("power callback failed", exc_info=True)
             return
         self._warn_failure(exc_info=False)
 
@@ -137,6 +144,7 @@ def start_stackchan_light(
     stop_event: threading.Event,
     *,
     device_connected: Callable[[], bool] = lambda: True,
+    on_battery: Callable[[bool], object] | None = None,
 ) -> StackChanLightService:
     """Build the ring indicator and service, start both loops, return the service.
 
@@ -167,6 +175,7 @@ def start_stackchan_light(
         link_phase=phase,
         device_connected=device_connected,
         battery=battery,
+        on_battery=on_battery,
     )
     threading.Thread(
         target=service.run,
