@@ -67,7 +67,7 @@ cp "$STAGE/maipai_bot-$VERSION-py3-none-any.whl" "$BOT/app/"
 # Export the locked runtime; uv evaluates environment markers for the target.
 # uv.lock resolves only for macOS (pyproject's [tool.uv] environments), so each target is compiled here for its own platform,
 # hash-pinned, with every version the lock already holds as a constraint (the same route build-wheelhouse.sh takes for the robot).
-python3 - "$ROOT/body/uv.lock" "$WORK/lock-constraints.txt" <<'PYC'
+uv run --no-project --python 3.12 python - "$ROOT/body/uv.lock" "$WORK/lock-constraints.txt" <<'PYC'
 import pathlib, sys, tomllib
 lock = tomllib.loads(pathlib.Path(sys.argv[1]).read_text())
 pins = sorted({f"{p['name']}=={p['version']}" for p in lock.get('package', []) if 'version' in p and p.get('source', {}).get('registry')})
@@ -78,7 +78,7 @@ PYC
 # A few locked dependencies publish only a source archive. They are pure Python, so building them on this host gives the same
 # wheel for every target; the allow-list below names them, and the check after install refuses any that is not pure.
 SDIST_ONLY="docopt"
-python3 - "$WORK/requirements.txt" "$WORK/wheels.txt" "$WORK/sdists.txt" "$SDIST_ONLY" <<'PY0'
+uv run --no-project --python 3.12 python - "$WORK/requirements.txt" "$WORK/wheels.txt" "$WORK/sdists.txt" "$SDIST_ONLY" <<'PY0'
 import pathlib, re, sys
 source, wheels, sdists, allowed = sys.argv[1], sys.argv[2], sys.argv[3], set(sys.argv[4].split())
 blocks, current = [], []
@@ -103,7 +103,7 @@ if grep -q . "$WORK/sdists.txt"; then
   uv pip install --python-platform "$TRIPLE" --python-version 3.12 --target "$BOT/app/site-packages" --no-deps --require-hashes -r "$WORK/sdists.txt"
 fi
 uv pip install --python-platform "$TRIPLE" --python-version 3.12 --target "$BOT/app/site-packages" --no-deps "$BOT/app/maipai_bot-$VERSION-py3-none-any.whl"
-python3 - "$WORK/requirements.txt" "$BOT/app/site-packages" "$SDIST_ONLY" <<'PY2'
+uv run --no-project --python 3.12 python - "$WORK/requirements.txt" "$BOT/app/site-packages" "$SDIST_ONLY" <<'PY2'
 import email, pathlib, re, sys
 requirements = pathlib.Path(sys.argv[1]).read_text().splitlines()
 names = {re.split(r'[<=>!~; \[]', line.strip(), maxsplit=1)[0].lower().replace('_', '-') for line in requirements if line.strip() and line[0] not in ' \t#-'}
@@ -135,7 +135,7 @@ SH
 chmod +x "$BOT/bin/maipai-bot-host"
 ARCHIVE="$STAGE/bot-$PLATFORM.tar.gz"
 COPYFILE_DISABLE=1 tar -czf "$ARCHIVE" -C "$WORK" bot
-python3 - "$ARCHIVE" <<'PY2'
+uv run --no-project --python 3.12 python - "$ARCHIVE" <<'PY2'
 import pathlib, sys, tarfile
 with tarfile.open(sys.argv[1], 'r:gz') as tar:
     for member in tar.getmembers():
