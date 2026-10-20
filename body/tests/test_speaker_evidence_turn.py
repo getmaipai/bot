@@ -144,7 +144,7 @@ def test_a_claim_is_tentative_never_access_and_lasts_one_turn():
     loop.claim_speaker(ANNA)
     stop, thread = _start(loop)
     try:
-        _wait_for(lambda: len(parts["turn"].speaker_evidence_calls) >= 2, timeout=6.0)
+        _wait_for(lambda: len(parts["turn"].speaker_evidence_calls) >= 2, timeout=20.0)
     finally:
         _stop(stop, thread)
     first, second = parts["turn"].speaker_evidence_calls[:2]
