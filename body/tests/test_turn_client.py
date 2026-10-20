@@ -96,6 +96,39 @@ def test_signal_then_done_yields_signal_and_done_cues_in_order(ndjson_server):
     assert events[-1].turn_id == "turn-1"
 
 
+def test_a_plugin_answer_with_no_text_pieces_is_read_from_the_done_value(ndjson_server):
+    """A built-in answer (the time, a timer) arrives once in the final message as
+    value.reply.text, with no delta events; the reply must not come back empty."""
+    server, handler, reset = ndjson_server
+    reset(
+        [
+            {"type": "turn_meta", "conversation_id": "conv-1", "turn_id": "turn-1"},
+            {"type": "done", "value": {"reply": {"text": "It's 4:59 PM."}, "source": "plugin"}},
+        ]
+    )
+    client = TurnClient(_base_url(server), "cookie-abc")
+
+    events = list(client.stream("what time is it"))
+
+    assert events[-1].reply_text == "It's 4:59 PM."
+
+
+def test_the_done_value_reply_wins_when_it_carries_the_whole_text(ndjson_server):
+    server, handler, reset = ndjson_server
+    reset(
+        [
+            {"type": "delta", "text": "Hello "},
+            {"type": "delta", "text": "there!"},
+            {"type": "done", "value": {"reply": {"text": "Hello there!"}, "source": "model"}},
+        ]
+    )
+    client = TurnClient(_base_url(server), "cookie-abc")
+
+    events = list(client.stream("hey"))
+
+    assert events[-1].reply_text == "Hello there!"
+
+
 def test_an_error_event_yields_a_cancel_cue(ndjson_server):
     server, handler, reset = ndjson_server
     reset(

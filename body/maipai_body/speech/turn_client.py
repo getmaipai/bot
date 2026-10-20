@@ -221,9 +221,16 @@ class TurnClient:
         if kind == "done":
             state.terminal_seen = True
             cue = Cue(phase=Phase.DONE, cue_seq=state.next_cue_seq())
+            # The final message carries the whole reply (`value.reply.text`). A built-in answer
+            # (the time, a timer) arrives only there, with no delta events, so it wins when present.
+            value = message.get("value")
+            reply = value.get("reply") if isinstance(value, dict) else None
+            final_text = reply.get("text") if isinstance(reply, dict) else None
             return TurnEvent(
                 cue=cue,
-                reply_text="".join(state.reply_parts),
+                reply_text=final_text
+                if isinstance(final_text, str) and final_text
+                else "".join(state.reply_parts),
                 conversation_id=state.conversation_id,
                 turn_id=state.turn_id,
                 generation=state.generation,
