@@ -1,0 +1,18 @@
+# Intent: load the wake word model. Patch 002 skips CheckAssetsVersion(), the only caller of Assets::Apply(), so the srmodels never reach the audio service and the wake word finds no model ("MODEL_LOADER: Can not find model in partition table"). Apply the assets already on the flash without any download.
+# Upstream: 78/xiaozhi-esp32 main/application.cc (MIT), via m5stack/StackChan firmware. Applies after 002, 014, 015, 016 with --unidiff-zero.
+# Check after a flash: the serial log shows "Model 0: ..." from afe_wake_word.cc at boot and no MODEL_LOADER error.
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index ecef0ac..dfbb6f0 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -330,0 +331,10 @@ void Application::ActivationTask() {
++#else
++    // Load the assets already on the flash (the wake word model, fonts, emoji) without any
++    // download. Assets::Apply() is what hands the srmodels to the audio service; without it the
++    // wake word detector finds no model and only voice activity detection runs.
++    {
++        auto& assets = Assets::GetInstance();
++        if (assets.partition_valid()) {
++            assets.Apply();
++        }
++    }
