@@ -7,6 +7,20 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-10-20
+
+### Fixed
+
+- A built-in answer (the time, a timer) arrives only in the final message as `value.reply.text`, with no streamed text pieces; the turn client read replies from the pieces alone, so those answers came back empty and the robot said nothing. The final message now wins when it carries the text.
+- The hub command channel gets `(url, cookie)` in the order it unpacks them; it used the cookie as the URL and reconnected every 30 seconds with a ValueError.
+- The face is set over the voice socket when the avatar channel is not connected (the avatar channel never starts in AI-agent mode), and the per-turn connection errors are gone.
+- A short voiced burst, such as the listening tone, no longer ends the turn: when the hub answers no speech inside the 6 second wake patience and the device has not stopped, a fresh stream keeps listening before the error line is spoken.
+- The first 180 ms of an utterance is no longer dropped, and the listen frame's mode and echo-cancel flag are forwarded.
+
+### Added
+
+- StackChan firmware patch 033: a plain "Connecting" screen with the blue slow pulse until the robot is ready, the face hidden until it is, and the ring settling to idle white.
+
 ## [0.2.4] - 2026-10-20
 
 ### Fixed
