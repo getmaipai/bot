@@ -943,20 +943,29 @@ class XiaozhiServer:
         finally:
             if stop:
                 self._speaking.discard(device_id)
+                await self._neutral_face(websocket, device_id)
                 await self._json(websocket, self._session_ids[device_id], "tts", {"state": "stop"})
 
     async def send_idle(self, device_id: str) -> None:
         """Ask the device to leave Listening and go idle (firmware patch 034 understands it)."""
         websocket = self._sessions.get(device_id)
         if websocket is not None and self._session_authorized(device_id):
-            await self._json(websocket, self._session_ids[device_id], "idle", {})
+            await self._json(websocket, self._session_ids[device_id], "system", {"command": "idle"})
 
     async def stop_audio(self, device_id: str) -> None:
         """Stop a current reply promptly; the sender observes this before its next frame."""
         self._speaking.discard(device_id)
         websocket = self._sessions.get(device_id)
         if websocket is not None and self._session_authorized(device_id):
+            await self._neutral_face(websocket, device_id)
             await self._json(websocket, self._session_ids[device_id], "tts", {"state": "stop"})
+
+    async def _neutral_face(self, websocket: ServerConnection, device_id: str) -> None:
+        """Reset the face in order with speech: a late happy frame must not outlive the reply."""
+        try:
+            await self._json(websocket, self._session_ids[device_id], "llm", {"emotion": "neutral"})
+        except Exception:
+            LOG.debug("StackChan neutral face before tts stop failed", exc_info=True)
 
     def call_device_tool(
         self, name: str, arguments: dict[str, object], *, timeout: float = 5.0

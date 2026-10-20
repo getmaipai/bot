@@ -570,6 +570,8 @@ async def _serve_stackchan_channels(
 
     uplink = UplinkStats()
     if link is not None and offline is not None:
+        from maipai_body.bodies.stackchan.volume import VolumeControl
+
         bridge = StackChanTurnBridge(
             voice,
             link,
@@ -582,6 +584,7 @@ async def _serve_stackchan_channels(
             expression_sink=_turn_sink(behavior, light),
             live_sink=light.cue_live,
             uplink_stats=uplink,
+            volume_control=VolumeControl(voice.robot.client._call, voice.robot.client.set_volume),
         )
         voice.audio_handler = bridge.on_audio
         voice.turn_handler = bridge.listen

@@ -277,6 +277,7 @@ class StackChanTurnBridge:
         live_sink=None,
         uplink_stats=None,
         side_executor=None,
+        volume_control=None,
         clock=time.monotonic,
     ) -> None:
         self.server, self.link, self.offline = server, link, offline
@@ -284,6 +285,8 @@ class StackChanTurnBridge:
         self.live_sink = live_sink
         # BOT-SELF-TEST-01: counts of uplink frames and wake detects (never audio).
         self.uplink_stats = uplink_stats
+        # "Louder", "volume to 60": answered here, without asking the hub.
+        self.volume_control = volume_control
         # The expression and light sinks make blocking device calls that wait on this very event
         # loop; run inline they froze it until each 5 s timeout (live log 2026-10-20: 5 s to start
         # a turn, 12 s to the first audio frame). One worker keeps their order.
@@ -598,6 +601,19 @@ class StackChanTurnBridge:
             if outcome == "failed":
                 await asyncio.to_thread(self._speak_plain_error, playback, base, cookie)
                 return
+            if self.volume_control is not None:
+                from maipai_body.bodies.stackchan.volume import confirmation, parse_volume_command
+
+                command = parse_volume_command(result.text or "")
+                if command is not None:
+                    before, after = await asyncio.to_thread(self.volume_control.apply, command)
+                    LOG.info(
+                        "StackChan voice: volume command %s (%d -> %d)", command.kind, before, after
+                    )
+                    line = confirmation(command, before, after)
+                    if line:
+                        await asyncio.to_thread(self._say, playback, base, cookie, line)
+                    return
             turn = self.turn_factory(base, cookie)
             chat_started = self._clock()
             events = await asyncio.to_thread(
@@ -721,6 +737,15 @@ class StackChanTurnBridge:
                 await send_idle(device_id)
             except Exception:
                 LOG.debug("StackChan voice: idle request failed", exc_info=True)
+
+    def _say(self, playback, base: str, cookie: str, text: str) -> None:
+        """Speak one short line through the hub's voice (a confirmation, not a chat reply)."""
+        try:
+            self.tts_factory(base, cookie, playback).speak(text)
+            playback.stop()
+            playback.end()
+        except Exception:
+            LOG.warning("StackChan voice: could not speak %r", text, exc_info=True)
 
     def _speak_plain_error(self, playback, base: str, cookie: str) -> None:
         if self._error_line_spoken:

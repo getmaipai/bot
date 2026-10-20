@@ -54,7 +54,7 @@ class BodyAction:
 CUE_FACE_MAP = {
     "listening": FaceFrame("neutral", mouth=False),
     "thinking": FaceFrame("doubt", mouth=False),
-    "speaking": FaceFrame("happy"),
+    "speaking": FaceFrame("neutral"),  # the firmware animates the mouth while it speaks
     "reply_mood": FaceFrame("neutral"),
 }
 
