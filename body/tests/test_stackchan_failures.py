@@ -189,6 +189,8 @@ class StackChanFailureShapeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(start["state"], "start")
             self.assertEqual(start["session_id"], hello["session_id"])
             self.assertEqual(await websocket.recv(), b"recorded-server-frame")
+            neutral = json.loads(await websocket.recv())  # the face resets before the stop
+            self.assertEqual((neutral["type"], neutral["emotion"]), ("llm", "neutral"))
             stop = json.loads(await websocket.recv())
             self.assertEqual(stop["type"], "tts")
             self.assertEqual(stop["state"], "stop")

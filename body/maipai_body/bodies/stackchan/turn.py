@@ -129,9 +129,13 @@ class StackChanAudioPlayback(AudioPlayback):
         clock=time.monotonic,
         sleeper=time.sleep,
         async_sleep=asyncio.sleep,
+        pitch_semitones=lambda: 0.0,
     ) -> None:
         self._server = server
         self._device_id = device_id
+        # The selected voice's pitch offset in semitones (0 leaves the audio untouched).
+        self._pitch_semitones = pitch_semitones
+        self._pitch_buffer: list[npt.NDArray[np.float32]] = []
         self._encoder = self._new_encoder()
         self._samples = np.zeros(0, dtype=np.float32)
         self._frames: list[bytes] = []
@@ -181,19 +185,32 @@ class StackChanAudioPlayback(AudioPlayback):
 
     def push_audio_sample(self, data: npt.NDArray[np.float32]) -> None:
         with self._lock:
-            self._samples = np.concatenate((self._samples, data.astype(np.float32)))
-            while len(self._samples) >= 1440:
-                block, self._samples = self._samples[:1440], self._samples[1440:]
-                frame = av.AudioFrame.from_ndarray(
-                    np.clip(block * 32767, -32768, 32767).astype(np.int16).reshape(1, -1),
-                    format="s16",
-                    layout="mono",
-                )
-                frame.sample_rate = 24000
-                self._frames.extend(bytes(packet) for packet in self._encoder.encode(frame))
+            if self._pitch_semitones() != 0.0:
+                # A pitch offset needs the whole sentence (nothing is sent before stop() anyway).
+                self._pitch_buffer.append(data.astype(np.float32))
+                return
+            self._frame_locked(data)
+
+    def _frame_locked(self, data: npt.NDArray[np.float32]) -> None:
+        self._samples = np.concatenate((self._samples, data.astype(np.float32)))
+        while len(self._samples) >= 1440:
+            block, self._samples = self._samples[:1440], self._samples[1440:]
+            frame = av.AudioFrame.from_ndarray(
+                np.clip(block * 32767, -32768, 32767).astype(np.int16).reshape(1, -1),
+                format="s16",
+                layout="mono",
+            )
+            frame.sample_rate = 24000
+            self._frames.extend(bytes(packet) for packet in self._encoder.encode(frame))
 
     def stop_playing(self) -> None:
         with self._lock:
+            if self._pitch_buffer:
+                from maipai_body.speech.pitch import shift_pitch
+
+                whole = np.concatenate(self._pitch_buffer)
+                self._pitch_buffer = []
+                self._frame_locked(shift_pitch(whole, 24000, self._pitch_semitones()))
             if len(self._samples):
                 padded = np.pad(self._samples, (0, 1440 - len(self._samples)))
                 frame = av.AudioFrame.from_ndarray(
@@ -326,6 +343,8 @@ class StackChanTurnBridge:
         self._last_turn_end: dict[str, float] = {}
         self._followup: dict[str, bool] = {}
         self.follow_up_s = FOLLOW_UP_S
+        # The selected voice record's pitch_semitones (-12 to 12); 0 changes nothing.
+        self.pitch_semitones = lambda: 0.0
         self._breaker = ErrorLineBreaker(clock=clock)
         self._quiet_streak = 0
 
@@ -560,7 +579,12 @@ class StackChanTurnBridge:
 
     async def _run(self, session_id: str, device_id: str, capture: StackChanAudioCapture) -> None:
         try:
-            playback = StackChanAudioPlayback(self.server, device_id, clock=self._clock)
+            playback = StackChanAudioPlayback(
+                self.server,
+                device_id,
+                clock=self._clock,
+                pitch_semitones=lambda: self.pitch_semitones(),
+            )
         except TypeError:
             playback = StackChanAudioPlayback(self.server, device_id)
         self._playbacks[session_id] = playback

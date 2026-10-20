@@ -61,3 +61,51 @@ def test_speech_like_input_keeps_its_loudness_roughly():
     shifted = shift_pitch(samples, RATE, -1.0)
     ratio = float(np.sqrt(np.mean(shifted**2)) / np.sqrt(np.mean(samples**2)))
     assert 0.7 < ratio < 1.3
+
+
+def _playback_frames(pitch):
+    """Push one second of tone through a real StackChanAudioPlayback and return the sent frames."""
+    import asyncio
+    import threading
+
+    from maipai_body.bodies.stackchan.turn import StackChanAudioPlayback
+
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    sent: list[bytes] = []
+
+    class _Server:
+        _loop = loop
+
+        async def send_audio(self, device_id, frames, **kwargs):
+            sent.extend(frames)
+
+        async def stop_audio(self, device_id):
+            pass
+
+    async def no_sleep(seconds):
+        return None
+
+    playback = StackChanAudioPlayback(
+        _Server(), "device", async_sleep=no_sleep, pitch_semitones=lambda: pitch
+    )
+    samples = _tone(200.0)
+    for index in range(0, len(samples), 2400):
+        playback.push_audio_sample(samples[index : index + 2400])
+    playback.stop_playing()
+    loop.call_soon_threadsafe(loop.stop)
+    thread.join(timeout=2)
+    return sent
+
+
+def test_pitch_zero_leaves_the_playback_audio_byte_identical():
+    baseline = _playback_frames(0.0)
+    assert baseline and baseline == _playback_frames(0.0)
+
+
+def test_a_pitch_offset_changes_the_audio_but_keeps_the_reply_length():
+    plain = _playback_frames(0.0)
+    shifted = _playback_frames(-1.0)
+    assert shifted != plain
+    assert abs(len(shifted) - len(plain)) <= 2  # within a couple of 60 ms frames
