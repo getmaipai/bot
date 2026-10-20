@@ -1,0 +1,36 @@
+# Intent: have the avatar channel use the saved websocket token and avatar URL.
+# Upstream: m5stack/StackChan firmware/main/hal/utils/secret_logic/secret_logic.cpp (MIT).
+diff --git a/firmware/main/hal/utils/secret_logic/secret_logic.cpp b/firmware/main/hal/utils/secret_logic/secret_logic.cpp
+index 10ea3f4..693907f 100644
+--- a/firmware/main/hal/utils/secret_logic/secret_logic.cpp
++++ b/firmware/main/hal/utils/secret_logic/secret_logic.cpp
+@@ -5,11 +5,17 @@
+  */
+ #include "secret_logic.h"
+ #include <sdkconfig.h>
++#include <settings.h>
+ 
+ namespace secret_logic {
+ 
+ __attribute__((weak)) std::string get_server_url()
+ {
++    Settings settings("websocket", false);
++    std::string saved_url = settings.GetString("avatar_url");
++    if (!saved_url.empty()) {
++        return saved_url;
++    }
+ #ifdef CONFIG_STACKCHAN_SERVER_URL
+     return CONFIG_STACKCHAN_SERVER_URL;
+ #else
+@@ -19,6 +25,11 @@ __attribute__((weak)) std::string get_server_url()
+ 
+ __attribute__((weak)) std::string generate_auth_token()
+ {
++    Settings settings("websocket", false);
++    std::string saved_token = settings.GetString("token");
++    if (!saved_token.empty()) {
++        return saved_token;
++    }
+ #ifdef CONFIG_STACKCHAN_PAIRING_TOKEN
+     return CONFIG_STACKCHAN_PAIRING_TOKEN;
+ #else

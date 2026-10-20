@@ -1,0 +1,29 @@
+# Intent: save a long-lived token from the server hello and reconnect with it.
+# Upstream: 78/xiaozhi-esp32 main/protocols/websocket_protocol.cc (MIT).
+diff --git a/main/protocols/websocket_protocol.cc b/main/protocols/websocket_protocol.cc
+--- a/main/protocols/websocket_protocol.cc
++++ b/main/protocols/websocket_protocol.cc
+@@ -232,6 +232,23 @@
+         return;
+     }
+ 
++    auto maipai_token = cJSON_GetObjectItem(root, "maipai_token");
++    if (cJSON_IsString(maipai_token) && maipai_token->valuestring != nullptr) {
++        std::string value = maipai_token->valuestring;
++        if (!value.empty() && value.size() <= 256) {
++            Settings settings("websocket", false);
++            if (settings.GetString("token") != value) {
++                Settings writable_settings("websocket", true);
++                writable_settings.SetString("token", value);
++                ESP_LOGI(TAG, "token updated (length=%u)", static_cast<unsigned>(value.size()));
++                Application::GetInstance().Schedule([this]() {
++                    CloseAudioChannel(false);
++                    OpenAudioChannel();
++                });
++            }
++        }
++    }
++
+     auto session_id = cJSON_GetObjectItem(root, "session_id");
+     if (cJSON_IsString(session_id)) {
+         session_id_ = session_id->valuestring;

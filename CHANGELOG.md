@@ -9,6 +9,7 @@ checklist (`docs/dev.md`).
 
 ### Changed
 
+- StackChan firmware patches 018 and 019 take the long-lived token from the hub's hello, save it to NVS, and have the avatar channel read its token and address from NVS (BOT-STACKCHAN-ENROLL-01, firmware half).
 - StackChan provisioning sets `boot_ai` and `is_configed` so the robot boots straight into the AI Agent without the Welcome screen.
 - Pin the body checks and release asset lookup to the robot API vocabulary in `spec-v0.1.141`.
 
