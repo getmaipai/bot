@@ -438,3 +438,40 @@ def test_a_slow_face_or_light_never_holds_up_the_voice_turn():
     while len(ran) < 1 and time.monotonic() < deadline:
         time.sleep(0.01)
     assert ran[:1] == ["listening"]  # the first update still ran, in order
+
+
+def test_playback_stop_never_runs_on_the_event_loop_thread(monkeypatch, caplog):
+    """stop() waits on a coroutine of the very loop that called it; inline it deadlocks for 30 s."""
+    import logging
+    import threading
+
+    import maipai_body.bodies.stackchan.turn as turn_module
+
+    stop_threads: list[int] = []
+
+    class ThreadRecordingPlayback(FakePlayback):
+        def stop(self):
+            stop_threads.append(threading.get_ident())
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    FakeTts.sentences = []
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", ThreadRecordingPlayback)
+    bridge = StackChanTurnBridge(
+        server,
+        Link(),
+        Offline(),
+        stt_factory=FakeStt,
+        turn_factory=FakeTurn,
+        tts_factory=FakeTts,
+        side_executor=InlineExecutor(),
+    )
+    with caplog.at_level(logging.INFO, logger="maipai_body.bodies.stackchan.turn"):
+        loop.run_until_complete(bridge._run("session", "device", FakeCapture()))
+    loop.close()
+    assert stop_threads and threading.get_ident() not in stop_threads
+    text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "text-to-speech sentence 1 started" in text
+    assert "synthesized in" in text and "reply finished playing" in text

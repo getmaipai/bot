@@ -550,25 +550,42 @@ class StackChanTurnBridge:
                 mood = next((value for value in reversed(moods) if value), None)
                 if mood:
                     self._emit_expression("reply_mood", mood=mood)
-                for sentence in _sentences(reply):
+                for index, sentence in enumerate(_sentences(reply)):
                     if asyncio.current_task().cancelling():
                         return
                     self._emit_expression("speaking")
                     self._states[session_id] = "speaking"
                     self._speaking_since[session_id] = self._clock()
+                    spoke_at = self._clock()
+                    LOG.info(
+                        "StackChan voice: text-to-speech sentence %d started (%d characters)",
+                        index + 1,
+                        len(sentence),
+                    )
                     await asyncio.to_thread(tts.speak, sentence, stop_event=cancel_event)
+                    synthesized_at = self._clock()
                     if cancel_event.is_set():
                         return
-                    playback.stop()
+                    # stop() sends the audio and waits on this event loop's own coroutine, so it
+                    # must run off the loop: inline it deadlocked until its 30 s timeout.
+                    await asyncio.to_thread(playback.stop)
+                    LOG.info(
+                        "StackChan voice: sentence %d synthesized in %.1f s, sent to the "
+                        "device in %.1f s",
+                        index + 1,
+                        synthesized_at - spoke_at,
+                        self._clock() - synthesized_at,
+                    )
                     self._states[session_id] = "listening"
                     self._speech_ended[session_id] = self._clock()
                 await asyncio.to_thread(playback.end)
+                LOG.info("StackChan voice: reply finished playing")
             else:
                 await asyncio.to_thread(self._speak_plain_error, playback, base, cookie)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            LOG.warning("StackChan voice turn failed: %s", type(exc).__name__)
+            LOG.warning("StackChan voice turn failed: %s: %s", type(exc).__name__, str(exc)[:160])
             if isinstance(exc, (TurnAuthFailed, TurnLinkLost, TtsAuthFailed)):
                 await asyncio.to_thread(self._offline_line, playback)
             else:

@@ -116,7 +116,10 @@ class AvatarServer:
 
     async def handle(self, websocket: ServerConnection) -> None:
         request = websocket.request
+        source = websocket.remote_address[0] if websocket.remote_address else "unknown"
+        LOG.info("StackChan avatar: connection from %s for %s", source, request.path[:60])
         if request.path != "/stackChan/ws?deviceType=StackChan":
+            LOG.warning("StackChan avatar: refused, unexpected path %r", request.path[:60])
             await websocket.close(1008, "Use /stackChan/ws?deviceType=StackChan.")
             return
         headers = request.headers
@@ -125,6 +128,11 @@ class AvatarServer:
         authorization = headers.get("Authorization", "")
         token = authorization[7:] if authorization.startswith("Bearer ") else None
         if not self.pairing.authorize(device_id, client_id, token):
+            LOG.warning(
+                "StackChan avatar: refused, not authorized (token %s, device %s)",
+                "present" if token else "missing",
+                device_id[-5:] or "missing",
+            )
             try:
                 self.pairing.request(device_id, client_id)
             except ValueError:
@@ -155,6 +163,7 @@ class AvatarServer:
                 await websocket.close(1002, "Expected the StackChan avatar hello frame.")
                 return
             await websocket.send(json.dumps({"type": "hello", "session_id": uuid.uuid4().hex}))
+            LOG.info("StackChan avatar: connected (device %s)", device_id[-5:])
             async for message in websocket:
                 if not self.pairing.authorize(device_id, client_id, token):
                     await websocket.close(1008, "Pairing was revoked; reconnect after approval.")

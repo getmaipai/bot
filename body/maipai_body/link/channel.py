@@ -186,7 +186,12 @@ class CommandChannel:
                         self._set_ws(None)
             except (ConnectionClosed, OSError, TimeoutError, ValueError) as exc:
                 if not stop_event.is_set():
-                    logger.info("hub command channel reconnecting after %s", type(exc).__name__)
+                    logger.info(
+                        "hub command channel reconnecting after %s: %s",
+                        type(exc).__name__,
+                        str(exc)[:200],
+                        exc_info=isinstance(exc, ValueError),
+                    )
                     if self._on_drop is not None:
                         try:
                             self._on_drop(f"command channel lost: {type(exc).__name__}")
