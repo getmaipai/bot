@@ -30,7 +30,7 @@ MIN_WINDOW_S = 3.0
 FRAME_S = 0.032
 MIN_RMS = 0.01
 MIN_BPM = 60.0
-MAX_BPM = 180.0
+MAX_BPM = 3.0 * MIN_BPM  # 60 to 180 BPM
 WEIGHT_BEAT = 0.6
 WEIGHT_TONALITY = 0.4
 # relative to a frame's own peak magnitude: keeps the geometric mean of a
