@@ -39,8 +39,8 @@ Fresh rebuild on the platform design, started 2026-09-03: see
 [docs/dev.md](docs/dev.md) for the design record and
 [docs/BACKLOG.md](docs/BACKLOG.md) for what's built and what's missing.
 The shared record shapes live in `getmaipai/commons`'s `spec/` workspace.
-Bot pins the spec workspace at `spec-v0.1.151` through the sibling
-`../commons-tags/spec-spec-v0.1.151/spec` checkout. The Python body reads
+Bot pins the spec workspace at `spec-v0.1.196` through the sibling
+`../commons-tags/spec-spec-v0.1.196/spec` checkout. The Python body reads
 versioned schemas, vocabularies and fixtures from that pinned source; it
 does not install `maipai-spec` as a Python distribution because
 `commons/spec/pyproject.toml` still has no `[build-system]` table and a

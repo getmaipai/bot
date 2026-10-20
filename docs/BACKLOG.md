@@ -3000,7 +3000,7 @@ Design: `home/docs/design/robots-switch-and-install-2026-10-20.md` section 4 and
 `home/docs/design/robot-face-color-and-night-2026-10-20.md` (architect-approved in `home`). Home's halves are ROBOT-HOST-01,
 STACKCHAN-INSTALL-01 and ROBOT-FACE-NIGHT-01. Flashing a unit is Jesse's call.
 
-- [ ] **BOT-RELEASE-FLASH-01: the release ships a flashable StackChan set with a signed manifest** (M; 2026-10-20; after commons
+- [ ] **BOT-RELEASE-FLASH-01: the release ships a flashable StackChan set with a signed manifest** (M; 2026-10-20; release half built (2026-10-20); firmware NVS patch open; after commons
   SPEC-FLASH-MANIFEST-01). Objective: `release.sh` (today :49-62 ships `stack-chan-maipai.bin`, `generated_assets.bin`,
   `ota_data_initial.bin`, `manifest.json`, `image-strings.txt`, `SHA256SUMS`, with no offsets, bootloader, partition table or
   signature) also ships the bootloader and partition table and emits a signed spec `FirmwareFlashManifest` with each part's offset,
