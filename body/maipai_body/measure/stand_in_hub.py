@@ -105,6 +105,11 @@ class StandInHub:
         approve_after_polls: int = 0,
         mute_channel: bool = False,
         command_channel: bool = False,
+        stt_delay_s: float = 0.0,
+        stt_results: list[str] | None = None,
+        stt_min_blocks: int = 0,
+        turn_delay_s: float = 0.0,
+        tts_chunk_delay_s: float = 0.0,
     ) -> None:
         self.reply_text = reply_text
         self.stt_text = stt_text
@@ -115,6 +120,15 @@ class StandInHub:
         self.approve_after_polls = approve_after_polls
         self.mute_channel = mute_channel
         self.command_channel = command_channel
+        # Voice-path knobs for the headless tests: recognition latency, scripted results
+        # ("no_speech" or a final text per stream), audio that must arrive before an answer,
+        # a chat delay and a pause between speech chunks.
+        self.stt_delay_s = stt_delay_s
+        self.stt_results = list(stt_results) if stt_results is not None else None
+        self.stt_min_blocks = stt_min_blocks
+        self.turn_delay_s = turn_delay_s
+        self.tts_chunk_delay_s = tts_chunk_delay_s
+        self.stt_blocks_received: list[int] = []
         self.device_token = "device-token-bench"
         self.session_cookie = "session-bench"
         self.paired_requests: list[dict] = []
@@ -442,6 +456,8 @@ class StandInHub:
             [{"type": "done", "value": {}}],
         ]
         started = False
+        if self.turn_delay_s:
+            time.sleep(self.turn_delay_s)
         with self._lock:
             self._in_flight.add(turn_id)
         try:
@@ -479,7 +495,7 @@ class StandInHub:
                 handler.end_chunked()
                 return
             handler.chunk(data[start : start + _TTS_CHUNK_BYTES])
-            time.sleep(self.event_delay_s)
+            time.sleep(self.event_delay_s + self.tts_chunk_delay_s)
         handler.end_chunked()
 
     def _serve_stt(self, ws) -> None:
@@ -501,13 +517,45 @@ class StandInHub:
                     ws.close()
                 return
             ws.send(json.dumps({"t": "ready"}))
+            blocks = self._wait_for_blocks(ws) if self.stt_min_blocks else 0
+            self.stt_blocks_received.append(blocks)
+            if self.stt_delay_s:
+                time.sleep(self.stt_delay_s)
+            outcome = self._next_stt_result()
+            if outcome == "no_speech":
+                ws.send(json.dumps({"t": "no_speech"}))
+                time.sleep(0.2)
+                return
             time.sleep(0.05)
             ws.send(json.dumps({"t": "vad", "speaking": True}))
             time.sleep(0.05)
-            ws.send(json.dumps({"t": "final", "v": self.stt_text}))
+            ws.send(json.dumps({"t": "final", "v": outcome}))
             time.sleep(0.2)  # let the client's own audio sends land before closing
         finally:
             self._untrack(ws.socket)
+
+    def _next_stt_result(self) -> str:
+        with self._lock:
+            if self.stt_results:
+                return self.stt_results.pop(0)
+        return self.stt_text
+
+    def _wait_for_blocks(self, ws) -> int:
+        """Count the client's binary audio blocks until stt_min_blocks, an end frame or 10 s."""
+        counted = 0
+        deadline = time.monotonic() + 10.0
+        while counted < self.stt_min_blocks and time.monotonic() < deadline:
+            try:
+                message = ws.recv(timeout=0.2)
+            except TimeoutError:
+                continue
+            except Exception:
+                break
+            if isinstance(message, bytes):
+                counted += 1
+            else:
+                break
+        return counted
 
     def _serve_ws(self, ws) -> None:
         if urlparse(ws.request.path).path == "/api/devices/me/events":
