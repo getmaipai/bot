@@ -110,7 +110,39 @@ def test_playback_leads_by_1_8_seconds_then_paces_and_drains(monkeypatch):
     assert clock.sleeps == pytest.approx([0.06, 0.06])
     playback.end()
     assert sent[-1] == "stop"
-    assert clock.sleeps == pytest.approx([0.06, 0.06, 0.42])
+    # The stop waits until the 32 frames (1.92 s) have played, plus the 0.12 s tail.
+    assert clock.sleeps == pytest.approx([0.06, 0.06, 1.92])
+    server._loop.call_soon_threadsafe(server._loop.stop)
+    worker.join(timeout=1)
+    server._loop.close()
+
+
+def test_stop_waits_for_every_queued_sentence_to_play():
+    # 2026-10-19 bench: the talking mouth stopped four words before the audio ended.
+    clock = Clock()
+    sent = []
+
+    async def send_audio(device, frames, **kwargs):
+        sent.extend(frames)
+
+    async def stop_audio(device):
+        sent.append("stop")
+
+    server = SimpleNamespace(_loop=None, send_audio=send_audio, stop_audio=stop_audio)
+    server._loop = asyncio.new_event_loop()
+    worker = threading.Thread(target=server._loop.run_forever, daemon=True)
+    worker.start()
+    playback = StackChanAudioPlayback(
+        server, "device", clock=clock.monotonic, sleeper=clock.sleep, async_sleep=clock.async_sleep
+    )
+    for _ in range(2):
+        playback._frames = [bytes([i]) for i in range(10)]
+        playback._samples = np.zeros(0, dtype=np.float32)
+        playback.stop_playing()
+    # Twenty frames play back to back (1.2 s); nothing was paced, so the clock is at 0.
+    playback.end()
+    assert sent[-1] == "stop"
+    assert clock.sleeps == pytest.approx([1.32])
     server._loop.call_soon_threadsafe(server._loop.stop)
     worker.join(timeout=1)
     server._loop.close()

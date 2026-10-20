@@ -27,6 +27,9 @@ LOG = logging.getLogger(__name__)
 # 2026-10-19 unit bench (ping peaks of 1.3 s) and stays under the firmware's
 # 40-frame (2.4 s) decode queue, which drops packets once full.
 LEAD_FRAMES = 30
+FRAME_S = 0.06
+# Decode and speaker delay after the last frame's play time, before the stop.
+STOP_TAIL_S = 0.12
 
 
 class StackChanAudioCapture:
@@ -117,6 +120,8 @@ class StackChanAudioPlayback(AudioPlayback):
         self._clock, self._sleep, self._async_sleep = clock, sleeper, async_sleep
         self._cancel_event: threading.Event | None = None
         self._aborted = threading.Event()
+        # When the robot finishes playing what was sent; the stop waits for it.
+        self._play_until = 0.0
         super().__init__(self)
 
     def get_output_audio_samplerate(self) -> int:
@@ -191,6 +196,8 @@ class StackChanAudioPlayback(AudioPlayback):
             async def paced_send():
                 if self._aborted.is_set() or (self._cancel_event and self._cancel_event.is_set()):
                     return
+                start = max(self._clock(), self._play_until)
+                self._play_until = start + len(frames) * FRAME_S
                 await self._server.send_audio(
                     self._device_id,
                     frames[:LEAD_FRAMES],
@@ -203,7 +210,7 @@ class StackChanAudioPlayback(AudioPlayback):
                 for frame in frames[LEAD_FRAMES:]:
                     if self._cancel_event is not None and self._cancel_event.is_set():
                         break
-                    deadline += 0.06
+                    deadline += FRAME_S
                     await self._async_sleep(max(0.0, deadline - self._clock()))
                     if self._cancel_event is not None and self._cancel_event.is_set():
                         break
@@ -215,7 +222,9 @@ class StackChanAudioPlayback(AudioPlayback):
             self._sentence_start = False
 
     def end(self) -> None:
-        self._sleep(0.42)
+        # The robot holds up to LEAD_FRAMES of audio when the last frame is sent. Stopping
+        # then cut the talking mouth about 1.4 s (four words) early on the 2026-10-19 bench.
+        self._sleep(max(0.0, self._play_until - self._clock()) + STOP_TAIL_S)
         asyncio.run_coroutine_threadsafe(
             self._server.stop_audio(self._device_id), self._server._loop
         ).result(timeout=5)
