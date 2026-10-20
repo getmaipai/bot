@@ -33,13 +33,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import reachy_mini
-from reachy_mini import ReachyMini, ReachyMiniApp
-
-from maipai_body.bodies.reachy_mini.client import ReachyMiniClient
-from maipai_body.bodies.reachy_mini.eyes_client import EyesClient
-from maipai_body.bodies.reachy_mini.motors import DaemonMotorBus, MotorGate
-from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.suppression import SuppressionContext
 from maipai_body.hal.errors import BodyLost
@@ -67,7 +60,6 @@ from maipai_body.presence.entries import presence_entries_from
 from maipai_body.presence.motor_health import MotorHealth
 from maipai_body.presence.night import NightController
 from maipai_body.presence.thermal import ThermalMonitor
-from maipai_body.run_loop import ConversationLoop
 from maipai_body.speech.capture import AudioCapture
 from maipai_body.speech.follow_up import FollowUpPolicy, PeopleDirectory
 from maipai_body.speech.models import EMBEDDING, MELSPECTROGRAM, WAKE_PHRASE, ensure_wakeword_models
@@ -86,11 +78,58 @@ from maipai_body.speech.stt_stream import SttStreamClient
 from maipai_body.speech.tts_playback import TtsPlaybackClient
 from maipai_body.speech.turn_client import TurnClient
 from maipai_body.speech.wake import OpenWakeWordEngine, WakeScorer
-from maipai_body.vision.detect import FiveLandmarkDetector
 from maipai_body.vision.embed import ensure_embedder
 from maipai_body.vision.gallery import FaceGallery
 from maipai_body.vision.models import SFACE
-from maipai_body.vision.watch import VisionWatch
+
+try:
+    import reachy_mini
+    from reachy_mini import ReachyMini, ReachyMiniApp
+
+    from maipai_body.bodies.reachy_mini.client import ReachyMiniClient
+    from maipai_body.bodies.reachy_mini.eyes_client import EyesClient
+    from maipai_body.bodies.reachy_mini.motors import DaemonMotorBus, MotorGate
+    from maipai_body.bodies.reachy_mini.profile import REACHY_MINI_PROFILE
+    from maipai_body.run_loop import ConversationLoop
+    from maipai_body.vision.watch import VisionWatch
+
+    _reachy_imported = True
+except ImportError:
+    reachy_mini = None
+    ReachyMini = Any
+    _reachy_imported = False
+    VisionWatch = Any
+
+    class ReachyMiniApp:
+        """Tiny runner shim used only by the standalone StackChan host."""
+
+        settings_app = None
+
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def wrapped_run(self) -> None:
+            self.run(None, threading.Event())
+
+        def stop(self) -> None:
+            pass
+
+    class _MissingReachyClient:
+        pass
+
+    ReachyMiniClient = _MissingReachyClient
+    EyesClient = Any
+    DaemonMotorBus = Any
+    MotorGate = Any
+    REACHY_MINI_PROFILE = None
+
+if _reachy_imported:
+    from maipai_body.run_loop import ConversationLoop
+    from maipai_body.vision.detect import FiveLandmarkDetector
+else:
+    ConversationLoop = None
+    FiveLandmarkDetector = None
+
 
 logger = logging.getLogger("maipai_body.app")
 
@@ -99,6 +138,11 @@ def _stackchan_selected(environ: Mapping[str, str] | None = None) -> bool:
     """Whether this Bot process is configured to serve a StackChan body."""
     environ = os.environ if environ is None else environ
     return environ.get("MAIPAI_BODY", "reachy_mini").strip().lower() in {"stackchan", "fake"}
+
+
+def _no_hub_discovery(timeout_s: float = 5.0):
+    """An explicit Home URL is the configured trust anchor for sidecars."""
+    return None
 
 
 class StackChanBehavior:
@@ -343,6 +387,7 @@ async def _serve_stackchan_channels(
     vision = None
     try:
         from maipai_body.bodies.stackchan.vision_bridge import StackChanVisionBridge
+        from maipai_body.vision.detect import FiveLandmarkDetector
 
         vision = StackChanVisionBridge(
             voice.robot.robot,
@@ -404,21 +449,21 @@ def _run_stackchan_service(
         if "MAIPAI_XIAOZHI_HOST" in os.environ and "MAIPAI_STACKCHAN_AVATAR_HOST" not in os.environ:
             avatar_host = host
         avatar_port = int(os.environ.get("MAIPAI_STACKCHAN_AVATAR_PORT", "8766"))
-        if link is None or offline is None:
-            asyncio.run(
-                _serve_stackchan_channels(stop_event, host, xiaozhi_port, avatar_host, avatar_port)
-            )
-        else:
-            asyncio.run(
-                _serve_stackchan_channels(
-                    stop_event, host, xiaozhi_port, avatar_host, avatar_port, link, offline
-                )
-            )
     except ValueError as exc:
         raise ValueError(
             "StackChan listener ports must be TCP port numbers. "
             "Set MAIPAI_XIAOZHI_PORT and MAIPAI_STACKCHAN_AVATAR_PORT to free ports."
         ) from exc
+    if link is None or offline is None:
+        asyncio.run(
+            _serve_stackchan_channels(stop_event, host, xiaozhi_port, avatar_host, avatar_port)
+        )
+    else:
+        asyncio.run(
+            _serve_stackchan_channels(
+                stop_event, host, xiaozhi_port, avatar_host, avatar_port, link, offline
+            )
+        )
 
 
 # FACE-01's own model_id convention (home's lib/biometricPrints.ts's
@@ -523,6 +568,10 @@ def _build_link_stack(
     sleep_after_s: float,
     clock: Callable[[], float] = time.monotonic,
     wall_clock: Callable[[], float] = time.time,
+    label: str = "Reachy Mini",
+    pairing_secret_path: Path | None = None,
+    extra_capabilities: list[str] | None = None,
+    hub_url: str | None = None,
 ) -> LinkStack:
     """LINK-STATE-01's wiring. Rung 1's recognizer and router are left
     unwired: the keyword spotter's cost on the Compute Module is UNVERIFIED
@@ -540,6 +589,10 @@ def _build_link_stack(
         observer=machine,
         address_walk=True,
         on_code=announcer,
+        label=label,
+        pairing_secret_path=pairing_secret_path,
+        extra_capabilities=extra_capabilities,
+        hub_url=hub_url,
     )
     announcer.current_code = lambda: link.state.code
     rung0 = Rung0Cues(machine=machine, clock=clock)
@@ -1307,11 +1360,23 @@ class MaiPaiBody(ReachyMiniApp):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         store = PairingStore(_default_pairing_path())
+        hosted = os.environ.get("MAIPAI_HUB_HOST") == "1"
+        discover = _no_hub_discovery if hosted else discover_hub
         self._stack = _build_link_stack(
             store,
-            HubLinkClient(store, clock_sync=ClockSync(system_clock_setter())),
-            discover=discover_hub,
+            HubLinkClient(
+                store,
+                clock_sync=ClockSync(system_clock_setter()),
+                discover=discover,
+            ),
+            discover=discover,
             sleep_after_s=_sleep_after_s(),
+            label=os.environ.get("MAIPAI_BOT_LABEL", "StackChan" if hosted else "Reachy Mini"),
+            pairing_secret_path=(Path(os.environ["MAIPAI_BOT_DATA_DIR"]) / "pairing-secret")
+            if hosted
+            else None,
+            extra_capabilities=["no_vendor_login"] if hosted else [],
+            hub_url=os.environ.get("MAIPAI_HUB_URL") if hosted else None,
         )
         self.link = self._stack.link
         # The base class only wires static files + index.html; the

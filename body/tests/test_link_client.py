@@ -28,6 +28,7 @@ class _StandInHub(http.server.BaseHTTPRequestHandler):
     label_seen: str | None = None
     kind_seen: str | None = None
     capabilities_seen: list | None = None
+    pairing_secret_seen: str | None = None
     poll_responses: list[dict] = [
         {"status": "approved", "device_token": "tok-123", "expires_at": "2027-01-01"}
     ]
@@ -55,6 +56,7 @@ class _StandInHub(http.server.BaseHTTPRequestHandler):
             type(self).label_seen = body.get("label")
             type(self).kind_seen = body.get("kind")
             type(self).capabilities_seen = body.get("capabilities")
+            type(self).pairing_secret_seen = body.get("pairing_secret")
             self._send_json(200, {"code": "AB12CD", "poll_token": "poll-xyz"})
         elif self.path == "/api/auth/devices/redeem":
             type(self).redeem_calls += 1
@@ -97,6 +99,7 @@ class _StandInHub(http.server.BaseHTTPRequestHandler):
 def stand_in_hub():
     _StandInHub.label_seen = None
     _StandInHub.capabilities_seen = None
+    _StandInHub.pairing_secret_seen = None
     _StandInHub.poll_responses = [
         {"status": "approved", "device_token": "tok-123", "expires_at": "2027-01-01"}
     ]
@@ -175,6 +178,74 @@ def test_pair_sends_kind_robot(stand_in_hub, tmp_path):
     client.pair(_address(server), label="Reachy")
 
     assert handler.kind_seen == "robot"
+    assert handler.pairing_secret_seen is None
+
+
+def test_pairing_secret_is_sent_once_then_deleted(stand_in_hub, tmp_path):
+    server, handler = stand_in_hub
+    secret = tmp_path / "pairing-secret"
+    secret.write_text("abcd0123", encoding="ascii")
+    secret.chmod(0o600)
+    _client(PairingStore(tmp_path / "pairing.json")).request_code(
+        _address(server), label="StackChan", pairing_secret_path=secret
+    )
+    assert handler.pairing_secret_seen == "abcd0123"
+    assert not secret.exists()
+
+
+def test_insecure_pairing_secret_is_ignored_and_deleted(stand_in_hub, tmp_path):
+    server, handler = stand_in_hub
+    secret = tmp_path / "pairing-secret"
+    secret.write_text("abcd0123", encoding="ascii")
+    secret.chmod(0o644)
+    _client(PairingStore(tmp_path / "pairing.json")).request_code(
+        _address(server), label="StackChan", pairing_secret_path=secret
+    )
+    assert handler.pairing_secret_seen is None
+    assert not secret.exists()
+
+
+def test_symlink_pairing_secret_is_ignored_and_target_untouched(stand_in_hub, tmp_path):
+    server, handler = stand_in_hub
+    target = tmp_path / "target"
+    target.write_text("abcd0123", encoding="ascii")
+    target.chmod(0o600)
+    secret = tmp_path / "pairing-secret"
+    secret.symlink_to(target)
+    _client(PairingStore(tmp_path / "pairing.json")).request_code(
+        _address(server), label="StackChan", pairing_secret_path=secret
+    )
+    assert handler.pairing_secret_seen is None
+    assert target.read_text(encoding="ascii") == "abcd0123"
+    assert not secret.exists()
+
+
+def test_non_hex_pairing_secret_is_ignored(stand_in_hub, tmp_path):
+    server, handler = stand_in_hub
+    secret = tmp_path / "pairing-secret"
+    secret.write_text("not-hex", encoding="ascii")
+    secret.chmod(0o600)
+    _client(PairingStore(tmp_path / "pairing.json")).request_code(
+        _address(server), label="StackChan", pairing_secret_path=secret
+    )
+    assert handler.pairing_secret_seen is None
+    assert not secret.exists()
+
+
+def test_pairing_secret_deleted_when_post_raises(stand_in_hub, tmp_path, monkeypatch):
+    server, _ = stand_in_hub
+    secret = tmp_path / "pairing-secret"
+    secret.write_text("abcd0123", encoding="ascii")
+    secret.chmod(0o600)
+    client = _client(PairingStore(tmp_path / "pairing.json"))
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("post failed")
+
+    monkeypatch.setattr(client._session, "post", fail)
+    with pytest.raises(RuntimeError, match="post failed"):
+        client.request_code(_address(server), label="StackChan", pairing_secret_path=secret)
+    assert not secret.exists()
 
 
 def test_poll_waits_through_pending_before_approval(stand_in_hub, tmp_path, monkeypatch):

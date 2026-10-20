@@ -74,6 +74,9 @@ class LinkLifecycle:
         on_code: Callable[[str], None] | None = None,
         observer: LinkObserver | None = None,
         address_walk: bool = False,
+        pairing_secret_path=None,
+        extra_capabilities: list[str] | None = None,
+        hub_url: str | None = None,
         tailnet: TailnetEndpoints = no_tailnet_endpoints,
         tailnet_member: Callable[[], bool] | None = None,
     ) -> None:
@@ -81,6 +84,9 @@ class LinkLifecycle:
         self._client = client
         self._discover = discover
         self._label = label
+        self._pairing_secret_path = pairing_secret_path
+        self._extra_capabilities = list(extra_capabilities or [])
+        self._hub_url = hub_url
         self._on_code = on_code
         self._observer = observer
         self._hub_address_book: list[HubEndpoint] = []
@@ -320,12 +326,15 @@ class LinkLifecycle:
             logger.warning("on_code hook failed", exc_info=True)
 
     def _discover_and_pair(self) -> bool:
-        address = self._discover(timeout_s=5.0)
+        address = self._hub_address_override() if self._hub_url else self._discover(timeout_s=5.0)
         if address is None:
             self._set_state(last_error="no hub found on the network")
             return False
         try:
-            pending = self._client.request_code(address, label=self._label)
+            request_options = {"capabilities": self._extra_capabilities}
+            if self._pairing_secret_path is not None:
+                request_options["pairing_secret_path"] = self._pairing_secret_path
+            pending = self._client.request_code(address, label=self._label, **request_options)
             # Surfaced before the blocking wait, not after - this is the
             # whole reason request_code()/await_approval() are split.
             self._set_state(paired=False, code=pending.code, last_error=None)
@@ -345,6 +354,20 @@ class LinkLifecycle:
                 classify_base_url(result.pairing.base_url).value, result.pairing.base_url
             )
         return True
+
+    def _hub_address_override(self):
+        from urllib.parse import urlparse
+
+        from maipai_body.link.discovery import HubAddress
+
+        parsed = urlparse(self._hub_url)
+        return HubAddress(
+            host=parsed.hostname or "",
+            port=parsed.port or (443 if parsed.scheme == "https" else 80),
+            instance_id="hub-host-configured",
+            name="MaiPai Home",
+            tls=parsed.scheme == "https",
+        )
 
     def _heartbeat(self, stop_event: threading.Event) -> None:
         """Re-redeems on a slow interval until a refresh fails or

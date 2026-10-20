@@ -295,6 +295,10 @@ class XiaozhiServer:
         await self._vision_runner.setup()
         self._vision_site = web.TCPSite(self._vision_runner, self.vision_host, self.vision_port)
         await self._vision_site.start()
+        if self.vision_port == 0 and self._vision_site._server is not None:
+            sockets = self._vision_site._server.sockets
+            if sockets:
+                self.vision_port = int(sockets[0].getsockname()[1])
 
     async def close(self) -> None:
         for device_id in tuple(self._camera_streaming):

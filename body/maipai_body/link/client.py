@@ -24,7 +24,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import re
 import ssl
+import stat
 import time
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -143,7 +146,13 @@ class HubLinkClient:
         return address.instance_id  # no certificate on plain http; pin identity instead
 
     def request_code(
-        self, address: HubAddress, *, label: str, capabilities: list[str] | None = None
+        self,
+        address: HubAddress,
+        *,
+        label: str,
+        capabilities: list[str] | None = None,
+        pairing_secret_path=None,
+        pairing_secret: str | None = None,
     ) -> PendingCode:
         """Step one: request a code. Returns immediately with the code
         to show while :meth:`await_approval` waits - split from that
@@ -151,11 +160,48 @@ class HubLinkClient:
         the code before blocking on approval, not after."""
         base_url = self._base_url(address)
         fingerprint = self._expected_fingerprint(address)
-        resp = self._session.post(
-            f"{base_url}/api/auth/quick-connect/code",
-            json={"label": label, "kind": "robot", "capabilities": capabilities or []},
-            timeout=10,
-        )
+        payload = {"label": label, "kind": "robot", "capabilities": capabilities or []}
+        if pairing_secret is None and pairing_secret_path is not None:
+            from pathlib import Path
+
+            secret_path = Path(pairing_secret_path)
+            fd = None
+            try:
+                fd = os.open(secret_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                info = os.fstat(fd)
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or stat.S_IMODE(info.st_mode) != 0o600
+                    or info.st_uid != os.getuid()
+                ):
+                    logger.warning(
+                        "pairing secret has unsafe ownership or permissions; ignoring it"
+                    )
+                else:
+                    with os.fdopen(os.dup(fd), "r", encoding="ascii") as secret_file:
+                        candidate = secret_file.read().strip()
+                    if re.fullmatch(r"[0-9a-fA-F]+", candidate):
+                        pairing_secret = candidate
+                    else:
+                        logger.warning("pairing secret is not hex; ignoring it")
+            except FileNotFoundError:
+                pass
+            except (OSError, UnicodeError) as exc:
+                logger.warning("could not read pairing secret; ignoring it: %s", exc)
+            finally:
+                if fd is not None:
+                    os.close(fd)
+        if pairing_secret is not None:
+            payload["pairing_secret"] = pairing_secret
+        try:
+            resp = self._session.post(
+                f"{base_url}/api/auth/quick-connect/code", json=payload, timeout=10
+            )
+        finally:
+            if pairing_secret_path is not None:
+                from pathlib import Path
+
+                Path(pairing_secret_path).unlink(missing_ok=True)
         resp.raise_for_status()
         body = resp.json()
         return PendingCode(
@@ -289,6 +335,8 @@ class HubLinkClient:
         pretends to solve."""
         if pairing.fingerprint is None:
             return
+        if pairing.hub_instance_id == "hub-host-configured":
+            return
         parsed = urlparse(pairing.base_url)
         host, port = parsed.hostname, parsed.port
         if host is None or port is None:
@@ -336,6 +384,8 @@ class HubLinkClient:
         scope: an mDNS TXT record is unauthenticated, so this rejects the
         wrong hub, not an on-path attacker; https is the only path with
         that defense."""
+        if pairing.hub_instance_id == "hub-host-configured":
+            return
         parsed = urlparse(pairing.base_url)
         if parsed.scheme == "https":
             if pairing.fingerprint is None:

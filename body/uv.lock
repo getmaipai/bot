@@ -585,18 +585,26 @@ name = "maipai-bot"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "av" },
     { name = "numpy" },
     { name = "pydantic" },
     { name = "pyserial" },
-    { name = "reachy-mini" },
     { name = "requests" },
     { name = "websockets" },
 ]
 
 [package.optional-dependencies]
+hub = [
+    { name = "num2words" },
+    { name = "onnxruntime" },
+    { name = "scipy" },
+]
 kws = [
     { name = "sherpa-onnx" },
+]
+reachy = [
+    { name = "reachy-mini" },
 ]
 sim = [
     { name = "reachy-mini", extra = ["mujoco"] },
@@ -609,31 +617,41 @@ voice = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "num2words" },
     { name = "pytest" },
+    { name = "reachy-mini" },
     { name = "ruff" },
+    { name = "scipy" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.14,<4" },
     { name = "av", specifier = ">=14,<17" },
+    { name = "num2words", marker = "extra == 'hub'", specifier = ">=0.5.13,<1" },
     { name = "num2words", marker = "extra == 'voice'", specifier = ">=0.5.13,<1" },
     { name = "numpy", specifier = ">=2.0,<3" },
+    { name = "onnxruntime", marker = "extra == 'hub'", specifier = "==1.30.0" },
     { name = "openwakeword", marker = "extra == 'voice'", specifier = ">=0.6.0,<0.7" },
     { name = "pydantic", specifier = ">=2.13,<3" },
     { name = "pyserial", specifier = ">=3.5,<4" },
-    { name = "reachy-mini", specifier = "==1.11.0" },
+    { name = "reachy-mini", marker = "extra == 'reachy'", specifier = "==1.11.0" },
     { name = "reachy-mini", extras = ["mujoco"], marker = "extra == 'sim'", specifier = "==1.11.0" },
     { name = "requests", specifier = ">=2.34,<3" },
+    { name = "scipy", marker = "extra == 'hub'", specifier = ">=1.14,<2" },
     { name = "scipy", marker = "extra == 'voice'", specifier = ">=1.14,<2" },
     { name = "sherpa-onnx", marker = "extra == 'kws'", specifier = ">=1.13.8,<2" },
     { name = "websockets", specifier = ">=15.0,<16" },
 ]
-provides-extras = ["sim", "voice", "kws"]
+provides-extras = ["reachy", "hub", "sim", "voice", "kws"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "num2words", specifier = ">=0.5.13,<1" },
     { name = "pytest", specifier = ">=8.0" },
+    { name = "reachy-mini", specifier = "==1.11.0" },
     { name = "ruff", specifier = ">=0.16" },
+    { name = "scipy", specifier = ">=1.14,<2" },
 ]
 
 [[package]]

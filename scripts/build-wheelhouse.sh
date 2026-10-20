@@ -24,7 +24,7 @@ mkdir -p "$WHEELS"
 # unlike pip resolving reachy-mini's upstream 1.27.0 pin on its own.
 (cd "$ROOT/body" && uv pip compile pyproject.toml \
   --python-platform aarch64-unknown-linux-gnu \
-  --extra voice --extra kws --no-header --no-annotate \
+  --extra reachy --extra voice --extra kws --no-header --no-annotate \
   --output-file "$REQ")
 grep -qx 'onnxruntime==1.30.0' "$REQ" || {
   echo "resolved requirements do not pin onnxruntime==1.30.0" >&2

@@ -39,8 +39,8 @@ import numpy as np
 import numpy.typing as npt
 
 from maipai_body.vision.align import align_crop
-from maipai_body.vision.detect import FiveLandmarks
 from maipai_body.vision.gallery import FaceGallery, FaceVerdict
+from maipai_body.vision.landmarks import FiveLandmarks
 
 logger = logging.getLogger("maipai_body.vision.watch")
 

@@ -18,6 +18,7 @@ class _FakeClient:
 
     def __init__(self) -> None:
         self.request_code_calls = 0
+        self.request_code_capabilities = None
         self.await_approval_calls = 0
         self.refresh_calls = 0
         self.refresh_results: list[bool] = [True]
@@ -26,6 +27,7 @@ class _FakeClient:
 
     def request_code(self, address, *, label, capabilities=None):
         self.request_code_calls += 1
+        self.request_code_capabilities = capabilities
         return self.request_code_result
 
     def await_approval(self, pending):
@@ -91,6 +93,37 @@ def test_starts_unpaired_with_no_code(tmp_path):
 
     assert lifecycle.state.paired is False
     assert lifecycle.state.code is None
+
+
+def test_host_capability_is_sent_in_quick_connect(tmp_path):
+    client = _FakeClient()
+    lifecycle = LinkLifecycle(
+        PairingStore(tmp_path / "pairing.json"),
+        client,
+        discover=lambda timeout_s: _address(),
+        extra_capabilities=["no_vendor_login"],
+    )
+    _run_until(lifecycle, lambda: lifecycle.state.paired)
+    assert client.request_code_capabilities == ["no_vendor_login"]
+
+
+def test_host_constructor_options_override_address_and_reach_request(tmp_path):
+    client = _FakeClient()
+    lifecycle = LinkLifecycle(
+        PairingStore(tmp_path / "pairing.json"),
+        client,
+        discover=lambda timeout_s: None,
+        hub_url="http://home.local:8800",
+        label="Office StackChan",
+        pairing_secret_path=tmp_path / "pairing-secret",
+        extra_capabilities=["no_vendor_login"],
+    )
+    address = lifecycle._hub_address_override()
+    assert (address.host, address.port) == ("home.local", 8800)
+    assert address.instance_id == "hub-host-configured"
+    assert lifecycle._label == "Office StackChan"
+    assert lifecycle._pairing_secret_path == tmp_path / "pairing-secret"
+    assert lifecycle._extra_capabilities == ["no_vendor_login"]
 
 
 def test_resumes_an_existing_pairing_without_discovering(tmp_path):

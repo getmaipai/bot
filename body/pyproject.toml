@@ -11,7 +11,6 @@ version = "0.1.0"
 description = "MaiPai Bot: the Python body that owns hardware behind the HAL seam, one profile per supported body."
 requires-python = ">=3.12"
 dependencies = [
-    "reachy-mini==1.11.0",
     "pydantic>=2.13,<3",
     "websockets>=15.0,<16",
     "requests>=2.34,<3",
@@ -24,6 +23,10 @@ dependencies = [
     # own code, so pyserial is declared directly rather than leaning on
     # reachy-mini's transitive pin (3.5 today, BSD-3, see NOTICE).
     "pyserial>=3.5,<4",
+    # The StackChan Xiaozhi server serves vision uploads and notify audio
+    # with aiohttp; reachy-mini used to bring it in transitively, which the
+    # hub bundle (no Reachy SDK) does not have.
+    "aiohttp>=3.14,<4",
     # Shared spec source pin: see maipai_body/spec_pin.py. The gate exposes
     # that pinned checkout as
     # MAIPAI_SPEC_DIR for schema, vocabulary and fixture checks. This is a
@@ -40,9 +43,10 @@ maipai_bot = "maipai_body.app:MaiPaiBody"
 
 [project.scripts]
 stackchan-provision = "maipai_body.bodies.stackchan.xiaozhi.provision:main"
+maipai-bot-host = "maipai_body.hub_host:main"
 
-# G12 (docs/dev/reachy-mini-gap-audit-2026-09-27.md): the bare
-# `reachy-mini` dependency above never pulls the simulator (mujoco is a
+# G12 (docs/dev/reachy-mini-gap-audit-2026-09-27.md): the optional
+# `reachy` dependency never pulls the simulator (mujoco is a
 # multi-hundred-MB extra with its own native deps, useless on the robot
 # itself and previously installed onto it for no reason,
 # install-reachy.sh's own comment already flagged this). The dev bench
@@ -50,6 +54,8 @@ stackchan-provision = "maipai_body.bodies.stackchan.xiaozhi.provision:main"
 # sync --extra sim` once, then plain `uv run ...`), not the bare `uv
 # run reachy-mini-daemon` this repo's docstrings used to show.
 [project.optional-dependencies]
+reachy = ["reachy-mini==1.11.0"]
+hub = ["onnxruntime==1.30.0", "scipy>=1.14,<2", "num2words>=0.5.13,<1"]
 sim = ["reachy-mini[mujoco]==1.11.0"]
 # G2: wake-word scoring. Pulls onnxruntime, scikit-learn, scipy, requests
 # and tqdm transitively - real weight on a CM4, so it's opt-in like `sim`,
@@ -79,6 +85,12 @@ kws = ["sherpa-onnx>=1.13.8,<2"]
 dev = [
     "pytest>=8.0",
     "ruff>=0.16",
+    # The deterministic suite imports Reachy adapters; this development-only
+    # dependency is excluded from the hub release export with --no-dev.
+    "reachy-mini==1.11.0",
+    # Test imports cover speech modules and the optional resampler.
+    "scipy>=1.14,<2",
+    "num2words>=0.5.13,<1",
 ]
 
 [tool.uv]
@@ -117,6 +129,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
     "unit_only: needs the physical Reachy Mini (MAIPAI_UNIT=1 and a non-simulator daemon on port 8000)",
+    "bundle: builds or inspects a self-contained hub bundle",
 ]
 
 [build-system]
