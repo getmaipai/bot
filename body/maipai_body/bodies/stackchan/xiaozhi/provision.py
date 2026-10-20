@@ -64,8 +64,8 @@ def generate_image(
 ) -> Path:
     """Generate an NVS binary using ESP-IDF's nvs_partition_gen.py.
 
-    The firmware sends board:uuid as its Client-Id. The image replaces the whole NVS
-    partition, so without that key the first boot invents a new UUID and pairing fails.
+    The image replaces the whole NVS partition, so these keys preserve pairing and make
+    the robot boot straight into the AI Agent.
     """
     if not websocket_url.startswith("ws://") and not websocket_url.startswith("wss://"):
         raise ValueError(
@@ -91,6 +91,14 @@ def generate_image(
                 rows.extend([["wifi", "namespace", "", ""], ["ota_url", "data", "string", ota_url]])
             if client_id:
                 rows.extend([["board", "namespace", "", ""], ["uuid", "data", "string", client_id]])
+            rows.extend(
+                [
+                    ["xiaozhi", "namespace", "", ""],
+                    ["boot_ai", "data", "u8", "1"],
+                    ["app_config", "namespace", "", ""],
+                    ["is_configed", "data", "u8", "1"],
+                ]
+            )
             writer.writerows(rows)
         result = subprocess.run(
             [

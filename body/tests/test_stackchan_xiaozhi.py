@@ -445,6 +445,13 @@ class ProvisioningTests(unittest.TestCase):
             self.assertEqual(rows[4], ["version", "data", "i32", "1"])
             self.assertEqual(rows[5], ["wifi", "namespace", "", ""])
             self.assertEqual(rows[6], ["ota_url", "data", "string", "http://192.0.2.10:8765/ota"])
+            for expected in (
+                ["xiaozhi", "namespace", "", ""],
+                ["boot_ai", "data", "u8", "1"],
+                ["app_config", "namespace", "", ""],
+                ["is_configed", "data", "u8", "1"],
+            ):
+                self.assertIn(expected, rows)
             called: list[list[str]] = []
 
             def fake_run(command, **kwargs):

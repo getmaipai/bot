@@ -9,6 +9,7 @@ checklist (`docs/dev.md`).
 
 ### Changed
 
+- StackChan provisioning sets `boot_ai` and `is_configed` so the robot boots straight into the AI Agent without the Welcome screen.
 - Pin the body checks and release asset lookup to the robot API vocabulary in `spec-v0.1.141`.
 
 ### Added
