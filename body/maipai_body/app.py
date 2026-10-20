@@ -407,7 +407,24 @@ async def _serve_stackchan_channels(
     behavior.idle_still = lambda: power.still
     from maipai_body.bodies.stackchan.light_wiring import start_stackchan_light
 
-    light = start_stackchan_light(voice.robot, link, stop_event, on_battery=power.on_battery_status)
+    def device_connected() -> bool:
+        return bool(voice._sessions)
+
+    light = start_stackchan_light(
+        voice.robot,
+        link,
+        stop_event,
+        device_connected=device_connected,
+        on_battery=power.on_battery_status,
+    )
+    from maipai_body.bodies.stackchan.estop_recovery import EstopRecovery
+
+    threading.Thread(
+        target=EstopRecovery(voice.robot.robot, device_connected).run,
+        args=(stop_event,),
+        name="stackchan-estop-recovery",
+        daemon=True,
+    ).start()
     voice.robot.robot._driver("camera").cue_sink = light.cue_camera
     if link is not None and offline is not None:
         bridge = StackChanTurnBridge(

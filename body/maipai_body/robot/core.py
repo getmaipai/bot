@@ -89,6 +89,7 @@ class Robot:
         self._parts: dict[str, RobotPart] = {}
         self._lease: Lease | None = None
         self._estop_engaged = False
+        self._estop_cause: str | None = None
         self._last_safe_stop: tuple[str, ...] = ()
 
     @property
@@ -103,6 +104,13 @@ class Robot:
     @property
     def estop_engaged(self) -> bool:
         return self._estop_engaged
+
+    @property
+    def estop_cause(self) -> str | None:
+        """What set the current stop latch: 'user' or 'body_lost' (None when off)."""
+        if not self._estop_engaged:
+            return None
+        return self._estop_cause
 
     @property
     def last_safe_stop(self) -> tuple[str, ...]:
@@ -197,6 +205,7 @@ class Robot:
         if part == "estop" and verb == "release":
             result = self._dispatch(part, verb, *args, **kwargs)
             self._estop_engaged = False
+            self._estop_cause = None
             return result
         if part == "base" and verb == "drive":
             self._check_deadline(args, kwargs)
@@ -212,6 +221,8 @@ class Robot:
             result = self._dispatch(part, verb, *applied_args, **applied_kwargs)
         except BodyLost:
             self._estop_engaged = True
+            if self._estop_cause != "user":
+                self._estop_cause = "body_lost"
             self._safe_stop(include_estop=True)
             raise
         if result is not None:
@@ -281,6 +292,7 @@ class Robot:
 
     def _engage_estop(self) -> Any:
         self._estop_engaged = True
+        self._estop_cause = "user"
         try:
             result = self._dispatch("estop", "engage")
         except BodyLost:
