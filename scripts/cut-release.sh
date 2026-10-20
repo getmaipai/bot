@@ -69,6 +69,8 @@ fi
 bash body/maipai_body/bodies/stackchan/firmware/release.sh \
   --date "$BUILD_DATE" --version "$VERSION" --signing-key "$SIGNING_KEY" --output "$FW_TMP"
 MAIPAI_BOT_BUNDLE_OUT_DIR="$STAGE" scripts/build-stackchan-firmware-asset.sh "$TAG" "$FW_TMP"
+# The wheel is a build input already packed inside each hub bundle; it is not a release asset.
+rm -f "$STAGE"/maipai_bot-*.whl "$STAGE"/maipai_bot-*.whl.sha256
 scripts/sign-release-sums.sh --signing-key "$SIGNING_KEY" "$STAGE"
 
 (cd "$STAGE" && shasum -a 256 -c SHA256SUMS)
