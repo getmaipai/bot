@@ -25,7 +25,7 @@ logger = logging.getLogger("maipai_body.bodies.stackchan.power_idle")
 # one-minute cap the light wiring uses for a failed battery read).
 FAILURE_WARN_S = 60.0
 # A battery reading older than this counts as unknown (the unit may have been plugged in).
-STATUS_TTL_S = 180.0
+STATUS_TTL_S = 3 * 60.0
 # Wait this long before retrying a failed idle-motion write.
 RETRY_S = 5.0
 
