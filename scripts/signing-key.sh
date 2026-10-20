@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Store a key once with: security add-generic-password -s maipai-release-signing-key -a maipai -w "$(cat key.pem)" then delete the file.
 
+# macOS /usr/bin/openssl is LibreSSL and cannot do Ed25519; prefer Homebrew's OpenSSL when it is installed.
+for brew_ssl in /opt/homebrew/opt/openssl@3/bin /opt/homebrew/opt/openssl/bin /opt/homebrew/bin; do
+  if [[ -x "$brew_ssl/openssl" ]]; then PATH="$brew_ssl:$PATH"; break; fi
+done
+export PATH
+
 signing_key_cleanup() {
   [[ -z "${SIGNING_KEY_TMPDIR:-}" ]] || rm -rf "$SIGNING_KEY_TMPDIR"
 }
