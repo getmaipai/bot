@@ -115,6 +115,8 @@ STACKCHAN_COMMIT=$(read_pin stackchan commit)
 REPOS_HASH=$(read_pin stackchan repos_json_sha256)
 LOCK_HASH=$(read_pin stackchan dependencies_lock_sha256)
 mkdir -p "$BUILD_ROOT" "$OUT"
+# The build config and app image hold the pairing token; keep them to this account.
+chmod 700 "$BUILD_ROOT"
 CREATED_SRC=0
 if [[ ! -d "$SRC/.git" ]]; then
   git clone --no-checkout "$STACKCHAN_URL" "$SRC"
