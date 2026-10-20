@@ -29,7 +29,10 @@ def _tool(name: str) -> str:
 
 
 def _tool_python(tool: str) -> str:
-    """Use the Python environment beside an ESP-IDF tool when available."""
+    """Use ESP-IDF's Python environment (set by export.sh) or one beside the tool."""
+    idf_env = os.environ.get("IDF_PYTHON_ENV_PATH")
+    if idf_env and (Path(idf_env) / "bin" / "python").is_file():
+        return str(Path(idf_env) / "bin" / "python")
     tool_path = Path(tool).resolve()
     for parent in tool_path.parents:
         candidate = parent / "bin" / "python"
@@ -55,10 +58,15 @@ def generate_image(
     token: str,
     version: str,
     ota_url: str,
+    client_id: str = "",
     partition_size: int = 0x4000,
     generator: str | None = None,
 ) -> Path:
-    """Generate an NVS binary using ESP-IDF's nvs_partition_gen.py."""
+    """Generate an NVS binary using ESP-IDF's nvs_partition_gen.py.
+
+    The firmware sends board:uuid as its Client-Id. The image replaces the whole NVS
+    partition, so without that key the first boot invents a new UUID and pairing fails.
+    """
     if not websocket_url.startswith("ws://") and not websocket_url.startswith("wss://"):
         raise ValueError(
             "WebSocket URL must start with ws:// or wss://. Use the bot host's LAN address."
@@ -81,6 +89,8 @@ def generate_image(
             ]
             if ota_url:
                 rows.extend([["wifi", "namespace", "", ""], ["ota_url", "data", "string", ota_url]])
+            if client_id:
+                rows.extend([["board", "namespace", "", ""], ["uuid", "data", "string", client_id]])
             writer.writerows(rows)
         result = subprocess.run(
             [
@@ -231,6 +241,7 @@ def main(argv: list[str] | None = None) -> int:
             token=token,
             version=args.version,
             ota_url=args.ota_url,
+            client_id=args.client_id or "",
             partition_size=args.size,
             generator=args.generator,
         )
