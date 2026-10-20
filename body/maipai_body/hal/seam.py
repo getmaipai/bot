@@ -351,6 +351,7 @@ class LookStyle(StrEnum):
     PULSE = "pulse"  # short on, long off
     BLINK = "blink"  # the alarm only
     FLASH = "flash"  # two quick flashes, the camera cue only
+    DOUBLE = "double"  # two short pulses, then a long rest (offline)
 
 
 class Look(BaseModel):

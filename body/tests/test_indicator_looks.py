@@ -391,3 +391,9 @@ def test_disabled_darkens_every_new_row_but_never_the_cues_or_the_alarm():
     assert resolve(_request(live=True, settings=off)) is not None
     assert resolve(_request(camera=True, settings=off)) is not None
     assert resolve(_request(alarm=True, alarm_on=True, settings=off)) is not None
+
+
+def test_offline_is_an_amber_double_pulse_every_ten_seconds():
+    look = resolve(_request(offline=True))
+    assert look is not None and look.colour is Palette.AMBER
+    assert look.style.value == "double" and look.period_s == 10.0

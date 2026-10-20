@@ -180,3 +180,43 @@ def test_a_visible_camera_stream_still_lights_and_clears_the_cue():
     assert robot._driver("leds").camera_indicator_active is True
     robot.camera.stream(enabled=False)
     assert robot._driver("leds").camera_indicator_active is False
+
+
+def test_a_turn_drives_the_ring_funnel_and_the_face_together():
+    from maipai_body.app import _turn_sink
+    from maipai_body.presence.funnel import FunnelState
+
+    funnel: list[FunnelState] = []
+    faces: list[str] = []
+
+    class _Light:
+        def update(self, **changes):
+            funnel.append(changes["funnel"])
+
+    class _Behavior:
+        def render_turn_state(self, state, *, mood=None):
+            faces.append(state)
+
+    sink = _turn_sink(_Behavior(), _Light())
+    for state in ("listening", "thinking", "reply_mood", "speaking", "settle"):
+        sink(state, mood="happy" if state == "reply_mood" else None)
+    assert funnel == [
+        FunnelState.LISTENING,
+        FunnelState.THINKING,
+        FunnelState.SPEAKING,
+        FunnelState.IDLE,
+    ]
+    assert faces == ["listening", "thinking", "reply_mood", "speaking", "settle"]
+
+
+def test_the_listening_cue_perks_the_head_up_with_a_happy_face():
+    from maipai_body.bodies.stackchan.expression_map import PRIMITIVE_BODY_MAP
+
+    perk = PRIMITIVE_BODY_MAP["perk"]
+    assert perk.face == "happy" and perk.pitch_fraction < 0  # up and brighter
+    import inspect
+
+    from maipai_body import app
+
+    source = inspect.getsource(app.StackChanBehavior.render_turn_state)
+    assert '"listening": "perk"' in source

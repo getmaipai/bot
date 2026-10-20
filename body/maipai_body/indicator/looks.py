@@ -85,7 +85,7 @@ LOOKS: dict[LookKey, tuple[Palette, float, LookStyle]] = {
     LookKey.OFFER: (Palette.BLUE, 0.6, LookStyle.STEADY),
     LookKey.ERROR: (Palette.AMBER, 0.7, LookStyle.STEADY),
     LookKey.CONNECTING: (Palette.BLUE, 0.5, LookStyle.PULSE),
-    LookKey.OFFLINE: (Palette.AMBER, 0.3, LookStyle.PULSE),
+    LookKey.OFFLINE: (Palette.AMBER, 0.3, LookStyle.DOUBLE),
     LookKey.PAIRING: (Palette.CYAN, 0.6, LookStyle.PULSE),
     LookKey.CHARGING: (Palette.GREEN, 0.3, LookStyle.BREATHE),
     LookKey.BATTERY_LOW: (Palette.AMBER, 0.3, LookStyle.PULSE),
@@ -100,6 +100,7 @@ PERIOD_S: dict[LookStyle, float] = {
     LookStyle.PULSE: 2.0,
     LookStyle.FLASH: 0.5,
     LookStyle.BLINK: 1.0,
+    LookStyle.DOUBLE: 10.0,
     LookStyle.STEADY: 0.0,
 }
 # Per-key periods that differ from their style's default.

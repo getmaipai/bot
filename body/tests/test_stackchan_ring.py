@@ -104,3 +104,14 @@ def test_every_look_key_renders_to_a_triple():
         colour, _, style = LOOKS[key]
         look = Look(colour=colour, brightness=0.5, style=style)
         assert sum(ring_rgb(look, period_s(key), 1.0)) > 0
+
+
+def test_double_is_two_short_pulses_then_a_long_rest():
+    from maipai_body.bodies.stackchan.ring import style_factor
+    from maipai_body.hal.seam import LookStyle
+
+    on = [0.0, 0.1, 0.3, 0.4]
+    off = [0.15, 0.2, 0.29, 0.45, 1.0, 9.9]
+    assert all(style_factor(LookStyle.DOUBLE, 10.0, t) == 1.0 for t in on)
+    assert all(style_factor(LookStyle.DOUBLE, 10.0, t) == 0.0 for t in off)
+    assert style_factor(LookStyle.DOUBLE, 10.0, 10.05) == 1.0  # repeats each period

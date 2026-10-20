@@ -107,3 +107,22 @@ Wired on StackChan: `StackChanLightService` and `LightPoller` (`light_service.py
 `app.py`. The camera cue reaches the service from the camera adapter (`cue_sink`), the live (green) cue from the turn bridge around the
 hub speech stream (`live_sink`), and connecting, offline, charging and low battery are polled once a second (battery once a minute). Pairing,
 updating and dancing flags have no caller yet. Nothing here has run on a unit.
+
+## Cue sequences on StackChan (owner request 2026-10-20)
+
+| Moment | Screen | Ring | Sound | Owner |
+|---|---|---|---|---|
+| Power on, joining Wi-Fi | plain "Connecting to Wi-Fi..." text, no face | blue slow pulse | none | firmware (patch 033, planned): the host is not connected yet |
+| Wi-Fi needs a person (setup) | the setup instructions | cyan slow pulse | none | firmware (patch 033, planned) |
+| Wi-Fi joined, opening the hub session | plain "Connecting to Home..." text, no face | blue slow pulse | none | firmware (patch 033, planned) |
+| Ready (hub session open) | the face appears | settles to idle white, dim | one short soft chime (the firmware's success sound) | face and chime: firmware; ring: host (the `connecting` fact clears when the device session opens) |
+| Wake word heard or a tap opens a turn | head lifts and the face brightens (`perk`) | blue steady | the firmware's rising pop-up tone | host: ring and `perk`; tone: firmware (already plays) |
+| Audio streaming to the hub | listening face | green steady (the live cue outranks blue and is held 0.5 s) | none | host |
+| Thinking | `doubt` face, head attends | magenta slow breathe | none | host |
+| Speaking | speaking face | white steady | the reply | host |
+| Turn over | settle | idle white, dim | none | host |
+| Hub unreachable after ready | face stays | amber double pulse, two short pulses every 10 s | none | host |
+
+Notes: the firmware has no wide-eyed emotion (its six are neutral, happy, angry, sad, doubt, sleepy), so "it heard you" is the head lift
+with the brighter face, not wider eyes; wide eyes would need a face skin change in the firmware (patch 033 can add one). Wake-word
+scoring alone shows nothing; the detected wake word is a state change to listening and does show. `double` joined the closed style set.

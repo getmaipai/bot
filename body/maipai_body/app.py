@@ -221,7 +221,7 @@ class StackChanBehavior:
             return
         self._night_turned = False
         primitive = {
-            "listening": "glance",
+            "listening": "perk",  # head lifts and the face brightens: it heard you
             "thinking": "attend",
             "speaking": "speak",
         }.get(state)
@@ -397,6 +397,33 @@ def _start_stackchan_night(
     return night
 
 
+def _turn_sink(behavior, light):
+    """One turn event: move the face and set the ring's funnel state (the light standard).
+
+    Wake word or tap opens a turn as ``listening`` (blue steady, eyes widen); the live cue (green)
+    takes over while audio streams to the hub; thinking breathes magenta; speaking is white.
+    """
+    from maipai_body.presence.funnel import FunnelState
+
+    funnel = {
+        "listening": FunnelState.LISTENING,
+        "thinking": FunnelState.THINKING,
+        "speaking": FunnelState.SPEAKING,
+        "settle": FunnelState.IDLE,
+    }
+
+    def sink(state: str, *, mood: str | None = None) -> None:
+        next_state = funnel.get(state)
+        if next_state is not None:
+            try:
+                light.update(funnel=next_state)
+            except Exception:  # a light never fails the turn
+                logger.warning("StackChan funnel light failed", exc_info=True)
+        behavior.render_turn_state(state, mood=mood)
+
+    return sink
+
+
 async def _serve_stackchan_channels(
     stop_event: threading.Event,
     host: str,
@@ -502,7 +529,7 @@ async def _serve_stackchan_channels(
             # This adapter consumes that field when the hub adds it; absent
             # results remain anonymous on this turn.
             person_attribution=lambda result: getattr(result, "speaker_evidence", None),
-            expression_sink=behavior.render_turn_state,
+            expression_sink=_turn_sink(behavior, light),
             live_sink=light.cue_live,
             uplink_stats=uplink,
         )

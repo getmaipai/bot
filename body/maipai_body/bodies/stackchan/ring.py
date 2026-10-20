@@ -47,6 +47,9 @@ def style_factor(style: LookStyle, period_s: float, t_s: float) -> float:
         return 0.15 + 0.85 * (0.5 - 0.5 * math.cos(2.0 * math.pi * t_s / period_s))
     if style is LookStyle.PULSE:
         return 1.0 if t_s % period_s < 0.25 else 0.0
+    if style is LookStyle.DOUBLE:
+        phase = t_s % period_s
+        return 1.0 if phase < 0.15 or 0.30 <= phase < 0.45 else 0.0
     if style is LookStyle.BLINK:
         return 1.0 if t_s % period_s < period_s / 2.0 else 0.15
     if style is LookStyle.FLASH:

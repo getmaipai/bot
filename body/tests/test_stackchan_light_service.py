@@ -150,13 +150,13 @@ def test_battery_low_shows_an_amber_pulse():
     assert look.period_s == looks.period_s(looks.LookKey.BATTERY_LOW)
 
 
-def test_offline_shows_an_amber_pulse_on_a_ten_second_period():
+def test_offline_shows_an_amber_double_pulse_on_a_ten_second_period():
     service, ring, _, _ = _service()
     service.update(offline=True)
     look = ring.current
     assert look is not None
     assert look.colour is Palette.AMBER
-    assert look.style is LookStyle.PULSE
+    assert look.style is LookStyle.DOUBLE
     assert look.period_s == looks.period_s(looks.LookKey.OFFLINE) == 10.0
 
 
