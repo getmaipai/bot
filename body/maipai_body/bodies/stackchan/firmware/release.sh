@@ -61,8 +61,10 @@ else
   echo "Container engine unavailable; documented local-toolchain fallback: run recipe.sh with ESP-IDF 5.5.4 exported." >&2
   bash "$HERE/recipe.sh"
 fi
-RECIPE_OUT="${STACKCHAN_BUILD_ROOT:-$HOME/esp/stackchan-build/stackchan-02-run/build}/output"
-BUILD_DIR="$(dirname "$RECIPE_OUT")"
+RECIPE_ROOT="${STACKCHAN_BUILD_ROOT:-$HOME/esp/stackchan-build/stackchan-02-run/build}"
+RECIPE_OUT="$RECIPE_ROOT/output"
+# The ESP-IDF build tree (bootloader, partition table, flasher_args.json) is inside the checkout recipe.sh builds.
+BUILD_DIR="$RECIPE_ROOT/StackChan/firmware/build"
 cp "$RECIPE_OUT/stack-chan-maipai.bin" "$OUT/"
 cp "$RECIPE_OUT/generated_assets.bin" "$RECIPE_OUT/ota_data_initial.bin" "$OUT/"
 cp "$BUILD_DIR/bootloader/bootloader.bin" "$BUILD_DIR/partition_table/partition-table.bin" "$OUT/"
