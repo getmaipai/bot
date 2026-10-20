@@ -7,6 +7,13 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-10-20
+
+### Fixed
+
+- Smoother, faster StackChan speech: a 14-frame playback lead, a streamed sender, bounded catch-up that logs a warning, per-sentence lateness logging, uplink decoding off the event loop, and a 30 ms settle before speech.
+- The thinking, doubt, wry, glance, tilt and attend looks now send the neutral face instead of a confused one. No reflash needed.
+
 ## [0.2.7] - 2026-10-20
 
 ### Fixed
