@@ -48,10 +48,10 @@ def test_per_led_update_cannot_hide_camera_indicator_during_capture():
         adapter = None
 
         def take_photo(self):
-            assert self.led_color == (168, 0, 0)
+            assert self.led_color == (168, 42, 92)
             self.adapter.robot.leds.many(_updates([(0, 0, 0)] * LED_COUNT))
-            assert self.led_color == (168, 0, 0)
-            assert self.led_colors == ((168, 0, 0),) * LED_COUNT
+            assert self.led_color == (168, 42, 92)
+            assert self.led_colors == ((168, 42, 92),) * LED_COUNT
             return b"jpeg"
 
     device = DuringCapture()
@@ -61,4 +61,4 @@ def test_per_led_update_cannot_hide_camera_indicator_during_capture():
     import asyncio
 
     assert asyncio.run(adapter.take_photo()) == b"jpeg"
-    assert device.led_colors == ((168, 0, 0),) * LED_COUNT
+    assert device.led_colors == ((168, 42, 92),) * LED_COUNT

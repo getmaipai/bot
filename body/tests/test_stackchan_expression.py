@@ -95,14 +95,14 @@ def test_expression_engine_selects_stackchan_renderer_and_estop_discards_motion(
 def test_camera_photo_requires_indicator_first_and_clears_it_on_capture_error():
     class GuardedCamera(FakeStackChanDeviceClient):
         def take_photo(self):
-            assert self.led_color == (168, 0, 0), "camera capture began without its indicator"
+            assert self.led_color == (168, 42, 92), "camera capture began without its indicator"
             return super().take_photo()
 
     device = GuardedCamera()
     adapter = StackChanRobotAdapter(device)
     device.photo = b"jpeg"
     assert asyncio.run(adapter.take_photo()) == b"jpeg"
-    assert device.led_colors == ((168, 0, 0),) * 12
+    assert device.led_colors == ((168, 42, 92),) * 12
 
     class FailingCamera(GuardedCamera):
         def take_photo(self):
@@ -112,4 +112,4 @@ def test_camera_photo_requires_indicator_first_and_clears_it_on_capture_error():
     failing = StackChanRobotAdapter(FailingCamera())
     with pytest.raises(RuntimeError, match="capture failed"):
         asyncio.run(failing.take_photo())
-    assert failing.client.led_colors == ((168, 0, 0),) * 12
+    assert failing.client.led_colors == ((168, 42, 92),) * 12

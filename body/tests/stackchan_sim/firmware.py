@@ -363,7 +363,7 @@ class StackChanFirmware:
                 for index in range(12)
             ]
             if self.camera_indicator_active:
-                self.led_color = (168, 0, 0)
+                self.led_color = (168, 42, 92)
                 self.led_colors = (self.led_color,) * 12
             else:
                 self.led_colors = tuple(colors)

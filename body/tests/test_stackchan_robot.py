@@ -207,25 +207,25 @@ def test_camera_photo_and_stream_indicator_turn_on_and_off_on_success_and_failur
         -1
     ] == {
         "red": 168,
-        "green": 0,
-        "blue": 0,
+        "green": 42,
+        "blue": 92,
     }
-    assert device.led_colors == ((168, 0, 0),) * 12
+    assert device.led_colors == ((168, 42, 92),) * 12
     robot.camera.stream()
     assert decode_frame(device.avatar_frames[-1]).command == AvatarCommand.START_CAMERA_STREAM
-    assert device.led_color == (168, 0, 0)
+    assert device.led_color == (168, 42, 92)
     robot.camera.stream(enabled=False)
     assert decode_frame(device.avatar_frames[-1]).payload == b"\x00"
-    assert device.led_colors == ((168, 0, 0),) * 12
+    assert device.led_colors == ((168, 42, 92),) * 12
 
     robot.camera.stream()
     robot._driver("camera").disconnected()
-    assert device.led_colors == ((168, 0, 0),) * 12
+    assert device.led_colors == ((168, 42, 92),) * 12
 
     device.connected = False
     with pytest.raises(BodyLost):
         robot.camera.frame()
-    assert device.led_colors == ((168, 0, 0),) * 12
+    assert device.led_colors == ((168, 42, 92),) * 12
 
 
 def test_camera_stream_is_refused_while_estopped():

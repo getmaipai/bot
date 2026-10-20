@@ -24,11 +24,8 @@ def test_runtime_renders_idle_turn_and_tracking_through_robot_api():
         behavior.render_primitive("glance")
         assert device.avatar_frames
         assert any(call.name == "self.robot.set_head_angles" for call in device.calls)
-        assert any(
-            call.name == "self.robot.set_led_colors"
-            and any(color != (0, 0, 0) for color in call.arguments.values())
-            for call in device.calls
-        )
+        # The ring carries state through the light standard, never expression.
+        assert not any(call.name.startswith("self.robot.set_led") for call in device.calls)
     finally:
         behavior.close()
 

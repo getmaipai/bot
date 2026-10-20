@@ -99,8 +99,8 @@ class FakeStackChanDeviceClient:
             raise ValueError("StackChan LED tool needs exactly 12 colors")
         colors = list(colors)
         if self._camera_indicator_active or self._camera_indicator_depth:
-            self.led_color = (168, 0, 0)
-            self.led_colors = ((168, 0, 0),) * 12
+            self.led_color = (168, 42, 92)
+            self.led_colors = ((168, 42, 92),) * 12
         else:
             self.led_colors = tuple(colors)
             self.led_color = colors[0] if len(set(colors)) == 1 else (-1, -1, -1)
@@ -194,7 +194,7 @@ class FakeStackChanDeviceClient:
 
     def take_photo(self) -> bytes | None:
         self._require_link()
-        if self.led_color != (168, 0, 0):
+        if self.led_color != (168, 42, 92):
             raise AssertionError("camera capture refused because its indicator is off")
         self.calls.append(FakeToolCall("camera.take_photo", {}))
         self._camera_indicator_active = True

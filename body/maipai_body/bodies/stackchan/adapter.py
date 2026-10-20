@@ -10,7 +10,8 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from maipai_body.hal.errors import BodyLost, EstopEngaged, NotSupported
-from maipai_body.hal.seam import BodyProfile, HeadPose
+from maipai_body.hal.seam import BodyProfile, HeadPose, Look
+from maipai_body.indicator import looks
 from maipai_body.robot import Robot, load_robot_api
 
 from .avatar_frames import start_camera_stream, stop_camera_stream
@@ -21,6 +22,7 @@ from .profile import (
     STACKCHAN_NOTIFY_ENABLED,
     STACKCHAN_PROFILE,
 )
+from .ring import camera_flash_frames, ring_rgb
 
 
 class StackChanDeviceClient(Protocol):
@@ -59,6 +61,17 @@ class StackChanDeviceClient(Protocol):
     def notify(self, audio_url: str) -> object: ...
 
     def device_supports(self, feature: str) -> bool: ...
+
+
+def _camera_look() -> Look:
+    """The camera cue from the one look table (pink, at least the 0.5 floor)."""
+    colour, weight, style = looks.LOOKS[looks.LookKey.CAMERA]
+    return Look(colour=colour, brightness=max(looks.CAMERA_FLOOR, weight), style=style)
+
+
+def _camera_rgb() -> tuple[int, int, int]:
+    """The steady camera colour for the whole ring, after the flash has played."""
+    return ring_rgb(_camera_look(), looks.period_s(looks.LookKey.CAMERA), 1.0)
 
 
 class _HeadAdapter:
@@ -178,7 +191,7 @@ class _LedAdapter:
                 fix="Include all 12 light indexes.",
             )
         if self.camera_indicator_active:
-            return self.client.set_led_color(LED_CHANNEL_MAX, 0, 0)
+            return self.client.set_led_color(*_camera_rgb())
         return self.client.set_led_colors(colors)
 
 
@@ -366,9 +379,16 @@ class _CameraAdapter:
         self._light_off()
 
     def _light_on(self) -> None:
-        self.robot._driver("leds").camera_indicator_active = True
+        driver = self.robot._driver("leds")
+        first = not driver.camera_indicator_active
+        driver.camera_indicator_active = True
+        if first:
+            # The light standard's camera cue: two quick flashes, then steady pink.
+            for rgb, seconds in camera_flash_frames(_camera_look()):
+                self.client.set_led_color(*rgb)
+                time.sleep(seconds)
         self.robot.leds.many(
-            [{"index": index, "rgb": [LED_CHANNEL_MAX, 0, 0]} for index in range(LED_COUNT)]
+            [{"index": index, "rgb": list(_camera_rgb())} for index in range(LED_COUNT)]
         )
 
     def _light_off(self) -> None:
@@ -393,13 +413,6 @@ class _ExpressionDevice:
 
     def send_avatar_frame(self, frame: bytes) -> None:
         self.client.send_avatar_frame(frame)
-
-    def set_expression_led(self, color: tuple[int, int, int], *, count: int) -> object:
-        if count != LED_COUNT:
-            raise ValueError("StackChan expression LED update must include the full ring")
-        return self.robot.leds.many(
-            [{"index": index, "rgb": list(color)} for index in range(count)]
-        )
 
 
 class _UnsupportedSensorAdapter:

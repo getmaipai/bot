@@ -15,7 +15,6 @@ from .expression_map import (
     UNSUPPORTED_PRIMITIVES,
     FaceFrame,
 )
-from .profile import LED_CHANNEL_MAX, LED_COUNT
 
 
 def _limit(profile: BodyProfile, axis: str, fraction: float) -> float:
@@ -76,10 +75,7 @@ def render(
     send = getattr(client, "send_avatar_frame", None)
     if callable(send):
         send(control_avatar(action.face))
-    led = getattr(client, "set_expression_led", None)
-    if callable(led):
-        color = tuple(min(LED_CHANNEL_MAX, channel) for channel in action.led)
-        led(color, count=LED_COUNT)
+    # The ring carries state through the light standard (indicator/looks.py), never expression.
 
 
 def render_cue(cue: str, client: HeadActuator, *, mood: str | None = None) -> None:
