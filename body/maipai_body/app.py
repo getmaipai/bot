@@ -397,6 +397,9 @@ async def _serve_stackchan_channels(
             embedder=None,
             gallery=None,
         )
+    except ImportError:
+        # The hub bundle ships without the Reachy SDK the face detector builds on: one quiet line.
+        logger.info("StackChan face tracking is unavailable in the hub bundle")
     except Exception:
         logger.warning("StackChan anonymous tracking is unavailable", exc_info=True)
     behavior = StackChanBehavior(voice.robot.robot, vision_bridge=vision)

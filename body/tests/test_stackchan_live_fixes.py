@@ -79,3 +79,15 @@ def test_a_connection_that_sends_no_bytes_logs_nothing_but_a_bad_request_still_d
     with caplog.at_level(logging.DEBUG, logger="test.ws.quiet"):
         asyncio.run(run())
     assert any(r.getMessage() == "opening handshake failed" for r in caplog.records)
+
+
+def test_a_missing_face_detector_package_is_one_quiet_line_without_a_traceback():
+    import inspect
+
+    from maipai_body import app
+
+    source = inspect.getsource(app._serve_stackchan_channels)
+    assert "except ImportError:" in source
+    assert "face tracking is unavailable in the hub bundle" in source
+    quiet = source.split("except ImportError:")[1].split("except Exception:")[0]
+    assert "exc_info" not in quiet
