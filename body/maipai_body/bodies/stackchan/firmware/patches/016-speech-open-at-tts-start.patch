@@ -1,0 +1,92 @@
+# Intent: accept a spoken line's audio from tts start and keep the decode queue on a reset while the line is open, so the speaking-state entry no longer cuts the first frames.
+# Upstream: 78/xiaozhi-esp32 main/application.cc and main/audio/audio_service.cc (MIT), via m5stack/StackChan firmware.
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index e18e41b..ef1bfdc 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -500,7 +500,7 @@ void Application::InitializeProtocol() {
+     });
+     
+     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
+-        if (GetDeviceState() == kDeviceStateSpeaking) {
++        if (GetDeviceState() == kDeviceStateSpeaking || audio_service_.speech_open()) {
+             speech_frames_in_++;
+             audio_service_.PushPacketToDecodeQueue(std::move(packet));
+         } else if (speech_frames_dropped_++ == 0) {
+@@ -519,6 +519,7 @@ void Application::InitializeProtocol() {
+     
+     protocol_->OnAudioChannelClosed([this, &board]() {
+         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
++        audio_service_.SetSpeechOpen(false);
+         Schedule([this]() {
+             auto display = Board::GetInstance().GetDisplay();
+             display->SetChatMessage("system", "");
+@@ -533,6 +534,13 @@ void Application::InitializeProtocol() {
+             auto state = cJSON_GetObjectItem(root, "state");
+             if (strcmp(state->valuestring, "start") == 0) {
+                 ESP_LOGI(TAG, "speech: tts start received");
++                // Accept audio from here, not from the scheduled state change: frames that
++                // arrived first were dropped or cleared by the speaking entry (2026-10-20).
++                if (aborted_) {
++                    audio_service_.SetSpeechOpen(false);
++                    audio_service_.ResetDecoder();
++                }
++                audio_service_.SetSpeechOpen(true);
+                 Schedule([this]() {
+                     ESP_LOGI(TAG, "speech: tts start applied in state %s, %lu frames dropped before it",
+                         DeviceStateMachine::GetStateName(GetDeviceState()),
+@@ -543,6 +551,7 @@ void Application::InitializeProtocol() {
+                 });
+             } else if (strcmp(state->valuestring, "stop") == 0) {
+                 ESP_LOGI(TAG, "speech: tts stop received");
++                audio_service_.SetSpeechOpen(false);
+                 Schedule([this]() {
+                     size_t decode = 0, playback = 0;
+                     uint32_t gaps = 0;
+@@ -969,6 +978,7 @@ void Application::Schedule(std::function<void()>&& callback) {
+ void Application::AbortSpeaking(AbortReason reason) {
+     ESP_LOGI(TAG, "Abort speaking");
+     aborted_ = true;
++    audio_service_.SetSpeechOpen(false);
+     if (protocol_) {
+         protocol_->SendAbortSpeaking(reason);
+     }
+diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.cc b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
+index 3ca7ff4..fda3842 100644
+--- a/firmware/xiaozhi-esp32/main/audio/audio_service.cc
++++ b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
+@@ -683,6 +683,12 @@ void AudioService::WaitForPlaybackQueueEmpty() {
+ 
+ void AudioService::ResetDecoder() {
+     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
++    if (speech_open_) {
++        // A line is streaming in: clearing here cut its first frames (stutter, 2026-10-20).
++        ESP_LOGI(TAG, "speech: decoder reset skipped, %u frames of the open line kept",
++            (unsigned)(audio_decode_queue_.size() + audio_playback_queue_.size()));
++        return;
++    }
+     std::unique_lock<std::mutex> decoder_lock(decoder_mutex_);
+     if (opus_decoder_ != nullptr) {
+         esp_opus_dec_reset(opus_decoder_);
+diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.h b/firmware/xiaozhi-esp32/main/audio/audio_service.h
+index 5f74d90..a654711 100644
+--- a/firmware/xiaozhi-esp32/main/audio/audio_service.h
++++ b/firmware/xiaozhi-esp32/main/audio/audio_service.h
+@@ -133,6 +133,9 @@ public:
+     void PlaySound(const std::string_view& sound);
+     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
+     void ResetDecoder();
++    // Open from tts start to tts stop: audio is accepted and a decoder reset keeps the queue.
++    void SetSpeechOpen(bool open) { speech_open_ = open; }
++    bool speech_open() const { return speech_open_; }
+     // MaiPai speech diagnostics: frames waiting to play, and playback gaps since the last call.
+     void GetQueueDepths(size_t& decode, size_t& playback);
+     void TakePlaybackGaps(uint32_t& count, int& max_ms);
+@@ -160,6 +163,7 @@ private:
+     int decoder_duration_ms_ = OPUS_FRAME_DURATION_MS;
+     int decoder_frame_size_ = 0;
+     DebugStatistics debug_statistics_;
++    std::atomic<bool> speech_open_{false};
+     uint32_t playback_gap_count_ = 0;
+     int playback_gap_max_ms_ = 0;
+     srmodel_list_t* models_list_ = nullptr;

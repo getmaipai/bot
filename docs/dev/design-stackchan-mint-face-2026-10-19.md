@@ -94,7 +94,7 @@ ping during speech averaged 0.57 s (5 of 40 lost) and Jesse heard only a little 
 
 **Left open:** the stutter at the start. Measured on 2026-10-20 (unit measurements, "Speech edges"): entering speaking
 clears the decode queue about 100 ms after `tts start`, cutting the first 6 to 12 frames. Gaps mid-line and at the end
-were Wi-Fi stalls from a 30-frame burst; the host now spaces its lead. The firmware start fix is built and waits for a
-flash.
+were Wi-Fi stalls from a 30-frame burst; the host now spaces its lead. Patch 016 fixes the start in firmware; it is built
+and waits for a flash and a listening test.
 
 **No speech bubble.** The text under the face is gone, as Jesse asked.

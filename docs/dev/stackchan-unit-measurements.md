@@ -189,7 +189,7 @@ Each run played three numbered lines ("Sentence one of three...") about
 | Run | Owner heard | Serial log | Host send queue |
 |---|---|---|---|
 | 30-frame burst | lines 2 and 3 stuttered | line 3: reset cleared 12 frames, then an 851 ms gap; line 2: 557 ms gap near the end | 2.9 KB unacknowledged for 1.45 s during line 2 |
-| Same, earlier | line 2 played 30 s late, line 3 lost | nothing reached the robot for 30 s | not recorded |
+| Same, earlier | one clean line, then the mouth moved with no sound, then a late clean line | nothing reached the robot for 30 s | not recorded |
 | Spaced burst (15 ms), 38-frame lead | first half of "Sentence" missing on line 1 only | line 1: reset cleared 6 frames; lines 2 and 3: no loss, 78 ms worst gap | drained, no stall |
 
 Findings:
@@ -207,9 +207,14 @@ Findings:
 - **Host fix, landed:** the lead goes out 15 ms per frame and is 38 frames
   (2.28 s, under the 40-frame decode queue), so about 1.7 s is queued when
   pacing starts. The send-queue stall did not recur.
-- **Firmware fix, built, not yet on the robot:** accept a line's audio from
-  `tts start` and keep the queue on a reset while the line is open. It
-  needs a flash with the owner present, then three clean numbered lines.
+- **The mouth that kept moving was the 30 s stall.** The robot stays in its
+  speaking state from `tts start` to `tts stop`, so the mouth animated while
+  no audio arrived. The spaced lead removes the burst that caused it.
+- **Firmware fix, patch 016, built, not yet on the robot:** accept a line's
+  audio from `tts start` and keep the queue on a reset while the line is
+  open. Serial then shows `decoder reset skipped` where it showed
+  `decoder reset cleared`. Waiting for the owner: a flash, then three clean
+  numbered lines.
 
 
 
