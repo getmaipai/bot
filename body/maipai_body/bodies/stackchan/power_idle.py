@@ -84,6 +84,12 @@ class PowerIdle:
         self._next_try = float("-inf")
         self.refresh()
 
+    def on_reconnect(self) -> None:
+        """The unit (re)connected: its idle-motion flag may have reset, so write it again."""
+        self._applied = None
+        self._next_try = float("-inf")
+        self.refresh()
+
     def tick(self) -> None:
         """Call about every second: an unknown or stale power state turns idle motion off."""
         if self._clock() >= self._next_try:
@@ -92,8 +98,8 @@ class PowerIdle:
     def refresh(self) -> None:
         """Re-evaluate the wanted idle-motion value and write it if it changed."""
         wanted = not self.still
-        current = self._applied if self._applied is not None else True
-        if wanted != current:
+        # Nothing written yet (or the unit just reconnected) means its flag is unknown: write it.
+        if self._applied is None or wanted != self._applied:
             self._write(wanted)
 
     def _write(self, value: bool) -> None:

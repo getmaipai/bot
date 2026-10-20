@@ -182,6 +182,11 @@ class StackChanBehavior:
         from maipai_body.expression.rest import RestPolicy
 
         self._rest = RestPolicy(time.monotonic(), quiet_hours_active=lambda: self.night_active())
+        from maipai_body.bodies.stackchan.head_gate import HeadMotionGate
+
+        self.head_gate = HeadMotionGate(
+            must_be_still=lambda: self.idle_still(), resting=lambda: self._rest.stage != "awake"
+        )
         self._rest_renderer = RestRenderer()
         self._rest_profile = _profile
         self._last_person_seen = float("-inf")
@@ -210,12 +215,16 @@ class StackChanBehavior:
     def render_primitive(self, primitive: str) -> bool:
         if self.night_active():
             return False
+        # Ambient moves (the idle settle, face following) go through the one head-motion gate.
+        if not self.head_gate.allow(f"ambient:{primitive}", response=self._active.is_set()):
+            return False
         return self._with_lease(
             lambda: self._expression.render_ambient(primitive, SuppressionContext())
         )
 
     def render_turn_state(self, state: str, *, mood: str | None = None) -> None:
         self._active.set()
+        self.head_gate.allow(f"turn:{state}", response=True)  # logged, always a response
         if self.night_active():
             # One head turn to face whoever speaks, then rest; no other gestures.
             if state == "listening" and not self._night_turned:
@@ -527,6 +536,7 @@ async def _serve_stackchan_channels(
         configured_level=lambda: behavior.idle_level,
     )
     behavior.on_idle_level = power.refresh
+    voice.session_listeners.append(lambda _device_id: power.on_reconnect())
 
     def _power_ticks() -> None:
         while not stop_event.wait(1.0):

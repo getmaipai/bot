@@ -311,6 +311,7 @@ class XiaozhiServer:
         self.vision_port = vision_port
         self.max_photo_bytes = max_photo_bytes
         # BOT-SELF-TEST-01: set by the app; both are None until a robot is attached.
+        self.session_listeners: list[Callable[[str], None]] = []
         self.selftest_checks: Callable[[], list[dict[str, str]]] | None = None
         self.selftest_runner: Callable[[list[str] | None], list[dict[str, object]]] | None = None
         self.advertised_vision_url = advertised_vision_url
@@ -442,6 +443,7 @@ class XiaozhiServer:
                 bind_camera(avatar_server, device_id)
         self._session_ready.set()
         hello_received = False
+        self._notify_session_listeners(device_id)
         try:
             while True:
                 try:
@@ -787,6 +789,14 @@ class XiaozhiServer:
             raise ValueError("unsupported avatar frame command")
         enabled = decoded.payload != b"\x00"
         await self.stream_camera(enabled)
+
+    def _notify_session_listeners(self, device_id: str) -> None:
+        """Tell the registered listeners that a device (re)connected; a listener never raises."""
+        for listener in tuple(self.session_listeners):
+            try:
+                listener(device_id)
+            except Exception:
+                LOG.warning("StackChan session listener failed", exc_info=True)
 
     async def _call_turn_handler(
         self, session_id: str, device_id: str, state: str, mode: object, aec: object
