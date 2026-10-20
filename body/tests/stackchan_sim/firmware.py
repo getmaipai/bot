@@ -59,6 +59,8 @@ class StackChanFirmware:
         self.audio_uplink: list[bytes] = []
         self.audio_downlink: list[bytes] = []
         self.uplink_log: list[tuple[float, int]] = []
+        self.llm_frames: list[dict[str, Any]] = []  # face / emotion frames from the host
+        self.system_frames: list[dict[str, Any]] = []  # system commands such as idle
         self.tts_frames: list[dict[str, Any]] = []
         self.tts_events: list[tuple[float, dict[str, Any]]] = []
         self.downlink_log: list[tuple[float, int]] = []
@@ -325,6 +327,10 @@ class StackChanFirmware:
             elif kind == "tts":
                 self.tts_frames.append(data)
                 self.tts_events.append((time.monotonic(), data))
+            elif kind == "llm":
+                self.llm_frames.append(data)
+            elif kind == "system":
+                self.system_frames.append(data)
 
     async def _serve_tool_call(self, ws: ClientConnection, request: dict[str, Any]) -> None:
         params = request.get("params", {})
