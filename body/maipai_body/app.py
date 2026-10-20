@@ -244,7 +244,8 @@ class StackChanBehavior:
             return
         self._presence_stop = threading.Event()
         try:
-            self.robot.camera.stream(enabled=True)
+            # Local watching: silent, and only while robot.camera.watch_level is not "off".
+            self.robot.camera.stream(enabled=True, silent=True)
         except Exception:
             logger.warning("StackChan camera stream could not start", exc_info=True)
         self._presence_thread = threading.Thread(
@@ -352,6 +353,7 @@ def _start_stackchan_night(
         leds=leds,
     )
     behavior.night_active = lambda: night.night
+    voice.robot.robot._driver("camera").watch_allowed = lambda: watch[0] != "off"
 
     def apply_settings(payload: dict) -> None:
         values = payload.get("values")
@@ -360,7 +362,15 @@ def _start_stackchan_night(
         quiet.apply(values)
         level = values.get("robot.camera.watch_level")
         if level in ("off", "presence", "identify"):
+            was_off = watch[0] == "off"
             watch[0] = level
+            try:
+                if level == "off":
+                    behavior.robot.camera.stream(enabled=False)
+                elif was_off:
+                    behavior.robot.camera.stream(enabled=True, silent=True)
+            except Exception:
+                logger.warning("StackChan camera watch level change failed", exc_info=True)
         night.apply_settings(values)
 
     if link is not None:

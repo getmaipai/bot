@@ -10,6 +10,16 @@ from maipai_body.bodies.stackchan.turn import StackChanTurnBridge, _sentences
 from maipai_body.speech.stt_stream import SttStreamResult
 
 
+class InlineExecutor:
+    """Runs side effects at once so a test can assert them right after the call."""
+
+    def submit(self, fn, *args, **kwargs):
+        fn(*args, **kwargs)
+
+    def shutdown(self, **kwargs):
+        pass
+
+
 class FakeServer:
     def __init__(self):
         self._loop = None
@@ -183,6 +193,7 @@ def test_turn_states_and_mood_are_emitted_and_sink_failure_is_isolated(monkeypat
         turn_factory=MoodTurn,
         tts_factory=FakeTts,
         expression_sink=sink,
+        side_executor=InlineExecutor(),
     )
     loop.run_until_complete(bridge._run("session", "device", FakeCapture()))
     loop.close()
@@ -198,7 +209,11 @@ def test_turn_states_and_mood_are_emitted_and_sink_failure_is_isolated(monkeypat
 def test_abort_emits_settle_state():
     states = []
     bridge = StackChanTurnBridge(
-        FakeServer(), Link(), Offline(), expression_sink=lambda state, **kw: states.append(state)
+        FakeServer(),
+        Link(),
+        Offline(),
+        side_executor=InlineExecutor(),
+        expression_sink=lambda state, **kw: states.append(state),
     )
     bridge.abort("session")
     assert states == ["settle"]
@@ -392,3 +407,34 @@ def test_the_bridge_counts_uplink_frames_and_wake_detects_without_keeping_audio(
     assert stats.total_frames == 2
     assert stats.total_bytes == 6
     assert stats.total_detects == 1
+
+
+def test_a_slow_face_or_light_never_holds_up_the_voice_turn():
+    import threading
+    import time
+
+    release = threading.Event()
+    ran: list[str] = []
+
+    def slow_sink(state, **kwargs):
+        release.wait(2.0)
+        ran.append(state)
+
+    bridge = StackChanTurnBridge(
+        FakeServer(),
+        Link(),
+        Offline(),
+        expression_sink=slow_sink,
+        live_sink=lambda active: release.wait(2.0),
+    )
+    started = time.monotonic()
+    bridge._emit_expression("listening")
+    bridge._set_live(True)
+    bridge._emit_expression("thinking")
+    assert time.monotonic() - started < 0.2  # nothing waited for the slow device
+    release.set()
+    bridge.close()
+    deadline = time.monotonic() + 2.0
+    while len(ran) < 1 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert ran[:1] == ["listening"]  # the first update still ran, in order

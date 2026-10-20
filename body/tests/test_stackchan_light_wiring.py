@@ -344,7 +344,13 @@ def test_the_turn_bridge_raises_the_live_cue_around_the_hub_stream_only():
     from maipai_body.bodies.stackchan.turn import StackChanTurnBridge
 
     events: list[bool] = []
+
+    class _Inline:
+        def submit(self, fn, *args, **kwargs):
+            fn(*args, **kwargs)
+
     bridge = StackChanTurnBridge.__new__(StackChanTurnBridge)
+    bridge._side = _Inline()
     bridge.live_sink = events.append
     bridge._set_live(True)
     bridge._set_live(False)

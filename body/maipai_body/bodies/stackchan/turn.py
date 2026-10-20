@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import inspect
 import logging
 import queue
@@ -261,6 +262,7 @@ class StackChanTurnBridge:
         expression_sink=None,
         live_sink=None,
         uplink_stats=None,
+        side_executor=None,
         clock=time.monotonic,
     ) -> None:
         self.server, self.link, self.offline = server, link, offline
@@ -268,6 +270,12 @@ class StackChanTurnBridge:
         self.live_sink = live_sink
         # BOT-SELF-TEST-01: counts of uplink frames and wake detects (never audio).
         self.uplink_stats = uplink_stats
+        # The expression and light sinks make blocking device calls that wait on this very event
+        # loop; run inline they froze it until each 5 s timeout (live log 2026-10-20: 5 s to start
+        # a turn, 12 s to the first audio frame). One worker keeps their order.
+        self._side = side_executor or concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="stackchan-side"
+        )
         self._clock = clock
         self.cache_dir = cache_dir
         self.stt_factory, self.turn_factory, self.tts_factory = (
@@ -406,6 +414,9 @@ class StackChanTurnBridge:
     def _set_live(self, active: bool) -> None:
         if self.live_sink is None:
             return
+        self._side.submit(self._run_live_sink, active)
+
+    def _run_live_sink(self, active: bool) -> None:
         try:
             self.live_sink(active)
         except Exception:  # a light must never break the voice path
@@ -414,10 +425,17 @@ class StackChanTurnBridge:
     def _emit_expression(self, state: str, *, mood: str | None = None) -> None:
         if self.expression_sink is None:
             return
+        self._side.submit(self._run_expression_sink, state, mood)
+
+    def _run_expression_sink(self, state: str, mood: str | None) -> None:
         try:
             self.expression_sink(state, mood=mood)
-        except Exception:
+        except Exception:  # a failed face or head move never fails the answer
             LOG.warning("StackChan expression event failed", exc_info=True)
+
+    def close(self) -> None:
+        """Stop the side-effect worker; pending face and light updates are dropped."""
+        self._side.shutdown(wait=False, cancel_futures=True)
 
     def _speaker_evidence(self, stt_result) -> dict | None:
         try:

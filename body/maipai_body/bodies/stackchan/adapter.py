@@ -294,6 +294,9 @@ class _CameraAdapter:
         self.device_id: str | None = None
         self._stream_indicator_active = False
         self.silent_capture_allowed: Callable[[], bool] = lambda: False
+        # Local watching (face tracking, the night light read): governed by the household's
+        # robot.camera.watch_level (anything but "off"). It never shows the camera cue.
+        self.watch_allowed: Callable[[], bool] = lambda: True
         # The light standard's camera cue also goes to the light service, when one is attached.
         self.cue_sink: Callable[[bool], None] | None = None
 
@@ -327,9 +330,9 @@ class _CameraAdapter:
                 return None
             if self.device_id is None:
                 return None
+            if not self.watch_allowed():
+                return None
             started = time.monotonic()
-            self._light_on()
-            self._stream_indicator_active = True
             try:
                 device_id = self.device_id
                 if device_id not in self.avatar_server._camera_frames:
@@ -341,17 +344,26 @@ class _CameraAdapter:
                     return None
                 return frame
             except BaseException:
-                self._light_off()
-                self._stream_indicator_active = False
                 raise
         if verb != "stream":
             raise AttributeError(verb)
+        if kwargs.keys() - {"enabled", "silent"} or len(args) > 1:
+            raise TypeError("camera.stream accepts enabled and silent")
         enabled = kwargs.get("enabled", args[0] if args else True)
         if type(enabled) is not bool:
             raise TypeError("camera.stream enabled must be a boolean")
+        silent = kwargs.get("silent", False)
+        if type(silent) is not bool:
+            raise TypeError("camera.stream silent must be a boolean")
 
         if enabled and self.robot.estop.engaged:
             raise EstopEngaged("camera stream refused while the emergency stop is engaged")
+        if enabled and silent:
+            # Local watching for the presence loop: no cue, only while the household allows it.
+            if not self.watch_allowed():
+                return False
+            self.client.send_avatar_frame(start_camera_stream())
+            return True
         if enabled:
             self._light_on()
             try:
@@ -402,6 +414,8 @@ class _CameraAdapter:
                 pass
 
     def _light_off(self) -> None:
+        if not self.robot._driver("leds").camera_indicator_active:
+            return  # no cue is up (a silent stream), so do not blank the ring
         try:
             self.robot.leds.many([{"index": index, "rgb": [0, 0, 0]} for index in range(LED_COUNT)])
         finally:

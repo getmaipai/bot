@@ -63,7 +63,7 @@ class StackChanCameraStreamTests(unittest.TestCase):
 
 
 class StackChanCameraHandoffTests(unittest.IsolatedAsyncioTestCase):
-    async def test_authenticated_peer_frame_reaches_bridge_under_indicator(self):
+    async def test_authenticated_peer_frame_reaches_bridge_without_a_cue(self):
         pairing = PairingStore()
         device_id = "02:00:00:00:00:15"
         client_id = "00000000-0000-4000-8000-000000000015"
@@ -107,7 +107,8 @@ class StackChanCameraHandoffTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(avatar.camera_frame_count, 1)
             target = await asyncio.to_thread(bridge.track_stream_frame)
             self.assertTrue(target.detected)
-            self.assertEqual(events, [("indicator", "on"), ("detect", True), ("indicator", "off")])
+            # Local watching (face tracking) shows no cue: the household's watch level governs it.
+            self.assertEqual(events, [("detect", False)])
             await peer.send_camera_frame(jpeg_frame(b"pending"))
             await avatar.wait_for_camera_frame(device_id)
         finally:

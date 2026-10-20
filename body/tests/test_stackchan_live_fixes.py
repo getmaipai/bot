@@ -150,3 +150,33 @@ def test_a_failed_device_tool_call_logs_the_real_cause_once_a_minute(caplog):
     ]
     assert len(lines) == 1
     assert "RuntimeError" in lines[0] and "out of range" in lines[0]
+
+
+def test_local_watching_shows_no_cue_and_stops_when_the_household_says_off():
+    from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
+    from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
+
+    device = FakeStackChanDeviceClient()
+    robot = StackChanRobotAdapter(device).robot
+    camera = robot._driver("camera")
+    leds_before = [c.name for c in device.calls if "led" in c.name]
+
+    assert robot.camera.stream(enabled=True, silent=True) is True
+    assert robot.camera.stream(enabled=False) is not None
+    assert [c.name for c in device.calls if "led" in c.name] == leds_before  # no ring writes
+
+    camera.watch_allowed = lambda: False
+    assert robot.camera.stream(enabled=True, silent=True) is False
+    assert camera.stream_frame(0.4) is None  # nothing is read while the watch level is off
+
+
+def test_a_visible_camera_stream_still_lights_and_clears_the_cue():
+    from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
+    from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
+
+    device = FakeStackChanDeviceClient()
+    robot = StackChanRobotAdapter(device).robot
+    robot.camera.stream(enabled=True)
+    assert robot._driver("leds").camera_indicator_active is True
+    robot.camera.stream(enabled=False)
+    assert robot._driver("leds").camera_indicator_active is False
