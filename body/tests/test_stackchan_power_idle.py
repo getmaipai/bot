@@ -104,6 +104,7 @@ def test_level_still_on_battery_refresh_writes_false_then_calm_writes_true():
     motion = Motion()
     level = {"value": "calm"}
     power = PowerIdle(motion, configured_level=lambda: level["value"])
+    power.on_battery_status(False)  # known to be on battery
     level["value"] = "still"
     power.refresh()
     assert motion.writes == [False]
@@ -131,7 +132,7 @@ def test_failing_write_warns_at_most_once_a_minute_does_not_raise_and_retries(ca
 
 def test_still_is_true_while_charging_regardless_of_level():
     power = PowerIdle(lambda _enabled: None, configured_level=lambda: "lively")
-    assert power.still is False
+    assert power.still is True  # unknown power is still
     power.on_battery_status(True)
     assert power.still is True
     power.on_battery_status(False)
@@ -175,3 +176,104 @@ def test_the_light_poller_tells_the_power_rule_and_a_failing_callback_never_stop
     )
     poller.poll()
     assert seen == [True]
+
+
+def test_unknown_power_is_still_until_the_unit_reports_it_is_on_battery():
+    clock = FakeClock()
+    motion = Motion()
+    power = PowerIdle(motion, clock=clock)
+    assert power.still is True
+    power.tick()
+    assert motion.writes == [False]  # idle motion is switched off before any reading
+    power.tick()
+    assert motion.writes == [False]  # and not written again
+    power.on_battery_status(False)
+    assert power.still is False
+    assert motion.writes == [False, True]  # a positive on-battery reading frees it
+
+
+def test_a_reading_older_than_three_minutes_is_unknown_again():
+    clock = FakeClock()
+    motion = Motion()
+    power = PowerIdle(motion, clock=clock)
+    power.on_battery_status(False)
+    assert power.still is False
+    clock.advance(179.0)
+    assert power.still is False
+    clock.advance(2.0)
+    assert power.still is True
+    power.tick()
+    assert motion.writes[-1] is False
+
+
+def test_a_failed_write_is_retried_after_five_seconds_not_every_tick():
+    clock = FakeClock()
+    motion = Motion()
+    motion.fail = True
+    attempts: list[bool] = []
+
+    def counting(enabled: bool) -> None:
+        attempts.append(enabled)
+        motion(enabled)
+
+    power = PowerIdle(counting, clock=clock)
+    power.tick()
+    power.tick()
+    power.tick()
+    assert len(attempts) == 1  # no hammering a unit that is not answering
+    clock.advance(5.1)
+    power.tick()
+    assert len(attempts) == 2
+    motion.fail = False
+    clock.advance(5.1)
+    power.tick()
+    assert motion.writes == [False]
+
+
+def test_the_idle_level_setting_is_read_and_still_turns_the_motion_off():
+    clock = FakeClock()
+    motion = Motion()
+    level = {"value": "calm"}
+    power = PowerIdle(motion, clock=clock, configured_level=lambda: level["value"])
+    power.on_battery_status(False)
+    assert power.still is False
+    level["value"] = "still"
+    power.refresh()
+    assert power.still is True and motion.writes[-1] is False
+
+
+def test_a_read_only_tool_is_asked_twice_but_a_motion_tool_is_not():
+    from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient
+
+    calls: list[str] = []
+
+    class _Server:
+        def call_device_tool(self, name, arguments, timeout):
+            calls.append(name)
+            raise TimeoutError("slow")
+
+    client = XiaozhiDeviceClient(_Server())
+    for call in (client.get_battery_status, client.get_head_angles):
+        try:
+            call()
+        except Exception:
+            pass
+    assert calls == ["self.battery.get_status"] * 2 + ["self.robot.get_head_angles"] * 2
+    calls.clear()
+    try:
+        client.set_head_angles(0, 45, 150)
+    except Exception:
+        pass
+    assert calls == ["self.robot.set_head_angles"]
+
+
+def test_the_app_reads_the_idle_level_setting_and_feeds_the_power_rule():
+    import inspect
+
+    from maipai_body import app
+
+    night = inspect.getsource(app._start_stackchan_night)
+    assert 'values.get("robot.idle.level")' in night and "behavior.idle_level" in night
+    serve = inspect.getsource(app._serve_stackchan_channels)
+    assert "configured_level=lambda: behavior.idle_level" in serve
+    assert "power.tick()" in serve

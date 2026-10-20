@@ -6,7 +6,10 @@ is active, or the configured ``robot.idle.level`` is ``still``. The robot
 wants idle motion enabled (``set_idle_motion(True)``) exactly when none of
 those hold, so on battery the configured level applies again by itself.
 
-A failing write is logged at most once a minute and retried on the next
+Unknown is still (fail safe): until the unit has positively reported that it
+is on battery, and again when its last good reading is older than
+``STATUS_TTL_S``, the robot does not move on its own. A failing write is logged
+at most once a minute and retried (after ``RETRY_S``) on the next ``tick()``,
 battery status or ``refresh()`` call, so a failed write is never lost.
 """
 
@@ -21,6 +24,10 @@ logger = logging.getLogger("maipai_body.bodies.stackchan.power_idle")
 # A failed set_idle_motion write is logged at most this often (the same
 # one-minute cap the light wiring uses for a failed battery read).
 FAILURE_WARN_S = 60.0
+# A battery reading older than this counts as unknown (the unit may have been plugged in).
+STATUS_TTL_S = 180.0
+# Wait this long before retrying a failed idle-motion write.
+RETRY_S = 5.0
 
 
 class PowerIdle:
@@ -46,6 +53,8 @@ class PowerIdle:
         self._configured_level = configured_level
         self._clock = clock
         self._charging = False
+        self._last_ok: float | None = None  # when the unit last answered a battery read
+        self._next_try = float("-inf")
         # The last value successfully written. None means the device is still
         # at its default (calm, motion on) because it was never plugged in.
         self._applied: bool | None = None
@@ -58,17 +67,27 @@ class PowerIdle:
 
     @property
     def still(self) -> bool:
-        """True while the robot must not wander: charging, night, or level still."""
-        if self._charging:
+        """True while the robot must not wander: unknown power, charging, night, or level still."""
+        if self._charging or not self._power_known():
             return True
         if self._night_active():
             return True
         return self._configured_level() == "still"
 
+    def _power_known(self) -> bool:
+        return self._last_ok is not None and self._clock() - self._last_ok < STATUS_TTL_S
+
     def on_battery_status(self, charging: bool) -> None:
         """Record a battery reading (charging on or off) and re-evaluate the motion."""
         self._charging = charging
+        self._last_ok = self._clock()
+        self._next_try = float("-inf")
         self.refresh()
+
+    def tick(self) -> None:
+        """Call about every second: an unknown or stale power state turns idle motion off."""
+        if self._clock() >= self._next_try:
+            self.refresh()
 
     def refresh(self) -> None:
         """Re-evaluate the wanted idle-motion value and write it if it changed."""
@@ -78,12 +97,13 @@ class PowerIdle:
             self._write(wanted)
 
     def _write(self, value: bool) -> None:
+        now = self._clock()
         try:
             self._set_idle_motion(value)
         except Exception:
-            now = self._clock()
             if now - self._last_failure_warn >= FAILURE_WARN_S:
                 logger.warning("power idle motion write failed", exc_info=True)
                 self._last_failure_warn = now
+            self._next_try = now + RETRY_S
             return
         self._applied = value

@@ -167,6 +167,9 @@ class StackChanBehavior:
         self.night_active: Callable[[], bool] = lambda: False
         # Charging or on USB power: no wandering. Set by the power rule (power_idle.py).
         self.idle_still: Callable[[], bool] = lambda: False
+        # robot.idle.level from the settings frame (still, calm, lively); calm until told.
+        self.idle_level = "calm"
+        self.on_idle_level: Callable[[], None] = lambda: None
         # BOT-SC-ANIM-01: drowsy and asleep stages so an idle robot does not sit smiling for hours.
         from maipai_body.bodies.stackchan.profile import STACKCHAN_PROFILE as _profile
         from maipai_body.bodies.stackchan.routines import RestRenderer
@@ -371,6 +374,10 @@ def _start_stackchan_night(
                     behavior.robot.camera.stream(enabled=True, silent=True)
             except Exception:
                 logger.warning("StackChan camera watch level change failed", exc_info=True)
+        idle = values.get("robot.idle.level")
+        if idle in ("still", "calm", "lively"):
+            behavior.idle_level = idle
+            behavior.on_idle_level()
         night.apply_settings(values)
 
     if link is not None:
@@ -445,7 +452,21 @@ async def _serve_stackchan_channels(
     night = _start_stackchan_night(voice, behavior, link, stop_event)
     from maipai_body.bodies.stackchan.power_idle import PowerIdle
 
-    power = PowerIdle(voice.robot.client.set_idle_motion, night_active=lambda: night.night)
+    power = PowerIdle(
+        voice.robot.client.set_idle_motion,
+        night_active=lambda: night.night,
+        configured_level=lambda: behavior.idle_level,
+    )
+    behavior.on_idle_level = power.refresh
+
+    def _power_ticks() -> None:
+        while not stop_event.wait(1.0):
+            try:
+                power.tick()
+            except Exception:
+                logger.warning("StackChan power rule failed", exc_info=True)
+
+    threading.Thread(target=_power_ticks, name="stackchan-power-idle", daemon=True).start()
     behavior.idle_still = lambda: power.still
     from maipai_body.bodies.stackchan.light_wiring import start_stackchan_light
 

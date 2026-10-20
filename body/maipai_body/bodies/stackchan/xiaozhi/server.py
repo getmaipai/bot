@@ -48,6 +48,17 @@ if TYPE_CHECKING:
     from maipai_body.bodies.stackchan.companion import StackChanCompanion
 
 
+# Tools that only read the unit; a failed call is retried once.
+_READ_ONLY_TOOLS = frozenset(
+    {
+        "self.battery.get_status",
+        "self.robot.get_head_angles",
+        "self.screen.get_ambient_light",
+        "self.robot.get_reminders",
+    }
+)
+
+
 class XiaozhiDeviceClient:
     """Synchronous Robot seam that sends MCP tool calls to the active device."""
 
@@ -184,7 +195,14 @@ class XiaozhiDeviceClient:
 
     def _call(self, name: str, arguments: dict[str, object]) -> object:
         try:
-            return self._call_raw(name, arguments)
+            try:
+                return self._call_raw(name, arguments)
+            except BodyLost:
+                if name not in _READ_ONLY_TOOLS:
+                    raise
+                # A read-only question is safe to ask twice; one slow reply is not a lost robot.
+                time.sleep(0.5)
+                return self._call_raw(name, arguments)
         except Exception as exc:
             self._log_call_failure(name, exc)
             raise
