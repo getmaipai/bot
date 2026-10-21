@@ -40,7 +40,7 @@ def test_volume_phrases_are_recognised(text, kind):
 
 @pytest.mark.parametrize(
     "text",
-    ["what is the weather", "turn on the living room light", "tell me about volume knobs", ""],
+    ["what is the weather", "turn on the living room light", "why is the sky blue", ""],
 )
 def test_other_speech_goes_to_the_hub(text):
     assert parse_volume_command(text) is None
@@ -162,3 +162,69 @@ def test_the_face_is_reset_in_order_before_every_tts_stop():
     asyncio.run(scenario())
     kinds = [(m.get("type"), m.get("emotion") or m.get("state") or m.get("command")) for m in sent]
     assert kinds == [("llm", "neutral"), ("tts", "stop"), ("system", "idle")]
+
+
+@pytest.mark.parametrize(
+    ("text", "kind", "level"),
+    [
+        # The real transcripts of 2026-10-20 and the phrases the owner wants to work.
+        ("A snatch-hem set your volume to one hundred.", "set", 100),
+        ("set your volume to 100%", "set", 100),
+        ("set your volume to 100 percent", "set", 100),
+        ("set your volume to sixty five", "set", 65),
+        ("set the volume to sixty-five", "set", 65),
+        ("volume to fifty please", "set", 50),
+        ("turn the volume up to 80", "set", 80),
+        ("half volume", "set", 50),
+        ("volume to a quarter", "set", 25),
+        ("full volume", "max", None),
+        ("set your volume to maximum", "max", None),
+        ("I can't hear you", "up", None),
+        ("I cannot hear you", "up", None),
+        ("it is hard to hear you", "up", None),
+        ("raise your volume", "up", None),
+        ("increase your volume please", "up", None),
+        ("turn your volume up", "up", None),
+        ("a little louder", "up", None),
+        ("much louder", "up", None),
+        ("you're too soft", "up", None),
+        ("too quiet", "up", None),
+        ("can you speak up", "up", None),
+        ("you're too loud", "down", None),
+        ("that's too loud", "down", None),
+        ("way too loud", "down", None),
+        ("lower your volume", "down", None),
+        ("decrease the volume", "down", None),
+        ("turn your volume down", "down", None),
+        ("a little quieter please", "down", None),
+        ("speak softer", "down", None),
+        ("mute", "mute", None),
+        ("Volume.", "ask", None),
+        ("the volume", "ask", None),
+        ("what is the volume of a cube", "hint", None),
+        ("tell me about volume knobs", "hint", None),
+        ("raise the volume by one", "up", None),
+    ],
+)
+def test_the_widened_phrases(text, kind, level):
+    command = parse_volume_command(text)
+    assert command is not None, text
+    assert (command.kind, command.level) == (kind, level), text
+
+
+def test_a_bare_volume_asks_which_way_and_a_stray_remark_says_how_to_ask():
+    assert confirmation(VolumeCommand("ask"), 60, 60) == "Louder or quieter?"
+    assert confirmation(VolumeCommand("hint"), 60, 60) == "Say louder, quieter, or a number."
+
+
+def test_ask_and_hint_change_nothing():
+    changed = []
+    control = VolumeControl(lambda name, args: None, changed.append)
+    assert control.apply(VolumeCommand("ask"))[0] == control.apply(VolumeCommand("hint"))[1]
+    assert changed == []
+
+
+def test_the_floor_of_twenty_holds_for_every_way_of_asking_quieter_but_mute_is_zero():
+    assert next_level(20, parse_volume_command("you're too loud")) == 20
+    assert next_level(60, parse_volume_command("set your volume to five")) == 20
+    assert next_level(60, parse_volume_command("mute")) == 0

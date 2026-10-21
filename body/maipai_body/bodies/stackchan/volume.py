@@ -21,47 +21,129 @@ MAX_LEVEL = 100
 STEP = 15
 DEFAULT_LEVEL = 60
 
+_VOLUME = re.compile(r"\b(volume|sound level)\b")
+_THE = r"(?:(?:the|your|my|that|this) )?"
 _UP = re.compile(
-    r"\b(louder|turn (it |the volume |the sound )?up|volume up|raise the volume|"
-    r"increase the volume|speak up|talk louder|a bit louder|too quiet|can'?t hear you)\b"
+    r"\b(louder|speak up|talk up|say that louder|"
+    rf"(?:raise|increase|turn up|bump up|boost|crank up|up) {_THE}(?:volume|sound)|"
+    rf"turn {_THE}(?:volume |sound |it )?up|volume up|more volume|"
+    r"too (?:quiet|soft|low|faint|quietly|softly)|"
+    r"can'?t hear|cannot hear|can not hear|couldn'?t hear|hard to hear|hardly hear|didn'?t hear)\b"
 )
 _DOWN = re.compile(
-    r"\b(quieter|softer|turn (it |the volume |the sound )?down|volume down|lower the volume|"
-    r"decrease the volume|talk quieter|too loud|not so loud|a bit quieter)\b"
+    r"\b(quieter|softer|more quietly|more softly|speak low|"
+    rf"(?:lower|decrease|reduce|turn down|bring down|drop|down) {_THE}(?:volume|sound)|"
+    rf"turn {_THE}(?:volume |sound |it )?down|volume down|less volume|"
+    r"too loud|so loud|way too loud|not so loud|too noisy|you'?re loud|that'?s loud|"
+    r"talk quieter|speak quieter|speak softer|talk softer)\b"
 )
-_SET = re.compile(
-    r"\b(?:set |make |put )?(?:the )?volume (?:to|at) (\d{1,3})(?: ?(?:percent|%))?\b"
+_MAX = re.compile(
+    r"\b(max(?:imum)? volume|full volume|volume (?:to |at )?(?:max|maximum|full)|"
+    r"as loud as you can|all the way up|turn it all the way up)\b"
 )
-_MAX = re.compile(r"\b(max(imum)? volume|full volume|as loud as you can)\b")
-_MUTE = re.compile(r"\b(mute|be quiet|silence)\b")
+_MUTE = re.compile(r"\b(mute|be quiet|silence|shush|shut up)\b")
+_HALF = re.compile(r"\b(half|halfway|half way|fifty fifty)\b")
+_QUARTER = re.compile(r"\b(quarter|a quarter)\b")
+_DIGITS = re.compile(r"\b(\d{1,3})\s?(?:%|percent)?(?!\d)")
+_LEVEL_CONTEXT = re.compile(r"\b(volume|sound|set|make|put|turn)\b|%|percent")
+_BARE = {"volume", "the volume", "your volume", "my volume", "sound", "the sound", "sound level"}
+_LOUDNESS = re.compile(r"\b(volume|loud|louder|quiet|quieter|softer|too soft|speak up)\b")
+_FILLERS = re.compile(r"\b(please|ok|okay|hey|hi|um|uh|now|thanks|thank you|stack ?chan)\b")
+
+_UNITS = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+    "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19,
+}  # fmt: skip
+_TENS = {
+    "twenty": 20, "thirty": 30, "forty": 40, "fourty": 40, "fifty": 50, "sixty": 60,
+    "seventy": 70, "eighty": 80, "ninety": 90,
+}  # fmt: skip
 
 
 @dataclass(frozen=True)
 class VolumeCommand:
-    kind: str  # "up", "down", "set", "max" or "mute"
+    # "up", "down", "set", "max", "mute", or the two answers that change nothing: "ask" (a bare
+    # "volume": which way?) and "hint" (a volume remark that matched no command).
+    kind: str
     level: int | None = None
 
 
+def _spoken_number(words: list[str]) -> int | None:
+    """The first number said in words ("sixty five", "a hundred", "one hundred"), or None."""
+    for start in range(len(words)):
+        total, used, seen_hundred = 0, 0, False
+        for word in words[start:]:
+            if word == "a" and used == 0:
+                used += 1
+                continue
+            if word in _UNITS and not (total % 100 >= 20 and _UNITS[word] >= 10):
+                total += _UNITS[word]
+            elif word in _TENS:
+                total += _TENS[word]
+            elif word == "hundred" and not seen_hundred:
+                total = max(1, total) * 100
+                seen_hundred = True
+            elif word == "and" and used:
+                pass
+            else:
+                break
+            used += 1
+        if total or (used and words[start] == "zero"):
+            return total
+    return None
+
+
+def _level_in(spoken: str) -> int | None:
+    digits = _DIGITS.search(spoken)
+    if digits:
+        return int(digits.group(1))
+    if _HALF.search(spoken):
+        return 50
+    if _QUARTER.search(spoken):
+        return 25
+    return _spoken_number(spoken.split())
+
+
 def parse_volume_command(text: str) -> VolumeCommand | None:
-    """The volume command in what the person said, or None (then it goes to the hub)."""
-    spoken = re.sub(r"[^\w%' ]+", " ", text.lower()).strip()
+    """The volume command in what the person said, or None (then it goes to the hub).
+
+    The match searches the whole sentence, so a garbled opening word or a trailing "please" does
+    not matter. A remark about the volume that matches no command still never reaches the hub as a
+    question: a bare "volume" asks which way, anything else says how to ask."""
+    spoken = re.sub(r"[^\w%' ]+", " ", text.lower())
+    spoken = re.sub(r"\s+", " ", _FILLERS.sub(" ", spoken)).strip()
     if not spoken:
         return None
-    match = _SET.search(spoken)
-    if match:
-        return VolumeCommand("set", max(0, min(100, int(match.group(1)))))
+    if spoken in _BARE:
+        return VolumeCommand("ask")
+    mentions_volume = bool(_VOLUME.search(spoken))
     if _MAX.search(spoken):
         return VolumeCommand("max")
+    if mentions_volume or "%" in spoken or "percent" in spoken:
+        # "raise the volume by one" is a step, not a level.
+        level = None
+        if _LEVEL_CONTEXT.search(spoken) and not re.search(r"\bby\b", spoken):
+            level = _level_in(spoken)
+        if level is not None and not _UP.search(spoken.replace("up to", "")):
+            return VolumeCommand("set", max(0, min(100, level)))
+        if level is not None and re.search(r"\b(to|at) ", spoken):
+            return VolumeCommand("set", max(0, min(100, level)))
     if _UP.search(spoken):
         return VolumeCommand("up")
     if _DOWN.search(spoken):
         return VolumeCommand("down")
     if _MUTE.search(spoken) and len(spoken.split()) <= 4:
         return VolumeCommand("mute")
+    if mentions_volume or (_LOUDNESS.search(spoken) and len(spoken.split()) <= 6):
+        return VolumeCommand("hint")
     return None
 
 
 def next_level(current: int, command: VolumeCommand) -> int:
+    if command.kind in {"ask", "hint"}:
+        return current
     if command.kind == "up":
         return min(MAX_LEVEL, current + STEP)
     if command.kind == "down":
@@ -76,6 +158,10 @@ def next_level(current: int, command: VolumeCommand) -> int:
 
 def confirmation(command: VolumeCommand, before: int, after: int) -> str:
     """One short plain line to say back (or an empty string for mute)."""
+    if command.kind == "ask":
+        return "Louder or quieter?"
+    if command.kind == "hint":
+        return "Say louder, quieter, or a number."
     if after == 0:
         return ""
     if command.kind in {"up", "max"} and after == before:
@@ -104,7 +190,10 @@ class VolumeControl:
         return self._known if self._known is not None else DEFAULT_LEVEL
 
     def apply(self, command: VolumeCommand) -> tuple[int, int]:
-        """Set the new level; returns (before, after)."""
+        """Set the new level; returns (before, after). "ask" and "hint" change nothing."""
+        if command.kind in {"ask", "hint"}:
+            level = self._known if self._known is not None else DEFAULT_LEVEL
+            return level, level
         before = self.current()
         after = next_level(before, command)
         self._set_volume(after)
