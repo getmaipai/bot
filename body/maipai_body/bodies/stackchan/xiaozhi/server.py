@@ -132,6 +132,16 @@ class XiaozhiDeviceClient:
             return float(result["lux"])
         return None
 
+    def get_device_status(self) -> dict[str, object]:
+        """The firmware's read-only device status: speaker, screen, battery and network class."""
+        result = self._call("self.get_device_status", {})
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except ValueError:
+                return {}
+        return result if isinstance(result, dict) else {}
+
     def get_battery_status(self) -> dict[str, object]:
         """Read battery status using the firmware's read-only MCP tool."""
         result = self._call("self.battery.get_status", {})
@@ -336,6 +346,7 @@ class XiaozhiServer:
         self._session_ids: dict[str, str] = {}
         self._session_features: dict[str, dict[str, Any]] = {}
         self._session_credentials: dict[str, tuple[str, str]] = {}
+        self._session_info: dict[str, tuple[str | None, float]] = {}
         self._pending_device_calls: dict[str, tuple[asyncio.Future[object], str, str]] = {}
         self._early_device_replies: dict[str, dict[str, Any]] = {}
         self._device_call_deadlines: dict[str, float] = {}
@@ -447,6 +458,8 @@ class XiaozhiServer:
         self._sessions[device_id] = websocket
         self._session_ids[device_id] = session_id
         self._session_credentials[device_id] = (client_id, enrollment_token or token or "")
+        remote = websocket.remote_address
+        self._session_info[device_id] = (remote[0] if remote else None, time.time())
         bind_camera = getattr(self.robot, "bind_avatar_camera", None)
         if callable(bind_camera) and self._avatar_frame_sender is not None:
             avatar_server = getattr(self._avatar_frame_sender, "__self__", None)
@@ -586,6 +599,7 @@ class XiaozhiServer:
             if self._sessions.get(device_id) is websocket:
                 self._sessions.pop(device_id, None)
                 self._session_credentials.pop(device_id, None)
+                self._session_info.pop(device_id, None)
                 self._session_features.pop(device_id, None)
                 self._session_ids.pop(device_id, None)
                 self._early_device_replies.clear()

@@ -1,0 +1,35 @@
+# Intent: tell the hub which firmware the unit runs and how strong its Wi-Fi is. The unit reported M5's own 1.5.1 (or nothing) and Home's Software card read "Not recorded". Once a minute, with the memory report, the unit pushes a "fw" event: the release version (from the header recipe.sh writes, "unknown" in a bare build) and the access point's RSSI in dBm (0 when not connected). The host forwards them in its robot check-in.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_head_touch.cpp (MIT). Applies after 061.
+# Check after a flash: the host log shows "unit firmware: version=0.2.31 rssi=-60" once a minute, and Home's Software card shows the version.
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index 57cc3df..1730273 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -10,6 +10,13 @@
+ #include <cstdio>
+ #include <esp_heap_caps.h>
+ #include <esp_system.h>
++#include <esp_wifi.h>
++#if __has_include("maipai_version.h")
++#include "maipai_version.h"
++#endif
++#ifndef MAIPAI_FIRMWARE_VERSION
++#define MAIPAI_FIRMWARE_VERSION "unknown"
++#endif
+ #include <settings.h>
+ #include <application.h>
+ #include <cstring>
+@@ -224,6 +231,13 @@ static void _head_touch_update_task(void* param)
+                      static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM)));
+             mclog::tagInfo(_tag, "memory: {}", mem);
+             device_events_push_diag("heap_stats", mem);
++            // Which firmware this is and how well the radio hears the router, so the hub's
++            // Software card and Devices list can show them.
++            wifi_ap_record_t ap_info;
++            const int rssi = esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK ? ap_info.rssi : 0;
++            char fw[96];
++            snprintf(fw, sizeof(fw), "\"version\":\"%s\",\"rssi\":%d", MAIPAI_FIRMWARE_VERSION, rssi);
++            device_events_push_diag("fw", fw);
+             // The least stack ever left free in the big tasks (bytes), to size or move stacks.
+             const char* names[] = {"opus_codec", "audio_input", "audio_output", "ws_reconnect", "stackchan",
+                                    "audio_detection"};

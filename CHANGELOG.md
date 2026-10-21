@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.31] - 2026-10-21
+
+### Added
+- Robot check-in: the body tells the hub which StackChan is connected and what it runs, with `PUT /api/devices/me/checkin` on connect, on a reboot or firmware report, and every minute: `device_id`, `board`, `online`, `last_seen`, `connected_since`, `ip`, `firmware_version`, `bot_version`, `rssi`, `signal`, `free_heap_internal`, `free_heap_min`, `psram_free`, `boot_reason`, `crash_resets`, `battery_level`, `charging`. A hub without the route (404) is asked again in ten minutes.
+- Firmware patch 062: the unit reports its release version and Wi-Fi RSSI once a minute (a `fw` event, shown in the host log as "unit firmware"); the release scripts pass the version to the build. `firmware_version` is null until a unit with this patch is flashed.
+
 ## [0.2.30] - 2026-10-21
 
 ### Fixed

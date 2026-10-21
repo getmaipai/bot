@@ -187,6 +187,7 @@ PY
   fi
   # Put back the launcher assets the build pruned (patch 049's assets step) so the pinned tree is clean.
   git -C "$SRC" checkout -- firmware/main/assets/assets_bin
+  rm -f "$SRC/firmware/main/hal/maipai_version.h"
   if [[ -n "$(git -C "$SRC" status --porcelain)" ]]; then
     echo "Firmware recipe left changes in $SRC. Inspect this source tree before retrying." >&2
     return 1
@@ -279,6 +280,10 @@ apply_repo_patch 058-internal-ram-trims.patch "$SRC"
 apply_repo_patch 059-wake-and-tap-visibility.patch "$SRC"
 apply_repo_patch 060-avatar-socket-credentials.patch "$SRC"
 apply_repo_patch 061-stop-while-speaking.patch "$SRC"
+apply_repo_patch 062-firmware-version-report.patch "$SRC"
+# The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
+printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
+  > "$SRC/firmware/main/hal/maipai_version.h"
 
 # Room in the 4 MB assets partition for the stop-word model (mn5q8_en, about 2.2 MB): drop the
 # launcher icons and artwork of the Mooncake apps, which this firmware never starts (it boots

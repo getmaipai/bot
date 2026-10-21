@@ -37,6 +37,7 @@ DIAGNOSTIC_KINDS = frozenset(
         "wake_stats",
         "state_guard",
         "touch_path",
+        "fw",
     }
 )
 EVENT_KINDS = (

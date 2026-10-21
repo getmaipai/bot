@@ -197,6 +197,9 @@ class StackChanBehavior:
         # Touch, swipe and shake events from the unit (patch 021) wake a drowsy or sleeping robot.
         # Set by the service wiring; None means no unit events are available.
         self.event_poll: Callable[[], list] | None = None
+        self.unit_facts: Any = (
+            None  # link.checkin.UnitFacts: the latest boot, memory and firmware facts
+        )
         # The unit's own volume and brightness sliders: (volume, brightness), either may be None.
         self.on_levels_changed: Callable[[int | None, int | None], None] | None = None
         # Gets the kinds of the events read ("head_touch", "shake", ...); set by the service wiring.
@@ -524,6 +527,8 @@ class StackChanBehavior:
         for event in events:
             if getattr(event, "kind", None) in DIAGNOSTIC_KINDS:
                 extra = getattr(event, "extra", None) or {}
+                if self.unit_facts is not None:
+                    self.unit_facts.observe(event.kind, extra)
                 if event.kind == "stop_word" and "cmd" in extra:
                     verdict = "accepted" if extra.get("accepted") else "rejected"
                     logger.info(
@@ -537,6 +542,7 @@ class StackChanBehavior:
                 detail = " ".join(f"{k}={v}" for k, v in extra.items())
                 label = {
                     "stop_word": "unit stop word",
+                    "fw": "unit firmware",
                     "heap_stats": "unit memory",
                     "stack_stats": "unit memory",
                     "boot": "unit boot",
@@ -823,6 +829,8 @@ async def _serve_stackchan_channels(
         avatar.camera_bytes_received,
     )
     behavior.event_poll = voice.robot.client.companion().poll_events
+    if link is not None:
+        _start_robot_checkin(voice, behavior, link, stop_event)
     night = _start_stackchan_night(voice, behavior, link, stop_event)
     behavior.on_levels_changed = night.set_levels_from_unit
     from maipai_body.bodies.stackchan.power_idle import PowerIdle
@@ -1697,6 +1705,49 @@ def _alarm_backstop(alarm: AlarmController, stop_event: threading.Event) -> None
             alarm.tick()
         except Exception:
             logger.warning("alarm backstop failed", exc_info=True)
+
+
+def _start_robot_checkin(voice: Any, behavior: Any, link: LinkLifecycle, stop_event: Any) -> None:
+    """Report the connected StackChan to the hub: address, firmware, memory, boot reason."""
+    from maipai_body.link.checkin import RobotCheckin, UnitFacts, build_payload
+
+    facts = UnitFacts()
+    behavior.unit_facts = facts
+    connected = threading.Event()
+    voice.session_listeners.append(lambda _device_id: connected.set())
+
+    def collect() -> dict[str, Any]:
+        sessions = list(voice._sessions)
+        device_id = sessions[0] if sessions else None
+        address, since = voice._session_info.get(device_id, (None, None))
+        status: dict[str, Any] = {}
+        if device_id is not None:
+            try:
+                status = {
+                    "network": (voice.robot.client.get_device_status() or {}).get("network"),
+                    "battery": voice.robot.client.get_battery_status(),
+                }
+                battery = status["battery"]
+                status["battery"] = {
+                    "level": battery.get("percent"),
+                    "charging": battery.get("charging"),
+                }
+            except Exception:
+                logger.debug("robot check-in could not read the unit's status", exc_info=True)
+        return build_payload(
+            device_id=device_id,
+            address=address,
+            connected_since=since,
+            facts=facts.snapshot(),
+            status=status,
+            bot_version=_app_version(),
+            now=time.time(),
+        )
+
+    reporter = RobotCheckin(
+        _hub_credentials_reader(link, ""), stop_event, collect, facts, connected
+    )
+    threading.Thread(target=reporter.run, name="robot-checkin", daemon=True).start()
 
 
 def _hub_credentials_reader(link: LinkLifecycle, base_url: str) -> Callable[[], tuple[str, str]]:
