@@ -237,3 +237,42 @@ def test_abort_during_encode_does_not_send_pending_frames(monkeypatch):
     loop.run_until_complete(asyncio.sleep(0))
     assert sent == ["stop"]
     loop.close()
+
+
+def test_a_stall_is_caught_up_at_the_prebuffer_cadence_not_rebased(monkeypatch, caplog):
+    # Fable review P2: re-basing after a stall permanently ate the 0.84 s cushion.
+    import logging
+
+    clock = Clock()
+    sent = []
+    state = {"stalled": False}
+
+    async def send_audio(device, frames, **kwargs):
+        sent.extend(frames)
+        if len(sent) == 20 and not state["stalled"]:
+            state["stalled"] = True
+            clock.now += 0.3  # the loop stalled for 300 ms: five frames overdue
+
+    async def stop_audio(device):
+        sent.append("stop")
+
+    server = SimpleNamespace(_loop=None, send_audio=send_audio, stop_audio=stop_audio)
+    server._loop = asyncio.new_event_loop()
+    worker = threading.Thread(target=server._loop.run_forever, daemon=True)
+    worker.start()
+    playback = StackChanAudioPlayback(
+        server, "device", clock=clock.monotonic, sleeper=clock.sleep, async_sleep=clock.async_sleep
+    )
+    playback._frames = [bytes([i]) for i in range(40)]
+    playback._samples = np.zeros(0, dtype=np.float32)
+    with caplog.at_level(logging.WARNING, logger="maipai_body.bodies.stackchan.turn"):
+        playback.stop_playing()
+    assert len(sent) == 40
+    assert any("behind by" in r.getMessage() for r in caplog.records)
+    # The five overdue frames went out at the 15 ms cadence, then the 60 ms pacing resumed.
+    assert clock.sleeps.count(0.015) >= 3  # 300 ms late is 5 frames; each catch-up gains 45 ms
+    assert clock.sleeps.count(0.015) <= 10
+    assert clock.sleeps[-1] == pytest.approx(0.06)
+    server._loop.call_soon_threadsafe(server._loop.stop)
+    worker.join(timeout=1)
+    server._loop.close()

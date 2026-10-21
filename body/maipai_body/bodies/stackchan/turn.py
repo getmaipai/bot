@@ -30,8 +30,13 @@ LOG = logging.getLogger(__name__)
 # lands on top of what is queued. A short lead (14 frames, 0.84 s, sent in about 0.2 s) keeps the
 # queue near 10 of 40 so even a catch-up cannot overflow it. UNMEASURED on the unit.
 LEAD_FRAMES = 14
-# More than this many frames behind the schedule: do not burst to catch up, re-base the schedule.
+# More than this many frames behind the schedule: catch up by sending the overdue frames at the
+# prebuffer cadence (not back to back) so the unit's cushion is refilled, not permanently lost.
 MAX_BEHIND_FRAMES = 2
+# At most this many overdue frames are caught up; a longer stall has already drained the cushion,
+# so the rest of the lost time is dropped from the schedule. 14 + 10 stays under the unit's 40.
+CATCH_UP_MAX_FRAMES = 10
+CATCH_UP_GAP_S = 0.015
 # Frames in flight (sent minus played at real time) above this are counted as over the soft cap.
 IN_FLIGHT_SOFT_CAP = 30
 STREAM_POLL_S = 0.01
@@ -237,7 +242,7 @@ class StackChanAudioPlayback(AudioPlayback):
             )
 
     async def _sender(self) -> None:
-        """Send the lead at once, then the rest at real time; never burst to catch up."""
+        """Send the lead at once, then the rest at real time; catch up a stall in bounded steps."""
         with self._lock:
             lead = self._frames[:LEAD_FRAMES]
             del self._frames[:LEAD_FRAMES]
@@ -258,6 +263,7 @@ class StackChanAudioPlayback(AudioPlayback):
         sent = len(lead)
         self._note_flight(sent, began)
         deadline = self._clock()
+        catching_up = False
         while not self._cancelled():
             with self._lock:
                 frame = self._frames.pop(0) if self._frames else None
@@ -272,12 +278,19 @@ class StackChanAudioPlayback(AudioPlayback):
             now = self._clock()
             behind = (now - deadline) / FRAME_S
             if behind > MAX_BEHIND_FRAMES:
-                self._behind_events += 1
-                LOG.warning(
-                    "StackChan playback behind by %d frames; re-basing the schedule", int(behind)
-                )
-                deadline = now
+                if not catching_up:
+                    catching_up = True
+                    self._behind_events += 1
+                    LOG.warning(
+                        "StackChan playback behind by %d frames (%.0f ms); catching up",
+                        int(behind),
+                        behind * FRAME_S * 1000,
+                    )
+                if behind > CATCH_UP_MAX_FRAMES:
+                    deadline = now - CATCH_UP_MAX_FRAMES * FRAME_S
+                await self._async_sleep(CATCH_UP_GAP_S)
             else:
+                catching_up = False
                 await self._async_sleep(max(0.0, deadline - now))
             if self._cancelled():
                 break
