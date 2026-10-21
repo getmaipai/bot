@@ -1,0 +1,57 @@
+# Intent: log-only timing diagnostic for the slow MCP replies (>5 s) seen while audio streams. Logs one warning line, at most one a second per kind, when an MCP tool call waited 100 ms or more for the main loop or ran that long, when its reply waited or took that long to send, and when the main loop's audio send drain took 100 ms or more. No line means that hop was quick. No behavior change, no extra network, no new allocation.
+# Upstream: 78/xiaozhi-esp32 main/mcp_server.cc, main/application.cc (MIT). Applies after 032 with --unidiff-zero.
+# Check after a flash: the serial log shows "MCP timing", "MCP reply waited" or "Audio send drain" lines only while something is slow; compare them with the host log's tool call durations.
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index 4599d25..d544b0c 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -220,0 +221,2 @@ void Application::Run() {
++            const int64_t drain_start_us = esp_timer_get_time();
++            int drained_packets          = 0;
+@@ -224,0 +227,9 @@ void Application::Run() {
++                ++drained_packets;
++            }
++            // Timing diagnostic: a long drain delays every scheduled task (MCP calls and replies).
++            // One line, at most one a second, only when the drain took 100 ms or more.
++            const int drain_ms = static_cast<int>((esp_timer_get_time() - drain_start_us) / 1000);
++            static int64_t last_drain_logged_us = 0;
++            if (drain_ms >= 100 && drain_start_us - last_drain_logged_us >= 1000000) {
++                last_drain_logged_us = drain_start_us;
++                ESP_LOGW(TAG, "Audio send drain took %d ms for %d packets", drain_ms, drained_packets);
+@@ -1135 +1146,3 @@ void Application::SendMcpMessage(const std::string& payload) {
+-    Schedule([this, payload = std::move(payload)]() {
++    const int64_t scheduled_us = esp_timer_get_time();
++    Schedule([this, payload = std::move(payload), scheduled_us]() {
++        const int64_t sending_us = esp_timer_get_time();
+@@ -1138,0 +1152,9 @@ void Application::SendMcpMessage(const std::string& payload) {
++        // Timing diagnostic: how long the reply waited for the main loop, then how long the send
++        // itself took. One line, at most one a second, only when either took 100 ms or more.
++        const int waited_ms = static_cast<int>((sending_us - scheduled_us) / 1000);
++        const int sent_ms   = static_cast<int>((esp_timer_get_time() - sending_us) / 1000);
++        static int64_t last_reply_logged_us = 0;
++        if ((waited_ms >= 100 || sent_ms >= 100) && sending_us - last_reply_logged_us >= 1000000) {
++            last_reply_logged_us = sending_us;
++            ESP_LOGW(TAG, "MCP reply waited %d ms for the main loop, send took %d ms", waited_ms, sent_ms);
++        }
+diff --git a/firmware/xiaozhi-esp32/main/mcp_server.cc b/firmware/xiaozhi-esp32/main/mcp_server.cc
+index 7cd7ba0..140533f 100644
+--- a/firmware/xiaozhi-esp32/main/mcp_server.cc
++++ b/firmware/xiaozhi-esp32/main/mcp_server.cc
+@@ -7,0 +8 @@
++#include <esp_timer.h>
+@@ -555 +556,3 @@ void McpServer::DoToolCall(int id, const std::string& tool_name, const cJSON* to
+-    app.Schedule([this, id, tool_iter, arguments = std::move(arguments)]() {
++    const int64_t queued_at_us = esp_timer_get_time();
++    app.Schedule([this, id, tool_iter, arguments = std::move(arguments), queued_at_us]() {
++        const int64_t started_us = esp_timer_get_time();
+@@ -557,0 +561,10 @@ void McpServer::DoToolCall(int id, const std::string& tool_name, const cJSON* to
++            // Timing diagnostic: one line, at most one a second, only for a slow call. No line
++            // means the call was quick and the main loop got to it at once.
++            const int waited_ms = static_cast<int>((started_us - queued_at_us) / 1000);
++            const int ran_ms    = static_cast<int>((esp_timer_get_time() - started_us) / 1000);
++            static int64_t last_logged_us = 0;
++            if ((waited_ms >= 100 || ran_ms >= 100) && started_us - last_logged_us >= 1000000) {
++                last_logged_us = started_us;
++                ESP_LOGW(TAG, "MCP timing %s: waited %d ms for the main loop, ran %d ms",
++                         (*tool_iter)->name().c_str(), waited_ms, ran_ms);
++            }
