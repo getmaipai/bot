@@ -174,9 +174,15 @@ def confirmation(command: VolumeCommand, before: int, after: int) -> str:
 class VolumeControl:
     """Reads and sets the speaker level through the device client's tool calls."""
 
-    def __init__(self, call: Callable[[str, dict[str, object]], object], set_volume: Any) -> None:
+    def __init__(
+        self,
+        call: Callable[[str, dict[str, object]], object],
+        set_volume: Any,
+        on_set: Callable[[int, VolumeCommand], None] | None = None,
+    ) -> None:
         self._call = call
         self._set_volume = set_volume
+        self._on_set = on_set
         self._known: int | None = None
 
     def current(self) -> int:
@@ -198,6 +204,8 @@ class VolumeControl:
         after = next_level(before, command)
         self._set_volume(after)
         self._known = after
+        if command.kind != "mute" and self._on_set is not None:
+            self._on_set(after, command)
         logger.info("StackChan volume %d -> %d (%s)", before, after, command.kind)
         return before, after
 

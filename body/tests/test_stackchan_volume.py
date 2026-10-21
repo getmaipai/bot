@@ -224,6 +224,35 @@ def test_ask_and_hint_change_nothing():
     assert changed == []
 
 
+@pytest.mark.parametrize(
+    "command",
+    [VolumeCommand("up"), VolumeCommand("down"), VolumeCommand("set", 45), VolumeCommand("max")],
+)
+def test_on_set_receives_successful_volume_commands(command):
+    updates = []
+    control = VolumeControl(
+        lambda name, args: {"audio_speaker": {"volume": 50}},
+        lambda level: None,
+        on_set=lambda level, received: updates.append((level, received)),
+    )
+    _, after = control.apply(command)
+    assert updates == [(after, command)]
+
+
+@pytest.mark.parametrize(
+    "command", [VolumeCommand("mute"), VolumeCommand("ask"), VolumeCommand("hint")]
+)
+def test_on_set_ignores_mute_and_non_commands(command):
+    updates = []
+    control = VolumeControl(
+        lambda name, args: {"audio_speaker": {"volume": 50}},
+        lambda level: None,
+        on_set=lambda level, received: updates.append((level, received)),
+    )
+    control.apply(command)
+    assert updates == []
+
+
 def test_the_floor_of_twenty_holds_for_every_way_of_asking_quieter_but_mute_is_zero():
     assert next_level(20, parse_volume_command("you're too loud")) == 20
     assert next_level(60, parse_volume_command("set your volume to five")) == 20

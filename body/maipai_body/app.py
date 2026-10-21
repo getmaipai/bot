@@ -413,6 +413,7 @@ def _start_stackchan_night(
 
     The hub's `settings_changed` reaches it through the same `CommandChannel` the
     Reachy body uses, started here because this body has no conversation loop."""
+    from maipai_body.bodies.stackchan.owner_levels import OwnerLevels
     from maipai_body.link.channel import CommandChannel
     from maipai_body.presence.sleep_auto import QuietHours, luma_reader
 
@@ -432,6 +433,9 @@ def _start_stackchan_night(
         if not on:  # back on: the expression engine repaints the ring itself
             voice.robot.robot.leds.many([{"index": i, "rgb": [0, 0, 0]} for i in range(12)])
 
+    levels = OwnerLevels(_data_dir() / "owner_levels.json")
+    levels.load()
+
     night = NightController(
         voice.robot.client,
         clock=time.monotonic,
@@ -439,7 +443,10 @@ def _start_stackchan_night(
         watch_level=lambda: watch[0],
         camera_luma=luma_reader(_StreamCamera(), level=lambda: watch[0]),
         leds=leds,
+        levels=levels,
+        connected=lambda: bool(voice._sessions),
     )
+    voice.session_listeners.append(lambda _device_id: night.on_connect())
     behavior.night_active = lambda: night.night
     voice.robot.robot._driver("camera").watch_allowed = lambda: watch[0] != "off"
 
@@ -648,7 +655,11 @@ async def _serve_stackchan_channels(
             expression_sink=_turn_sink(behavior, light),
             live_sink=light.cue_live,
             uplink_stats=uplink,
-            volume_control=VolumeControl(voice.robot.client._call, voice.robot.client.set_volume),
+            volume_control=VolumeControl(
+                voice.robot.client._call,
+                voice.robot.client.set_volume,
+                on_set=lambda level, _command: night.set_owner_volume_from_voice(level),
+            ),
             head_control=head_commander,
         )
         voice.audio_handler = bridge.on_audio

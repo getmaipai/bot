@@ -7,6 +7,7 @@ import threading
 from collections.abc import Callable, Mapping
 from typing import Any, Protocol
 
+from maipai_body.bodies.stackchan.owner_levels import OwnerLevels
 from maipai_body.presence.sleep_auto import DARK_LUMA
 from maipai_body.settings_keys import FACE_COLOR_KEY, NIGHT_MODE_KEY, face_color, night_mode
 
@@ -22,9 +23,9 @@ POLL_S = 10.0
 NIGHT_VOLUME_SHARE = 0.4
 # Pending measurement on the unit: the dimmed backlight level (0 to 100).
 NIGHT_BRIGHTNESS = 15
-# Nothing on the unit reads these back, so they are what the Bot last set until told.
-DEFAULT_OWNER_VOLUME = 60
+DEFAULT_OWNER_VOLUME = 70
 DEFAULT_OWNER_BRIGHTNESS = 100
+UNREADABLE_LIGHT_GRACE_S = 600.0
 WATCH_LEVEL_KEY = "robot.camera.watch_level"
 
 
@@ -37,6 +38,7 @@ class NightPolicy:
         self.enabled = True
         self._dark_since: float | None = None
         self._light_since: float | None = None
+        self._unreadable_since: float | None = None
 
     def update(
         self,
@@ -50,10 +52,12 @@ class NightPolicy:
         if not self.enabled:
             self.night = False
             self._dark_since = self._light_since = None
+            self._unreadable_since = None
             return False
         if quiet_hours:
             self.night = True
             self._light_since = None
+            self._unreadable_since = None
             return self.night
         if lux is None and watch_level == "off":
             # Nothing may measure the room (no sensor, camera barred), so darkness
@@ -61,7 +65,21 @@ class NightPolicy:
             # exactly as long as quiet hours.
             self._dark_since = self._light_since = None
             self.night = False
+            self._unreadable_since = None
             return False
+        if lux is None and camera_luma is None:
+            self._dark_since = self._light_since = None
+            if self.night:
+                if self._unreadable_since is None:
+                    self._unreadable_since = now
+                elif now - self._unreadable_since >= UNREADABLE_LIGHT_GRACE_S:
+                    self.night = False
+                    self._unreadable_since = None
+            else:
+                self._unreadable_since = None
+                self.night = False
+            return self.night
+        self._unreadable_since = None
         # Reuse sleep-auto's camera brightness threshold when the ambient sensor
         # is absent. The luma reader itself enforces watch-level off.
         dark = (
@@ -74,9 +92,6 @@ class NightPolicy:
             if lux is not None
             else camera_luma is not None and camera_luma >= DARK_LUMA
         )
-        if lux is None and camera_luma is None:
-            self._dark_since = self._light_since = None
-            return self.night
         if not self.night:
             self._light_since = None
             if dark:
@@ -144,6 +159,8 @@ class NightController:
         camera_luma: Callable[[], float | None] | None = None,
         leds: Callable[[bool], None] | None = None,
         alarm_active: Callable[[], bool] = lambda: False,
+        levels: OwnerLevels | None = None,
+        connected: Callable[[], bool] | None = None,
     ) -> None:
         self._device = device
         self._quiet = quiet_hours
@@ -151,13 +168,58 @@ class NightController:
         self._camera_luma = camera_luma
         self._leds = leds
         self._alarm_active = alarm_active
+        self._levels = levels
+        self._connected = connected
+        self._clock = clock
         self._policy = NightPolicy(clock)
         self._lock = threading.RLock()
         self.color = "mint"
-        self.owner_volume = DEFAULT_OWNER_VOLUME
-        self.owner_brightness = DEFAULT_OWNER_BRIGHTNESS
+        self._owner_volume = DEFAULT_OWNER_VOLUME
+        self._owner_brightness = DEFAULT_OWNER_BRIGHTNESS
         self.applied_volume = DEFAULT_OWNER_VOLUME
         self.night = False
+        self.night_volume_override: int | None = None
+        self._synced = True
+        self._last_debug_log = float("-inf")
+        self._traceback_at: dict[str, float] = {}
+        self._next_reason = "reconnect"
+
+    @property
+    def owner_volume(self) -> int:
+        return self._levels.volume if self._levels is not None else self._owner_volume
+
+    @owner_volume.setter
+    def owner_volume(self, value: int) -> None:
+        if self._levels is not None:
+            self._levels.set_volume(value)
+        else:
+            self._owner_volume = value
+
+    @property
+    def owner_brightness(self) -> int:
+        return self._levels.brightness if self._levels is not None else self._owner_brightness
+
+    @owner_brightness.setter
+    def owner_brightness(self, value: int) -> None:
+        if self._levels is not None:
+            self._levels.set_brightness(value)
+        else:
+            self._owner_brightness = value
+
+    def set_owner_volume_from_voice(self, level: int) -> None:
+        with self._lock:
+            if self.night:
+                self.night_volume_override = max(0, min(100, int(level)))
+                self._sync_volume()
+            else:
+                self.owner_volume = level
+                self._sync_volume()
+
+    def on_connect(self) -> None:
+        """Force a full state write on the next poll after a unit reconnects."""
+        with self._lock:
+            self._synced = False
+            self._next_reason = "reconnect"
 
     @property
     def enabled(self) -> bool:
@@ -191,7 +253,10 @@ class NightController:
     def tick(self) -> bool:
         """One poll: read the light (only while night mode is on) and apply any edge."""
         with self._lock:
+            if self._connected is not None and not self._connected():
+                return self.night  # no unit to talk to: on_connect will sync it when it joins
             if not self._policy.enabled:
+                self._reconcile(False)
                 return self.night
             quiet = bool(self._quiet())
             level = self._watch_level()
@@ -202,6 +267,23 @@ class NightController:
             wanted = self._policy.update(
                 quiet_hours=quiet, lux=lux, watch_level=level, camera_luma=luma
             )
+            if self._clock() - self._last_debug_log >= 60.0:
+                logger.debug("StackChan light reading: lux=%s camera_luma=%s", lux, luma)
+                self._last_debug_log = self._clock()
+            if wanted != self.night:
+                if quiet:
+                    reason = "quiet hours"
+                elif lux is not None and wanted:
+                    reason = f"dark {lux:.1f} lux"
+                elif lux is not None:
+                    reason = f"light {lux:.1f} lux"
+                elif luma is not None and wanted:
+                    reason = f"dark {luma:.1f} lux"
+                elif luma is not None:
+                    reason = f"light {luma:.1f} lux"
+                else:
+                    reason = "no light reading"
+                self._next_reason = reason
             self._reconcile(wanted)
             return self.night
 
@@ -221,11 +303,19 @@ class NightController:
     # -- the edges ---------------------------------------------------------
 
     def _reconcile(self, wanted: bool) -> None:
-        if wanted != self.night:
+        changed = wanted != self.night
+        reconnect_sync = not self._synced
+        if changed or reconnect_sync:
             if not self._edge(wanted):
                 return  # the face call failed; the next poll retries
+            if changed or reconnect_sync:
+                reason = self._next_reason if changed else "reconnect"
+                logger.info("StackChan night %s (reason: %s)", "on" if wanted else "off", reason)
             self.night = wanted
-        self._sync_volume()
+            self._synced = True
+            if changed and not wanted:
+                self.night_volume_override = None
+        self._sync_volume(force=reconnect_sync)
 
     def _edge(self, night: bool) -> bool:
         d = self._device
@@ -240,20 +330,28 @@ class NightController:
     def _target_volume(self, night: bool) -> int:
         if not night:
             return self.owner_volume
+        if self.night_volume_override is not None:
+            return self.night_volume_override
         return max(0, min(100, round(self.owner_volume * NIGHT_VOLUME_SHARE)))
 
-    def _sync_volume(self) -> None:
+    def _sync_volume(self, *, force: bool = False) -> None:
         if self._alarm_active():
             return
         target = self._target_volume(self.night)
-        if target != self.applied_volume:
+        if force or target != self.applied_volume:
             self._call(self.write_volume, target)
 
-    @staticmethod
-    def _call(fn: Callable[..., object], *args: object) -> bool:
+    def _call(self, fn: Callable[..., object], *args: object) -> bool:
         try:
             fn(*args)
             return True
         except Exception:
-            logger.warning("night call failed", exc_info=True)
+            name = getattr(fn, "__name__", type(fn).__name__)
+            now = self._clock()
+            previous = self._traceback_at.get(name, float("-inf"))
+            if now - previous >= 300.0:
+                self._traceback_at[name] = now
+                logger.warning("night call failed: %s", name, exc_info=True)
+            else:
+                logger.warning("night call failed: %s", name)
             return False

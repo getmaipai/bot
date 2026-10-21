@@ -34,6 +34,20 @@ def test_quiet_hours_enter_immediately_and_light_ends_after_two_minutes():
     assert not policy.update(quiet_hours=False, lux=NIGHT_LIGHT_LUX + 1, watch_level="presence")
 
 
+def test_unreadable_light_ends_night_after_grace_when_quiet_hours_end():
+    from maipai_body.presence.night import UNREADABLE_LIGHT_GRACE_S
+
+    clock = Clock()
+    policy = NightPolicy(clock)
+    # The camera may watch but neither the sensor nor the camera gives a reading.
+    assert policy.update(quiet_hours=True, lux=None, watch_level="presence")
+    assert policy.update(quiet_hours=False, lux=None, watch_level="presence")
+    clock.value = UNREADABLE_LIGHT_GRACE_S - 1
+    assert policy.update(quiet_hours=False, lux=None, watch_level="presence")
+    clock.value = UNREADABLE_LIGHT_GRACE_S
+    assert not policy.update(quiet_hours=False, lux=None, watch_level="presence")
+
+
 def test_disabled_mode_never_enters_night_and_off_watch_does_not_use_darkness():
     clock = Clock()
     policy = NightPolicy(clock)
@@ -192,6 +206,140 @@ def test_a_failed_face_call_is_retried_next_poll():
     assert rig.night.tick() is False
     rig.device.connected = True
     assert rig.night.tick() is True
+
+
+def test_reconnect_resyncs_morning_state_even_when_host_already_believes_day(tmp_path):
+    from maipai_body.bodies.stackchan.owner_levels import OwnerLevels
+
+    rig = _Rig(lux=100)
+    levels = OwnerLevels(tmp_path / "owner_levels.json")
+    levels.load()
+    rig.night = NightController(
+        rig.device,
+        clock=rig.clock,
+        quiet_hours=lambda: rig.quiet,
+        levels=levels,
+    )
+    rig.night.on_connect()
+    assert rig.night.tick() is False
+    assert ("self.screen.set_face_background", {"palette": "mint", "night": False}) in rig.names()
+    assert ("self.screen.set_brightness", {"brightness": 100}) in rig.names()
+    assert ("self.audio_speaker.set_volume", {"volume": 70}) in rig.names()
+
+
+def test_reconnect_during_quiet_hours_sends_night_state(tmp_path):
+    from maipai_body.bodies.stackchan.owner_levels import OwnerLevels
+
+    rig = _Rig(lux=100)
+    rig.quiet = True
+    levels = OwnerLevels(tmp_path / "owner_levels.json")
+    levels.load()
+    rig.night = NightController(
+        rig.device,
+        clock=rig.clock,
+        quiet_hours=lambda: rig.quiet,
+        levels=levels,
+    )
+    rig.night.on_connect()
+    assert rig.night.tick() is True
+    assert ("self.screen.set_face_background", {"palette": "mint", "night": True}) in rig.names()
+    assert ("self.audio_speaker.set_volume", {"volume": 28}) in rig.names()
+
+
+def test_reconnect_writes_the_default_owner_volume_when_none_was_ever_saved(tmp_path):
+    from maipai_body.bodies.stackchan.owner_levels import OwnerLevels
+
+    levels = OwnerLevels(tmp_path / "levels.json")
+    levels.load()
+    rig = _Rig(lux=100)
+    rig.night = NightController(
+        rig.device, clock=rig.clock, quiet_hours=lambda: rig.quiet, levels=levels
+    )
+    rig.night.on_connect()
+    rig.night.tick()
+    assert ("self.audio_speaker.set_volume", {"volume": 70}) in rig.names()
+    assert levels.volume == 70  # never adopts a value the unit happens to have
+
+
+def test_no_calls_are_made_while_no_unit_is_connected_and_the_unit_is_synced_when_it_joins(
+    tmp_path,
+):
+    from maipai_body.bodies.stackchan.owner_levels import OwnerLevels
+
+    levels = OwnerLevels(tmp_path / "levels.json")
+    levels.load()
+    rig = _Rig(lux=100)
+    connected = {"value": False}
+    rig.night = NightController(
+        rig.device,
+        clock=rig.clock,
+        quiet_hours=lambda: rig.quiet,
+        levels=levels,
+        connected=lambda: connected["value"],
+    )
+    rig.night.tick()
+    assert rig.names() == []
+    connected["value"] = True
+    rig.night.on_connect()
+    rig.night.tick()
+    assert ("self.screen.set_face_background", {"palette": "mint", "night": False}) in rig.names()
+
+
+def test_unreadable_light_with_the_camera_barred_ends_night_at_once_after_quiet_hours():
+    rig = _Rig(lux=None, level="off")
+    rig.quiet = True
+    rig.night.tick()  # quiet hours: night on
+    assert rig.night.night is True
+    rig.quiet = False
+    rig.night.tick()
+    assert rig.night.night is False
+
+
+def test_voice_volume_is_owner_level_by_day_and_temporary_at_night(tmp_path):
+    from maipai_body.bodies.stackchan.owner_levels import OwnerLevels
+
+    levels = OwnerLevels(tmp_path / "levels.json")
+    levels.load()
+    rig = _Rig(lux=100)
+    rig.night = NightController(
+        rig.device,
+        clock=rig.clock,
+        quiet_hours=lambda: rig.quiet,
+        levels=levels,
+    )
+    rig.night.set_owner_volume_from_voice(85)
+    assert levels.volume == 85
+    rig.quiet = True
+    rig.night.tick()
+    rig.night.set_owner_volume_from_voice(45)
+    assert levels.volume == 85
+    rig.quiet = False
+    rig.night.tick()
+    rig.clock.value = 120
+    rig.device.ambient_lux = 100
+    rig.night.tick()
+    assert rig.device.volume == 85
+    assert rig.night.night_volume_override is None
+
+
+def test_failed_face_warning_is_short_each_poll_and_traceback_is_rate_limited(caplog):
+    import logging
+
+    rig = _Rig(lux=100)
+    rig.quiet = True
+    rig.device.connected = False
+    with caplog.at_level(logging.WARNING, logger="maipai_body.presence.night"):
+        rig.night.tick()
+        rig.clock.value = 10
+        rig.night.tick()
+    records = [r for r in caplog.records if "night call failed" in r.message]
+    assert len(records) == 2
+    assert sum(bool(r.exc_info) for r in records) == 1
+    assert all("Traceback" not in r.message for r in records)
+    rig.clock.value = 300
+    with caplog.at_level(logging.WARNING, logger="maipai_body.presence.night"):
+        rig.night.tick()
+    assert sum(bool(r.exc_info) for r in caplog.records if "night call failed" in r.message) == 2
 
 
 def test_alarm_at_night_plays_at_full_volume_and_night_never_lowers_it():
