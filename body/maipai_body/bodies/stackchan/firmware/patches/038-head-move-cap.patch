@@ -1,6 +1,6 @@
-# Intent: a last-resort limit on the host's head moves (owner request 2026-10-20: servo wear from constant movement). self.robot.set_head_angles refuses more than 20 calls in any 60 seconds and logs a warning; the tool returns false. A looping or confused host can wear the gears for a minute at most. The idle wander is already off by default (patch 037) and the servos already release torque at rest (Servo auto torque release, on by default upstream).
+# Intent: a last-resort limit on the host's head moves (owner request 2026-10-20: servo wear from constant movement). self.robot.set_head_angles refuses more than 40 calls in any 60 seconds and logs a warning; the tool returns false. A looping or confused host can wear the gears for a minute at most. The idle wander is already off by default (patch 037) and the servos already release torque at rest (Servo auto torque release, on by default upstream).
 # Upstream: m5stack/StackChan firmware/main/hal/hal_mcp.cpp (MIT). Applies after 037 with --unidiff-zero.
-# Check after a flash: send 25 set_head_angles calls within a minute; the first 20 move the head and the rest return false with a "refused" warning in the serial log.
+# Check after a flash: send 45 set_head_angles calls within a minute; the first 40 move the head and the rest return false with a "refused" warning in the serial log.
 diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
 index 74b93e2..f58823f 100644
 --- a/firmware/main/hal/hal_mcp.cpp
@@ -8,7 +8,7 @@ index 74b93e2..f58823f 100644
 @@ -33,0 +34,17 @@ int s_dance_modifier_id        = -1;
 +// Last-resort servo protection: the host may move the head at most kMaxHeadMovesPerMinute times a
 +// minute. A looping or confused host can then wear the gears for a minute at most.
-+constexpr int kMaxHeadMovesPerMinute = 20;
++constexpr int kMaxHeadMovesPerMinute = 40;
 +uint32_t s_head_move_times_ms[kMaxHeadMovesPerMinute] = {};
 +int s_head_move_next                                   = 0;
 +
