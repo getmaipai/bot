@@ -7,6 +7,17 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.17] - 2026-10-21
+
+### Fixed
+
+- The robot no longer wanders. The day and night code only ever switches the unit's idle motion off; it never turns it on. The power rule alone writes the idle-motion value, and every connect re-asserts it (off when the power state is unknown or the idle level is still). The hub's default idle level "calm" counts as "still"; only "lively" wanders.
+- A touch, swipe or shake wakes a drowsy or sleeping robot (polled every 5 seconds only while it is drowsy or asleep, 30 second cooldown).
+
+### Added
+
+- Face watching: the bundled build decodes the unit's pictures with PyAV (it has no cv2) and runs the YuNet face detector (MIT, pinned model) on onnxruntime, in memory, about 3 ms a frame. Only boxes and counts are kept; nothing is stored. It is on by default behind `robot.camera.watch_level`, local only, and logs one camera line a minute (frames and bytes). Firmware is unchanged from 0.2.16.
+
 ## [0.2.16] - 2026-10-21
 
 ### Fixed
