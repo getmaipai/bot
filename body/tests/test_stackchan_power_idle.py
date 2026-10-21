@@ -243,7 +243,7 @@ def test_the_idle_level_setting_is_read_and_still_turns_the_motion_off():
     assert power.still is True and motion.writes[-1] is False
 
 
-def test_a_read_only_tool_is_asked_twice_but_a_motion_tool_is_not():
+def test_a_read_only_tool_is_asked_twice_but_a_motion_tool_and_the_head_check_are_not():
     from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient
 
     calls: list[str] = []
@@ -259,7 +259,8 @@ def test_a_read_only_tool_is_asked_twice_but_a_motion_tool_is_not():
             call()
         except Exception:
             pass
-    assert calls == ["self.battery.get_status"] * 2 + ["self.robot.get_head_angles"] * 2
+    # get_head_angles is the "does the unit answer" check: asked once, never retried.
+    assert calls == ["self.battery.get_status"] * 2 + ["self.robot.get_head_angles"]
     calls.clear()
     try:
         client.set_head_angles(0, 45, 150)
@@ -352,3 +353,23 @@ def test_a_hello_notifies_the_session_listeners_and_a_failing_one_is_isolated():
     while not seen and time.monotonic() < deadline:
         time.sleep(0.01)
     assert seen == ["device-1"]
+
+
+def test_a_failing_presence_step_logs_once_a_minute(caplog):
+    import logging
+
+    from maipai_body.app import StackChanBehavior
+    from maipai_body.bodies.stackchan import StackChanRobotAdapter
+    from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
+
+    behavior = StackChanBehavior(StackChanRobotAdapter(FakeStackChanDeviceClient()).robot)
+    try:
+        with caplog.at_level(logging.WARNING, logger="maipai_body.app"):
+            for _ in range(50):
+                try:
+                    raise RuntimeError("unit away")
+                except RuntimeError:
+                    behavior._warn_limited("watchdog", "StackChan face watchdog failed")
+        assert sum("face watchdog failed" in r.getMessage() for r in caplog.records) == 1
+    finally:
+        behavior.close()

@@ -52,11 +52,12 @@ if TYPE_CHECKING:
     from maipai_body.bodies.stackchan.companion import StackChanCompanion
 
 
-# Tools that only read the unit; a failed call is retried once.
+# Tools that only read the unit; a failed call is retried once. get_head_angles is left out on
+# purpose: stop recovery and the safe stop use it as the "does the unit answer" check, and a
+# second 5 s wait behind a slow answer made one hold take 10 s.
 _READ_ONLY_TOOLS = frozenset(
     {
         "self.battery.get_status",
-        "self.robot.get_head_angles",
         "self.screen.get_ambient_light",
         "self.robot.get_reminders",
     }
@@ -1085,9 +1086,9 @@ class XiaozhiServer:
                     "StackChan camera has no Robot indicator adapter; configure the body Robot "
                     "first."
                 )
-            return asyncio.run_coroutine_threadsafe(
-                self.robot.take_photo(device_id), self._loop
-            ).result(timeout=timeout + 1)
+            return asyncio.run_coroutine_threadsafe(self.robot.take_photo(), self._loop).result(
+                timeout=timeout + 1
+            )
         # StackChan firmware parses MCP request ids as numeric JSON-RPC ids.
         request_id = next(self._next_device_request_id)
         request_key = str(request_id)

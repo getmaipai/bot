@@ -178,6 +178,7 @@ class StackChanBehavior:
         self.idle_level = "still"
         # True once any move left the head off centre; the post-turn settle only runs then.
         self._head_off_centre = False
+        self._warned: dict[str, float] = {}
         self.on_idle_level: Callable[[], None] = lambda: None
         # BOT-SC-ANIM-01: drowsy and asleep stages so an idle robot does not sit smiling for hours.
         from maipai_body.bodies.stackchan.profile import STACKCHAN_PROFILE as _profile
@@ -301,7 +302,7 @@ class StackChanBehavior:
                 try:
                     self.render_primitive("settle")
                 except Exception:
-                    logger.warning("StackChan idle expression failed", exc_info=True)
+                    self._warn_limited("idle", "StackChan idle expression failed")
             if self._vision is not None and not self._active.is_set() and not self.idle_still():
                 try:
                     target = self._vision.track_stream_frame(deadline_s=0.4)
@@ -309,15 +310,23 @@ class StackChanBehavior:
                         self._last_person_seen = now
                         self.render_primitive("attend")
                 except Exception:
-                    logger.warning("StackChan anonymous tracking failed", exc_info=True)
+                    self._warn_limited("tracking", "StackChan anonymous tracking failed")
             try:
                 self.rest_step(now)
             except Exception:
-                logger.warning("StackChan rest routine failed", exc_info=True)
+                self._warn_limited("rest", "StackChan rest routine failed")
             try:
                 self.face_watchdog(now)
             except Exception:
-                logger.warning("StackChan face watchdog failed", exc_info=True)
+                self._warn_limited("watchdog", "StackChan face watchdog failed")
+
+    def _warn_limited(self, key: str, message: str) -> None:
+        """One warning with its traceback per minute per cause: a loop that fails five times a
+        second while the unit is away logged 378 tracebacks in nine minutes."""
+        now = time.monotonic()
+        if now - self._warned.get(key, float("-inf")) >= 60.0:
+            self._warned[key] = now
+            logger.warning(message, exc_info=True)
 
     def face_watchdog(self, now: float) -> bool:
         """Never leave the face stuck (eyes shut, mouth open) after a lost frame or an odd exit.
