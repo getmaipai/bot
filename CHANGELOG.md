@@ -7,6 +7,13 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-10-20
+
+### Fixed
+
+- StackChan joins the strongest Wi-Fi access point instead of the first one it scans. Firmware patch 044 turns on the stored `remember_bssid` setting at boot, so a unit that scanned a weak access point on channel 1 before the strong one on channel 6 no longer joins it, which caused connection errors, handshake timeouts and a dropped voice link every 20 seconds. If only one access point exists it is still joined.
+- Firmware patches 040, 041 and 043 (decoder priority, update-task sleep, cached head angles) are removed again until each can be booted on the unit by itself. Patches to flash since 0.2.2: 030, 032, 033, 034, 037, 038, 039, 044.
+
 ## [0.2.12] - 2026-10-20
 
 ### Fixed
