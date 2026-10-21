@@ -540,6 +540,10 @@ class StackChanBehavior:
                     "heap_stats": "unit memory",
                     "stack_stats": "unit memory",
                     "boot": "unit boot",
+                    "tap": "unit tap",
+                    "wake": "unit wake",
+                    "wake_stats": "unit wake",
+                    "state_guard": "unit wake",
                 }.get(event.kind, "unit touch")
                 logger.info("%s: %s %s", label, event.kind, detail)
         events = [e for e in events if getattr(e, "kind", None) not in DIAGNOSTIC_KINDS]

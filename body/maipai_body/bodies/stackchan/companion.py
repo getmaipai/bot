@@ -32,6 +32,10 @@ DIAGNOSTIC_KINDS = frozenset(
         "shake_peak",
         "imu_stats",
         "avatar_channel",
+        "tap",
+        "wake",
+        "wake_stats",
+        "state_guard",
     }
 )
 EVENT_KINDS = (

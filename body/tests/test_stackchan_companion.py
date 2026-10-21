@@ -63,6 +63,10 @@ def test_dances_and_event_kinds_export_the_supported_sets():
             "shake_peak",
             "imu_stats",
             "avatar_channel",
+            "tap",
+            "wake",
+            "wake_stats",
+            "state_guard",
         }
     )
 

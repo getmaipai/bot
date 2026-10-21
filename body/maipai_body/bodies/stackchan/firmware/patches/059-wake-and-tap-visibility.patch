@@ -1,0 +1,149 @@
+# Intent: make the wake word and taps robust and visible (owner report 2026-10-21: the robot does not listen, taps do not start or stop listening, and the wake word does not stop it talking). The host log cannot tell what state the unit believes it is in, so: (1) every tap reports its decision (tap: start, stop or ignored, with the DeviceState it saw and why); (2) every wake word detection reports the state it was heard in (wake); (3) once a minute the unit reports the wake-word task's heartbeat and its own state (wake_stats: armed, fetches, fetch_errors, detections, ms_since_fetch, state); (4) a state guard in the one-second clock tick puts a unit that has sat in Connecting for 8 s or in Listening for 45 s back to idle (reported as state_guard), because from those states it cannot hear the wake word and ignores taps; (5) the swipe-down gesture of patch 036 aborted speech whatever the state, which left a listening unit listening with its wake word off after the host had dropped the turn: it now aborts only speech, and ends a listening turn the way a tap does. The detection task stack stays at the stock 4,096 bytes (it is the stock value; 1,852 bytes were left of it in 0.2.25, so it is not overflowing).
+# Upstream: 78/xiaozhi-esp32 main/application.cc, main/application.h, main/audio/wake_words/afe_wake_word.cc; m5stack/StackChan firmware/main/hal/board/stackchan_display.cc, hal/hal_head_touch.cpp, hal/device_events.h (MIT). Applies after 058 with --unidiff-zero.
+# Check after a flash: tap the face at rest: "unit tap: decision=start state=3"; tap while it listens or speaks: "decision=stop"; say "Hi, StackChan" at rest: "unit wake: state=3" and a turn starts, while it speaks: "unit wake: state=6" and it stops; leave it alone for a minute: "unit wake: wake_stats armed=1 fetches=N" with N in the thousands and state=3. If it ever sits in Connecting or Listening, "unit wake: state_guard" appears and it returns to idle.
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index f6166b4..e80c9e3 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -460,0 +461,3 @@ void StackChanAvatarDisplay::OnGesture(lv_event_t* event)
++        // A swipe down stops what is going on: speech is aborted, and a listening turn is ended
++        // the way a tap ends it (an abort alone left the unit listening with its wake word off while
++        // the host had dropped the turn).
+@@ -462 +465,11 @@ void StackChanAvatarDisplay::OnGesture(lv_event_t* event)
+-            Application::GetInstance().AbortSpeaking(kAbortReasonNone);
++            auto& app = Application::GetInstance();
++            const auto state = app.GetDeviceState();
++            char extra[48];
++            snprintf(extra, sizeof(extra), "\"decision\":\"stop\",\"state\":%d,\"why\":\"swipe\"",
++                     static_cast<int>(state));
++            device_events_push_diag("tap", extra);
++            if (state == kDeviceStateSpeaking) {
++                app.AbortSpeaking(kAbortReasonNone);
++            } else if (state == kDeviceStateListening) {
++                app.ToggleChatState();
++            }
+diff --git a/firmware/main/hal/device_events.h b/firmware/main/hal/device_events.h
+index d6c0f45..4d979f6 100644
+--- a/firmware/main/hal/device_events.h
++++ b/firmware/main/hal/device_events.h
+@@ -4,0 +5 @@
++#include <cstddef>
+@@ -10,0 +12,4 @@ void device_events_push_diag(const char* kind, const char* extra);
++
++// Fills out with the wake word detection task's counters since the last call, as JSON members
++// (armed, fetches, fetch_errors, detections, ms_since_fetch), and clears them. Patch 059.
++void device_events_wake_stats(char* out, size_t size);
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index 3bc2d2f..a05a74c 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -13,0 +14,2 @@
++#include <application.h>
++#include <cstring>
+@@ -235,0 +238,12 @@ static void _head_touch_update_task(void* param)
++
++            // The wake word's heartbeat and the state the unit believes it is in (DeviceState:
++            // 0 unknown, 1 starting, 2 wifi configuring, 3 idle, 4 connecting, 5 listening,
++            // 6 speaking, 7 upgrading, ...), so a unit that cannot be woken can be told apart from
++            // one that is.
++            char wake[160];
++            int used_wake = 0;
++            device_events_wake_stats(wake, sizeof(wake) - 24);
++            used_wake = static_cast<int>(strlen(wake));
++            snprintf(wake + used_wake, sizeof(wake) - used_wake, ",\"state\":%d",
++                     static_cast<int>(Application::GetInstance().GetDeviceState()));
++            device_events_push_diag("wake_stats", wake);
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index 0a42c95..3287604 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -13,0 +14,2 @@
++#include <cstdio>
++#include <hal/device_events.h>
+@@ -275,0 +278,21 @@ void Application::Run() {
++
++            // State guard (patch 059): a unit that is stuck connecting, or listening with nobody
++            // answering, cannot hear the wake word or a tap. Put it back to idle after a while.
++            auto guard_state = GetDeviceState();
++            if (guard_state != guard_last_state_) {
++                guard_last_state_ = guard_state;
++                guard_since_tick_ = clock_ticks_;
++            } else {
++                const uint32_t held = static_cast<uint32_t>(clock_ticks_ - guard_since_tick_);
++                if ((guard_state == kDeviceStateConnecting && held >= 8) ||
++                    (guard_state == kDeviceStateListening && held >= 45)) {
++                    char extra[64];
++                    snprintf(extra, sizeof(extra), "\"state\":%d,\"held_s\":%u", (int)guard_state,
++                             static_cast<unsigned>(held));
++                    ESP_LOGW(TAG, "State guard: %s for %u s, going idle",
++                             DeviceStateMachine::GetStateName(guard_state), static_cast<unsigned>(held));
++                    device_events_push_diag("state_guard", extra);
++                    SetDeviceState(kDeviceStateIdle);
++                    guard_since_tick_ = clock_ticks_;
++                }
++            }
+@@ -744,0 +768,8 @@ void Application::StopListening() {
++// A decision the unit made on a tap, for the host log ("unit tap: ..."): the state it saw, and what it did.
++static void report_tap(const char* decision, int state, const char* why = "") {
++    char extra[96];
++    snprintf(extra, sizeof(extra), "\"decision\":\"%s\",\"state\":%d,\"why\":\"%s\"", decision, state, why);
++    ESP_LOGI("Application", "tap: %s (state %d) %s", decision, state, why);
++    device_events_push_diag("tap", extra);
++}
++
+@@ -748,0 +780 @@ void Application::HandleToggleChatEvent() {
++        report_tap("ignored", (int)state, "activating");
+@@ -762,0 +795 @@ void Application::HandleToggleChatEvent() {
++        report_tap("ignored", (int)state, "no_protocol");
+@@ -767,0 +801 @@ void Application::HandleToggleChatEvent() {
++        report_tap("start", (int)state, protocol_->IsAudioChannelOpened() ? "channel_open" : "channel_closed");
+@@ -777,0 +812 @@ void Application::HandleToggleChatEvent() {
++        report_tap("stop", (int)state, "speaking");
+@@ -779,0 +815 @@ void Application::HandleToggleChatEvent() {
++        report_tap("stop", (int)state, "listening");
+@@ -861,0 +898,5 @@ void Application::HandleWakeWordDetectedEvent() {
++    {
++        char extra[48];
++        snprintf(extra, sizeof(extra), "\"state\":%d", (int)state);
++        device_events_push_diag("wake", extra);
++    }
+diff --git a/firmware/xiaozhi-esp32/main/application.h b/firmware/xiaozhi-esp32/main/application.h
+index 2e08d78..bfd0645 100644
+--- a/firmware/xiaozhi-esp32/main/application.h
++++ b/firmware/xiaozhi-esp32/main/application.h
+@@ -147,0 +148,2 @@ private:
++    DeviceState guard_last_state_ = kDeviceStateUnknown;  // the state guard (patch 059)
++    int guard_since_tick_ = 0;
+diff --git a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
+index babfe50..eaa0ca4 100644
+--- a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
++++ b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
+@@ -16,0 +17,19 @@
++// Counters for the once-a-minute wake report (device_events_wake_stats): how many audio chunks the
++// detection task fetched, how many wake words it heard, and whether detection is armed right now.
++static std::atomic<uint32_t> s_fetches{0};
++static std::atomic<uint32_t> s_fetch_errors{0};
++static std::atomic<uint32_t> s_detections{0};
++static std::atomic<uint32_t> s_last_fetch_ms{0};
++static EventGroupHandle_t s_wake_event_group = nullptr;
++
++void device_events_wake_stats(char* out, size_t size)
++{
++    const uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
++    const uint32_t last   = s_last_fetch_ms.load();
++    const bool armed      = s_wake_event_group != nullptr && (xEventGroupGetBits(s_wake_event_group) & DETECTION_RUNNING_EVENT);
++    snprintf(out, size, "\"armed\":%d,\"fetches\":%u,\"fetch_errors\":%u,\"detections\":%u,\"ms_since_fetch\":%d",
++             armed ? 1 : 0, static_cast<unsigned>(s_fetches.exchange(0)),
++             static_cast<unsigned>(s_fetch_errors.exchange(0)), static_cast<unsigned>(s_detections.exchange(0)),
++             last == 0 ? -1 : static_cast<int>(now_ms - last));
++}
++
+@@ -22,0 +42 @@ AfeWakeWord::AfeWakeWord()
++    s_wake_event_group = event_group_;
+@@ -314,0 +335 @@ void AfeWakeWord::AudioDetectionTask() {
++            s_fetch_errors++;
+@@ -316,0 +338,2 @@ void AfeWakeWord::AudioDetectionTask() {
++        s_fetches++;
++        s_last_fetch_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+@@ -332,0 +356 @@ void AfeWakeWord::AudioDetectionTask() {
++            s_detections++;
