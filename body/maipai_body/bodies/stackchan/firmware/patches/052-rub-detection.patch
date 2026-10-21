@@ -1,0 +1,161 @@
+# Intent: make a real rub register without bringing the phantom pets back (owner report 2026-10-21: after 048 "I don't see rubbing registering"). The host log showed a rub reads only pad value 1 and never 2, and the lockout for three short contacts also fired on his rubbing. Contact is now told apart by how long and how dense it is, not by strength. A press is 6 touched samples out of the last 8 (reading 1 or more), with the contact at least 8 samples (400 ms) old and the current sample touched, so a rub with dropouts counts and an isolated blip or a short tap does not. It ends when at most 1 of the last 8 samples is touched. A blip is now a run of 1 or 2 touched samples with 8 quiet samples before and after it; three blips inside 10 s still lock the strip out for 10 s, but a rub's dropouts no longer count as blips. head_touch_stats gains run_max (the longest unbroken touched run in samples) and long_runs (runs of 8 samples or more), so the host log shows what a rub looks like.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_head_touch.cpp (MIT). Applies after 051 with --unidiff-zero.
+# Check after a flash: leave it alone for 5 minutes: head_touch_stats shows presses=0 and long_runs=0. Then rub the head for a few seconds: presses=1 or more, long_runs=1 or more, and a pet is reported to the host. A simulation of the recogniser (steady rub, a rub with dropouts, isolated blips every 10 s, short taps, a 1 s hold) gave the expected results before this patch was written.
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index d479399..e97b9c7 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -19,9 +19,16 @@ static const std::string_view _tag = "HAL-HeadTouch";
+-enum class TouchState { IDLE, CANDIDATE, TOUCHED, SWIPING };
+-
+-// The strip reports phantom touches with nobody there (host log 2026-10-21: one about every 10 s).
+-// A press now needs contact held for kHoldSamples samples (400 ms at 50 ms), starting at a pad
+-// reading of kPressIntensity or more (readings are 0 to 3) and staying at 1 or more with at most one
+-// dropped sample. Three short blips inside kBlipWindowMs lock the strip out for kLockoutMs.
+-constexpr int kPressIntensity   = 2;
+-constexpr int kHoldSamples      = 8;
+-constexpr int kBlipCountToLock  = 3;
++enum class TouchState { IDLE, TOUCHED, SWIPING };
++
++// The strip reports phantom touches with nobody there (host log 2026-10-21: isolated single-sample
++// blips about every 10 s), and a real rub only ever reads 1 (readings are 0 to 3; the first flash of
++// the 2-to-start rule registered no rub at all). So contact is told apart by how long and how dense
++// it is, not by strength: a press is 6 touched samples out of the last 8, at reading 1 or more, with
++// the contact at least 8 samples (400 ms at 50 ms) old, so a rub with dropouts still counts and a
++// lone blip or a short tap never does. It ends when
++// at most 1 of the last 8 samples is touched. A blip is a run of 1 or 2 touched samples with 8 quiet
++// samples before and after it; three blips inside kBlipWindowMs lock the strip out for kLockoutMs.
++constexpr int kWindowSamples     = 8;
++constexpr int kPressSamples      = 6;
++constexpr int kReleaseSamples    = 1;
++constexpr int kBlipMaxRun        = 2;
++constexpr int kLongRunSamples    = 8;
++constexpr int kBlipCountToLock   = 3;
+@@ -73,2 +80,6 @@ public:
+-    uint32_t blips   = 0;  // short contacts dropped as noise, since the last report
+-    uint32_t presses = 0;
++    // Counters reported once a minute (and cleared): isolated blips, presses, the longest unbroken
++    // run of touched samples, and the number of runs of kLongRunSamples or more.
++    uint32_t blips    = 0;
++    uint32_t presses  = 0;
++    uint32_t run_max  = 0;
++    uint32_t long_runs = 0;
+@@ -79,0 +91,9 @@ public:
++        const bool touched     = data.is_touched();
++        track_runs(touched, now_ms);
++        if (touched) {
++            last_position = data.get_position();
++        }
++
++        window = ((window << 1) | (touched ? 1u : 0u)) & ((1u << kWindowSamples) - 1);
++        const int dense = __builtin_popcount(window);
++        active          = window == 0 ? 0 : active + 1;  // samples since the strip last read quiet
+@@ -88,27 +108,5 @@ public:
+-                if (data.get_max_intensity() >= kPressIntensity) {
+-                    current_state    = TouchState::CANDIDATE;
+-                    initial_position = data.get_position();
+-                    held_samples     = 1;
+-                    gap_samples      = 0;
+-                }
+-                break;
+-
+-            case TouchState::CANDIDATE:
+-                if (data.is_touched()) {
+-                    gap_samples = 0;
+-                    if (++held_samples >= kHoldSamples) {
+-                        current_state    = TouchState::TOUCHED;
+-                        initial_position = data.get_position();
+-                        gesture          = HeadPetGesture::Press;
+-                        presses++;
+-                    }
+-                } else if (++gap_samples > 1) {
+-                    // Contact ended before it was held: noise, not a stroke.
+-                    current_state = TouchState::IDLE;
+-                    blips++;
+-                    blip_times_ms[blip_next] = now_ms;
+-                    blip_next                = (blip_next + 1) % kBlipCountToLock;
+-                    uint32_t oldest          = blip_times_ms[blip_next];
+-                    if (oldest != 0 && now_ms - oldest < kBlipWindowMs) {
+-                        locked_until_ms = now_ms + kLockoutMs;
+-                    }
++                if (touched && dense >= kPressSamples && active >= kWindowSamples) {
++                    current_state    = TouchState::TOUCHED;
++                    initial_position = last_position;
++                    gesture          = HeadPetGesture::Press;
++                    presses++;
+@@ -119 +117 @@ public:
+-                if (!data.is_touched()) {
++                if (dense <= kReleaseSamples) {
+@@ -122 +120 @@ public:
+-                } else {
++                } else if (touched) {
+@@ -130 +127,0 @@ public:
+-                        // mclog::tagInfo(_tag, "Swipe forward detected, delta: {}", delta);
+@@ -134 +130,0 @@ public:
+-                        // mclog::tagInfo(_tag, "Swipe backward detected, delta: {}", delta);
+@@ -140 +136 @@ public:
+-                if (!data.is_touched()) {
++                if (dense <= kReleaseSamples) {
+@@ -155,0 +152,38 @@ private:
++    // Run bookkeeping for the statistics and the blip lockout.
++    void track_runs(bool touched, uint32_t now_ms)
++    {
++        if (touched) {
++            if (run_len == 0) {
++                quiet_before = quiet;
++            }
++            run_len++;
++            quiet = 0;
++            pending_blip = false;  // something touched soon after a short run: not isolated
++            if (run_len > run_max) {
++                run_max = run_len;
++            }
++            return;
++        }
++        if (run_len > 0) {
++            if (run_len >= static_cast<uint32_t>(kLongRunSamples)) {
++                long_runs++;
++            }
++            if (run_len <= static_cast<uint32_t>(kBlipMaxRun) && quiet_before >= static_cast<uint32_t>(kWindowSamples)) {
++                pending_blip = true;
++            }
++            run_len = 0;
++            quiet   = 0;
++        }
++        quiet++;
++        if (pending_blip && quiet >= static_cast<uint32_t>(kWindowSamples)) {
++            pending_blip = false;
++            blips++;
++            blip_times_ms[blip_next] = now_ms == 0 ? 1 : now_ms;
++            blip_next                = (blip_next + 1) % kBlipCountToLock;
++            uint32_t oldest          = blip_times_ms[blip_next];
++            if (oldest != 0 && now_ms - oldest < kBlipWindowMs) {
++                locked_until_ms = now_ms + kLockoutMs;
++            }
++        }
++    }
++
+@@ -159,2 +193,7 @@ private:
+-    int held_samples                          = 0;
+-    int gap_samples                           = 0;
++    int16_t last_position                     = 0;
++    uint32_t window                           = 0;
++    int active                                = 0;
++    uint32_t run_len                          = 0;
++    uint32_t quiet                            = 1000;
++    uint32_t quiet_before                     = 1000;
++    bool pending_blip                         = false;
+@@ -205,2 +244,4 @@ static void _head_touch_update_task(void* param)
+-            char extra[96];
+-            snprintf(extra, sizeof(extra), "\"samples\":%u,\"touched\":%u,\"max\":%u,\"blips\":%u,\"presses\":%u",
++            char extra[160];
++            snprintf(extra, sizeof(extra),
++                     "\"samples\":%u,\"touched\":%u,\"max\":%u,\"blips\":%u,\"presses\":%u,\"run_max\":%u,"
++                     "\"long_runs\":%u",
+@@ -209 +250,2 @@ static void _head_touch_update_task(void* param)
+-                     static_cast<unsigned>(recognizer.presses));
++                     static_cast<unsigned>(recognizer.presses), static_cast<unsigned>(recognizer.run_max),
++                     static_cast<unsigned>(recognizer.long_runs));
+@@ -236 +278 @@ static void _head_touch_update_task(void* param)
+-            recognizer.blips = recognizer.presses = 0;
++            recognizer.blips = recognizer.presses = recognizer.run_max = recognizer.long_runs = 0;
