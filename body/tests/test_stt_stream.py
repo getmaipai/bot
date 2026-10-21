@@ -298,3 +298,32 @@ def test_the_wait_for_the_final_after_end_covers_a_slow_transcription():
     from maipai_body.speech import stt_stream
 
     assert stt_stream._FINAL_WAIT_S >= 10.0
+
+
+def test_a_quiet_listen_stops_waiting_when_the_hub_never_answers_end(stt_server):
+    """The hub sends nothing for `end` when nobody spoke; the host must not wait the full 12 s."""
+    import time
+
+    server, handler = stt_server([(8.0, "close")])
+    client = SttStreamClient(
+        f"http://127.0.0.1:{server.socket.getsockname()[1]}", "cookie-abc", wake_patience_s=0.2
+    )
+    capture, _ = _capture_with_fixture()
+    started = time.monotonic()
+    result = client.run(capture)
+    assert result.kind == "timeout"
+    assert {"t": "end"} in handler.received_text
+    assert time.monotonic() - started < 4.0
+
+
+def test_speech_in_flight_at_give_up_keeps_the_long_wait(stt_server):
+    """A vad speaking message that lands after the end request means the hub will finalize."""
+    server, _handler = stt_server(
+        [(0.9, {"t": "vad", "speaking": True, "rms": 0.1}), (2.0, {"t": "final", "v": "hello"})]
+    )
+    client = SttStreamClient(
+        f"http://127.0.0.1:{server.socket.getsockname()[1]}", "cookie-abc", wake_patience_s=0.2
+    )
+    capture, _ = _capture_with_fixture()
+    result = client.run(capture)
+    assert result.kind == "final" and result.text == "hello"

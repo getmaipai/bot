@@ -46,6 +46,8 @@ _GIVE_UP_GRACE_S = 0.6
 # After the end request the hub finalises what it has; transcribing can take seconds when the Mac
 # is busy, and a timeout here throws away words the hub would have answered.
 _FINAL_WAIT_S = 12.0
+# With no speech detected the hub does not answer the end request, so wait only this long for one.
+_QUIET_END_WAIT_S = 1.5
 
 
 class SttStreamError(RuntimeError):
@@ -207,11 +209,24 @@ class SttStreamClient:
         still a successful give-up, not a transport error."""
         try:
             ws.send(json.dumps({"t": "end"}))
-            raw = ws.recv(timeout=_FINAL_WAIT_S)
-            message = json.loads(raw)
-            result = self._handle_message(message)
-            if result is not None:
-                return result
-        except (TimeoutError, ValueError, TypeError, ConnectionClosed):
+            # The hub answers the end request only when it heard speech (its finalize); with nobody
+            # speaking it sends nothing, so a long wait would only hold the face in "listening".
+            # Wait briefly for a reply, and keep the long wait only if the hub says speech began.
+            wait_until = time.monotonic() + _QUIET_END_WAIT_S
+            while True:
+                remaining = wait_until - time.monotonic()
+                if remaining <= 0:
+                    break
+                try:
+                    raw = ws.recv(timeout=remaining)
+                except TimeoutError:
+                    break
+                message = json.loads(raw)
+                result = self._handle_message(message)
+                if result is not None:
+                    return result
+                if message.get("t") == "vad" and message.get("speaking"):
+                    wait_until = time.monotonic() + _FINAL_WAIT_S
+        except (ValueError, TypeError, ConnectionClosed):
             pass
         return SttStreamResult(kind="timeout")
