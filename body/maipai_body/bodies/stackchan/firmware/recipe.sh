@@ -264,12 +264,23 @@ apply_repo_patch 044-strongest-wifi-ap.patch "$SRC"
 apply_repo_patch 046-touch-diagnostics.patch "$SRC"
 apply_repo_patch 047-tap-handling.patch "$SRC"
 apply_repo_patch 048-head-touch-filter.patch "$SRC"
+apply_repo_patch 049-stop-word.patch "$SRC"
+
+# Room in the 4 MB assets partition for the stop-word model (mn5q8_en, about 2.2 MB): drop the
+# launcher icons and artwork of the Mooncake apps, which this firmware never starts (it boots
+# straight into the voice agent). A missing image is logged and drawn blank by assets::get_image,
+# never a crash. Kept: the Wi-Fi, battery, bell, home and indicator icons.
+for asset in icon_ai_agent.bin icon_app_center.bin icon_controller.bin icon_dance.bin \
+    icon_ezdata.bin icon_sentinel.bin icon_setup.bin setup_stackchan_front_view.bin app_center_bg.png; do
+  rm -f "$FW/main/assets/assets_bin/$asset"
+done
 
 cat > "$FW/sdkconfig.defaults.local" <<CFG
 CONFIG_STACKCHAN_SERVER_URL="$AVATAR_SERVER_URL"
 CONFIG_OTA_URL=""
 CONFIG_STACKCHAN_NTP_SERVER=""
 CONFIG_STACKCHAN_XIAOZHI_OTA_CHECK=n
+CONFIG_SR_MN_EN_MULTINET5_SINGLE_RECOGNITION_QUANT8=y
 CFG
 if [[ -n "$DEVICE_ID" ]]; then
   printf 'CONFIG_STACKCHAN_DEVICE_ID="%s"\n' "$DEVICE_ID" >> "$FW/sdkconfig.defaults.local"
@@ -339,6 +350,11 @@ xtensa-esp-elf-gcc --version > "$OUT/xtensa-version.txt"
 shasum -a 256 "$(command -v python3)" > "$OUT/python-runtime.sha256"
 python3 -m pip freeze | LC_ALL=C sort | shasum -a 256 > "$OUT/python-environment.sha256"
 cp "$image" "$OUT/stack-chan-maipai.bin"
+ASSETS_BYTES=$(wc -c < "$FW/build/generated_assets.bin")
+if (( ASSETS_BYTES > 4194304 )); then
+  echo "The assets image is $ASSETS_BYTES bytes and does not fit the 4 MB assets partition. Prune more launcher assets or drop the stop-word model." >&2
+  exit 1
+fi
 cp "$FW/build/generated_assets.bin" "$OUT/"
 cp "$FW/build/ota_data_initial.bin" "$OUT/"
 (cd "$OUT" && shasum -a 256 stack-chan-maipai.bin generated_assets.bin ota_data_initial.bin idf-version.txt xtensa-version.txt python-runtime.sha256 python-environment.sha256 > SHA256SUMS)

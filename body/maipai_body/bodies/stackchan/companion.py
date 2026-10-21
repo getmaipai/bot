@@ -25,6 +25,7 @@ DIAGNOSTIC_KINDS = frozenset(
         "gesture_ignored",
         "click_ignored",
         "head_touch_stats",
+        "stop_word",
     }
 )
 EVENT_KINDS = (

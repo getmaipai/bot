@@ -7,6 +7,10 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+### Added
+
+- Firmware patch 049 (not flashed): a stop word that works while the robot is talking. A small command-word model on the unit (stop, stackchan stop, be quiet, quiet, that's enough, never mind, cancel) listens only while it speaks; a clear hit aborts the reply and the host ends the turn silently. The host log shows every hit and near-miss as `unit stop word: heard 'stop', score 91 ...` (command name and score only). The model drops itself if it would use more than 6 KB of internal RAM, and the build prunes unused launcher icons so the assets still fit the 4 MB partition.
+
 ### Fixed
 
 - Firmware patch 048 (not flashed): the head touch strip no longer invents pets. A press needs contact that starts at a pad reading of 2 and is held for 400 ms; three short blips in 10 seconds lock the strip out for 10 seconds; the unit's own stroke face, heart and head motion are off (the host decides what a pet looks like); and a once-a-minute `head_touch_stats` line in the host log shows the strip's resting noise.

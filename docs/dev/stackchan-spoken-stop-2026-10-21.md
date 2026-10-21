@@ -1,8 +1,8 @@
 # StackChan: "StackChan, stop" while it is talking (design, 2026-10-21)
 
-Owner request: a spoken stop must work while the robot is speaking. Design and measured costs
-only. No firmware patch is written until patch 047 (tap to stop) has been tested on the unit and
-the owner says to go on.
+Owner request: a spoken stop must work while the robot is speaking. The owner approved building
+the on-unit stop word (option 1 below) on 2026-10-21 and chose pruning over resizing the
+partitions; it is firmware patch 049.
 
 ## What happens today
 
@@ -75,3 +75,29 @@ tested.
 
 Whether to run the option 0 test now (no flash needed beyond 0.2.20), and whether the measurement
 flash may ride the next firmware batch.
+
+## As built: patch 049 (2026-10-21, compiled and apply-checked, not flashed)
+
+- **Model and words.** `mn5q8_en` with seven commands: stop, stackchan stop, be quiet, quiet,
+  that's enough, never mind, cancel (phonemes from esp-sr's `multinet_g2p.py`). It listens to the
+  AFE's echo-cancelled output, only in the Speaking state. A hit at 0.85 or more aborts the reply;
+  the abort message makes the host end the turn silently. The model threshold is 0.5 so near-misses
+  can be logged.
+- **Assets.** The measured assets image was 2,298,029 bytes. Without the launcher icons and
+  artwork (about 0.68 MB that this firmware never starts the apps to show) it is 1,616,863 bytes;
+  with `mn5q8_en` packed it is 3,794,083 bytes, 400,221 bytes under the 4 MB partition. The build
+  script now fails if the image exceeds 4,194,304 bytes. `assets::get_image` returns an empty image
+  and logs when an asset is missing, so a pruned icon cannot crash.
+- **Memory guards.** The model is created when the wake word starts and dropped for good if it
+  costs more than 6 KB of internal RAM (the lowest free internal RAM seen was 12.5 KB). Arming is
+  refused below 16 KB free. Both outcomes are logged and sent to the host. The detection task's stack
+  moved to PSRAM (12 KB), so deeper `detect()` calls cost no internal RAM. If the guard drops the
+  model, the host log says so with the measured cost, and nothing else changes.
+- **Logs.** `unit stop word: heard 'stop', score 91, second 40 (accepted)` for every hit and
+  near-miss (command name and score only, never audio or words), and `unit stop word: stop_word
+  state=ready cost=...` or `state=off` at start-up.
+- **Wake word kept.** xiaozhi used to switch to its custom (multinet) wake word whenever a multinet
+  model was present; the patch keeps the AFE wake word when a wakenet model exists.
+- **Not verified on a unit.** The model's internal-RAM cost, its CPU cost on the audio core, and
+  its false-accept rate with the robot's own voice and a TV are unknown until a flash; the
+  start-up line and the hit lines give those numbers.

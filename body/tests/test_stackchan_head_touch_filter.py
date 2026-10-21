@@ -80,3 +80,29 @@ def test_companion_keeps_held_ms_on_head_events():
     )
     (event,) = companion.poll_events()
     assert event.extra == {"held_ms": 400}
+
+
+def test_stop_word_hits_and_start_up_are_logged_with_the_fixed_command_name(caplog):
+    from maipai_body.app import StackChanBehavior
+    from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
+    from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
+
+    behavior = StackChanBehavior(StackChanRobotAdapter(FakeStackChanDeviceClient()).robot)
+    try:
+        behavior._rest = type("Rest", (), {"stage": "awake"})()
+        batch = [
+            _ev("stop_word", state="ready", cost=3100),
+            _ev("stop_word", cmd="stop", score=91, second=40, accepted=True),
+            _ev("stop_word", cmd="quiet", score=62, second=10, accepted=False),
+        ]
+        queue = [[], batch]
+        behavior.event_poll = lambda: queue.pop(0) if queue else []
+        behavior.wake_on_touch(0.0)
+        with caplog.at_level(logging.INFO, logger="maipai_body.app"):
+            behavior.wake_on_touch(5.0)
+        lines = [r.getMessage() for r in caplog.records]
+        assert "unit stop word: stop_word state=ready cost=3100" in lines
+        assert "unit stop word: heard 'stop', score 91, second 40 (accepted)" in lines
+        assert "unit stop word: heard 'quiet', score 62, second 10 (rejected)" in lines
+    finally:
+        behavior.close()

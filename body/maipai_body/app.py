@@ -510,10 +510,20 @@ class StackChanBehavior:
         events = [e for e in events if getattr(e, "kind", None) != "level_changed"]
         for event in events:
             if getattr(event, "kind", None) in DIAGNOSTIC_KINDS:
-                detail = " ".join(
-                    f"{k}={v}" for k, v in (getattr(event, "extra", None) or {}).items()
-                )
-                logger.info("unit touch: %s %s", event.kind, detail)
+                extra = getattr(event, "extra", None) or {}
+                if event.kind == "stop_word" and "cmd" in extra:
+                    verdict = "accepted" if extra.get("accepted") else "rejected"
+                    logger.info(
+                        "unit stop word: heard %r, score %s, second %s (%s)",
+                        extra.get("cmd"),
+                        extra.get("score"),
+                        extra.get("second"),
+                        verdict,
+                    )
+                    continue
+                detail = " ".join(f"{k}={v}" for k, v in extra.items())
+                label = "unit stop word" if event.kind == "stop_word" else "unit touch"
+                logger.info("%s: %s %s", label, event.kind, detail)
         events = [e for e in events if getattr(e, "kind", None) not in DIAGNOSTIC_KINDS]
         events = self._head_filter.accept(now, events)
         if paused or not self._event_queue_drained:
