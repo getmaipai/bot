@@ -123,6 +123,7 @@ def test_every_head_move_call_site_is_audited():
         if "robot.head.set(" in path.read_text()
     }
     assert found == {
+        "app.py",  # the spoken head command: an explicit request, see head_commands.py
         "bodies/stackchan/adapter.py",
         "bodies/stackchan/renderer.py",
         "bodies/stackchan/routines.py",

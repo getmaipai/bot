@@ -16,7 +16,7 @@ right after the volume check, before anything goes to the hub.
 | stay (there) | cancels the return to centre |
 | turn around, spin, rotate, dance, wave, walk, jump, look over there | "I can look left, right, up or down." Nothing moves, the hub is not asked. |
 
-Left and right are the robot's own left and right (negative yaw is the robot's left). The match searches the sentence, strips the
+Left and right are the robot's own left and right (negative yaw is the robot's left), the way you would tell a person facing you to look left. If Jesse wants them mirrored (the person's left), it is one sign flip in `target_for` in `head_commands.py`: ask for it. The match searches the sentence, strips the
 same fillers as volume ("please", "can you", "hey"), and only applies to short sentences: a question ("how do I turn right on
 red"), a long sentence, or a request to describe what it sees ("look down and tell me what you see") goes to the hub.
 

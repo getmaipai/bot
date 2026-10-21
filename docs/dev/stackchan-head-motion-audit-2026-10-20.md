@@ -17,6 +17,7 @@ effect on the unit, and patch 038 (plus 037) on the next flash.
 | Safe stop `head.hold` | `robot/core.py`, `vision_bridge.py` | none by design; it reads the angles and holds them, it does not travel | an e-stop or a lost link |
 | Dance tool | `companion.py` `dance` | explicit call by a person's request only; no automatic caller exists | a person asks |
 | Look at speaker, auto dance, silent ambient vision | `speaker_gaze.py`, `presence/auto_dance.py`, `ambient_vision.py` | not wired into the app yet; when wired they must call `HeadMotionGate.allow` first | never today |
+| Spoken head command ("look left", "nod") | `app.py` `_move_head` via `head_commands.py` | an explicit request: not the ambient gate; own limit of 30 a minute; refused while charging, with the stop latched, or on any failure | a person asks |
 | Self-test movement check | `selftest/stackchan_wiring.py` | explicit run by a person | on request |
 
 `tests/test_stackchan_head_stillness.py` pins the gate, the default, the settle rule, the cap and the stop backoff, and fails
