@@ -1,0 +1,17 @@
+# Intent: stutter fix from the Fable review (2026-10-20): the Opus decode task ran at priority 2, below LVGL, the StackChan update task and both AFE tasks (all 3), so any of them starved the decoder; the playback queue held only 2 frames (120 ms). The decoder now runs at priority 5 (above LVGL, the update task and the AFE tasks; the audio output task stays at 4) and the playback queue holds 4 frames. Costs about 6 KB of internal SRAM at peak.
+# Upstream: 78/xiaozhi-esp32 main/audio/audio_service.cc, audio_service.h (MIT). Applies after 039 with --unidiff-zero.
+# Check after a flash: during a three-sentence reply the serial log shows no 'playback gap' or 'decode queue full' lines, and 'minimal sram' stays above 12000.
+diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.cc b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
+index fda3842..e680f14 100644
+--- a/firmware/xiaozhi-esp32/main/audio/audio_service.cc
++++ b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
+@@ -166 +166 @@ void AudioService::Start() {
+-    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
++    }, "opus_codec", 2048 * 12, this, 5, &opus_codec_task_handle_);
+diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.h b/firmware/xiaozhi-esp32/main/audio/audio_service.h
+index a654711..1e26966 100644
+--- a/firmware/xiaozhi-esp32/main/audio/audio_service.h
++++ b/firmware/xiaozhi-esp32/main/audio/audio_service.h
+@@ -42 +42 @@
+-#define MAX_PLAYBACK_TASKS_IN_QUEUE 2
++#define MAX_PLAYBACK_TASKS_IN_QUEUE 4

@@ -1,0 +1,13 @@
+# Intent: latency fix from the Fable review: the StackChan update task slept 100 ms while holding the LVGL lock whenever the unit was not idle, so during a turn every SetStatus/SetEmotion and every MCP tool waited for that lock. The sleep now happens before the lock is taken; the update cadence is unchanged.
+# Upstream: m5stack/StackChan firmware/main/hal/hal.cpp (MIT). Applies after 039 with --unidiff-zero.
+# Check after a flash: MCP tool calls during a reply no longer wait for the 100 ms sleep; patch 039's 'MCP timing' lines stay below 100 ms.
+diff --git a/firmware/main/hal/hal.cpp b/firmware/main/hal/hal.cpp
+index 3ca8a14..5c9401d 100644
+--- a/firmware/main/hal/hal.cpp
++++ b/firmware/main/hal/hal.cpp
+@@ -154,2 +153,0 @@ static void _stackchan_update_task(void* param)
+-        LvglLockGuard lock;
+-
+@@ -159,0 +158,2 @@ static void _stackchan_update_task(void* param)
++        LvglLockGuard lock;
++

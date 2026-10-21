@@ -1,0 +1,18 @@
+# Intent: hearing fix from the Fable review: the 16 kHz uplink encoder used the audio (music) application mode at complexity 0 with DTX on, which drops speech modelling and can swallow quiet word onsets before the hub's voice detector sees them. It now uses the VoIP mode at complexity 3 with DTX off and a fixed 24 kbps. Costs a little more CPU in the encode path.
+# Upstream: 78/xiaozhi-esp32 main/audio/audio_service.h (MIT). Applies after 039 with --unidiff-zero.
+# Check after a flash: the host's per-turn 'uplink level' line and the hub's speech detection start on the first syllable more often; uplink packets are larger than the old 146 bytes per 60 ms.
+diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.h b/firmware/xiaozhi-esp32/main/audio/audio_service.h
+index 1e26966..e6c6b0f 100644
+--- a/firmware/xiaozhi-esp32/main/audio/audio_service.h
++++ b/firmware/xiaozhi-esp32/main/audio/audio_service.h
+@@ -70 +70 @@
+-        .bitrate            = ESP_OPUS_BITRATE_AUTO,                                                              \
++        .bitrate            = 24000,                                                              \
+@@ -72,2 +72,2 @@
+-        .application_mode   = ESP_OPUS_ENC_APPLICATION_AUDIO,                                                     \
+-        .complexity         = 0,                                                                                  \
++        .application_mode   = ESP_OPUS_ENC_APPLICATION_VOIP,                                                     \
++        .complexity         = 3,                                                                                  \
+@@ -75 +75 @@
+-        .enable_dtx         = true,                                                                               \
++        .enable_dtx         = false,                                                                               \
