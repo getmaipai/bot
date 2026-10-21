@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.34] - 2026-10-21
+
+### Added
+- Firmware patch 065: a per-minute `barge_stats` event (host log "unit barge") with the echo-cancelled microphone level while the robot speaks (chunks, voice-detector hits, average and peak level, a level histogram), to decide whether talking over a reply can work. The ambient-light tool also returns the raw LTR-553 channel counts, logged as `ch0` and `ch1` in the minute light line.
+
 ## [0.2.33] - 2026-10-21
 
 ### Fixed

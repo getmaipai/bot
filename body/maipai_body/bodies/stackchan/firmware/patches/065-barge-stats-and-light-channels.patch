@@ -1,0 +1,171 @@
+# Intent: (1) measure whether barge-in can work (owner test 2026-10-21: "Hi, StackChan" over a reply never woke the unit). While the robot speaks, each echo-cancelled microphone chunk the wake front end fetches is measured, and once a minute a "barge_stats" event reports chunk count, voice-detector hits, average and peak level, and a five-bucket level histogram. Compare a minute with nobody talking over a reply against a minute with a person talking over it: if the levels match, no software can tell the person from the echo. (2) the ambient-light tool also returns the raw LTR-553 channel counts (ch0, ch1) so the night thresholds can be set from data.
+# Upstream: 78/xiaozhi-esp32 main/audio/wake_words/afe_wake_word.cc, main/application.cc; m5stack/StackChan firmware/main/hal/hal_mcp.cpp, hal_head_touch.cpp (MIT). Applies after 064.
+# Check after a flash: the host log shows "unit barge: chunks=N vad=N rms_avg=N rms_max=N ..." each minute (chunks 0 when it did not speak); "StackChan light sensor" lines carry ch0 and ch1.
+diff --git a/firmware/main/hal/device_events.h b/firmware/main/hal/device_events.h
+index bb056e3..736c5e9 100644
+--- a/firmware/main/hal/device_events.h
++++ b/firmware/main/hal/device_events.h
+@@ -13,6 +13,7 @@ void device_events_push_diag(const char* kind, const char* extra);
+ // Fills out with the wake word detection task's counters since the last call, as JSON members
+ // (armed, fetches, fetch_errors, detections, ms_since_fetch), and clears them. Patch 059.
+ void device_events_wake_stats(char* out, size_t size);
++void device_events_barge_stats(char* out, size_t size);
+ 
+ // Touch path health (patch 061): the board's 20 ms controller poll and the display's read of it.
+ // note_poll is called once per poll, ok=false when the controller read failed; note_read once per
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index 2ba294e..d314d84 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -246,6 +246,10 @@ static void _head_touch_update_task(void* param)
+                      static_cast<unsigned>(g_cam_starts.exchange(0)), static_cast<unsigned>(g_cam_captured.exchange(0)),
+                      static_cast<unsigned>(g_cam_sent.exchange(0)), static_cast<unsigned>(g_cam_failed.exchange(0)));
+             device_events_push_diag("camera", cam);
++            // Microphone level while the robot speaks (afe_wake_word.cc), to judge barge-in.
++            char barge[192];
++            device_events_barge_stats(barge, sizeof(barge));
++            device_events_push_diag("barge_stats", barge);
+             // The least stack ever left free in the big tasks (bytes), to size or move stacks.
+             const char* names[] = {"opus_codec", "audio_input", "audio_output", "ws_reconnect", "stackchan",
+                                    "audio_detection"};
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index 2c52698..18da3d1 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -104,7 +104,7 @@ void ltr553_init()
+     }
+ }
+ 
+-bool ltr553_read_lux(float& lux)
++bool ltr553_read_lux(float& lux, float* raw_ch0 = nullptr, float* raw_ch1 = nullptr)
+ {
+     if (!ltr553) {
+         return false;
+@@ -116,6 +116,12 @@ bool ltr553_read_lux(float& lux)
+     }
+     const float ch1 = data[0] | (data[1] << 8);
+     const float ch0 = data[2] | (data[3] << 8);
++    if (raw_ch0) {
++        *raw_ch0 = ch0;
++    }
++    if (raw_ch1) {
++        *raw_ch1 = ch1;
++    }
+     if (ch0 + ch1 <= 0) {
+         lux = 0;
+         return true;
+@@ -336,10 +342,13 @@ void Hal::xiaozhi_mcp_init()
+     mcp_server.AddTool("self.screen.get_ambient_light", "Returns the room brightness in lux from the light sensor.",
+                        std::vector<Property>{}, [this](const PropertyList& properties) -> ReturnValue {
+                            float lux = 0;
+-                           if (!ltr553_read_lux(lux)) {
++                           float ch0 = 0;
++                           float ch1 = 0;
++                           if (!ltr553_read_lux(lux, &ch0, &ch1)) {
+                                return std::string("The ambient light sensor is not available on this unit.");
+                            }
+-                           return fmt::format(R"({{"lux": {:.1f}}})", lux);
++                           // The raw channel counts let night thresholds be set from data.
++                           return fmt::format(R"({{"lux": {:.1f}, "ch0": {:.0f}, "ch1": {:.0f}}})", lux, ch0, ch1);
+                        });
+ 
+     mclog::tagInfo(_tag, "add robot.create_reminder tool");
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index 745f2f5..a2c68e9 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -19,6 +19,9 @@
+ #include <arpa/inet.h>
+ #include <font_awesome.h>
+ 
++#include <atomic>
++extern std::atomic<bool> g_barge_speaking;  // afe_wake_word.cc
++
+ #define TAG "Application"
+ 
+ 
+@@ -994,6 +997,7 @@ void Application::HandleStateChangedEvent() {
+     auto led = board.GetLed();
+     led->OnStateChanged();
+     
++    g_barge_speaking = (new_state == kDeviceStateSpeaking);
+     if (new_state != kDeviceStateSpeaking) {
+         audio_service_.SetStopWordArmed(false);
+     }
+diff --git a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
+index 3fd9ec3..139208b 100644
+--- a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
++++ b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
+@@ -7,6 +7,8 @@
+ #include <esp_mn_speech_commands.h>
+ #include <freertos/idf_additions.h>
+ #include <cstdio>
++#include <cmath>
++#include <atomic>
+ #include <sstream>
+ #include <hal/device_events.h>
+ 
+@@ -23,6 +25,52 @@ static std::atomic<uint32_t> s_vad_speech{0};
+ static std::atomic<uint32_t> s_last_fetch_ms{0};
+ static EventGroupHandle_t s_wake_event_group = nullptr;
+ 
++// Barge-in measurement: how loud the echo-cancelled microphone is while the robot speaks, and how
++// often the voice detector fires then. Set from the application's state change, reported once a
++// minute by device_events_barge_stats. Compare a minute with nobody talking over a reply against a
++// minute with a person talking over it.
++std::atomic<bool> g_barge_speaking{false};
++static std::atomic<uint32_t> s_barge_chunks{0};
++static std::atomic<uint32_t> s_barge_vad{0};
++static std::atomic<uint32_t> s_barge_rms_sum{0};
++static std::atomic<uint32_t> s_barge_rms_max{0};
++static std::atomic<uint32_t> s_barge_bin[5] = {};  // chunks with rms under 150, 400, 1000, 2500, above
++
++static void barge_step(const int16_t* data, size_t samples, bool vad)
++{
++    if (samples == 0) {
++        return;
++    }
++    uint64_t sum = 0;
++    for (size_t i = 0; i < samples; i++) {
++        sum += static_cast<int64_t>(data[i]) * data[i];
++    }
++    const uint32_t rms = static_cast<uint32_t>(std::sqrt(static_cast<double>(sum) / samples));
++    s_barge_chunks++;
++    s_barge_rms_sum += rms;
++    if (vad) {
++        s_barge_vad++;
++    }
++    uint32_t prev = s_barge_rms_max.load();
++    while (rms > prev && !s_barge_rms_max.compare_exchange_weak(prev, rms)) {
++    }
++    s_barge_bin[rms < 150 ? 0 : rms < 400 ? 1 : rms < 1000 ? 2 : rms < 2500 ? 3 : 4]++;
++}
++
++void device_events_barge_stats(char* out, size_t size)
++{
++    const uint32_t chunks = s_barge_chunks.exchange(0);
++    const uint32_t sum    = s_barge_rms_sum.exchange(0);
++    snprintf(out, size,
++             "\"chunks\":%u,\"vad\":%u,\"rms_avg\":%u,\"rms_max\":%u,\"lt150\":%u,\"lt400\":%u,"
++             "\"lt1000\":%u,\"lt2500\":%u,\"ge2500\":%u",
++             static_cast<unsigned>(chunks), static_cast<unsigned>(s_barge_vad.exchange(0)),
++             static_cast<unsigned>(chunks ? sum / chunks : 0), static_cast<unsigned>(s_barge_rms_max.exchange(0)),
++             static_cast<unsigned>(s_barge_bin[0].exchange(0)), static_cast<unsigned>(s_barge_bin[1].exchange(0)),
++             static_cast<unsigned>(s_barge_bin[2].exchange(0)), static_cast<unsigned>(s_barge_bin[3].exchange(0)),
++             static_cast<unsigned>(s_barge_bin[4].exchange(0)));
++}
++
+ void device_events_wake_stats(char* out, size_t size)
+ {
+     const uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+@@ -344,6 +392,10 @@ void AfeWakeWord::AudioDetectionTask() {
+         }
+         s_last_fetch_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+ 
++        if (g_barge_speaking.load()) {
++            barge_step(res->data, res->data_size / sizeof(int16_t), res->vad_state == VAD_SPEECH);
++        }
++
+         // Store the wake word data for voice recognition, like who is speaking
+         StoreWakeWordData(res->data, res->data_size / sizeof(int16_t));
+ 

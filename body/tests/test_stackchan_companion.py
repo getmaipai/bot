@@ -70,6 +70,7 @@ def test_dances_and_event_kinds_export_the_supported_sets():
             "touch_path",
             "fw",
             "camera",
+            "barge_stats",
         }
     )
 

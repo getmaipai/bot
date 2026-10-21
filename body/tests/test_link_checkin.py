@@ -88,3 +88,12 @@ def test_send_puts_to_the_checkin_route_with_the_session_cookie():
 
 def test_a_hub_without_the_route_is_asked_again_in_ten_minutes():
     assert _checkin(_Session(404)).send_once() == 600.0
+
+
+def test_the_light_tool_keeps_the_raw_channel_counts_for_the_minute_log():
+    from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient
+
+    client = XiaozhiDeviceClient.__new__(XiaozhiDeviceClient)
+    client._call = lambda name, args: {"lux": 3.5, "ch0": 12, "ch1": 4}
+    assert client.get_ambient_light() == 3.5
+    assert client.last_light_raw == (12, 4)

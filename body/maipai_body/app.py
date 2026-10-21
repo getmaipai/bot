@@ -544,6 +544,7 @@ class StackChanBehavior:
                     "stop_word": "unit stop word",
                     "fw": "unit firmware",
                     "camera": "unit camera",
+                    "barge_stats": "unit barge",
                     "heap_stats": "unit memory",
                     "stack_stats": "unit memory",
                     "boot": "unit boot",

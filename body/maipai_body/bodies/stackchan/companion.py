@@ -39,6 +39,7 @@ DIAGNOSTIC_KINDS = frozenset(
         "touch_path",
         "fw",
         "camera",
+        "barge_stats",
     }
 )
 EVENT_KINDS = (

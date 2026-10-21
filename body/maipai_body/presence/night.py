@@ -339,8 +339,15 @@ class NightController:
             if self._clock() - self._last_info_log >= 60.0:
                 # A record of the light sensor every minute until night is calibrated from data:
                 # the unit reads about 1 to 2 percent of the true lux (it sits behind the screen
-                # glass), and the firmware does not expose the raw channel counts.
-                logger.info("StackChan light sensor: lux=%s, night=%s", lux, self.night)
+                # glass), and the raw channel counts (firmware patch 065) are logged next to it.
+                raw = getattr(self._device, "last_light_raw", None) or (None, None)
+                logger.info(
+                    "StackChan light sensor: lux=%s ch0=%s ch1=%s, night=%s",
+                    lux,
+                    raw[0],
+                    raw[1],
+                    self.night,
+                )
                 self._last_info_log = self._clock()
             if wanted != self.night:
                 if quiet:
