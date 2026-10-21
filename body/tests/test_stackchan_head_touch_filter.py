@@ -106,3 +106,8 @@ def test_stop_word_hits_and_start_up_are_logged_with_the_fixed_command_name(capl
         assert "unit stop word: heard 'quiet', score 62, second 10 (rejected)" in lines
     finally:
         behavior.close()
+
+
+def test_a_touch_the_unit_marks_strong_is_real_at_once():
+    filt = HeadTouchFilter()
+    assert len(filt.accept(0.0, [_ev("head_touch", strong=1)])) == 1

@@ -7,6 +7,19 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.28] - 2026-10-21
+
+### Fixed
+
+- Pets register (firmware patch 056). The head strip reads 1 on 60 to 90 samples a minute with nobody there, in runs up to 23 samples, so reading 1 is noise however long it lasts; real pats and rubs reach 2 or 3. A pet is now a run whose peak reading is at least 2 and that lasts at least 2 samples, every such run is one press, and there is no lockout (the old lockout locked out real pets). The once-a-minute `head_touch_stats` line reports weak and strong samples and runs apart.
+- The host reacts to a pet while the robot only listens (a face for about 3 seconds that does not interrupt listening), and reads the unit's events during a turn too. A pet while it is thinking or speaking is ignored.
+- A shake is easier to trigger (patch 057: threshold 9 instead of 16 m/s^2) and reports its strongest peak; the unit reports the strongest sample-to-sample change once a minute so the threshold can be tuned. A pick-up event is not added yet.
+- The unit's boot report carries a count of panic and watchdog restarts kept in NVS (`crash_resets`).
+
+### Changed
+
+- About 11 KB of internal RAM back without a PSRAM stack (patch 058): smaller audio and websocket stacks that keep at least 1.7 KB of margin over the measured peak, and a smaller LVGL draw buffer. The opus codec stack goes to PSRAM again with the stop word still off (patch 055) to settle whether the stalls of 0.2.24 came from that stack or from the stop word; if the unit stalls, remove that one line from the recipe. When about 32 KB of internal RAM is free, patch 054 opens the camera and avatar socket.
+
 ## [0.2.27] - 2026-10-21
 
 ### Fixed

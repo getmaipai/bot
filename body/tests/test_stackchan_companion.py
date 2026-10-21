@@ -60,6 +60,9 @@ def test_dances_and_event_kinds_export_the_supported_sets():
             "heap_stats",
             "stack_stats",
             "boot",
+            "shake_peak",
+            "imu_stats",
+            "avatar_channel",
         }
     )
 

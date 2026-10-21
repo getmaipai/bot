@@ -296,3 +296,26 @@ def test_the_neutral_face_is_not_forced_in_the_middle_of_a_conversation():
     rig.faces.clear()
     rig.reactions.tick()
     assert rig.faces == []
+
+
+def test_a_pet_reacts_while_the_robot_only_listens_but_not_while_it_thinks_or_speaks():
+    from maipai_body.app import StackChanBehavior
+    from maipai_body.bodies.stackchan import StackChanRobotAdapter
+    from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
+
+    behavior = StackChanBehavior(StackChanRobotAdapter(FakeStackChanDeviceClient()).robot)
+    try:
+        device = behavior.robot._driver("head").expression_device
+        behavior._active.set()
+        behavior._phase = "listening"
+        assert not behavior.reaction_blocked()
+        behavior.show_face("happy", while_listening=True)
+        assert device.last_expression == "happy"
+        behavior.show_face("surprised")  # a plain face still waits for the turn to end
+        assert device.last_expression == "happy"
+        behavior._phase = "busy"
+        assert behavior.reaction_blocked()
+        behavior.show_face("surprised", while_listening=True)
+        assert device.last_expression == "happy"
+    finally:
+        behavior.close()

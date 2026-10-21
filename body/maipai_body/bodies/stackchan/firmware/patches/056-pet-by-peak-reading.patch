@@ -1,0 +1,278 @@
+# Intent: pets that register, from the host log of the petting minutes (2026-10-21). With nobody there the strip reads 1 on 60 to 90 samples a minute, in runs up to 23 samples long, so reading 1 is noise however long it lasts; real pats and rubs reach 2 or 3. 052's "dense contact at reading 1" would have turned that noise into pets, and its blip lockout locked out real pets (blips=10 with presses=0). A pet is now a run of touched samples whose peak reading is at least 2 and that lasts at least 2 samples (a pat of 3 samples at peak 3 counts; a single sample or any run that never passes 1 does not). Every such run is one press, so a stroke is several of them; a run ends after 2 untouched samples in a row, so one dropout inside a rub does not split it. There is no lockout: weak runs never count. head_touch_stats reports weak and strong samples and runs apart (weak, strong, runs_weak, runs_strong, run_max, strong_run_max), so the noise floor and a pat can be read off the host log. Press and swipe events carry strong=1 so the host trusts each. The strip's sensitivity is two constants at the top of the file (kSensitivityType, kSensitivityLevel), unchanged. The boot report now carries crash_resets, a count of panic and watchdog restarts kept in NVS, so a stack or memory change that makes the unit reset shows as a rising number.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_head_touch.cpp, hal/hal_mcp.cpp (MIT). Applies after 055 with --unidiff-zero.
+# Check after a flash: idle 5 minutes: presses=0, runs_weak may be non-zero, no pets. Pat the head hard and soft, short and long: presses rises by one per pat or stroke contact and the host reacts to each. Boot: "unit boot: boot reason=1 crash_resets=0".
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index d17ea0d..3bc2d2f 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -12,0 +13 @@
++#include <settings.h>
+@@ -22,16 +23,16 @@ enum class TouchState { IDLE, TOUCHED, SWIPING };
+-// The strip reports phantom touches with nobody there (host log 2026-10-21: isolated single-sample
+-// blips about every 10 s), and a real rub only ever reads 1 (readings are 0 to 3; the first flash of
+-// the 2-to-start rule registered no rub at all). So contact is told apart by how long and how dense
+-// it is, not by strength: a press is 6 touched samples out of the last 8, at reading 1 or more, with
+-// the contact at least 8 samples (400 ms at 50 ms) old, so a rub with dropouts still counts and a
+-// lone blip or a short tap never does. It ends when
+-// at most 1 of the last 8 samples is touched. A blip is a run of 1 or 2 touched samples with 8 quiet
+-// samples before and after it; three blips inside kBlipWindowMs lock the strip out for kLockoutMs.
+-constexpr int kWindowSamples     = 8;
+-constexpr int kPressSamples      = 6;
+-constexpr int kReleaseSamples    = 1;
+-constexpr int kBlipMaxRun        = 2;
+-constexpr int kLongRunSamples    = 8;
+-constexpr int kBlipCountToLock   = 3;
+-constexpr uint32_t kBlipWindowMs = 10000;
+-constexpr uint32_t kLockoutMs    = 10000;
++// The head strip's sensitivity, in one place. TYPE_LOW level 3 (register value 0x33) is the stock
++// setting. A higher level reads more, a lower one less: if the strip's idle noise at reading 1 is a
++// nuisance and real touches still reach 2, try level 2 (0x22). Changing it needs a flash.
++constexpr si12t_type_t kSensitivityType            = SI12T_TYPE_LOW;
++constexpr si12t_sensitivity_level_t kSensitivityLevel = SI12T_SENSITIVITY_LEVEL_3;
++
++// What counts as a touch (host log 2026-10-21): with nobody there the strip reads 1 on 60 to 90
++// samples a minute, in runs of up to 23 samples, so reading 1 is noise however long it lasts. Real
++// pats and rubs reach 2 or 3. A pet is a run of touched samples whose peak reading is at least
++// kPetPeak and that lasts at least kPetSamples; every such run is one press (a stroke is several
++// of them). A run ends after kRunGap untouched samples in a row, so a single dropout inside a rub
++// does not split it. There is no lockout: weak runs never count, so there is nothing to lock out.
++constexpr int kPetPeak    = 2;
++constexpr int kPetSamples = 2;
++constexpr int kRunGap     = 2;
++constexpr int kLongRun    = 8;
+@@ -81,6 +82,8 @@ public:
+-    // Counters reported once a minute (and cleared): isolated blips, presses, the longest unbroken
+-    // run of touched samples, and the number of runs of kLongRunSamples or more.
+-    uint32_t blips    = 0;
+-    uint32_t presses  = 0;
+-    uint32_t run_max  = 0;
+-    uint32_t long_runs = 0;
++    // Counters reported once a minute (and cleared).
++    uint32_t presses      = 0;  // pets recognised
++    uint32_t samples_weak = 0;  // samples that read exactly 1
++    uint32_t samples_strong = 0;  // samples that read 2 or more
++    uint32_t runs_weak    = 0;  // runs that never passed reading 1
++    uint32_t runs_strong  = 0;  // runs that reached reading 2 or more
++    uint32_t run_max      = 0;  // longest run of touched samples, any peak
++    uint32_t strong_run_max = 0;
+@@ -89 +92 @@ public:
+-    HeadPetGesture update(const TouchData& data, uint32_t now_ms)
++    HeadPetGesture update(const TouchData& data)
+@@ -92,2 +95,2 @@ public:
+-        const bool touched     = data.is_touched();
+-        track_runs(touched, now_ms);
++        const uint8_t reading  = data.get_max_intensity();
++        const bool touched     = reading >= 1;
+@@ -94,0 +98 @@ public:
++            (reading >= kPetPeak ? samples_strong : samples_weak)++;
+@@ -98,35 +102,24 @@ public:
+-        window = ((window << 1) | (touched ? 1u : 0u)) & ((1u << kWindowSamples) - 1);
+-        const int dense = __builtin_popcount(window);
+-        active          = window == 0 ? 0 : active + 1;  // samples since the strip last read quiet
+-
+-        if (now_ms < locked_until_ms) {
+-            current_state = TouchState::IDLE;
+-            return gesture;
+-        }
+-
+-        switch (current_state) {
+-            case TouchState::IDLE:
+-                if (touched && dense >= kPressSamples && active >= kWindowSamples) {
+-                    current_state    = TouchState::TOUCHED;
+-                    initial_position = last_position;
+-                    gesture          = HeadPetGesture::Press;
+-                    presses++;
+-                }
+-                break;
+-
+-            case TouchState::TOUCHED:
+-                if (dense <= kReleaseSamples) {
+-                    current_state = TouchState::IDLE;
+-                    gesture       = HeadPetGesture::Release;
+-                } else if (touched) {
+-                    // Check for swipe
+-                    int16_t current_pos = data.get_position();
+-                    int16_t delta       = current_pos - initial_position;
+-
+-                    if (delta > config.swipe_threshold) {
+-                        current_state = TouchState::SWIPING;
+-                        gesture       = HeadPetGesture::SwipeForward;
+-                    } else if (delta < -config.swipe_threshold) {
+-                        current_state = TouchState::SWIPING;
+-                        gesture       = HeadPetGesture::SwipeBackward;
+-                    }
++        if (touched) {
++            gap = 0;
++            run_len++;
++            if (reading > run_peak) {
++                run_peak = reading;
++            }
++            if (run_len > run_max) {
++                run_max = run_len;
++            }
++            if (current_state == TouchState::IDLE && run_peak >= kPetPeak &&
++                run_len >= static_cast<uint32_t>(kPetSamples)) {
++                current_state    = TouchState::TOUCHED;
++                initial_position = last_position;
++                gesture          = HeadPetGesture::Press;
++                presses++;
++            } else if (current_state == TouchState::TOUCHED) {
++                // Check for swipe
++                int16_t delta = data.get_position() - initial_position;
++                if (delta > config.swipe_threshold) {
++                    current_state = TouchState::SWIPING;
++                    gesture       = HeadPetGesture::SwipeForward;
++                } else if (delta < -config.swipe_threshold) {
++                    current_state = TouchState::SWIPING;
++                    gesture       = HeadPetGesture::SwipeBackward;
+@@ -134,6 +127,7 @@ public:
+-                break;
+-
+-            case TouchState::SWIPING:
+-                if (dense <= kReleaseSamples) {
+-                    current_state = TouchState::IDLE;
+-                    gesture       = HeadPetGesture::Release;
++            }
++        } else if (run_len > 0 && ++gap >= kRunGap) {
++            // The run is over: count it, and release if it was a pet.
++            if (run_peak >= kPetPeak) {
++                runs_strong++;
++                if (run_len > strong_run_max) {
++                    strong_run_max = run_len;
+@@ -141 +135,10 @@ public:
+-                break;
++            } else {
++                runs_weak++;
++            }
++            run_len  = 0;
++            run_peak = 0;
++            gap      = 0;
++            if (current_state != TouchState::IDLE) {
++                current_state = TouchState::IDLE;
++                gesture       = HeadPetGesture::Release;
++            }
+@@ -153,38 +155,0 @@ private:
+-    // Run bookkeeping for the statistics and the blip lockout.
+-    void track_runs(bool touched, uint32_t now_ms)
+-    {
+-        if (touched) {
+-            if (run_len == 0) {
+-                quiet_before = quiet;
+-            }
+-            run_len++;
+-            quiet = 0;
+-            pending_blip = false;  // something touched soon after a short run: not isolated
+-            if (run_len > run_max) {
+-                run_max = run_len;
+-            }
+-            return;
+-        }
+-        if (run_len > 0) {
+-            if (run_len >= static_cast<uint32_t>(kLongRunSamples)) {
+-                long_runs++;
+-            }
+-            if (run_len <= static_cast<uint32_t>(kBlipMaxRun) && quiet_before >= static_cast<uint32_t>(kWindowSamples)) {
+-                pending_blip = true;
+-            }
+-            run_len = 0;
+-            quiet   = 0;
+-        }
+-        quiet++;
+-        if (pending_blip && quiet >= static_cast<uint32_t>(kWindowSamples)) {
+-            pending_blip = false;
+-            blips++;
+-            blip_times_ms[blip_next] = now_ms == 0 ? 1 : now_ms;
+-            blip_next                = (blip_next + 1) % kBlipCountToLock;
+-            uint32_t oldest          = blip_times_ms[blip_next];
+-            if (oldest != 0 && now_ms - oldest < kBlipWindowMs) {
+-                locked_until_ms = now_ms + kLockoutMs;
+-            }
+-        }
+-    }
+-
+@@ -194,10 +159,4 @@ private:
+-    int16_t last_position                     = 0;
+-    uint32_t window                           = 0;
+-    int active                                = 0;
+-    uint32_t run_len                          = 0;
+-    uint32_t quiet                            = 1000;
+-    uint32_t quiet_before                     = 1000;
+-    bool pending_blip                         = false;
+-    uint32_t locked_until_ms                  = 0;
+-    uint32_t blip_times_ms[kBlipCountToLock]  = {};
+-    int blip_next                             = 0;
++    int16_t last_position = 0;
++    uint32_t run_len      = 0;
++    uint8_t run_peak      = 0;
++    int gap               = 0;
+@@ -217,2 +176,3 @@ static void _head_touch_update_task(void* param)
+-    // Baseline statistics for the host log, once a minute: how noisy the strip is at rest.
+-    uint32_t stats_samples = 0, stats_touched = 0, stats_max = 0, stats_start_ms = 0;
++    // Baseline statistics for the host log, once a minute: how noisy the strip is at rest, and
++    // what a pat looks like (weak and strong samples and runs counted apart).
++    uint32_t stats_samples = 0, stats_max = 0, stats_start_ms = 0;
+@@ -230 +190 @@ static void _head_touch_update_task(void* param)
+-        gesture               = recognizer.update(data, now_ms);
++        gesture               = recognizer.update(data);
+@@ -236,3 +195,0 @@ static void _head_touch_update_task(void* param)
+-        if (data.is_touched()) {
+-            stats_touched++;
+-        }
+@@ -245 +202 @@ static void _head_touch_update_task(void* param)
+-            char extra[160];
++            char extra[200];
+@@ -247,6 +204,7 @@ static void _head_touch_update_task(void* param)
+-                     "\"samples\":%u,\"touched\":%u,\"max\":%u,\"blips\":%u,\"presses\":%u,\"run_max\":%u,"
+-                     "\"long_runs\":%u",
+-                     static_cast<unsigned>(stats_samples), static_cast<unsigned>(stats_touched),
+-                     static_cast<unsigned>(stats_max), static_cast<unsigned>(recognizer.blips),
+-                     static_cast<unsigned>(recognizer.presses), static_cast<unsigned>(recognizer.run_max),
+-                     static_cast<unsigned>(recognizer.long_runs));
++                     "\"samples\":%u,\"weak\":%u,\"strong\":%u,\"max\":%u,\"presses\":%u,\"runs_weak\":%u,"
++                     "\"runs_strong\":%u,\"run_max\":%u,\"strong_run_max\":%u",
++                     static_cast<unsigned>(stats_samples), static_cast<unsigned>(recognizer.samples_weak),
++                     static_cast<unsigned>(recognizer.samples_strong), static_cast<unsigned>(stats_max),
++                     static_cast<unsigned>(recognizer.presses), static_cast<unsigned>(recognizer.runs_weak),
++                     static_cast<unsigned>(recognizer.runs_strong), static_cast<unsigned>(recognizer.run_max),
++                     static_cast<unsigned>(recognizer.strong_run_max));
+@@ -278,2 +236,3 @@ static void _head_touch_update_task(void* param)
+-            stats_samples = stats_touched = stats_max = 0;
+-            recognizer.blips = recognizer.presses = recognizer.run_max = recognizer.long_runs = 0;
++            stats_samples = stats_max = 0;
++            recognizer.presses = recognizer.samples_weak = recognizer.samples_strong = 0;
++            recognizer.runs_weak = recognizer.runs_strong = recognizer.run_max = recognizer.strong_run_max = 0;
+@@ -293,2 +252,14 @@ void Hal::head_touch_init()
+-    char reason[32];
+-    snprintf(reason, sizeof(reason), "\"reason\":%d", static_cast<int>(esp_reset_reason()));
++    // A crash-type restart (panic, interrupt or task watchdog, other watchdog) is also counted in
++    // NVS, so a stack or memory change that makes the unit reset shows as a rising number.
++    const int why = static_cast<int>(esp_reset_reason());
++    int crash_resets = 0;
++    {
++        Settings counter("maipai", true);
++        crash_resets = counter.GetInt("crash_resets", 0);
++        if (why >= 4 && why <= 7) {
++            crash_resets++;
++            counter.SetInt("crash_resets", crash_resets);
++        }
++    }
++    char reason[48];
++    snprintf(reason, sizeof(reason), "\"reason\":%d,\"crash_resets\":%d", why, crash_resets);
+@@ -306 +277 @@ void Hal::head_touch_init()
+-    si12t_setup(si12t, SI12T_TYPE_LOW, SI12T_SENSITIVITY_LEVEL_3);
++    si12t_setup(si12t, kSensitivityType, kSensitivityLevel);
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index de51513..2c52698 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -169,2 +169,2 @@ void Hal::xiaozhi_mcp_init()
+-                // A press now means contact held for 400 ms (hal_head_touch.cpp); the host trusts that.
+-                push_event("head_touch", "\"held_ms\":400");
++                // A press now means a run that reached reading 2 or more (hal_head_touch.cpp); the host trusts it.
++                push_event("head_touch", "\"strong\":1");
+@@ -172 +172 @@ void Hal::xiaozhi_mcp_init()
+-                push_event("head_swipe_forward", "\"held_ms\":400");
++                push_event("head_swipe_forward", "\"strong\":1");
+@@ -174 +174 @@ void Hal::xiaozhi_mcp_init()
+-                push_event("head_swipe_back", "\"held_ms\":400");
++                push_event("head_swipe_back", "\"strong\":1");

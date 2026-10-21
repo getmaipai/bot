@@ -50,3 +50,21 @@ A second, smaller bug waited behind it: the enroll image stores the avatar addre
 - Memory in the stable build: the internal minimum fell to 9,971 bytes with 6,656 as the largest free block.
   Allocations above that size from internal RAM can fail, and this is below the old 12.5 KB floor.
   It is a real margin risk, not an immediate fault.
+
+## RAM that does not depend on PSRAM stacks (patch 058, 2026-10-21)
+
+Static data is small (36 KB data, 36 KB bss); the internal heap is spent at run time. Candidates, with measured or computed sizes:
+
+| Candidate | Size | Decision |
+|---|---|---|
+| LVGL draw buffer, 20 lines, DMA, internal | 12,800 bytes | halved to 10 lines: 6,400 back; moving it to PSRAM is possible on the S3 but needs a display test |
+| `audio_input` stack (use 2,336 of 6,144) | 6,144 | 4,096: 2,048 back |
+| `audio_output` stack (use 1,416 of 4,096) | 4,096 | 3,072: 1,024 back |
+| `ws_reconnect` stack (use 1,712 of 6,144) | 6,144 | 4,096: 2,048 back |
+| `opus_codec` stack (use 20,036 of 24,576) | 24,576 | patch 055 (PSRAM, experiment); not shrunk |
+| `stackchan` task (1,428 left of 4,096) | 4,096 | untouched |
+| Wi-Fi/lwip pools to PSRAM (`SPIRAM_TRY_ALLOCATE_WIFI_LWIP`) | tens of KB, load dependent | not done: same cache-disabled risk as a PSRAM stack, and the link carries live audio |
+| BT/NimBLE | none at run time (never started in agent mode) | nothing to gain |
+| LVGL layer buffer (24,576) | allocated by LVGL's allocator, which prefers PSRAM above 512 bytes | nothing to gain |
+
+Total from 058: about 11 KB. With 055 as well, about 35 KB; the avatar channel starts at 32 KB free.

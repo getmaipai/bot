@@ -196,8 +196,8 @@ def test_a_touch_wakes_a_sleeping_robot_after_the_first_look_empties_the_queue()
         behavior.close()
 
 
-def test_an_awake_robot_reads_events_slowly_and_never_wakes_or_asks_during_a_turn():
-    behavior, polls = _sleeping_behavior([[], ["shake"]])
+def test_an_awake_robot_reads_events_slowly_and_keeps_reading_them_during_a_turn():
+    behavior, polls = _sleeping_behavior([[], ["shake"], ["shake"]])
     seen = []
     try:
         behavior._rest = type("Rest", (), {"stage": "awake"})()
@@ -208,7 +208,7 @@ def test_an_awake_robot_reads_events_slowly_and_never_wakes_or_asks_during_a_tur
         assert seen == [["shake"]] and len(polls) == 2
         behavior._active.set()
         assert behavior.wake_on_touch(10.0) is False
-        assert len(polls) == 2  # nothing is asked of the unit during a turn
+        assert len(polls) == 3  # events are read during a turn too, so no pat is lost
     finally:
         behavior.close()
 

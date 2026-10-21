@@ -176,6 +176,7 @@ class StackChanBehavior:
         self._holder = "stackchan-runtime"
         self._lock = threading.RLock()
         self._active = threading.Event()
+        self._phase = "idle"
         self._closed = threading.Event()
         self._presence_stop: threading.Event | None = None
         self._presence_thread: threading.Thread | None = None
@@ -278,6 +279,8 @@ class StackChanBehavior:
 
     def render_turn_state(self, state: str, *, mood: str | None = None) -> None:
         self._active.set()
+        # "listening" leaves room for a pet's face; thinking and speaking own the face and voice.
+        self._phase = {"listening": "listening", "settle": "idle"}.get(state, "busy")
         # Only states that really move the head ask the gate (and count toward its cap); the
         # settle back to centre is essential and always passes.
         moves = state in {"listening", "thinking", "speaking"}
@@ -474,9 +477,15 @@ class StackChanBehavior:
         if not self.idle_still():
             self.render_primitive("nod")
 
-    def show_face(self, expression: str) -> None:
-        """Show a face for a moment; the face watchdog puts the idle face back."""
-        if self._active.is_set():
+    def reaction_blocked(self) -> bool:
+        """True while the robot is thinking or speaking: a touch reaction is not shown then."""
+        return self._active.is_set() and self._phase != "listening"
+
+    def show_face(self, expression: str, *, while_listening: bool = False) -> None:
+        """Show a face for a moment; the face watchdog puts the idle face back.
+
+        Not during a turn, except a reaction face while the robot is only listening."""
+        if self._active.is_set() and not (while_listening and self._phase == "listening"):
             return
         device = self.robot._driver("head").expression_device
         if device is None:
@@ -490,9 +499,10 @@ class StackChanBehavior:
         """Read the unit's touch, swipe and shake events; wake a sleeper, tell the reactions.
 
         The unit is asked every ``EVENT_POLL_S`` while awake and every ``TOUCH_POLL_S`` while
-        drowsy or asleep, and not at all during a turn. The first look after a pause only empties
-        the unit's queue (old events are not a reason to react). True when it woke the robot."""
-        if self.event_poll is None or self._active.is_set():
+        drowsy or asleep, during a turn too (a pat while it only listens must react; the reactions
+        decide what to show). The first look after a pause only empties the unit's queue (old events
+        are not a reason to react). True when it woke the robot."""
+        if self.event_poll is None:
             self._event_queue_drained = False
             return False
         asleep = self._rest.stage != "awake"
@@ -928,10 +938,10 @@ async def _serve_stackchan_channels(
         from maipai_body.bodies.stackchan.reactions import Reactions
 
         reactions = Reactions(
-            face=behavior.show_face,
+            face=lambda expression: behavior.show_face(expression, while_listening=True),
             say=bridge.speak_reaction,
             quiet=lambda: night.night,
-            busy=lambda: behavior._active.is_set(),
+            busy=behavior.reaction_blocked,
             symbol=lambda name: voice.robot.client._call(
                 "self.screen.show_symbol", {"name": name, "ms": 2500}
             ),

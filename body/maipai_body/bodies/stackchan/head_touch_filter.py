@@ -53,6 +53,8 @@ class HeadTouchFilter:
         if len(head) >= 2:
             return True
         extra = getattr(head[0], "extra", None) or {}
+        if extra.get("strong") in (1, True):
+            return True  # the unit's recogniser saw a touch that reached reading 2 or more
         held = extra.get("held_ms")
         if isinstance(held, int) and not isinstance(held, bool) and held >= HELD_MS:
             return True

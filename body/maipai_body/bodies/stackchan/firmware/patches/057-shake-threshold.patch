@@ -1,0 +1,79 @@
+# Intent: tune the shake (host log 2026-10-21: a lift-and-shake by hand produced no event). The shake detector sums the change in the three axes between samples 100 ms apart and needs three peaks above a threshold within a second; the stock threshold of 16 m/s^2 needed a hard shake. It is now 9. Every shake reports its strongest peak (shake_peak event, "peak" and "threshold") and once a minute the strongest sample-to-sample change seen is reported (imu_stats, "max_diff" and "shakes"), so the threshold can be tuned from the host log by shaking and lifting the unit by hand. A pick-up event is NOT added: lifting looks like the head's own servo reaction on the base, a false pick-up would wake a sleeping robot, and it needs a unit test first.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_imu.cpp, hal/utils/motion_detector/motion_detector.h (MIT). Applies after 056 with --unidiff-zero.
+# Check after a flash: shake the unit by hand: "unit touch: shake_peak peak=N threshold=9" and a shake reaction; each minute "unit touch: imu_stats max_diff=N shakes=M" shows how hard a lift or a nudge reads.
+diff --git a/firmware/main/hal/hal_imu.cpp b/firmware/main/hal/hal_imu.cpp
+index 24fdf60..e0c377f 100644
+--- a/firmware/main/hal/hal_imu.cpp
++++ b/firmware/main/hal/hal_imu.cpp
+@@ -11,0 +12,2 @@
++#include <cstdio>
++#include "device_events.h"
+@@ -20 +22,6 @@ static void _imu_task(void* param)
+-    motion_detector->setShakeThreshold(16.0f);
++    // 9.0 (was 16.0): the sum of the change in the three axes between two samples 100 ms apart, in
++    // m/s^2. The stock 16 needed a hard shake; a lift-and-shake by hand did not reach it.
++    constexpr float kShakeThreshold = 9.0f;
++    motion_detector->setShakeThreshold(kShakeThreshold);
++    uint32_t stats_start_ms = 0;
++    uint32_t shakes         = 0;
+@@ -30 +37,6 @@ static void _imu_task(void* param)
+-                mclog::tagInfo(_tag, "Shake Detected!");
++                shakes++;
++                char peak[64];
++                snprintf(peak, sizeof(peak), "\"peak\":%d,\"threshold\":%d",
++                         static_cast<int>(motion_detector->lastShakePeak()), static_cast<int>(kShakeThreshold));
++                mclog::tagInfo(_tag, "Shake Detected! {}", peak);
++                device_events_push_diag("shake_peak", peak);
+@@ -32,0 +45,13 @@ static void _imu_task(void* param)
++            // Once a minute: the strongest sample-to-sample change seen, so the threshold can be tuned
++            // from the host log by shaking or lifting the unit by hand.
++            const uint32_t now_ms = pdTICKS_TO_MS(xTaskGetTickCount());
++            if (stats_start_ms == 0) {
++                stats_start_ms = now_ms;
++            } else if (now_ms - stats_start_ms >= 60000) {
++                char stats[64];
++                snprintf(stats, sizeof(stats), "\"max_diff\":%d,\"shakes\":%u",
++                         static_cast<int>(motion_detector->takeMaxDiff()), static_cast<unsigned>(shakes));
++                device_events_push_diag("imu_stats", stats);
++                shakes         = 0;
++                stats_start_ms = now_ms;
++            }
+diff --git a/firmware/main/hal/utils/motion_detector/motion_detector.h b/firmware/main/hal/utils/motion_detector/motion_detector.h
+index a19cf76..40d8f33 100644
+--- a/firmware/main/hal/utils/motion_detector/motion_detector.h
++++ b/firmware/main/hal/utils/motion_detector/motion_detector.h
+@@ -40,0 +41,4 @@ public:
++        if (diff > _max_diff) {
++            _max_diff = diff;
++        }
++
+@@ -43,0 +48,3 @@ public:
++            if (diff > _sequence_peak) {
++                _sequence_peak = diff;
++            }
+@@ -53,2 +60,4 @@ public:
+-                    _shake_detected = true;
+-                    _shake_count    = 0;
++                    _shake_detected  = true;
++                    _shake_count     = 0;
++                    _last_shake_peak = _sequence_peak;
++                    _sequence_peak   = 0;
+@@ -68,0 +78,14 @@ public:
++    // Tuning aids: the largest change between two samples since the last call (a shake needs three
++    // above the threshold within a second), and the strongest of the last shake's three peaks.
++    float takeMaxDiff()
++    {
++        float value = _max_diff;
++        _max_diff   = 0;
++        return value;
++    }
++
++    float lastShakePeak() const
++    {
++        return _last_shake_peak;
++    }
++
+@@ -82,0 +106,3 @@ private:
++    float _max_diff                = 0;
++    float _sequence_peak           = 0;
++    float _last_shake_peak         = 0;

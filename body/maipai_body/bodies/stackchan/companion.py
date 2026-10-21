@@ -29,6 +29,9 @@ DIAGNOSTIC_KINDS = frozenset(
         "heap_stats",
         "stack_stats",
         "boot",
+        "shake_peak",
+        "imu_stats",
+        "avatar_channel",
     }
 )
 EVENT_KINDS = (
