@@ -7,6 +7,15 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.16] - 2026-10-21
+
+### Fixed
+
+- The robot's head rests level. Centre pitch is now the lowest angle (5 degrees); before, the host treated 45 degrees as centre and the drowsy and asleep poses raised the head to 66 and 85 degrees, so it always looked up. Nods and perks are small upward offsets from level. One constant, `CENTRE_PITCH_DEG` in `bodies/stackchan/profile.py`, sets the level.
+- Night and day: every connect now applies the current face, brightness, idle motion, lights and volume once, so a host restart or a unit reboot cannot leave the face dark in the morning. Unreadable light ends night after 10 minutes. There is one log line per night start and end with its reason, and no calls or retry spam while no unit is connected.
+- Volume: the default is 70 and brightness 100, both remembered in `owner_levels.json` in the Bot data directory. A voice change by day updates the stored level; at night it changes only the night level; day restores the stored value exactly.
+- Firmware patch 038's head-move cap is 40 a minute (it was 20) and the firmware asset includes that change. Patches to flash since 0.2.2: 030, 032, 033, 034, 037, 038, 039, 044.
+
 ## [0.2.15] - 2026-10-21
 
 ### Added
