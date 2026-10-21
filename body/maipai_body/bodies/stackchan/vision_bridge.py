@@ -81,7 +81,7 @@ class StackChanVisionBridge:
             if may_move is not None and not may_move():
                 return target
             self._cancel_timer()
-            pose = _follow_pose(target)
+            pose = follow_pose(target)
             holder = "stackchan-vision"
             if self.robot.lease_holder != holder:
                 self.robot.lease.acquire(priority="expression", holder=holder)
@@ -131,7 +131,7 @@ class StackChanVisionBridge:
         )
         self._cancel_timer()
         # The Robot head adapter clamps both angles against profile.py.
-        pose = _follow_pose(target)
+        pose = follow_pose(target)
         holder = "stackchan-vision"
         if self.robot.lease_holder != holder:
             self.robot.lease.acquire(priority="expression", holder=holder)
@@ -225,18 +225,23 @@ class StackChanVisionBridge:
                 pass
 
 
-def _follow_pose(target: FaceTrackTarget) -> HeadPose:
-    """Head pose that turns toward a face; pitch is level plus up to 20 degrees for a high face.
-
-    The head only travels up from level, so a face below the middle of the frame is level."""
+def follow_pose(target: FaceTrackTarget) -> HeadPose:
+    """Head pose that turns toward a face: yaw across the camera's field of view, pitch level plus
+    up to 20 degrees for a high face. The head only travels up from level, so a face below the
+    middle of the frame is level."""
     import math
 
-    from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG, FOLLOW_PITCH_SPAN_DEG
+    from maipai_body.bodies.stackchan.profile import (
+        CENTRE_PITCH_DEG,
+        FOLLOW_PITCH_SPAN_DEG,
+        FOLLOW_YAW_SPAN_DEG,
+    )
 
     assert target.x is not None and target.y is not None
     up_degrees = max(0.0, 0.5 - target.y) * FOLLOW_PITCH_SPAN_DEG
     return HeadPose(
-        yaw=float((target.x - 0.5) * 0.35), pitch=math.radians(CENTRE_PITCH_DEG + up_degrees)
+        yaw=math.radians((target.x - 0.5) * FOLLOW_YAW_SPAN_DEG),
+        pitch=math.radians(CENTRE_PITCH_DEG + up_degrees),
     )
 
 

@@ -150,6 +150,7 @@ def _no_hub_discovery(timeout_s: float = 5.0):
 FACE_QUIET_S = 5.0
 # While drowsy or asleep the unit is asked for touch events this often; wakes repeat no sooner.
 LOOK_INTERVAL_S = 0.5  # two looks a second at most
+TURN_FACE_FRESH_S = 5.0  # turn toward a face seen this recently when a turn starts
 LOST_AFTER_LOOKS = 4  # two seconds without the face it was following: it was lost
 TOUCH_POLL_S = 5.0
 TOUCH_WAKE_COOLDOWN_S = 30.0
@@ -202,6 +203,9 @@ class StackChanBehavior:
         self._last_look = float("-inf")
         self._followed = False
         self._missed_looks = 0
+        # The most recent face (frame x, y and when), for turning toward the speaker.
+        self._last_face: tuple[float, float, float] | None = None
+        self._turn_face_held = False
         self._warned: dict[str, float] = {}
         self.on_idle_level: Callable[[], None] = lambda: None
         # BOT-SC-ANIM-01: drowsy and asleep stages so an idle robot does not sit smiling for hours.
@@ -298,6 +302,7 @@ class StackChanBehavior:
 
         def render() -> None:
             if state == "settle":
+                self._turn_face_held = False
                 # Only a head that actually left centre is brought back: a quiet turn that moved
                 # nothing must not move the head again (the unit was settling after every turn).
                 if self._head_off_centre and may_move and time.monotonic() >= self._hold_until:
@@ -305,7 +310,9 @@ class StackChanBehavior:
                     self._expression.render_ambient("settle", SuppressionContext())
                 return
             self._expression.render_turn_state(state, mood=mood)
-            if primitive is not None and may_move:
+            if state == "listening":
+                self._turn_face_held = may_move and self._turn_toward_face()
+            if primitive is not None and may_move and not self._turn_face_held:
                 self._head_off_centre = True
                 self._expression.render_ambient(primitive, SuppressionContext())
             elif state == "reply_mood":
@@ -402,10 +409,33 @@ class StackChanBehavior:
             return False
         self._missed_looks = 0
         self._last_person_seen = now
+        if target.x is not None and target.y is not None:
+            self._last_face = (target.x, target.y, now)
         if self._followed:
             self.gaze.note(GazeReason.TRACK)
         if self._greeting.seen(now):
             self.greet()
+        return True
+
+    def face_age(self) -> float | None:
+        """Seconds since a face was last seen, or None if none has been."""
+        return None if self._last_face is None else time.monotonic() - self._last_face[2]
+
+    def _turn_toward_face(self) -> bool:
+        """On listen start, turn toward the face seen a moment ago and hold the turn through the
+        reply. Nothing happens when no face was seen in the last few seconds (no hunting)."""
+        face = self._last_face
+        if face is None or time.monotonic() - face[2] > TURN_FACE_FRESH_S:
+            return False
+        from maipai_body.bodies.stackchan.gaze import GazeReason
+        from maipai_body.bodies.stackchan.vision_bridge import follow_pose
+        from maipai_body.hal.seam import FaceTrackTarget
+
+        pose = follow_pose(FaceTrackTarget(detected=True, x=face[0], y=face[1]))
+        self.robot.head.set(pose=pose)  # the lease is held by the turn state that called this
+        self._head_off_centre = True
+        self.gaze.note(GazeReason.TRACK)
+        logger.info("StackChan turned toward the speaker")
         return True
 
     def _may_follow(self) -> bool:
@@ -768,6 +798,7 @@ async def _serve_stackchan_channels(
             return None
 
         from maipai_body.bodies.stackchan.gaze import GazeReason
+        from maipai_body.bodies.stackchan.sight import SightAnswers
 
         head_commander = HeadCommander(
             _move_head,
@@ -797,6 +828,11 @@ async def _serve_stackchan_channels(
             ),
             head_control=head_commander,
             gaze_control=behavior.gaze,
+            sight_control=SightAnswers(
+                face_age=behavior.face_age,
+                camera_on=lambda: behavior.watch_level() != "off",
+                detector_ready=lambda: getattr(getattr(vision, "detector", None), "ready", True),
+            ),
         )
         voice.audio_handler = bridge.on_audio
         voice.turn_handler = bridge.listen

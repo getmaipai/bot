@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from types import SimpleNamespace
 
+import pytest
+
 from maipai_body.app import StackChanBehavior
 from maipai_body.bodies.stackchan import StackChanRobotAdapter
 from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
@@ -153,3 +155,131 @@ def test_the_yunet_cache_step_works_without_huggingface_hub(tmp_path, monkeypatc
 
     monkeypatch.setattr(builtins, "__import__", refuse)
     assert prepare_yunet_cache(model) == model
+
+
+# -- turning toward the speaker ---------------------------------------------------------------
+
+
+class _FaceAt:
+    """A vision stand-in that sees a face at a chosen place in the frame."""
+
+    def __init__(self, x, y, detected=True):
+        self.x, self.y, self.detected = x, y, detected
+
+    def track_stream_frame(self, *, deadline_s=0.4, may_move=None):
+        return SimpleNamespace(detected=self.detected, x=self.x, y=self.y)
+
+
+def _head_moves(device):
+    return [c for c in device.calls if c.name == "self.robot.set_head_angles"]
+
+
+def test_a_listen_start_turns_toward_a_face_seen_a_moment_ago_and_holds_it_through_the_reply():
+    import time
+
+    vision = _FaceAt(0.9, 0.3)  # far right of the frame, high
+    behavior, device = _behavior(vision)
+    try:
+        behavior.watch_for_faces(time.monotonic())
+        behavior._active.clear()
+        behavior.render_turn_state("listening")
+        moves = _head_moves(device)
+        assert moves, "the head should have turned"
+        turn = moves[-1].arguments
+        assert turn["yaw"] > 15  # 0.4 of a 60 degree view to the robot's right
+        assert turn["pitch"] > 5  # a high face lifts the head a little
+        count = len(moves)
+        behavior.render_turn_state("thinking")
+        behavior.render_turn_state("speaking")
+        assert len(_head_moves(device)) == count  # the turn is held: nothing pulls it back
+        behavior.render_turn_state("settle")
+        assert _head_moves(device)[-1].arguments["yaw"] == 0  # level after the turn
+    finally:
+        behavior.close()
+
+
+def test_no_recent_face_means_no_turn_and_no_hunting():
+    vision = _FaceAt(0.9, 0.3)
+    behavior, device = _behavior(vision)
+    try:
+        behavior._last_face = (0.9, 0.3, __import__("time").monotonic() - 30.0)  # long ago
+        behavior.render_turn_state("listening")
+        assert behavior._turn_face_held is False
+        assert all(m.arguments["yaw"] == 0 for m in _head_moves(device))  # only the usual perk
+    finally:
+        behavior.close()
+
+
+def test_the_face_age_is_kept_so_the_looking_at_you_answer_is_true():
+    import time
+
+    behavior, _device = _behavior(_FaceAt(0.5, 0.5))
+    try:
+        assert behavior.face_age() is None
+        behavior.watch_for_faces(time.monotonic())
+        assert behavior.face_age() is not None and behavior.face_age() < 1.0
+    finally:
+        behavior.close()
+
+
+def test_the_follow_pose_uses_the_whole_field_of_view():
+    import math
+
+    from maipai_body.bodies.stackchan.vision_bridge import follow_pose
+    from maipai_body.hal.seam import FaceTrackTarget
+
+    right = follow_pose(FaceTrackTarget(detected=True, x=1.0, y=0.5))
+    left = follow_pose(FaceTrackTarget(detected=True, x=0.0, y=0.5))
+    assert math.degrees(right.yaw) == pytest.approx(30)
+    assert math.degrees(left.yaw) == pytest.approx(-30)
+    low = follow_pose(FaceTrackTarget(detected=True, x=0.5, y=0.9))
+    assert math.degrees(low.pitch) == pytest.approx(5)  # below the middle: level, never below
+
+
+def test_the_bridge_answers_can_you_see_me_without_the_hub(monkeypatch):
+    import asyncio
+
+    import maipai_body.bodies.stackchan.turn as turn_module
+    from maipai_body.bodies.stackchan.sight import SightAnswers
+    from maipai_body.speech.stt_stream import SttStreamResult
+    from tests.test_stackchan_turn import (  # type: ignore[import-not-found]
+        FakeCapture,
+        FakePlayback,
+        FakeServer,
+        FakeTts,
+        FakeTurn,
+        InlineExecutor,
+        Link,
+        Offline,
+    )
+
+    class Stt:
+        def __init__(self, base, cookie):
+            pass
+
+        def run(self, capture, **kwargs):
+            return SttStreamResult(kind="final", text="Can you see me?")
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    FakeTurn.streams = []
+    FakeTts.sentences = []
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    bridge = turn_module.StackChanTurnBridge(
+        server,
+        Link(),
+        Offline(),
+        stt_factory=Stt,
+        turn_factory=FakeTurn,
+        tts_factory=FakeTts,
+        side_executor=InlineExecutor(),
+        sight_control=SightAnswers(face_age=lambda: 1.5, camera_on=lambda: True),
+    )
+    loop.run_until_complete(bridge._run("session", "device", FakeCapture()))
+    loop.close()
+    assert FakeTurn.streams == []  # the hub never saw "can you see me"
+    from maipai_body.bodies.stackchan.sight import YES
+
+    assert FakeTts.sentences and FakeTts.sentences[0] in YES

@@ -536,6 +536,7 @@ class StackChanTurnBridge:
         volume_control=None,
         head_control=None,
         gaze_control=None,
+        sight_control=None,
         clock=time.monotonic,
     ) -> None:
         self.server, self.link, self.offline = server, link, offline
@@ -549,6 +550,8 @@ class StackChanTurnBridge:
         self.head_control = head_control
         # "What are you looking at?": answered from the head's own reason, never by the hub.
         self.gaze_control = gaze_control
+        # "Can you see me?": answered from what the host knows, never "I can't see".
+        self.sight_control = sight_control
         # The expression and light sinks make blocking device calls that wait on this very event
         # loop; run inline they froze it until each 5 s timeout (live log 2026-10-20: 5 s to start
         # a turn, 12 s to the first audio frame). One worker keeps their order.
@@ -959,6 +962,13 @@ class StackChanTurnBridge:
                 if gaze_line:
                     LOG.info("StackChan voice: gaze question answered (%r)", gaze_line)
                     await asyncio.to_thread(self._say, playback, base, cookie, gaze_line)
+                    self._breaker.note_speech()
+                    return
+            if self.sight_control is not None:
+                sight_line = self.sight_control.answer(result.text or "")
+                if sight_line:
+                    LOG.info("StackChan voice: sight question answered (%r)", sight_line)
+                    await asyncio.to_thread(self._say, playback, base, cookie, sight_line)
                     self._breaker.note_speech()
                     return
             turn = self.turn_factory(base, cookie)

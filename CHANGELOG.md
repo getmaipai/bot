@@ -9,6 +9,8 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- The robot turns toward the person who starts talking to it: on a wake word, a tap or a follow-up it turns to the face it saw in the last 5 seconds, holds the turn while it listens and answers, and returns to level after. With no recent face it does nothing. Following a face now uses the camera's whole field of view (it turned only 10 degrees at the edge before).
+- "Can you see me?" is answered from what the robot really knows: a face in the last 10 seconds gets a yes ("I can see you right there"), a camera that is off says so, nobody in view says it cannot spot anyone but the camera is on; never a flat "I can't see". "What do you see?", "what am I holding?", "look at this" and "what's this" get "I can look, but I can't describe pictures yet." until Home can describe a picture. No frame leaves the host.
 - "What are you looking at?", "what are you looking for?" and "why are you looking over there?" are answered by the robot from why its head last moved (following a face, a spoken look command, a lost face, thinking, resting, or nothing in particular), with a few honest, friendly variants per case and no claims about anything it did not detect. "What do you see?" still goes to the hub.
 
 ### Fixed

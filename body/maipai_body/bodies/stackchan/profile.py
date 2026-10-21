@@ -44,6 +44,8 @@ LED_CHANNEL_MAX = 168
 CENTRE_PITCH_DEG = 5
 # A face at the top of the frame turns the head up by half this many degrees (frame middle: none).
 FOLLOW_PITCH_SPAN_DEG = 40
+# The camera sees about this many degrees side to side; a face at the edge is half of it away.
+FOLLOW_YAW_SPAN_DEG = 60
 EXPRESSION_YAW_FRACTION = 0.12
 EXPRESSION_PITCH_FRACTION = 0.08
 

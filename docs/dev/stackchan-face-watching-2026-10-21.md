@@ -38,3 +38,16 @@ paired hub asset sync. Until it has arrived the detector finds nothing and logs 
 Unmeasured until it runs. Once a minute the host logs one line, for example
 `StackChan camera: 612 frames and 9400 KB from the unit in 1.0 min; looked at 120 (a face in 18), mean 3.4 ms, max 9.0 ms`.
 The first lines from a real unit give its frame rate and bandwidth.
+
+## Turning toward the speaker, and "can you see me?"
+
+- On a listen start (wake word, tap or follow-up) the head turns toward the last face seen, if it was seen in the last 5 s
+  (`TURN_FACE_FRESH_S`), as a response move through the head gate. The turn is held through thinking and speaking (the turn's other
+  head cues are skipped so they do not pull it back) and the post-turn settle returns the head to level. No recent face: nothing moves.
+  The unit has one microphone, so there is no sound direction; the face is the only cue.
+- The yaw follows the camera's field of view (`FOLLOW_YAW_SPAN_DEG`, 60 degrees: a face at the frame edge is 30 degrees away). Pitch is
+  level plus up to 20 degrees for a high face.
+- `sight.py` answers "can you see me?" from the last-face age and the camera level, and gives the interim picture line for the cue
+  phrases ("what do you see", "what am I holding", "look at this", "what's this"). Describing a frame is blocked on Home: its turn
+  route accepts pictures only on written chat turns uploaded by a signed-in person, not on a robot's spoken turn. When Home's robot
+  vision contract exists, the cue phrases attach one fresh frame in memory and drop it after the turn.
