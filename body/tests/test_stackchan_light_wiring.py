@@ -351,6 +351,7 @@ def test_the_turn_bridge_raises_the_live_cue_around_the_hub_stream_only():
 
     bridge = StackChanTurnBridge.__new__(StackChanTurnBridge)
     bridge._side = _Inline()
+    bridge._light_side = _Inline()
     bridge.live_sink = events.append
     bridge._set_live(True)
     bridge._set_live(False)
