@@ -23,7 +23,7 @@ red"), a long sentence, or a request to describe what it sees ("look down and te
 ## How it moves
 
 The runner sends yaw and pitch through `robot.head.set` (the lease, the e-stop latch and the profile limits all apply) at speed 120
-(the profile range is 100 to 150). Centre is yaw 0, pitch 45. A "look" is 45 degrees of yaw or 25 degrees of pitch from centre,
+(the profile range is 100 to 150). Centre is yaw 0 and level pitch, `CENTRE_PITCH_DEG` (5 degrees: the pitch servo only travels up from level, so 45 would be 45 degrees up). A "look" is 45 degrees of yaw or up to 25 degrees of pitch up from level ("look down" is level),
 so the largest move ("all the way") is 90 degrees of yaw. After 5 seconds the head returns to centre unless the person says "stay"
 or gives another command; the post-turn settle is held off for that time so it does not undo the pose at once.
 

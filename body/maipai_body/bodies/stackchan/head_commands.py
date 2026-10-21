@@ -19,10 +19,12 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
+
 logger = logging.getLogger("maipai_body.bodies.stackchan.head_commands")
 
 CENTRE_YAW = 0
-CENTRE_PITCH = 45
+CENTRE_PITCH = CENTRE_PITCH_DEG  # level; the head only travels up from here
 RETURN_AFTER_S = 5.0
 MAX_COMMANDS_PER_MIN = 30
 SPEED = 120  # moderate: the profile range is 100 to 150
@@ -119,8 +121,7 @@ def target_for(command: HeadCommand) -> tuple[int, int]:
         yaw = round(_BASE_YAW * scale)
     elif command.direction == "up":
         pitch = CENTRE_PITCH + round(_BASE_PITCH * scale)
-    elif command.direction == "down":
-        pitch = CENTRE_PITCH - round(_BASE_PITCH * scale)
+    # "down" is level: the head cannot tilt below it, so it comes back from any raised pose.
     return yaw, pitch
 
 
@@ -209,9 +210,9 @@ class HeadCommander:
                 self._sleep(1.4)
         elif command.kind == "nod":
             for _ in range(2):
-                self._move(CENTRE_YAW, CENTRE_PITCH + 15, SPEED)
+                self._move(CENTRE_YAW, CENTRE_PITCH + 12, SPEED)
                 self._sleep(0.35)
-                self._move(CENTRE_YAW, CENTRE_PITCH - 8, SPEED)
+                self._move(CENTRE_YAW, CENTRE_PITCH, SPEED)
                 self._sleep(0.35)
             self._move(CENTRE_YAW, CENTRE_PITCH, SPEED)
         elif command.kind == "shake":

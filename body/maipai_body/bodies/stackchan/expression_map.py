@@ -47,7 +47,7 @@ class FaceFrame:
 class BodyAction:
     face: str
     yaw_fraction: float = 0.0
-    pitch_fraction: float = 0.0
+    pitch_fraction: float = 0.0  # of the way up from level (the head only travels up)
 
 
 # Turn-state cues are selected by the expression layer. Model text is never a token.
@@ -75,10 +75,10 @@ PRIMITIVE_BODY_MAP = {
     "glance": BodyAction("neutral", yaw_fraction=0.12),
     "tilt": BodyAction("neutral", pitch_fraction=0.08),
     "nod": BodyAction("happy", pitch_fraction=0.06),
-    "perk": BodyAction("happy", pitch_fraction=-0.06),
+    "perk": BodyAction("happy", pitch_fraction=0.10),  # lifts: pitch only goes up from level
     "attend": BodyAction("neutral", pitch_fraction=0.04),
     "settle": BodyAction("neutral"),
-    "speak": BodyAction("happy", pitch_fraction=-0.03),
+    "speak": BodyAction("happy", pitch_fraction=0.04),
 }
 
 UNSUPPORTED_PRIMITIVES = {

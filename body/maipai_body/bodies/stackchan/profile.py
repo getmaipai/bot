@@ -36,6 +36,12 @@ HEAD_COMMAND_SPEED = 150
 HEAD_SPEED_SOFT_MAX = 150
 LED_COUNT = 12
 LED_CHANNEL_MAX = 168
+# Level, the head's resting pose, in degrees. The pitch servo only travels UP from level: its limit
+# is 3 to 87 degrees (firmware hal_servo.cpp, angleLimit 30..870 in tenths), M5's tool text says
+# "Neutral position is pitch 0" and "90 is up", and the firmware itself returns to pitch 0 as its
+# default pose. The middle of the 5..85 profile range (45) is therefore 45 degrees UP, which is
+# why the head always looked at the ceiling. If 5 does not look level by eye, change this number.
+CENTRE_PITCH_DEG = 5
 EXPRESSION_YAW_FRACTION = 0.12
 EXPRESSION_PITCH_FRACTION = 0.08
 

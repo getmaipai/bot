@@ -15,6 +15,8 @@ checklist (`docs/dev.md`).
 
 ### Fixed
 
+- The robot's head no longer rests looking at the ceiling. Its up-and-down servo only travels up from level (about 3 to 87 degrees), but the host treated the middle of its range (45 degrees) as straight ahead, and the rest layer raised it to 66 and 85 degrees when drowsy or asleep. Level is now 5 degrees (`CENTRE_PITCH_DEG` in `bodies/stackchan/profile.py`, change it if 5 does not look level), rest stages stay at level, and the nod, perk and look-up moves are small upward offsets. "Look down" means level.
+
 - The camera stream start ran on the host's event loop at every start and reconnect, freezing the host for about 5 seconds and causing a failed first connection after a host restart. It now runs in a worker thread, and the loop guard also covers avatar frames and notifications.
 - The head-move cap no longer blocks a return to centre (settle and hold are always allowed) and is 30 moves a minute; a watchdog logs and reboots a unit that answers no commands for 120 seconds while connected.
 - Firmware is unchanged from 0.2.13.

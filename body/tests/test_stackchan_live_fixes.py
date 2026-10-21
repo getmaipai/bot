@@ -213,7 +213,7 @@ def test_the_listening_cue_perks_the_head_up_with_a_happy_face():
     from maipai_body.bodies.stackchan.expression_map import PRIMITIVE_BODY_MAP
 
     perk = PRIMITIVE_BODY_MAP["perk"]
-    assert perk.face == "happy" and perk.pitch_fraction < 0  # up and brighter
+    assert perk.face == "happy" and perk.pitch_fraction > 0  # up from level, and brighter
     import inspect
 
     from maipai_body import app

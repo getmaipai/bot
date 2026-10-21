@@ -15,19 +15,29 @@ from .expression_map import (
     UNSUPPORTED_PRIMITIVES,
     FaceFrame,
 )
+from .profile import CENTRE_PITCH_DEG
 
 
 def _limit(profile: BodyProfile, axis: str, fraction: float) -> float:
+    """A signed fraction of the axis' range, in radians (yaw)."""
     bound = profile.axis(axis)
     edge = max(abs(bound.min), abs(bound.max)) * fraction
     low, high = bound.min, bound.max
     if bound.unit == "deg":
         edge = math.radians(edge)
         low, high = math.radians(low), math.radians(high)
-    if axis == "head_pitch":
-        neutral = (low + high) / 2
-        edge = neutral + math.copysign(edge, fraction)
     return min(high, max(low, edge))
+
+
+def pitch_for(profile: BodyProfile, fraction: float = 0.0) -> float:
+    """Head pitch in radians: level plus ``fraction`` of the way up to the top of the range.
+
+    The head only travels up from level, so a negative fraction is level."""
+    bound = profile.axis("head_pitch")
+    level = max(bound.min, float(CENTRE_PITCH_DEG))
+    degrees = level + max(0.0, fraction) * (bound.max - level)
+    degrees = min(bound.max, max(level, degrees))
+    return math.radians(degrees) if bound.unit == "deg" else degrees
 
 
 def render(
@@ -51,14 +61,7 @@ def render(
         direction = doa_angle_rad or 1.0
         sign = 1.0 if direction >= 0 else -1.0
         yaw = sign * _limit(profile, "head_yaw", action.yaw_fraction)
-    pitch_axis = profile.axis("head_pitch")
-    pitch = (
-        _limit(profile, "head_pitch", action.pitch_fraction)
-        if action.pitch_fraction
-        else math.radians((pitch_axis.min + pitch_axis.max) / 2)
-        if pitch_axis.unit == "deg"
-        else (pitch_axis.min + pitch_axis.max) / 2
-    )
+    pitch = pitch_for(profile, action.pitch_fraction)
     pose = HeadPose(yaw=yaw, pitch=pitch)
     # Robot's part facade dispatches only methods present on its API; the expression
     # engine ordinarily owns motion through MotionWorker. StackChan's adapter accepts

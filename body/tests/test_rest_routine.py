@@ -107,8 +107,8 @@ def test_rest_renderer_does_not_resend_the_same_stage():
     renderer.render(_rest_output("asleep", 0.6, "sleepy"), client, STACKCHAN_PROFILE)
     assert len(client.frames) == 2
     assert len(client.poses) == 2
-    # Deeper stage drops the head further into the profile's down range.
-    assert client.poses[1].pitch > client.poses[0].pitch
+    # The head only travels up from level, so every rest stage rests at level; the face differs.
+    assert client.poses[1].pitch == client.poses[0].pitch
 
 
 def test_render_rest_routes_through_a_renderer_and_dedups():

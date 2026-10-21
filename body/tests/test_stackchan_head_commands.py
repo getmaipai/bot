@@ -15,6 +15,7 @@ from maipai_body.bodies.stackchan.head_commands import (
     parse_head_command,
     target_for,
 )
+from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG as C
 
 
 @pytest.mark.parametrize(
@@ -74,10 +75,10 @@ def test_other_speech_goes_to_the_hub(text):
 
 
 def test_targets_are_in_the_robots_own_directions_and_scale_with_the_amount():
-    assert target_for(HeadCommand("look", "left")) == (-45, 45)
-    assert target_for(HeadCommand("look", "right")) == (45, 45)
-    assert target_for(HeadCommand("look", "up")) == (0, 70)
-    assert target_for(HeadCommand("look", "down")) == (0, 20)
+    assert target_for(HeadCommand("look", "left")) == (-45, C)
+    assert target_for(HeadCommand("look", "right")) == (45, C)
+    assert target_for(HeadCommand("look", "up")) == (0, C + 25)
+    assert target_for(HeadCommand("look", "down")) == (0, C)
     assert target_for(HeadCommand("look", "left", "little"))[0] == -20
     assert target_for(HeadCommand("look", "left", "far"))[0] == -90
 
@@ -117,11 +118,11 @@ def test_look_left_moves_says_one_line_holds_the_pose_and_returns_to_centre_afte
     rec = _Recorder()
     line = rec.commander().run(HeadCommand("look", "left"))
     assert line == "Looking left."
-    assert rec.moves == [(-45, 45, 120)]
+    assert rec.moves == [(-45, C, 120)]
     assert rec.held and rec.held[0] > 5.0  # the post-turn settle must not undo it
     assert rec.timers[0]["seconds"] == 5.0
     rec.timers[0]["callback"]()
-    assert rec.moves[-1] == (0, 45, 120)
+    assert rec.moves[-1] == (0, C, 120)
 
 
 def test_stay_cancels_the_return_and_a_new_command_replaces_it():
@@ -139,10 +140,10 @@ def test_nod_shake_and_look_around_are_sequences_that_end_at_centre():
     rec = _Recorder()
     commander = rec.commander()
     commander.run(HeadCommand("nod"))
-    assert len(rec.moves) == 5 and rec.moves[-1][:2] == (0, 45)
+    assert len(rec.moves) == 5 and rec.moves[-1][:2] == (0, C)
     rec.moves.clear()
     commander.run(HeadCommand("shake"))
-    assert len(rec.moves) == 5 and rec.moves[-1][:2] == (0, 45)
+    assert len(rec.moves) == 5 and rec.moves[-1][:2] == (0, C)
     rec.moves.clear()
     commander.run(HeadCommand("around"))
     assert [m[0] for m in rec.moves] == [-60, 60, 0]
@@ -229,7 +230,7 @@ def test_the_bridge_answers_can_you_look_down_without_asking_the_hub(monkeypatch
     rec = _Recorder()
     streams, said = _bridge_says(monkeypatch, "Can you look down?", rec.commander())
     assert streams == [] and said == ["Looking down."]
-    assert rec.moves == [(0, 20, 120)]
+    assert rec.moves == [(0, C, 120)]
 
 
 def test_the_bridge_gives_the_fixed_reply_for_turn_around_and_never_asks_the_hub(monkeypatch):
