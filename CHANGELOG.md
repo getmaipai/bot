@@ -7,19 +7,25 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.26] - 2026-10-21
+
+### Changed
+
+- The petted reaction has no cooldown. A pet shows the heart (or a smile) for about 3 seconds and goes back to neutral, and the next real pet reacts again as soon as that animation ends; nothing waits 10 or 60 seconds. A swipe across the head counts as a pet too. The phantom filter and the firmware's sustained-contact recogniser keep false pets out.
+- The host logs the light sensor reading every minute (`StackChan light sensor: lux=...`) instead of every 10 minutes, to calibrate night mode from data. The unit's numbers are about 1 to 2 percent of true lux because the sensor sits behind the screen glass.
+
 ## [0.2.25] - 2026-10-21
 
 ### Fixed
 
 - A stable build after 0.2.24, which stalled the unit for 30 to 45 seconds and reset it. Firmware patch 053 puts the opus codec task and the audio detection task back on internal stacks (a task with a PSRAM stack cannot run while a flash write, such as a volume change saving to NVS, has the cache disabled), and turns the stop word off in the build. The rub detection (052) stays. The unit now reports why it last restarted (`unit boot: boot reason=N`), so a reset shows in the host log.
-- Night mode no longer starts at midday. The light sensor read 4.6 to 7.5 lux in the afternoon against a start threshold of 8, so night begins only below 1.5 lux and ends above 3 until a real night reading is logged (the host now logs the light sensor reading every minute: `StackChan light sensor: lux=...`; the unit's numbers are about 1 to 2 percent of true lux because the sensor sits behind the screen glass). Night volume is half the owner's volume, not 40%.
-- The petted reaction has no cooldown. A pet shows the heart (or a smile) for about 3 seconds and goes back to neutral, and the next real pet reacts again as soon as that animation ends; nothing waits 10 or 60 seconds. A swipe across the head counts as a pet too. The phantom filter and the firmware's sustained-contact recogniser keep false pets out.
+- Night mode no longer starts at midday. The light sensor read 4.6 to 7.5 lux in the afternoon against a start threshold of 8, so night begins only below 1.5 lux and ends above 3 until a real night reading is logged (the 10-minute light sensor line). Night volume is half the owner's volume, not 40%.
 
 ## [0.2.24] - 2026-10-21
 
 ### Added
 
-- Firmware patch 051: frees 24 KB of internal RAM by moving the opus codec task's stack to PSRAM, makes the stop word's internal-RAM budget explicit (model at most 12 KB, at least 34 KB free after it, 20 KB free to arm), and reports memory and task-stack headroom once a minute (`unit memory: ...`). The host also logs the light sensor reading every minute.
+- Firmware patch 051: frees 24 KB of internal RAM by moving the opus codec task's stack to PSRAM, makes the stop word's internal-RAM budget explicit (model at most 12 KB, at least 34 KB free after it, 20 KB free to arm), and reports memory and task-stack headroom once a minute (`unit memory: ...`). The host also logs the light sensor reading every 10 minutes.
 
 ### Fixed
 
