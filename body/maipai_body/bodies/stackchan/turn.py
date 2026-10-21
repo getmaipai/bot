@@ -6,10 +6,13 @@ import asyncio
 import concurrent.futures
 import inspect
 import logging
+import os
 import queue
 import re
 import threading
 import time
+import wave
+from pathlib import Path
 
 import av
 import numpy as np
@@ -51,6 +54,13 @@ POPUP_HOLD_S = 0.3
 # long to speak before the turn ends quietly (robot.follow_up.seconds, default 8).
 FOLLOW_UP_S = 8.0
 FOLLOW_UP_AFTER_S = 2.0
+# The microphone queue holds at most this many 32 ms blocks (about 2 s); older ones are dropped.
+CAPTURE_QUEUE_BLOCKS = 64
+# The level line covers the first two seconds heard (16 kHz).
+LEVEL_WINDOW_SAMPLES = 32000
+# Opt-in debug recording of the uplink, to a folder on this Mac (up to 30 s per turn).
+DEBUG_WAV_ENV = "MAIPAI_STACKCHAN_DEBUG_WAV_DIR"
+DEBUG_WAV_MAX = 16000 * 30
 # Voiced audio the hub must have called speech before a failure is worth an apology.
 MIN_SPEECH_S = 0.5
 # Fresh speech-to-text streams opened after a dropped socket before the turn gives up.
@@ -64,13 +74,25 @@ class StackChanAudioCapture:
     """AudioCapture protocol fed by decoded xiaozhi Opus frames."""
 
     def __init__(self) -> None:
-        self._queue: queue.Queue[npt.NDArray[np.float32] | None] = queue.Queue()
+        # Bounded: the capture keeps filling during the chat and the reply otherwise. The oldest
+        # block is dropped when it is full; recognition has long since read anything that old.
+        self._queue: queue.Queue[npt.NDArray[np.float32] | None] = queue.Queue(
+            maxsize=CAPTURE_QUEUE_BLOCKS
+        )
         self._closed = threading.Event()
         self._aborted = threading.Event()
         self._decoder = av.CodecContext.create("opus", "r")
         self._resampler = av.AudioResampler(format="flt", layout="mono", rate=16000)
         self._leftover = np.zeros(0, dtype=np.float32)
         self.peak = 0.0  # loudest sample seen (0..1); a level, never audio
+        self._square_sum = 0.0
+        self._level_samples = 0
+        # Opt-in debug recording (MAIPAI_STACKCHAN_DEBUG_WAV_DIR): the decoded uplink, kept in
+        # memory for one turn and written to that folder on this Mac only. Off by default.
+        self._debug_samples: list[npt.NDArray[np.float32]] | None = (
+            [] if os.environ.get(DEBUG_WAV_ENV) else None
+        )
+        self._debug_total = 0
 
     @property
     def closed(self) -> bool:
@@ -85,14 +107,51 @@ class StackChanAudioCapture:
                 samples = converted.to_ndarray().reshape(-1).astype(np.float32)
                 if samples.size:
                     self.peak = max(self.peak, min(1.0, float(np.max(np.abs(samples)))))
+                    if self._level_samples < LEVEL_WINDOW_SAMPLES:
+                        self._square_sum += float(np.sum(np.square(samples, dtype=np.float64)))
+                        self._level_samples += samples.size
+                    if self._debug_samples is not None and self._debug_total < DEBUG_WAV_MAX:
+                        self._debug_samples.append(samples)
+                        self._debug_total += samples.size
                 self._queue_blocks(samples)
 
     def _queue_blocks(self, samples: npt.NDArray[np.float32]) -> None:
         data = np.concatenate((self._leftover, samples))
         while len(data) >= BLOCK_SAMPLES:
-            self._queue.put(data[:BLOCK_SAMPLES].copy())
+            block = data[:BLOCK_SAMPLES].copy()
+            while True:
+                try:
+                    self._queue.put_nowait(block)
+                    break
+                except queue.Full:
+                    try:
+                        self._queue.get_nowait()  # drop the oldest
+                    except queue.Empty:
+                        pass
             data = data[BLOCK_SAMPLES:]
         self._leftover = data
+
+    @property
+    def rms(self) -> float:
+        """Loudness of the first two seconds heard (0..1); a level, never audio."""
+        if not self._level_samples:
+            return 0.0
+        return float(np.sqrt(self._square_sum / self._level_samples))
+
+    def save_debug_wav(self, folder: str, name: str) -> Path | None:
+        """Write the opt-in debug recording; returns the file, or None when it is off."""
+        if not self._debug_samples:
+            return None
+        directory = Path(folder).expanduser()
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{name}.wav"
+        pcm = np.clip(np.concatenate(self._debug_samples) * 32767, -32768, 32767).astype("<i2")
+        with wave.open(str(path), "wb") as out:
+            out.setnchannels(1)
+            out.setsampwidth(2)
+            out.setframerate(16000)
+            out.writeframes(pcm.tobytes())
+        return path
 
     def start(self) -> None:
         pass
@@ -490,6 +549,11 @@ class StackChanTurnBridge:
         self._side = side_executor or concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="stackchan-side"
         )
+        # The ring light has its own worker: a slow light write (5 s timeout) must not hold the
+        # face behind it.
+        self._light_side = side_executor or concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="stackchan-light"
+        )
         self._clock = clock
         self.cache_dir = cache_dir
         self.stt_factory, self.turn_factory, self.tts_factory = (
@@ -695,6 +759,29 @@ class StackChanTurnBridge:
                 deadline - self._clock(),
             )
 
+    def _log_uplink_level(self, session_id: str, capture) -> None:
+        """One line per turn: how loud the microphone was, to tell "too quiet" from "not heard"."""
+        try:
+            LOG.info(
+                "StackChan voice: uplink level peak %.2f, rms %.3f over the first 2 s",
+                getattr(capture, "peak", 0.0),
+                getattr(capture, "rms", 0.0),
+            )
+            folder = os.environ.get(DEBUG_WAV_ENV)
+            saver = getattr(capture, "save_debug_wav", None)
+            if folder and saver is not None:
+                stamp = time.strftime("%Y%m%d-%H%M%S")
+                path = saver(folder, f"uplink-{stamp}-{session_id[:8]}")
+                if path is not None:
+                    LOG.warning(
+                        "StackChan voice: debug recording of the microphone written to %s "
+                        "(%s is set; unset it to stop)",
+                        path,
+                        DEBUG_WAV_ENV,
+                    )
+        except Exception:
+            LOG.warning("StackChan voice: the uplink level line failed", exc_info=True)
+
     def _record_uplink(self, nbytes: int, peak: float, *, detect: bool = False) -> None:
         if self.uplink_stats is None:
             return
@@ -709,7 +796,7 @@ class StackChanTurnBridge:
     def _set_live(self, active: bool) -> None:
         if self.live_sink is None:
             return
-        self._side.submit(self._run_live_sink, active)
+        self._light_side.submit(self._run_live_sink, active)
 
     def _run_live_sink(self, active: bool) -> None:
         try:
@@ -731,6 +818,7 @@ class StackChanTurnBridge:
     def close(self) -> None:
         """Stop the side-effect worker; pending face and light updates are dropped."""
         self._side.shutdown(wait=False, cancel_futures=True)
+        self._light_side.shutdown(wait=False, cancel_futures=True)
 
     def _speaker_evidence(self, stt_result) -> dict | None:
         try:
@@ -816,6 +904,8 @@ class StackChanTurnBridge:
                 return
             self._current_session = session_id
             result = await self._recognise(base, cookie, capture, started_at)
+            self._log_uplink_level(session_id, capture)
+            capture.close()  # recognition is over: stop buffering the microphone
             LOG.info(
                 "StackChan voice: speech-to-text ended (%s, %d characters)",
                 result.kind,

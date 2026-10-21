@@ -116,6 +116,13 @@ class AnsweredTurnTests(VoiceEndToEnd):
         )
         self.assertLess(max(self.lag), 0.25, f"the event loop stalled: {max(self.lag):.3f} s")
 
+    async def test_each_turn_logs_the_microphone_level_once(self):
+        with self.assertLogs("maipai_body.bodies.stackchan.turn", level="INFO") as logs:
+            await self.speak_a_phrase()
+            await self.wait_until(lambda: len(self.device.downlink_log) > 3)
+        lines = [m for m in logs.output if "uplink level peak" in m]
+        self.assertEqual(len(lines), 1, lines)
+
     async def test_face_is_reset_to_neutral_before_the_tts_stop(self):
         await self.speak_a_phrase()
         await self.wait_until(
