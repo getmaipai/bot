@@ -1,0 +1,139 @@
+# Intent: stop the head touch strip's phantom pets (owner report 2026-10-21: the unit showed its petted heart and open-mouthed happy face at random with nobody touching it, and the host log showed a pet about every 10 s). The strip's "touched" test was any pad reading of 1 or more out of 3. A press now needs contact that starts at a pad reading of 2 or more and is held for 400 ms (at most one dropped sample); a shorter contact is a blip, and three blips inside 10 s lock the strip out for 10 s. The stock stroke reaction (happy face, heart and shy decorators, head motion) is off, because the host decides what a pet looks like. Press and swipe events carry held_ms=400 so the host can trust them, and once a minute a head_touch_stats event (samples, touched, max pad reading, blips, presses) goes to the host log so the strip's baseline noise is visible.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_head_touch.cpp, hal/hal_mcp.cpp, stackchan/modifiers/head_pet.h (MIT). Applies after 047 with --unidiff-zero.
+# Check after a flash: leave the unit alone for 5 minutes: no petted face, no heart, and the host log shows "unit touch: head_touch_stats" each minute with presses=0. Then stroke the head for a second: a pet is reported (the unit shows no stock reaction; the host answers). If a gentle real stroke is missed, the stats show max=1: lower kPressIntensity to 1 and keep the 400 ms hold.
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index 3847d9e..f051ebe 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -8,0 +9,2 @@
++#include "device_events.h"
++#include <cstdio>
+@@ -16 +18,11 @@ static const std::string_view _tag = "HAL-HeadTouch";
+-enum class TouchState { IDLE, TOUCHED, SWIPING };
++enum class TouchState { IDLE, CANDIDATE, TOUCHED, SWIPING };
++
++// The strip reports phantom touches with nobody there (host log 2026-10-21: one about every 10 s).
++// A press now needs contact held for kHoldSamples samples (400 ms at 50 ms), starting at a pad
++// reading of kPressIntensity or more (readings are 0 to 3) and staying at 1 or more with at most one
++// dropped sample. Three short blips inside kBlipWindowMs lock the strip out for kLockoutMs.
++constexpr int kPressIntensity   = 2;
++constexpr int kHoldSamples      = 8;
++constexpr int kBlipCountToLock  = 3;
++constexpr uint32_t kBlipWindowMs = 10000;
++constexpr uint32_t kLockoutMs    = 10000;
+@@ -59,0 +72,3 @@ public:
++    uint32_t blips   = 0;  // short contacts dropped as noise, since the last report
++    uint32_t presses = 0;
++
+@@ -61 +76 @@ public:
+-    HeadPetGesture update(const TouchData& data)
++    HeadPetGesture update(const TouchData& data, uint32_t now_ms)
+@@ -64,0 +80,5 @@ public:
++        if (now_ms < locked_until_ms) {
++            current_state = TouchState::IDLE;
++            return gesture;
++        }
++
+@@ -67,2 +87,2 @@ public:
+-                if (data.is_touched()) {
+-                    current_state    = TouchState::TOUCHED;
++                if (data.get_max_intensity() >= kPressIntensity) {
++                    current_state    = TouchState::CANDIDATE;
+@@ -70,2 +90,24 @@ public:
+-                    gesture          = HeadPetGesture::Press;
+-                    // mclog::tagInfo(_tag, "Touch detected at position: {}", initial_position);
++                    held_samples     = 1;
++                    gap_samples      = 0;
++                }
++                break;
++
++            case TouchState::CANDIDATE:
++                if (data.is_touched()) {
++                    gap_samples = 0;
++                    if (++held_samples >= kHoldSamples) {
++                        current_state    = TouchState::TOUCHED;
++                        initial_position = data.get_position();
++                        gesture          = HeadPetGesture::Press;
++                        presses++;
++                    }
++                } else if (++gap_samples > 1) {
++                    // Contact ended before it was held: noise, not a stroke.
++                    current_state = TouchState::IDLE;
++                    blips++;
++                    blip_times_ms[blip_next] = now_ms;
++                    blip_next                = (blip_next + 1) % kBlipCountToLock;
++                    uint32_t oldest          = blip_times_ms[blip_next];
++                    if (oldest != 0 && now_ms - oldest < kBlipWindowMs) {
++                        locked_until_ms = now_ms + kLockoutMs;
++                    }
+@@ -115,0 +158,5 @@ private:
++    int held_samples                          = 0;
++    int gap_samples                           = 0;
++    uint32_t locked_until_ms                  = 0;
++    uint32_t blip_times_ms[kBlipCountToLock]  = {};
++    int blip_next                             = 0;
+@@ -128,0 +176,3 @@ static void _head_touch_update_task(void* param)
++    // Baseline statistics for the host log, once a minute: how noisy the strip is at rest.
++    uint32_t stats_samples = 0, stats_touched = 0, stats_max = 0, stats_start_ms = 0;
++
+@@ -138 +188,2 @@ static void _head_touch_update_task(void* param)
+-        gesture = recognizer.update(data);
++        const uint32_t now_ms = data.timestamp * portTICK_PERIOD_MS;
++        gesture               = recognizer.update(data, now_ms);
+@@ -142,0 +194,22 @@ static void _head_touch_update_task(void* param)
++        stats_samples++;
++        if (data.is_touched()) {
++            stats_touched++;
++        }
++        if (data.get_max_intensity() > stats_max) {
++            stats_max = data.get_max_intensity();
++        }
++        if (stats_start_ms == 0) {
++            stats_start_ms = now_ms;
++        } else if (now_ms - stats_start_ms >= 60000) {
++            char extra[96];
++            snprintf(extra, sizeof(extra), "\"samples\":%u,\"touched\":%u,\"max\":%u,\"blips\":%u,\"presses\":%u",
++                     static_cast<unsigned>(stats_samples), static_cast<unsigned>(stats_touched),
++                     static_cast<unsigned>(stats_max), static_cast<unsigned>(recognizer.blips),
++                     static_cast<unsigned>(recognizer.presses));
++            mclog::tagInfo(_tag, "minute: {}", extra);
++            device_events_push_diag("head_touch_stats", extra);
++            stats_samples = stats_touched = stats_max = 0;
++            recognizer.blips = recognizer.presses = 0;
++            stats_start_ms = now_ms;
++        }
++
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index 0875804..de51513 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -62 +62 @@ std::mutex s_events_mutex;
+-void push_event(const char* kind)
++void push_event(const char* kind, const char* extra = "")
+@@ -68 +68 @@ void push_event(const char* kind)
+-    s_events.push_back({kind, static_cast<uint32_t>(esp_timer_get_time() / 1000), {}});
++    s_events.push_back({kind, static_cast<uint32_t>(esp_timer_get_time() / 1000), extra});
+@@ -169 +169,2 @@ void Hal::xiaozhi_mcp_init()
+-                push_event("head_touch");
++                // A press now means contact held for 400 ms (hal_head_touch.cpp); the host trusts that.
++                push_event("head_touch", "\"held_ms\":400");
+@@ -171 +172 @@ void Hal::xiaozhi_mcp_init()
+-                push_event("head_swipe_forward");
++                push_event("head_swipe_forward", "\"held_ms\":400");
+@@ -173 +174 @@ void Hal::xiaozhi_mcp_init()
+-                push_event("head_swipe_back");
++                push_event("head_swipe_back", "\"held_ms\":400");
+diff --git a/firmware/main/stackchan/modifiers/head_pet.h b/firmware/main/stackchan/modifiers/head_pet.h
+index 7548767..3285cc7 100644
+--- a/firmware/main/stackchan/modifiers/head_pet.h
++++ b/firmware/main/stackchan/modifiers/head_pet.h
+@@ -16,0 +17,4 @@ namespace stackchan {
++// The stock stroke reaction (open-mouthed happy face, heart and shy decorators, a head motion) is
++// off: the host decides what a pet looks like. Set true to bring the stock reaction back.
++constexpr bool kUnitPetReaction = false;
++
+@@ -47 +51,3 @@ public:
+-            handle_swipe(stackchan);
++            if (kUnitPetReaction) {
++                handle_swipe(stackchan);
++            }

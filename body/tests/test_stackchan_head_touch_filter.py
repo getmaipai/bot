@@ -65,3 +65,18 @@ def test_a_phantom_does_not_wake_a_sleeping_robot():
         assert seen == []
     finally:
         behavior.close()
+
+
+def test_a_swipe_the_unit_says_was_held_is_real_at_once():
+    filt = HeadTouchFilter()
+    assert len(filt.accept(0.0, [_ev("head_swipe_forward", held_ms=400)])) == 1
+
+
+def test_companion_keeps_held_ms_on_head_events():
+    from maipai_body.bodies.stackchan.companion import StackChanCompanion
+
+    companion = StackChanCompanion(
+        lambda name, args: [{"kind": "head_swipe_back", "at_ms": 3, "held_ms": 400}]
+    )
+    (event,) = companion.poll_events()
+    assert event.extra == {"held_ms": 400}

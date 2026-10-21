@@ -7,6 +7,10 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- Firmware patch 048 (not flashed): the head touch strip no longer invents pets. A press needs contact that starts at a pad reading of 2 and is held for 400 ms; three short blips in 10 seconds lock the strip out for 10 seconds; the unit's own stroke face, heart and head motion are off (the host decides what a pet looks like); and a once-a-minute `head_touch_stats` line in the host log shows the strip's resting noise.
+
 ## [0.2.21] - 2026-10-21
 
 ### Fixed

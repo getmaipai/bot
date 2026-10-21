@@ -178,3 +178,14 @@ to test.
 **Heart and surprise faces.** The unit's own stroke reaction sets the open-mouthed happy face and
 restores it 3 s after the hand lifts. The host now puts the neutral face back 3 s after any stroke,
 shake or heart (never during a conversation), so the open mouth cannot linger.
+
+## 5. Phantom pets (2026-10-21)
+
+The unit showed its petted heart and open-mouthed happy face at random, and the host log had a
+"petted" line every 10 to 13 s with nobody there. Cause: `hal_head_touch.cpp` called the strip
+touched when any of its three pads read 1 or more (readings are 0 to 3), set up once at sensitivity
+level 3 with no baseline read, and fired a press at once. The stock `HeadPetModifier` then shows the
+happy face, the heart and shy decorators and a head motion on every swipe, with no host involved.
+Host side (0.2.21): a lone head event is ignored unless it was held 400 ms, a second follows
+within about 4.5 s, or several arrive together. Firmware side (048): see the patch header. If a
+gentle real stroke is missed, `head_touch_stats` will show max=1; lower `kPressIntensity` to 1.

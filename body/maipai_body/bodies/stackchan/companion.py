@@ -102,7 +102,7 @@ class StackChanCompanion:
                             for key, value in item.items()
                             if key not in {"kind", "at_ms"} and isinstance(value, (int, str, bool))
                         }
-                        if kind in DIAGNOSTIC_KINDS or kind == "head_touch"
+                        if kind in DIAGNOSTIC_KINDS or kind.startswith("head_")
                         else None
                     )
                     or None,
