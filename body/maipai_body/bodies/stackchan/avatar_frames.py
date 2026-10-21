@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
-
 UNIT_START_CAMERA = 0x05
 UNIT_STOP_CAMERA = 0x06
 
