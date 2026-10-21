@@ -1,0 +1,60 @@
+# Intent: a stable build after 0.2.24 (owner report 2026-10-21: the unit stopped answering MCP calls for 30 to 45 s and then reset, repeatedly; a spoken volume change cut off mid-word and the speaking face stuck). 0.2.24 changed three things at once: the opus codec task's 24 KB stack moved to PSRAM (patch 051), the stop word came up (state=ready) and ran its model while the robot spoke, and the rub detection (052). The prime suspect is the PSRAM stack: ESP-IDF does not allow a task with an external stack to run while a flash write has the cache disabled, and the volume change writes NVS. This patch puts the opus stack and the audio detection stack back in internal RAM at their stock sizes, turns the stop word off in the build (kStopWordEnabled=false, reported as stop_word state=off why=build), and reports esp_reset_reason() at boot as a boot event so every reset shows in the host log. The rub detection (052) and the memory report stay.
+# Upstream: 78/xiaozhi-esp32 main/audio/audio_service.cc, main/audio/wake_words/afe_wake_word.cc (MIT); m5stack/StackChan firmware/main/hal/hal_head_touch.cpp. Applies after 052 with --unidiff-zero.
+# Check after a flash: no stalls; the host log shows "unit boot: boot reason=1" (power on) or 3 (software) after a flash and never reason 4 to 7 (panic or watchdog) in normal use; "unit stop word: stop_word state=off why=build"; "unit memory" int_min back near the 12.5 KB of 0.2.23 (the price of the stable stacks).
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index e97b9c7..d17ea0d 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -11,0 +12 @@
++#include <esp_system.h>
+@@ -289,0 +291,7 @@ void Hal::head_touch_init()
++    // Why the unit last restarted (1 power on, 3 software, 4 panic, 5 interrupt watchdog, 6 task
++    // watchdog, 7 other watchdog, 9 brownout), reported to the host so resets show up in its log.
++    char reason[32];
++    snprintf(reason, sizeof(reason), "\"reason\":%d", static_cast<int>(esp_reset_reason()));
++    mclog::tagInfo(_tag, "boot: {}", reason);
++    device_events_push_diag("boot", reason);
++
+diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.cc b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
+index f7cad6f..7769b3a 100644
+--- a/firmware/xiaozhi-esp32/main/audio/audio_service.cc
++++ b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
+@@ -162,4 +162,5 @@ void AudioService::Start() {
+-    /* Start the opus codec task. Its 24 KB stack lives in PSRAM (patch 051): internal RAM is the
+-     * scarce resource on this unit (lowest free seen: 12.5 KB), and this one stack was the largest
+-     * single internal allocation. It never touches flash, so an external stack is safe. */
+-    xTaskCreateWithCaps([](void* arg) {
++    /* Start the opus codec task. Its 24 KB stack is back in internal RAM (patch 053): with it in
++     * PSRAM (patch 051) the unit stalled for 30 to 45 s and reset, most likely because a task with an
++     * external stack cannot run while a flash write (NVS) has the cache disabled. The measured least
++     * stack left was 4,532 bytes, so it keeps its full size. */
++    xTaskCreate([](void* arg) {
+@@ -169 +170 @@ void AudioService::Start() {
+-    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_, MALLOC_CAP_SPIRAM);
++    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
+diff --git a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
+index 0677d8a..babfe50 100644
+--- a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
++++ b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
+@@ -96,3 +96,3 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
+-    // The detection task keeps its stack in PSRAM: the stop word's detect() needs a deeper stack
+-    // than the 4 KB it had, and internal RAM is the scarce resource here.
+-    xTaskCreateWithCaps([](void* arg) {
++    // The detection task is back to the stock internal 4 KB stack (patch 053): an external stack is
++    // unsafe when a flash write disables the cache, and the stop word's deeper detect() is off.
++    xTaskCreate([](void* arg) {
+@@ -102 +102 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
+-    }, "audio_detection", 12288, this, 3, nullptr, MALLOC_CAP_SPIRAM);
++    }, "audio_detection", 4096, this, 3, nullptr);
+@@ -143,0 +144,4 @@ constexpr StopCommand kStopCommands[] = {
++// The stop word is off in this build. The first flash of it (0.2.24) came with stalls of 30 to 45 s
++// and resets; until the cause is settled on the unit, it stays off rather than risk the unit.
++constexpr bool kStopWordEnabled = false;
++
+@@ -144,0 +149,6 @@ void AfeWakeWord::InitStopWord() {
++    if (!kStopWordEnabled) {
++        ESP_LOGI(TAG, "Stop word off: disabled in this build");
++        stop_disabled_ = true;
++        device_events_push_diag("stop_word", "\"state\":\"off\",\"why\":\"build\"");
++        return;
++    }

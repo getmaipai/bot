@@ -522,9 +522,12 @@ class StackChanBehavior:
                     )
                     continue
                 detail = " ".join(f"{k}={v}" for k, v in extra.items())
-                label = {"stop_word": "unit stop word", "heap_stats": "unit memory"}.get(
-                    event.kind, "unit memory" if event.kind == "stack_stats" else "unit touch"
-                )
+                label = {
+                    "stop_word": "unit stop word",
+                    "heap_stats": "unit memory",
+                    "stack_stats": "unit memory",
+                    "boot": "unit boot",
+                }.get(event.kind, "unit touch")
                 logger.info("%s: %s %s", label, event.kind, detail)
         events = [e for e in events if getattr(e, "kind", None) not in DIAGNOSTIC_KINDS]
         events = self._head_filter.accept(now, events)

@@ -270,6 +270,7 @@ apply_repo_patch 049-stop-word.patch "$SRC"
 apply_repo_patch 050-ring-dark-with-screen.patch "$SRC"
 apply_repo_patch 051-internal-ram-budget.patch "$SRC"
 apply_repo_patch 052-rub-detection.patch "$SRC"
+apply_repo_patch 053-stable-stacks.patch "$SRC"
 
 # Room in the 4 MB assets partition for the stop-word model (mn5q8_en, about 2.2 MB): drop the
 # launcher icons and artwork of the Mooncake apps, which this firmware never starts (it boots

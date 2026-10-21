@@ -7,6 +7,13 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.25] - 2026-10-21
+
+### Fixed
+
+- A stable build after 0.2.24, which stalled the unit for 30 to 45 seconds and reset it. Firmware patch 053 puts the opus codec task and the audio detection task back on internal stacks (a task with a PSRAM stack cannot run while a flash write, such as a volume change saving to NVS, has the cache disabled), and turns the stop word off in the build. The rub detection (052) stays. The unit now reports why it last restarted (`unit boot: boot reason=N`), so a reset shows in the host log.
+- Night mode no longer starts at midday. The light sensor read 4.6 to 7.5 lux in the afternoon against a start threshold of 8, so night begins only below 1.5 lux and ends above 3 until a real night reading is logged (the 10-minute light sensor line). Night volume is half the owner's volume, not 40%.
+
 ## [0.2.24] - 2026-10-21
 
 ### Added

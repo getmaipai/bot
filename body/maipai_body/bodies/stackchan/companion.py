@@ -28,6 +28,7 @@ DIAGNOSTIC_KINDS = frozenset(
         "stop_word",
         "heap_stats",
         "stack_stats",
+        "boot",
     }
 )
 EVENT_KINDS = (

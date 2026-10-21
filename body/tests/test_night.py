@@ -108,7 +108,7 @@ class _Rig:
         return [c.name for c in self.device.calls]
 
 
-def test_entering_night_makes_the_five_calls_with_forty_percent_volume():
+def test_entering_night_makes_the_five_calls_with_half_the_volume():
     rig = _Rig(lux=100)
     rig.quiet = True
     rig.night.apply_settings({FACE_COLOR_KEY: "sky"})
@@ -116,7 +116,7 @@ def test_entering_night_makes_the_five_calls_with_forty_percent_volume():
     assert rig.night.tick() is True
     assert ("self.screen.set_face_background", {"palette": "sky", "night": True}) in rig.names()
     assert ("self.screen.set_brightness", {"brightness": NIGHT_BRIGHTNESS}) in rig.names()
-    assert ("self.audio_speaker.set_volume", {"volume": 20}) in rig.names()
+    assert ("self.audio_speaker.set_volume", {"volume": 25}) in rig.names()
     assert ("self.robot.set_idle_motion", {"enabled": False}) in rig.names()
     assert rig.led_calls == [False]
 
@@ -244,7 +244,7 @@ def test_reconnect_during_quiet_hours_sends_night_state(tmp_path):
     rig.night.on_connect()
     assert rig.night.tick() is True
     assert ("self.screen.set_face_background", {"palette": "mint", "night": True}) in rig.names()
-    assert ("self.audio_speaker.set_volume", {"volume": 28}) in rig.names()
+    assert ("self.audio_speaker.set_volume", {"volume": 35}) in rig.names()
 
 
 def test_reconnect_writes_the_default_owner_volume_when_none_was_ever_saved(tmp_path):
@@ -347,7 +347,7 @@ def test_alarm_at_night_plays_at_full_volume_and_night_never_lowers_it():
     rig = _Rig(lux=100)
     rig.quiet = True
     rig.night.tick()
-    assert rig.device.volume == 20
+    assert rig.device.volume == 25
     played: list[int] = []
 
     class Player:
@@ -381,7 +381,7 @@ def test_alarm_at_night_plays_at_full_volume_and_night_never_lowers_it():
     rig.alarm = False
     alarm.handle_command({"alarm_id": "a1", "state": "cleared"})
     rig.night.tick()
-    assert rig.device.volume == 20
+    assert rig.device.volume == 25
 
 
 def test_stackchan_settings_reach_the_night_controller_through_the_command_channel():

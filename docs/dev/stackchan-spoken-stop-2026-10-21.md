@@ -148,3 +148,17 @@ unused margin there are the next candidates to shrink or move.
 (threshold 8). A room at midday is normally far brighter, so the sensor is either shadowed behind
 the screen or the formula reads low. The host now logs the light sensor every 10 minutes
 (`StackChan light sensor: lux=..., night=...`) so a day of readings can be compared with the room.
+
+## 0.2.24 stalled; the stop word is off again (2026-10-21, patch 053)
+
+After the flash of 0.2.24 the unit stopped answering MCP calls for 30 to 45 s and then
+reset, repeatedly, and a spoken volume change cut off mid-word. 0.2.24 changed three things at
+once: the opus codec task's stack moved to PSRAM (patch 051), the stop word came up and ran its
+model while the robot spoke (`state=ready cost=11092 free=39247`), and the rub detection (052). The
+likeliest cause is the PSRAM stack: ESP-IDF does not allow a task with an external stack to run
+while a flash write has the cache disabled, and the volume change saves to NVS. The memory plan itself
+worked (internal minimum free 27 KB against 12.5 KB), but not at that price. Patch 053 puts both
+stacks back in internal RAM at their stock sizes, turns the stop word off in the build, and reports
+`esp_reset_reason()` at boot so the next reset shows its cause in the host log. The stop word returns
+only after the stack question is settled on the unit, with the opus stack internal (least stack left
+was 4,532 of 24,576 bytes, so it cannot shrink much) and the RAM found elsewhere.

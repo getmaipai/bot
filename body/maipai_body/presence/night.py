@@ -13,14 +13,17 @@ from maipai_body.settings_keys import FACE_COLOR_KEY, NIGHT_MODE_KEY, face_color
 
 logger = logging.getLogger("maipai_body.presence.night")
 
-# Pending measurement on the unit. Lux from the sensor beside the display may be biased.
-NIGHT_DARK_LUX = 8.0
-# Pending measurement on the unit; deliberately above the dark threshold for hysteresis.
-NIGHT_LIGHT_LUX = 20.0
+# The sensor beside the display reads low: afternoon readings were 4.6 to 7.5 lux (host log
+# 2026-10-21), which started night mode at midday with the old 8 lux threshold. Until a real night
+# reading is logged (the 10-minute light sensor line), night starts only below 1.5 lux.
+NIGHT_DARK_LUX = 1.5
+# Deliberately above the dark threshold for hysteresis.
+NIGHT_LIGHT_LUX = 3.0
 STABLE_FOR_S = 120.0
 POLL_S = 10.0
-# Night volume is this share of the owner's volume (the design says about 40%).
-NIGHT_VOLUME_SHARE = 0.4
+# Night volume is this share of the owner's volume. It was 40%, which made a night misfire sound
+# broken; it never drops below half the owner's volume.
+NIGHT_VOLUME_SHARE = 0.5
 # Pending measurement on the unit: the dimmed backlight level (0 to 100).
 NIGHT_BRIGHTNESS = 15
 DEFAULT_OWNER_VOLUME = 70
