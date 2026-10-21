@@ -934,10 +934,11 @@ class StackChanTurnBridge:
 
                 stop = is_stop_phrase(result.text)
                 heard = normalize(result.text)
-                # Short utterances are the ones that could be a stop; longer ones are not logged.
+                # The log never holds what a person said: a matched stop phrase comes from a fixed
+                # list and is named, anything else is only counted in words.
                 LOG.info(
                     "StackChan voice: stop check %s -> %s",
-                    repr(heard) if len(heard.split()) <= 6 else f"({len(heard.split())} words)",
+                    repr(heard) if stop else f"({len(heard.split())} words)",
                     "yes" if stop else "no",
                 )
                 if stop:

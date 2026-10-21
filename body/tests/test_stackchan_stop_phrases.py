@@ -156,3 +156,4 @@ def test_every_checked_transcript_logs_one_line_and_long_ones_omit_the_text(capl
     lines = [r.getMessage() for r in caplog.records if "stop check" in r.getMessage()]
     assert lines[0].endswith("'stop' -> yes")
     assert lines[1].endswith("(15 words) -> no")
+    assert "roman" not in " ".join(lines)

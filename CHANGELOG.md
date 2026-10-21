@@ -15,7 +15,7 @@ checklist (`docs/dev.md`).
 
 ### Added
 
-- Every transcript checked against the stop list writes one INFO line (`stop check 'stop' -> yes`); utterances longer than six words log only their word count.
+- Every transcript checked against the stop list writes one INFO line (`stop check 'stop' -> yes`); a matched stop phrase is named and anything else logs only its word count, since the log never holds what a person said.
 - The host logs the head sensor's per-minute statistics from firmware that sends them (`unit touch: head_touch_stats ...`).
 
 ## [0.2.20] - 2026-10-21
