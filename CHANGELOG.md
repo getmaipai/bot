@@ -15,6 +15,8 @@ checklist (`docs/dev.md`).
 
 ### Fixed
 
+- Night and day are reapplied every time the robot connects, so a host restart or a unit reboot can no longer leave the face dark in the morning (or bright at night); night ends after 10 minutes if the light cannot be read; each night start and end is logged with its reason. The owner volume (default 70, brightness 100) is remembered in `owner_levels.json` across host restarts and flashes and restored exactly when day returns; a voice volume change by day changes it, one at night only changes that night.
+
 - The robot's head no longer rests looking at the ceiling. Its up-and-down servo only travels up from level (about 3 to 87 degrees), but the host treated the middle of its range (45 degrees) as straight ahead, and the rest layer raised it to 66 and 85 degrees when drowsy or asleep. Level is now 5 degrees (`CENTRE_PITCH_DEG` in `bodies/stackchan/profile.py`, change it if 5 does not look level), rest stages stay at level, and the nod, perk and look-up moves are small upward offsets. "Look down" means level.
 
 - The camera stream start ran on the host's event loop at every start and reconnect, freezing the host for about 5 seconds and causing a failed first connection after a host restart. It now runs in a worker thread, and the loop guard also covers avatar frames and notifications.
