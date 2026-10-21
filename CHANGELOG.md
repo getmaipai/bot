@@ -7,6 +7,14 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-10-20
+
+### Fixed
+
+- Smoother speech: a reply is one paced stream with no gap between sentences, a stall is caught up at the normal cadence instead of re-based, and the speaking state lasts until the unit has finished playing.
+- Hearing and reliability: one `uplink level peak, rms` line per turn (and an opt-in debug recording of the uplink with `MAIPAI_STACKCHAN_DEBUG_WAV_DIR`); the capture closes when recognition ends and its queue is bounded; `get_head_angles` is no longer retried; the ring light has its own worker; presence-loop warnings are rate limited; `take_photo` no longer passes an unsupported device id.
+- StackChan firmware patches 040 to 043: the decoder task runs at priority 5 with a 4-slot playback queue, the update task sleeps before taking the display lock, the uplink Opus uses voice mode at complexity 3 with no DTX at 24 kbps, and `get_head_angles` answers from the animation value without a servo bus read. Patches to flash since 0.2.2: 030, 032, 033, 034, 037 to 043.
+
 ## [0.2.10] - 2026-10-20
 
 ### Fixed
