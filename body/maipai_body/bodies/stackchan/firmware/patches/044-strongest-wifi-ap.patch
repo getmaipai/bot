@@ -1,0 +1,24 @@
+# Intent: join the strongest access point of the saved network (Jesse's unit, 2026-10-20: it joined a -80 dBm channel-1 mesh node although a -37 dBm node on channel 6 was in the scan, then failed to reach the host). The Wi-Fi component only pins the strongest scan result when NVS wifi/remember_bssid is 1, and it defaults to 0, so the radio took the first match it met while scanning. This sets the flag at boot (written only when it is not already 1). The component then sorts scan results by signal, pins the strongest, and on failure retries it 5 times, tries the next-strongest, and rescans when none is left, so a vanished access point still falls back to any other one.
+# Upstream: m5stack/StackChan firmware/main/hal/hal.cpp and 78/esp-wifi-connect wifi_station.cc (MIT). Applies after 039 with --unidiff-zero.
+# Check after a flash: with both access points up, the serial log shows "connected with SKYNET ... bssid" of the strongest one; with the strongest powered off, it connects to the next one within about a minute.
+diff --git a/firmware/main/hal/hal.cpp b/firmware/main/hal/hal.cpp
+index 3ca8a14..84b8341 100644
+--- a/firmware/main/hal/hal.cpp
++++ b/firmware/main/hal/hal.cpp
+@@ -34,0 +35,16 @@ void Hal::init()
++    // Join the strongest access point of the saved network. Without this flag the Wi-Fi component
++    // lets the radio take the first matching access point it meets while scanning, and a weak
++    // mesh node on channel 1 beat the strong one on channel 6 (-80 dBm, no usable link). With the
++    // flag it pins the strongest scan result and falls back to the next one if that fails.
++    {
++        nvs_handle_t wifi_nvs;
++        if (nvs_open("wifi", NVS_READWRITE, &wifi_nvs) == ESP_OK) {
++            uint8_t remember_bssid = 0;
++            if (nvs_get_u8(wifi_nvs, "remember_bssid", &remember_bssid) != ESP_OK || remember_bssid != 1) {
++                nvs_set_u8(wifi_nvs, "remember_bssid", 1);
++                nvs_commit(wifi_nvs);
++            }
++            nvs_close(wifi_nvs);
++        }
++    }
++
