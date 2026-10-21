@@ -44,8 +44,13 @@ class StackChanVisionBridge:
         self._timer: threading.Timer | None = None
         self._lock = threading.Lock()
 
-    def track_stream_frame(self, *, deadline_s: float = 0.4) -> FaceTrackTarget:
-        """Track from the latest streamed frame, discarding one past its deadline."""
+    def track_stream_frame(
+        self, *, deadline_s: float = 0.4, may_move: Callable[[], bool] | None = None
+    ) -> FaceTrackTarget:
+        """Track from the latest streamed frame, discarding one past its deadline.
+
+        ``may_move`` is asked just before the head would follow the face; when it says no the
+        face is still reported (the room is occupied) but the head stays where it is."""
         if not 0 < deadline_s <= 1.0:
             raise ValueError("tracking deadline must be over 0 and at most 1 second")
         started = self.clock()
@@ -73,8 +78,10 @@ class StackChanVisionBridge:
                 x=float((x + width / 2) / frame_w),
                 y=float((y + height / 2) / frame_h),
             )
+            if may_move is not None and not may_move():
+                return target
             self._cancel_timer()
-            pose = HeadPose(yaw=float((target.x - 0.5) * 0.35), pitch=float((0.5 - target.y) * 0.2))
+            pose = _follow_pose(target)
             holder = "stackchan-vision"
             if self.robot.lease_holder != holder:
                 self.robot.lease.acquire(priority="expression", holder=holder)
@@ -124,7 +131,7 @@ class StackChanVisionBridge:
         )
         self._cancel_timer()
         # The Robot head adapter clamps both angles against profile.py.
-        pose = HeadPose(yaw=float((target.x - 0.5) * 0.35), pitch=float((0.5 - target.y) * 0.2))
+        pose = _follow_pose(target)
         holder = "stackchan-vision"
         if self.robot.lease_holder != holder:
             self.robot.lease.acquire(priority="expression", holder=holder)
@@ -216,6 +223,21 @@ class StackChanVisionBridge:
                 self.robot.lease.release(holder="stackchan-vision")
             except Exception:
                 pass
+
+
+def _follow_pose(target: FaceTrackTarget) -> HeadPose:
+    """Head pose that turns toward a face; pitch is level plus up to 20 degrees for a high face.
+
+    The head only travels up from level, so a face below the middle of the frame is level."""
+    import math
+
+    from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
+
+    assert target.x is not None and target.y is not None
+    up_degrees = max(0.0, 0.5 - target.y) * 40.0
+    return HeadPose(
+        yaw=float((target.x - 0.5) * 0.35), pitch=math.radians(CENTRE_PITCH_DEG + up_degrees)
+    )
 
 
 def _decode_jpeg(data: bytes) -> npt.NDArray[np.uint8]:

@@ -20,6 +20,8 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- Idle face watching, on by default behind `robot.camera.watch_level`: about twice a second the robot looks for a face in the unit's camera frame (local only, nothing stored). A face keeps it from drifting to sleep, the head follows it when the head gate allows, and a person returning after 10 minutes of an empty room gets one gesture greeting. The host logs one line a minute with the unit's camera frames and bytes. See `docs/dev/stackchan-face-watching-2026-10-21.md`.
+
 - Face detection that works in the hub bundle: camera frames are decoded with the bundled PyAV (no OpenCV) and faces are found by the pinned YuNet model on the bundled ONNX Runtime (no Reachy SDK). Measured on the Mac Studio: JPEG decode 0.13 ms (320x240) and 0.44 ms (640x480), detection about 3 ms per frame on one thread. Frames stay in memory; only boxes are kept. The model arrives from Home like every other pinned model.
 
 - A touch, swipe or shake on a drowsy or sleeping robot wakes it (the unit already queues these; the host now looks every 5 seconds, only while the robot is drowsy or asleep, and at most one wake every 30 seconds). Waking on a loud sound needs a small firmware event and is on the firmware list.

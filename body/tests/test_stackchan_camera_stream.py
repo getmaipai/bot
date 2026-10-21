@@ -105,6 +105,8 @@ class StackChanCameraHandoffTests(unittest.IsolatedAsyncioTestCase):
             await peer.send_camera_frame(jpeg_frame(b"tracked"))
             await avatar.wait_for_camera_frame(device_id)
             self.assertEqual(avatar.camera_frame_count, 1)
+            self.assertEqual(avatar.camera_frames_received, 1)
+            self.assertGreater(avatar.camera_bytes_received, 0)
             target = await asyncio.to_thread(bridge.track_stream_frame)
             self.assertTrue(target.detected)
             # Local watching (face tracking) shows no cue: the household's watch level governs it.

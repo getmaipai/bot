@@ -108,6 +108,9 @@ class AvatarServer:
         self._camera_disconnects: dict[str, asyncio.Event] = {}
         self._camera_ready = threading.Condition()
         self.camera_frame_count = 0
+        # Running totals of the unit's camera stream, for the one-line-a-minute load report.
+        self.camera_frames_received = 0
+        self.camera_bytes_received = 0
 
     async def start(self, host: str = "127.0.0.1", port: int = 8766, **kwargs: Any) -> None:
         self._server = await serve(
@@ -195,6 +198,8 @@ class AvatarServer:
                         LOG.warning("discarded malformed StackChan camera frame")
                         continue
                     self._camera_frames[device_id] = (frame.payload, time.monotonic())
+                    self.camera_frames_received += 1
+                    self.camera_bytes_received += len(frame.payload)
                     self.camera_frame_count = len(self._camera_frames)
                     with self._camera_ready:
                         self._camera_ready.notify_all()

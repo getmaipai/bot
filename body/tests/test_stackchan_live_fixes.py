@@ -81,16 +81,14 @@ def test_a_connection_that_sends_no_bytes_logs_nothing_but_a_bad_request_still_d
     assert any(r.getMessage() == "opening handshake failed" for r in caplog.records)
 
 
-def test_a_missing_face_detector_package_is_one_quiet_line_without_a_traceback():
+def test_the_bundle_builds_its_face_detector_without_the_reachy_sdk():
     import inspect
 
     from maipai_body import app
 
     source = inspect.getsource(app._serve_stackchan_channels)
-    assert "except ImportError:" in source
-    assert "face tracking is unavailable in the hub bundle" in source
-    quiet = source.split("except ImportError:")[1].split("except Exception:")[0]
-    assert "exc_info" not in quiet
+    assert "LazyFaceDetector(" in source
+    assert "FiveLandmarkDetector" not in source and "reachy_mini" not in source
 
 
 def test_a_hosted_bot_logs_the_voice_session_at_info_and_setup_is_idempotent():

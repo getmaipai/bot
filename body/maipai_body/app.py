@@ -149,6 +149,7 @@ def _no_hub_discovery(timeout_s: float = 5.0):
 # repaired, and how often the idle face is resent while all is well.
 FACE_QUIET_S = 5.0
 # While drowsy or asleep the unit is asked for touch events this often; wakes repeat no sooner.
+LOOK_INTERVAL_S = 0.5  # two looks a second at most
 TOUCH_POLL_S = 5.0
 TOUCH_WAKE_COOLDOWN_S = 30.0
 FACE_REFRESH_S = 30.0
@@ -158,6 +159,7 @@ class StackChanBehavior:
     """Shared expression and bounded anonymous tracking for an attached StackChan."""
 
     def __init__(self, robot, *, vision_bridge=None, idle_interval_s: float = 8.0) -> None:
+        from maipai_body.bodies.stackchan.presence_watch import CameraStats, GreetingPolicy
         from maipai_body.bodies.stackchan.profile import STACKCHAN_PROFILE
         from maipai_body.expression.engine import ExpressionEngine
 
@@ -188,6 +190,14 @@ class StackChanBehavior:
         self._last_event_poll = float("-inf")
         self._last_touch_wake = float("-inf")
         self._event_queue_drained = False
+        # Idle face watching: the camera level from the settings frame, the greeting style, and
+        # the counters of the unit's camera stream (all set by the service wiring).
+        self.watch_level: Callable[[], str] = lambda: "identify"
+        self.greeting_mode = "gesture"
+        self.camera_counters: Callable[[], tuple[int, int]] = lambda: (0, 0)
+        self._camera_stats = CameraStats(lambda: self.camera_counters())
+        self._greeting = GreetingPolicy()
+        self._last_look = float("-inf")
         self._warned: dict[str, float] = {}
         self.on_idle_level: Callable[[], None] = lambda: None
         # BOT-SC-ANIM-01: drowsy and asleep stages so an idle robot does not sit smiling for hours.
@@ -326,14 +336,13 @@ class StackChanBehavior:
                     self.render_primitive("settle")
                 except Exception:
                     self._warn_limited("idle", "StackChan idle expression failed")
-            if self._vision is not None and not self._active.is_set() and not self.idle_still():
-                try:
-                    target = self._vision.track_stream_frame(deadline_s=0.4)
-                    if target.detected:
-                        self._last_person_seen = now
-                        self.render_primitive("attend")
-                except Exception:
-                    self._warn_limited("tracking", "StackChan anonymous tracking failed")
+            try:
+                self.watch_for_faces(now)
+            except Exception:
+                self._warn_limited("tracking", "StackChan face watching failed")
+            line = self._camera_stats.report(now)
+            if line:
+                logger.info(line)
             try:
                 self.wake_on_touch(now)
             except Exception:
@@ -346,6 +355,50 @@ class StackChanBehavior:
                 self.face_watchdog(now)
             except Exception:
                 self._warn_limited("watchdog", "StackChan face watchdog failed")
+
+    def watch_for_faces(self, now: float) -> bool:
+        """Look for a face in the unit's latest camera frame about twice a second.
+
+        Local only: the frame is decoded and searched in memory and only "a face was there" is
+        kept. Off while a turn is on, at night, and when the camera level is off. The head follows
+        a face only when the head gate allows it; the room counts as occupied either way, which
+        keeps the rest policy awake and, after a long empty spell, gives one greeting."""
+        if (
+            self._vision is None
+            or self._active.is_set()
+            or self.night_active()
+            or self.watch_level() == "off"
+            or now - self._last_look < LOOK_INTERVAL_S
+        ):
+            return False
+        self._last_look = now
+        started = time.monotonic()
+        target = self._vision.track_stream_frame(deadline_s=0.4, may_move=self._may_follow)
+        self._camera_stats.looked(time.monotonic() - started, target.detected)
+        if not target.detected:
+            return False
+        self._last_person_seen = now
+        if self._greeting.seen(now):
+            self.greet()
+        return True
+
+    def _may_follow(self) -> bool:
+        return not self.idle_still() and self.head_gate.allow("ambient:track")
+
+    def greet(self) -> None:
+        """A gesture greeting: a happy face for a moment, and a nod when the head may move.
+
+        Spoken greetings belong to Home's person and age rules; the robot only gestures."""
+        if self.greeting_mode == "off":
+            return
+        logger.info("StackChan greeting: someone came into view after a long while")
+        device = self.robot._driver("head").expression_device
+        if device is not None:
+            from maipai_body.bodies.stackchan.avatar.server import control_avatar
+
+            device.send_avatar_frame(control_avatar("happy"))  # the face watchdog restores it
+        if not self.idle_still():
+            self.render_primitive("nod")
 
     def wake_on_touch(self, now: float) -> bool:
         """Wake a drowsy or sleeping robot when the unit reports a touch, swipe or shake.
@@ -484,6 +537,7 @@ def _start_stackchan_night(
     )
     voice.session_listeners.append(lambda _device_id: night.on_connect())
     behavior.night_active = lambda: night.night
+    behavior.watch_level = lambda: watch[0]
     voice.robot.robot._driver("camera").watch_allowed = lambda: watch[0] != "off"
 
     def apply_settings(payload: dict) -> None:
@@ -502,6 +556,9 @@ def _start_stackchan_night(
                     behavior.robot.camera.stream(enabled=True, silent=True)
             except Exception:
                 logger.warning("StackChan camera watch level change failed", exc_info=True)
+        greeting = values.get("robot.greetings.mode")
+        if greeting in ("off", "gesture", "spoken"):
+            behavior.greeting_mode = greeting
         idle = values.get("robot.idle.level")
         if idle in ("still", "calm", "lively"):
             behavior.idle_level = idle
@@ -590,20 +647,23 @@ async def _serve_stackchan_channels(
     vision = None
     try:
         from maipai_body.bodies.stackchan.vision_bridge import StackChanVisionBridge
-        from maipai_body.vision.detect import FiveLandmarkDetector
+        from maipai_body.vision.yunet import LazyFaceDetector
 
+        # The pinned YuNet model comes from Home like every other model; until it has been synced
+        # the detector finds nothing and says so once every ten minutes.
         vision = StackChanVisionBridge(
             voice.robot.robot,
-            detector=FiveLandmarkDetector(),
+            detector=LazyFaceDetector(lambda: _load_yunet_model(link)),
             embedder=None,
             gallery=None,
         )
-    except ImportError:
-        # The hub bundle ships without the Reachy SDK the face detector builds on: one quiet line.
-        logger.info("StackChan face tracking is unavailable in the hub bundle")
     except Exception:
-        logger.warning("StackChan anonymous tracking is unavailable", exc_info=True)
+        logger.warning("StackChan face watching is unavailable", exc_info=True)
     behavior = StackChanBehavior(voice.robot.robot, vision_bridge=vision)
+    behavior.camera_counters = lambda: (
+        avatar.camera_frames_received,
+        avatar.camera_bytes_received,
+    )
     behavior.event_poll = voice.robot.client.companion().poll_events
     night = _start_stackchan_night(voice, behavior, link, stop_event)
     from maipai_body.bodies.stackchan.power_idle import PowerIdle
@@ -1465,6 +1525,25 @@ def _hub_credentials_reader(link: LinkLifecycle, base_url: str) -> Callable[[], 
         return link.hub_client.session_cookie or "", answered or last_known_good_url[0]
 
     return read
+
+
+def _load_yunet_model(link: LinkLifecycle | None) -> Path:
+    """The verified YuNet file: from the local model cache, else synced from the paired hub."""
+    from maipai_body.link.assets import AssetSync
+    from maipai_body.model_assets import AssetUnavailable, ensure_asset
+    from maipai_body.vision.models import YUNET
+
+    cache = _default_models_cache_dir()
+    try:
+        return ensure_asset(YUNET, cache)  # already synced (or the fetcher is configured)
+    except AssetUnavailable:
+        pass
+    if link is None:
+        raise AssetUnavailable("YuNet is not synced and the robot is not paired with Home")
+    url, cookie = _command_credentials(link)()
+    if not url or not cookie:
+        raise AssetUnavailable("YuNet is not synced and Home has not answered yet")
+    return AssetSync(url, cookie).ensure(YUNET, cache)
 
 
 def _command_credentials(link: LinkLifecycle) -> Callable[[], tuple[str, str]]:

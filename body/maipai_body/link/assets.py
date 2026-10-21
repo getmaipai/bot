@@ -288,7 +288,11 @@ def prepare_yunet_cache(model_path: Path | None, hf_home: Path | None = None) ->
     elif os.environ.get("HF_HOME"):
         hf_root = Path(os.environ["HF_HOME"])
     else:
-        from huggingface_hub.constants import HF_HOME
+        try:
+            from huggingface_hub.constants import HF_HOME
+        except ImportError:
+            # The hub bundle has no huggingface_hub: its own YuNet runner reads the file itself.
+            return model_path
 
         hf_root = Path(HF_HOME)
     repo = hf_root / "hub" / "models--pollen-robotics--face_detection_yunet_2026may"
