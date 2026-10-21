@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.23] - 2026-10-21
+
+### Fixed
+
+- Firmware patch 050: the LED ring goes dark with the screen. On the unit's power-save sleep and before its idle-shutdown power off the ring is blanked, and the host's last look returns on wake. Holding the power button for a hardware shutdown is not covered: the PMIC cuts power with no warning, and clearing the ring in time needs the AXP2101 power-key interrupt, which is left for a check on the unit.
+
 ### Changed
 
 - The ring is dark when the robot is awake and idle. Owner ruling: no lights for idle. The status lights stay for real states (blue listening, green live, magenta thinking, white speaking, pink camera flash, amber fault or offline, green charging breathe). The light standard and its tests are updated; `robot.indicator.enabled` still turns every status light off.
