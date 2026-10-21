@@ -1,4 +1,4 @@
-"""StackChan stays still while charging (owner request 2026-10-20).
+"""StackChan stays still while charging or not upright (owner requests 2026-10-20, 2026-10-21).
 
 ``PowerIdle`` drives the firmware ``set_idle_motion`` tool from the three
 answers that all mean "no idle movement": the unit is on USB power, night
@@ -59,6 +59,7 @@ class PowerIdle:
         # at its default (calm, motion on) because it was never plugged in.
         self._applied: bool | None = None
         self._last_failure_warn = float("-inf")
+        self._orientation_hold = False
 
     @property
     def charging(self) -> bool:
@@ -68,7 +69,7 @@ class PowerIdle:
     @property
     def still(self) -> bool:
         """True while the robot must not wander: unknown power, charging, night, or level still."""
-        if self._charging or not self._power_known():
+        if self._charging or not self._power_known() or self._orientation_hold:
             return True
         if self._night_active():
             return True
@@ -76,6 +77,12 @@ class PowerIdle:
 
     def _power_known(self) -> bool:
         return self._last_ok is not None and self._clock() - self._last_ok < STATUS_TTL_S
+
+    def set_orientation_hold(self, held: bool) -> None:
+        """Hold still while the unit is not upright: the head must not fight gravity."""
+        self._orientation_hold = held
+        self._next_try = float("-inf")
+        self.refresh()
 
     def on_battery_status(self, charging: bool) -> None:
         """Record a battery reading (charging on or off) and re-evaluate the motion."""

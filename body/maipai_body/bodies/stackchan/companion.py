@@ -40,6 +40,7 @@ DIAGNOSTIC_KINDS = frozenset(
         "fw",
         "camera",
         "barge_stats",
+        "orientation",
     }
 )
 EVENT_KINDS = (

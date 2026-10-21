@@ -373,3 +373,16 @@ def test_a_failing_presence_step_logs_once_a_minute(caplog):
         assert sum("face watchdog failed" in r.getMessage() for r in caplog.records) == 1
     finally:
         behavior.close()
+
+
+def test_a_unit_that_is_not_upright_holds_still_and_moves_again_when_upright():
+    motion = Motion()
+    power = PowerIdle(motion)
+    power.on_battery_status(False)
+    assert motion.writes == [True]
+    power.set_orientation_hold(True)
+    assert power.still is True
+    assert motion.writes == [True, False]
+    power.set_orientation_hold(False)
+    assert power.still is False
+    assert motion.writes == [True, False, True]

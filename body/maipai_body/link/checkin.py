@@ -64,6 +64,7 @@ def build_payload(
     address: str | None,
     connected_since: float | None,
     facts: Mapping[str, Any],
+    orientation: str | None = None,
     status: Mapping[str, Any] | None,
     bot_version: str | None,
     now: float,
@@ -95,6 +96,7 @@ def build_payload(
         "boot_reason": facts.get("boot_reason"),
         "crash_resets": facts.get("boot_crash_resets"),
         "battery_level": battery.get("level") if isinstance(battery.get("level"), int) else None,
+        "orientation": orientation,
         "charging": battery.get("charging") if isinstance(battery.get("charging"), bool) else None,
     }
 

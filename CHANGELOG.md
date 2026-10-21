@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.36] - 2026-10-21
+
+### Added
+- Orientation reactions (host side; the unit's `orientation` event and `self.screen.set_rotation` tool come in a later firmware patch): the body turns the unit's gravity axis into a pose (upright, on a side, upside down, face-down, lying back), shows a held pose face, flips the screen 180 degrees when upside down and back to 0 on upright, on every connect and when the unit goes away, stops idle motion and gaze while not upright, says one short original line per change (never the same twice in a row, at most one per two minutes, silent at night, asleep, or during a turn), logs "unit orientation", and adds `orientation` to the robot check-in.
+
 ## [0.2.35] - 2026-10-21
 
 ### Added

@@ -205,6 +205,10 @@ class StackChanBehavior:
         # Gets the kinds of the events read ("head_touch", "shake", ...); set by the service wiring.
         self.reaction: Callable[[list[str]], object] | None = None
         self.reaction_tick: Callable[[], object] | None = None
+        # Orientation: the pose logic, its timer, and whether a pose face is being held.
+        self.orientation: Any = None
+        self.orientation_tick: Callable[[], object] | None = None
+        self.pose_held: Callable[[], bool] = lambda: False
         self._last_event_poll = float("-inf")
         self._last_touch_wake = float("-inf")
         self._event_queue_drained = False
@@ -390,6 +394,11 @@ class StackChanBehavior:
                     self.reaction_tick()
                 except Exception:
                     self._warn_limited("reaction", "StackChan reaction timer failed")
+            if self.orientation_tick is not None:
+                try:
+                    self.orientation_tick()
+                except Exception:
+                    self._warn_limited("orientation", "StackChan orientation timer failed")
             try:
                 self.rest_step(now)
             except Exception:
@@ -539,12 +548,18 @@ class StackChanBehavior:
                         verdict,
                     )
                     continue
+                if event.kind == "orientation" and self.orientation is not None:
+                    try:
+                        self.orientation.on_event(extra)
+                    except Exception:
+                        self._warn_limited("orientation", "StackChan orientation reaction failed")
                 detail = " ".join(f"{k}={v}" for k, v in extra.items())
                 label = {
                     "stop_word": "unit stop word",
                     "fw": "unit firmware",
                     "camera": "unit camera",
                     "barge_stats": "unit barge",
+                    "orientation": "unit orientation",
                     "heap_stats": "unit memory",
                     "stack_stats": "unit memory",
                     "boot": "unit boot",
@@ -600,7 +615,7 @@ class StackChanBehavior:
         With no turn active for ``FACE_QUIET_S`` and the rest policy awake, resend the idle face
         once if the last frame was not idle (or never arrived), then every ``FACE_REFRESH_S``.
         """
-        if self._active.is_set():
+        if self._active.is_set() or self.pose_held():
             self._face_quiet_since = None
             return False
         if self._face_quiet_since is None:
@@ -966,6 +981,7 @@ async def _serve_stackchan_channels(
         )
         behavior.reaction = reactions.on_events
         behavior.reaction_tick = reactions.tick
+        _wire_orientation(voice, behavior, bridge, night, power)
         bridge.on_user_words = reactions.on_user_words
         bridge.on_reply_mood = reactions.on_reply_mood
         from maipai_body.selftest.stackchan_wiring import build_context, build_service_hooks
@@ -1713,6 +1729,40 @@ def _alarm_backstop(alarm: AlarmController, stop_event: threading.Event) -> None
             logger.warning("alarm backstop failed", exc_info=True)
 
 
+def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power: Any) -> None:
+    """Pose faces, lines, screen rotation and the motion hold for the unit's orientation events."""
+    from maipai_body.bodies.stackchan.orientation import OrientationReactions
+
+    def rotate(degrees: int) -> None:
+        try:
+            voice.robot.client._call("self.screen.set_rotation", {"degrees": degrees})
+        except Exception:
+            behavior._warn_limited("rotation", "StackChan screen rotation failed")
+
+    def asleep() -> bool:
+        return behavior._rest.stage != "awake"
+
+    orientation = OrientationReactions(
+        face=lambda expression: behavior.show_face(expression, while_listening=False),
+        say=bridge.speak_reaction,
+        rotate=rotate,
+        hold_motion=power.set_orientation_hold,
+        quiet=lambda: night.night or asleep(),
+        busy=behavior.reaction_blocked,
+    )
+    behavior.orientation = orientation
+    behavior.pose_held = lambda: orientation.pose != "upright"
+
+    def tick() -> None:
+        if not voice._sessions and orientation.pose != "upright":
+            orientation.reset()
+            return
+        orientation.tick()
+
+    behavior.orientation_tick = tick
+    voice.session_listeners.append(lambda _device_id: orientation.reset())
+
+
 def _start_robot_checkin(voice: Any, behavior: Any, link: LinkLifecycle, stop_event: Any) -> None:
     """Report the connected StackChan to the hub: address, firmware, memory, boot reason."""
     from maipai_body.link.checkin import RobotCheckin, UnitFacts, build_payload
@@ -1745,6 +1795,7 @@ def _start_robot_checkin(voice: Any, behavior: Any, link: LinkLifecycle, stop_ev
             address=address,
             connected_since=since,
             facts=facts.snapshot(),
+            orientation=getattr(behavior.orientation, "pose", None),
             status=status,
             bot_version=_app_version(),
             now=time.time(),

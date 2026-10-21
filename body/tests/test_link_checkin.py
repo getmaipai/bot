@@ -97,3 +97,29 @@ def test_the_light_tool_keeps_the_raw_channel_counts_for_the_minute_log():
     client._call = lambda name, args: {"lux": 3.5, "ch0": 12, "ch1": 4}
     assert client.get_ambient_light() == 3.5
     assert client.last_light_raw == (12, 4)
+
+
+def test_payload_carries_the_orientation_pose():
+    payload = build_payload(
+        device_id="aa:bb:cc:dd:ee:ff",
+        address=None,
+        connected_since=None,
+        facts={},
+        orientation="upside_down",
+        status=None,
+        bot_version=None,
+        now=0,
+    )
+    assert payload["orientation"] == "upside_down"
+    assert (
+        build_payload(
+            device_id=None,
+            address=None,
+            connected_since=None,
+            facts={},
+            status=None,
+            bot_version=None,
+            now=0,
+        )["orientation"]
+        is None
+    )
