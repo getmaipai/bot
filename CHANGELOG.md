@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-10-20
+
+### Fixed
+
+- StackChan no longer reboots on the wake word. Patch 042 (uplink Opus voice mode, complexity 3) overflowed the 24 KB stack of the wake-word encode task, which shares the encoder configuration; the patch is removed and the encoder is back to complexity 0. Patches to flash since 0.2.2: 030, 032, 033, 034, 037 to 041, 043.
+
 ## [0.2.11] - 2026-10-20
 
 ### Fixed
