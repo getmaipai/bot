@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from maipai_body.bodies.stackchan.companion import DIAGNOSTIC_KINDS
+from maipai_body.bodies.stackchan.head_touch_filter import HeadTouchFilter
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.suppression import SuppressionContext
 from maipai_body.hal.errors import BodyLost
@@ -200,6 +201,7 @@ class StackChanBehavior:
         self._last_event_poll = float("-inf")
         self._last_touch_wake = float("-inf")
         self._event_queue_drained = False
+        self._head_filter = HeadTouchFilter()
         # Idle face watching: the camera level from the settings frame, the greeting style, and
         # the counters of the unit's camera stream (all set by the service wiring).
         self.watch_level: Callable[[], str] = lambda: "identify"
@@ -513,6 +515,7 @@ class StackChanBehavior:
                 )
                 logger.info("unit touch: %s %s", event.kind, detail)
         events = [e for e in events if getattr(e, "kind", None) not in DIAGNOSTIC_KINDS]
+        events = self._head_filter.accept(now, events)
         if paused or not self._event_queue_drained:
             self._event_queue_drained = True
             return False

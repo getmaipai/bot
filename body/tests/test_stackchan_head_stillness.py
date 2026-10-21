@@ -182,7 +182,9 @@ def _sleeping_behavior(events):
 
 
 def test_a_touch_wakes_a_sleeping_robot_after_the_first_look_empties_the_queue():
-    behavior, polls = _sleeping_behavior([["head_touch"], ["head_touch"]])
+    behavior, polls = _sleeping_behavior(
+        [["head_touch", "head_swipe_forward"], ["head_touch", "head_swipe_forward"]]
+    )
     try:
         assert behavior.wake_on_touch(100.0) is False  # old events: drained, not a reason to wake
         assert behavior.wake_on_touch(101.0) is False  # polled too soon
@@ -242,7 +244,7 @@ def test_a_touch_wake_brings_the_rest_policy_back_to_awake():
     behavior = StackChanBehavior(StackChanRobotAdapter(device).robot)
     try:
         behavior._rest._stage = "asleep"
-        queue = [[], [SimpleNamespace(kind="head_touch")]]
+        queue = [[], [SimpleNamespace(kind="head_touch"), SimpleNamespace(kind="head_swipe_back")]]
         behavior.event_poll = lambda: queue.pop(0) if queue else []
         now = 1000.0
         behavior.wake_on_touch(now)

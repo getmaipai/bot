@@ -7,6 +7,17 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.21] - 2026-10-21
+
+### Fixed
+
+- Phantom head touches no longer pet the robot. The head sensor fires a lone touch about every 10 seconds with nobody there; each woke the robot and one in four earned a heart. A lone head touch is now ignored unless the unit reports it held for 400 ms or more, a second one follows within about 3 seconds, or several arrive together. One INFO line a minute counts the ones ignored.
+
+### Added
+
+- Every transcript checked against the stop list writes one INFO line (`stop check 'stop' -> yes`); utterances longer than six words log only their word count.
+- The host logs the head sensor's per-minute statistics from firmware that sends them (`unit touch: head_touch_stats ...`).
+
 ## [0.2.20] - 2026-10-21
 
 ### Added

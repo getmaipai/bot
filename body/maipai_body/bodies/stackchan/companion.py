@@ -24,6 +24,7 @@ DIAGNOSTIC_KINDS = frozenset(
         "gesture",
         "gesture_ignored",
         "click_ignored",
+        "head_touch_stats",
     }
 )
 EVENT_KINDS = (
@@ -101,9 +102,10 @@ class StackChanCompanion:
                             for key, value in item.items()
                             if key not in {"kind", "at_ms"} and isinstance(value, (int, str, bool))
                         }
-                        if kind in DIAGNOSTIC_KINDS
+                        if kind in DIAGNOSTIC_KINDS or kind == "head_touch"
                         else None
-                    ),
+                    )
+                    or None,
                 )
             )
         return events

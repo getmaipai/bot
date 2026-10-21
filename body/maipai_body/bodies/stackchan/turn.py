@@ -930,9 +930,17 @@ class StackChanTurnBridge:
             )
             outcome = self._classify(result)
             if outcome == "speech":
-                from maipai_body.bodies.stackchan.stop_phrases import is_stop_phrase
+                from maipai_body.bodies.stackchan.stop_phrases import is_stop_phrase, normalize
 
-                if is_stop_phrase(result.text):
+                stop = is_stop_phrase(result.text)
+                heard = normalize(result.text)
+                # Short utterances are the ones that could be a stop; longer ones are not logged.
+                LOG.info(
+                    "StackChan voice: stop check %s -> %s",
+                    repr(heard) if len(heard.split()) <= 6 else f"({len(heard.split())} words)",
+                    "yes" if stop else "no",
+                )
+                if stop:
                     # "Stop", "never mind", "be quiet": end the turn here, nothing is said.
                     LOG.info("StackChan voice: stop phrase heard; going idle without the hub")
                     self._quiet_streak = 0

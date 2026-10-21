@@ -96,3 +96,63 @@ def test_the_bridge_goes_idle_on_a_stop_phrase_without_asking_the_hub(monkeypatc
     assert idle_for == ["device"]
     assert FakeTurn.streams == [] and FakeTts.sentences == []
     assert heard == []  # a stop is not "kind words"
+
+
+def test_every_checked_transcript_logs_one_line_and_long_ones_omit_the_text(caplog):
+    import logging
+
+    import maipai_body.bodies.stackchan.turn as turn_module
+    from maipai_body.speech.stt_stream import SttStreamResult
+    from tests.test_stackchan_turn import (  # type: ignore[import-not-found]
+        FakeCapture,
+        FakePlayback,
+        FakeServer,
+        FakeTts,
+        FakeTurn,
+        InlineExecutor,
+        Link,
+        Offline,
+    )
+
+    def run(text):
+        class Stt:
+            def __init__(self, base, cookie):
+                pass
+
+            def run(self, capture, **kwargs):
+                return SttStreamResult(kind="final", text=text)
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        server = FakeServer()
+        server._loop = loop
+
+        async def send_idle(device_id):
+            return None
+
+        server.send_idle = send_idle
+        FakeTurn.streams = []
+        FakeTts.sentences = []
+        bridge = turn_module.StackChanTurnBridge(
+            server,
+            Link(),
+            Offline(),
+            stt_factory=Stt,
+            turn_factory=FakeTurn,
+            tts_factory=FakeTts,
+            side_executor=InlineExecutor(),
+        )
+        loop.run_until_complete(bridge._run("session", "device", FakeCapture()))
+        loop.close()
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    try:
+        with caplog.at_level(logging.INFO):
+            run("Stop!")
+            run("tell me a long story about the history of the roman empire and its roads")
+    finally:
+        monkey.undo()
+    lines = [r.getMessage() for r in caplog.records if "stop check" in r.getMessage()]
+    assert lines[0].endswith("'stop' -> yes")
+    assert lines[1].endswith("(15 words) -> no")

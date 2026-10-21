@@ -30,8 +30,11 @@ _PHRASES = frozenset(
 )
 
 
+def normalize(text: str | None) -> str:
+    spoken = re.sub(r"[^\w' ]+", " ", (text or "").lower().replace("-", " "))
+    return re.sub(r"\s+", " ", _FILLERS.sub(" ", spoken)).strip()
+
+
 def is_stop_phrase(text: str | None) -> bool:
     """True when the whole utterance is a stop phrase (fillers such as "StackChan" ignored)."""
-    spoken = re.sub(r"[^\w' ]+", " ", (text or "").lower().replace("-", " "))
-    spoken = re.sub(r"\s+", " ", _FILLERS.sub(" ", spoken)).strip()
-    return spoken in _PHRASES
+    return normalize(text) in _PHRASES

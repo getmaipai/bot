@@ -1,0 +1,67 @@
+"""Phantom head touches are dropped; a real stroke is kept (owner report 2026-10-21)."""
+
+from __future__ import annotations
+
+import logging
+from types import SimpleNamespace
+
+from maipai_body.bodies.stackchan.head_touch_filter import HeadTouchFilter
+
+
+def _ev(kind, **extra):
+    return SimpleNamespace(kind=kind, extra=extra or None)
+
+
+def test_a_lone_head_touch_is_ignored_and_other_events_pass():
+    filt = HeadTouchFilter()
+    kept = filt.accept(0.0, [_ev("head_touch"), _ev("shake")])
+    assert [e.kind for e in kept] == ["shake"]
+
+
+def test_a_burst_in_one_look_is_a_real_stroke():
+    filt = HeadTouchFilter()
+    kept = filt.accept(0.0, [_ev("head_touch"), _ev("head_swipe_forward")])
+    assert [e.kind for e in kept] == ["head_touch", "head_swipe_forward"]
+
+
+def test_a_repeat_within_a_few_seconds_is_real_but_a_phantom_every_ten_seconds_is_not():
+    filt = HeadTouchFilter()
+    assert filt.accept(0.0, [_ev("head_touch")]) == []
+    assert len(filt.accept(2.0, [_ev("head_touch")])) == 1
+    filt = HeadTouchFilter()
+    for step in range(5):
+        assert filt.accept(step * 10.0, [_ev("head_touch")]) == []
+
+
+def test_a_contact_the_unit_says_was_held_is_real_at_once():
+    filt = HeadTouchFilter()
+    assert len(filt.accept(0.0, [_ev("head_touch", held_ms=650)])) == 1
+    assert filt.accept(10.0, [_ev("head_touch", held_ms=80)]) == []
+
+
+def test_one_info_line_a_minute_counts_what_was_ignored(caplog):
+    filt = HeadTouchFilter()
+    with caplog.at_level(logging.INFO, logger="maipai_body.bodies.stackchan.head_touch_filter"):
+        for step in range(12):
+            filt.accept(step * 10.0, [_ev("head_touch")])
+    lines = [r.getMessage() for r in caplog.records]
+    assert len(lines) == 2 and "ignored 1 lone head touch" in lines[0]
+
+
+def test_a_phantom_does_not_wake_a_sleeping_robot():
+    from maipai_body.app import StackChanBehavior
+    from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
+    from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
+
+    behavior = StackChanBehavior(StackChanRobotAdapter(FakeStackChanDeviceClient()).robot)
+    try:
+        behavior._rest._stage = "asleep"
+        queue = [[], [_ev("head_touch")]]
+        behavior.event_poll = lambda: queue.pop(0) if queue else []
+        seen = []
+        behavior.reaction = seen.append
+        behavior.wake_on_touch(0.0)
+        assert behavior.wake_on_touch(5.0) is False
+        assert seen == []
+    finally:
+        behavior.close()
