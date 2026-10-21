@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import unittest
 
@@ -59,6 +60,24 @@ class StackChanAvatarTests(unittest.IsolatedAsyncioTestCase):
         await peer.connect()
         try:
             self.assertEqual(await peer.recv_frame(), b"\x05\x00\x00\x00\x00")
+        finally:
+            await peer.close()
+
+    async def test_the_start_is_repeated_until_a_frame_arrives(self):
+        from maipai_body.bodies.stackchan.avatar import server as avatar_server
+
+        avatar_server.CAMERA_START_RETRY_S = 0.05
+        wanted = [False]
+        self.app.start_camera_on_connect = lambda: wanted[0]
+        peer = self.peer()
+        await peer.connect()
+        try:
+            wanted[0] = True  # the household's settings arrived after the connect
+            self.assertEqual(await peer.recv_frame(), b"\x05\x00\x00\x00\x00")
+            self.assertEqual(await peer.recv_frame(), b"\x05\x00\x00\x00\x00")
+            await peer.send_camera_frame(jpeg_frame(b"x"))
+            await asyncio.sleep(0.2)
+            self.assertIn(self.device_id, self.app._camera_seen)
         finally:
             await peer.close()
 

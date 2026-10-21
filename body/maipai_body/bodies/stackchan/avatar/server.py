@@ -25,6 +25,8 @@ CAMERA_FRAME = 0x01
 MAX_CAMERA_FRAME_SIZE = 2 * 1024 * 1024
 HELLO_TIMEOUT_S = 10.0
 MAX_HELLO_SIZE = 4096
+# Seconds between asks for the camera stream while no frame has arrived yet.
+CAMERA_START_RETRY_S = 5.0
 
 # M5's app_avatar passes this object directly to updateAvatarFromJson.
 # Keep the expression table closed and local; model text never becomes a face token.
@@ -106,6 +108,7 @@ class AvatarServer:
         # Asked on every connect: True when the camera should already be streaming (local watching
         # is on). The body's one start at boot comes before the unit's socket exists.
         self.start_camera_on_connect: Any = None
+        self._camera_seen: set[str] = set()
         self._camera_frames: dict[str, tuple[bytes, float]] = {}
         self._camera_events: dict[str, asyncio.Event] = {}
         self._camera_disconnects: dict[str, asyncio.Event] = {}
@@ -164,6 +167,7 @@ class AvatarServer:
         if stale is not None:
             asyncio.create_task(self._close_stale(stale))
         self._sessions[device_id] = websocket
+        start_task: asyncio.Task[None] | None = None
         try:
             try:
                 hello = await asyncio.wait_for(websocket.recv(), HELLO_TIMEOUT_S)
@@ -183,9 +187,9 @@ class AvatarServer:
                 return
             await websocket.send(json.dumps({"type": "hello", "session_id": uuid.uuid4().hex}))
             LOG.info("StackChan avatar: connected (device %s)", device_id[-5:])
-            if callable(self.start_camera_on_connect) and self.start_camera_on_connect():
-                await websocket.send(encode_frame(0x05))
-                LOG.info("StackChan avatar: asked the unit to start its camera stream")
+            start_task = asyncio.create_task(
+                self._start_camera_until_streaming(websocket, device_id)
+            )
             async for message in websocket:
                 if not self.pairing.authorize(device_id, client_id, token):
                     await websocket.close(1008, "Pairing was revoked; reconnect after approval.")
@@ -203,6 +207,7 @@ class AvatarServer:
                     if not _valid_jpeg(frame.payload):
                         LOG.warning("discarded malformed StackChan camera frame")
                         continue
+                    self._camera_seen.add(device_id)
                     self._camera_frames[device_id] = (frame.payload, time.monotonic())
                     self.camera_frames_received += 1
                     self.camera_bytes_received += len(frame.payload)
@@ -222,6 +227,9 @@ class AvatarServer:
         except Exception:
             LOG.debug("avatar session ended", exc_info=True)
         finally:
+            if start_task is not None:
+                start_task.cancel()
+            self._camera_seen.discard(device_id)
             if self._sessions.get(device_id) is websocket:
                 self._sessions.pop(device_id, None)
                 self.clear_camera_frame(device_id)
@@ -229,6 +237,34 @@ class AvatarServer:
                 event = self._camera_events.get(device_id)
                 if event is not None:
                     event.clear()
+
+    async def _start_camera_until_streaming(
+        self, websocket: ServerConnection, device_id: str
+    ) -> None:
+        """Ask the unit to stream every few seconds until its first frame arrives.
+
+        The body's own start at boot can come before the unit's socket exists, and local watching
+        may be off until the household's settings have loaded, so one ask on connect is not enough
+        (host log 2026-10-21: no frames after a fresh boot)."""
+        attempt = 0
+        waiting_logged = False
+        while device_id not in self._camera_seen:
+            wanted = callable(self.start_camera_on_connect) and bool(self.start_camera_on_connect())
+            if wanted:
+                attempt += 1
+                try:
+                    await websocket.send(encode_frame(0x05))
+                except ConnectionClosed:
+                    return
+                if attempt <= 3 or attempt % 12 == 0:
+                    LOG.info(
+                        "StackChan avatar: asked the unit to start its camera stream (try %d)",
+                        attempt,
+                    )
+            elif not waiting_logged:
+                waiting_logged = True
+                LOG.info("StackChan avatar: not asking for the camera yet: local watching is off")
+            await asyncio.sleep(CAMERA_START_RETRY_S)
 
     async def wait_for_camera_frame(self, device_id: str) -> None:
         event = self._camera_events.setdefault(device_id, asyncio.Event())
