@@ -180,6 +180,8 @@ class NightController:
         self.night = False
         self.night_volume_override: int | None = None
         self._synced = True
+        # Called after every edge so the power rule can write the idle-motion value it wants.
+        self.after_edge: Callable[[], object] | None = None
         self._last_debug_log = float("-inf")
         self._traceback_at: dict[str, float] = {}
         self._next_reason = "reconnect"
@@ -324,7 +326,16 @@ class NightController:
         self._call(d.set_brightness, NIGHT_BRIGHTNESS if night else self.owner_brightness)
         if self._leds is not None:
             self._call(self._leds, not night)
-        self._call(d.set_idle_motion, not night)
+        # Night turns the wandering off. Day never turns it back on here: whether the head may
+        # wander is the power rule's decision (idle level, charging, unknown power), and a night
+        # edge or a reconnect that enabled it put the unit wandering again (2026-10-21).
+        if night:
+            self._call(d.set_idle_motion, False)
+        if self.after_edge is not None:
+            try:
+                self.after_edge()
+            except Exception:
+                logger.warning("night after-edge hook failed", exc_info=True)
         return True
 
     def _target_volume(self, night: bool) -> int:

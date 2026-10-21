@@ -11,6 +11,8 @@ checklist (`docs/dev.md`).
 
 ### Fixed
 
+- The robot no longer wanders on its own after a reconnect or at day. The night rule used to switch the unit's idle motion ON whenever night ended or the unit reconnected; it now only ever switches it off, and the power rule alone decides when it may wander. Home's default idle level "calm" is treated as "still" (it cannot be told from a choice); "lively" is honoured.
+
 - The robot's head rests level. Centre pitch is now the lowest angle (5 degrees); before, the host treated 45 degrees as centre and the drowsy and asleep poses raised the head to 66 and 85 degrees, so it always looked up. Nods and perks are small upward offsets from level. One constant, `CENTRE_PITCH_DEG` in `bodies/stackchan/profile.py`, sets the level.
 - Night and day: every connect now applies the current face, brightness, idle motion, lights and volume once, so a host restart or a unit reboot cannot leave the face dark in the morning. Unreadable light ends night after 10 minutes. There is one log line per night start and end with its reason, and no calls or retry spam while no unit is connected.
 - Volume: the default is 70 and brightness 100, both remembered in `owner_levels.json` in the Bot data directory. A voice change by day updates the stored level; at night it changes only the night level; day restores the stored value exactly.

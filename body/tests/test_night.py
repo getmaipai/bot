@@ -133,7 +133,8 @@ def test_leaving_night_restores_the_owner_values_and_day_palette():
     assert ("self.screen.set_face_background", {"palette": "mint", "night": False}) in rig.names()
     assert ("self.screen.set_brightness", {"brightness": 100}) in rig.names()
     assert ("self.audio_speaker.set_volume", {"volume": 50}) in rig.names()
-    assert ("self.robot.set_idle_motion", {"enabled": True}) in rig.names()
+    # Day never enables the wandering: that is the power rule's decision, not the night rule's.
+    assert ("self.robot.set_idle_motion", {"enabled": True}) not in rig.names()
     assert rig.led_calls == [False, True]
 
 
@@ -440,3 +441,60 @@ def test_behavior_makes_no_gestures_at_night_but_one_turn_to_face_a_speaker():
         behavior.render_turn_state("settle")
     finally:
         behavior.close()
+
+
+def test_entering_night_turns_the_wandering_off_and_leaving_it_never_turns_it_on():
+    rig = _Rig(lux=100)
+    rig.quiet = True
+    rig.night.tick()
+    assert ("self.robot.set_idle_motion", {"enabled": False}) in rig.names()
+    rig.device.calls.clear()
+    rig.quiet = False
+    rig.night.tick()
+    rig.clock.value = 120
+    rig.night.tick()
+    rig.night.on_connect()
+    rig.night.tick()
+    assert not any(
+        name == "self.robot.set_idle_motion" and args.get("enabled") for name, args in rig.names()
+    )
+
+
+def test_the_after_edge_hook_runs_so_the_power_rule_can_write_its_value():
+    rig = _Rig(lux=100)
+    edges = []
+    rig.night.after_edge = lambda: edges.append(1)
+    rig.quiet = True
+    rig.night.tick()
+    rig.quiet = False
+    rig.night.tick()
+    rig.clock.value = 120
+    rig.night.tick()
+    assert len(edges) == 2
+
+
+def test_a_reconnect_by_day_with_the_still_level_leaves_the_idle_motion_off():
+    from maipai_body.bodies.stackchan.power_idle import PowerIdle
+
+    rig = _Rig(lux=100)
+    power = PowerIdle(
+        rig.device.set_idle_motion,
+        night_active=lambda: rig.night.night,
+        configured_level=lambda: "still",
+    )
+    rig.night.after_edge = power.refresh
+    power.on_battery_status(False)
+    rig.night.on_connect()
+    power.on_reconnect()
+    rig.night.tick()
+    power.tick()
+    writes = [args["enabled"] for name, args in rig.names() if name == "self.robot.set_idle_motion"]
+    assert writes and not any(writes)  # every write says off
+
+
+def test_home_default_calm_counts_as_still_and_lively_is_a_choice():
+    from maipai_body.app import _effective_idle_level
+
+    assert _effective_idle_level("calm") == "still"
+    assert _effective_idle_level("still") == "still"
+    assert _effective_idle_level("lively") == "lively"

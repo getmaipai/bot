@@ -561,7 +561,10 @@ def _start_stackchan_night(
             behavior.greeting_mode = greeting
         idle = values.get("robot.idle.level")
         if idle in ("still", "calm", "lively"):
-            behavior.idle_level = idle
+            # "calm" is Home's registry default, so it cannot be told from a deliberate choice;
+            # a robot that wanders on its own by default wore servos (2026-10-21), so calm counts
+            # as still until the default itself changes. "lively" is always a choice.
+            behavior.idle_level = _effective_idle_level(idle)
             behavior.on_idle_level()
         night.apply_settings(values)
 
@@ -674,6 +677,7 @@ async def _serve_stackchan_channels(
         configured_level=lambda: behavior.idle_level,
     )
     behavior.on_idle_level = power.refresh
+    night.after_edge = power.refresh
     voice.session_listeners.append(lambda _device_id: power.on_reconnect())
 
     def _power_ticks() -> None:
@@ -1544,6 +1548,11 @@ def _load_yunet_model(link: LinkLifecycle | None) -> Path:
     if not url or not cookie:
         raise AssetUnavailable("YuNet is not synced and Home has not answered yet")
     return AssetSync(url, cookie).ensure(YUNET, cache)
+
+
+def _effective_idle_level(level: str) -> str:
+    """The idle level acted on: Home's default "calm" counts as "still"."""
+    return "still" if level == "calm" else level
 
 
 def _command_credentials(link: LinkLifecycle) -> Callable[[], tuple[str, str]]:
