@@ -21,6 +21,9 @@ SHAKE_LINES = ("Whoa!", "Hey! Easy!", "Eep! Where are we going?")
 SHAKE_COOLDOWN_S = 20.0
 PET_COOLDOWN_S = 10.0
 HEART_COOLDOWN_S = 60.0
+# How long a reaction face (heart, surprise) stays before the neutral face is put back. The unit's
+# own happy face after a stroke is open-mouthed and was left on far too long.
+FACE_HOLD_S = 3.0
 SYMBOL_RETRY_S = 600.0
 
 # What it would love to hear. A short, closed list: a heart must be earned, not guessed.
@@ -67,6 +70,7 @@ class Reactions:
         self._last_heart = float("-inf")
         self._symbol_retry_at = float("-inf")
         self._last_line: str | None = None
+        self._neutral_at: float | None = None
 
     # -- the unit's events ----------------------------------------------------
 
@@ -76,6 +80,9 @@ class Reactions:
             return  # in a conversation: the reply owns the face and the voice
         if "shake" in kinds:
             self._shaken()
+        if any(kind in _PET_EVENTS for kind in kinds) or any(k in _SWIPE_EVENTS for k in kinds):
+            # The unit shows its own open-mouthed happy face for a stroke; take it back soon.
+            self._hold_face()
         if any(kind in _PET_EVENTS for kind in kinds):
             self._petted()
         # A stroke across the head already makes the unit show its own happy face and heart.
@@ -86,6 +93,7 @@ class Reactions:
             return
         self._last_shake = now
         self._face("surprised")
+        self._hold_face()
         if self._quiet():
             logger.info("StackChan was shaken (quiet hours: face only)")
             return
@@ -105,6 +113,17 @@ class Reactions:
         self._last_pet = now
         logger.info("StackChan was petted")
         self.heart("petted")
+
+    def _hold_face(self) -> None:
+        self._neutral_at = self._clock() + FACE_HOLD_S
+
+    def tick(self) -> None:
+        """Put the neutral face back once a reaction face has been held long enough."""
+        if self._neutral_at is None or self._clock() < self._neutral_at:
+            return
+        self._neutral_at = None
+        if not self._busy():
+            self._face("neutral")
 
     # -- the heart, rare on purpose ----------------------------------------------
 
@@ -132,5 +151,6 @@ class Reactions:
                 self._symbol_retry_at = now + SYMBOL_RETRY_S
         if not shown:
             self._face("happy")
+        self._hold_face()
         logger.info("StackChan heart (%s): %s", reason, "heart" if shown else "smile")
         return True

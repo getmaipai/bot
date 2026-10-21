@@ -250,3 +250,41 @@ def test_show_face_sends_the_face_and_holds_off_the_watchdog():
         assert behavior.robot._driver("head").expression_device.last_expression == "surprised"
     finally:
         behavior.close()
+
+
+def test_a_reaction_face_is_replaced_by_the_neutral_face_after_three_seconds():
+    from maipai_body.bodies.stackchan.reactions import FACE_HOLD_S
+
+    rig = _Rig()
+    rig.reactions.on_events(["head_touch"])
+    rig.now[0] += FACE_HOLD_S - 0.5
+    rig.reactions.tick()
+    assert "neutral" not in rig.faces
+    rig.now[0] += 1.0
+    rig.reactions.tick()
+    assert rig.faces[-1] == "neutral"
+    rig.reactions.tick()
+    assert rig.faces.count("neutral") == 1  # once
+
+
+def test_a_stroke_the_cooldown_refuses_still_gets_its_open_mouth_face_taken_back():
+    rig = _Rig()
+    rig.reactions.on_events(["head_touch"])
+    rig.now[0] += 5.0
+    rig.reactions.tick()
+    rig.faces.clear()
+    rig.now[0] += 1.0  # inside the pet cooldown: no new heart
+    rig.reactions.on_events(["head_touch"])
+    rig.now[0] += 4.0
+    rig.reactions.tick()
+    assert rig.faces == ["neutral"]
+
+
+def test_the_neutral_face_is_not_forced_in_the_middle_of_a_conversation():
+    rig = _Rig()
+    rig.reactions.on_events(["shake"])
+    rig.busy = True
+    rig.now[0] += 10.0
+    rig.faces.clear()
+    rig.reactions.tick()
+    assert rig.faces == []

@@ -9,6 +9,15 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- A spoken "stop" while listening ends the turn on the robot: "stop", "StackChan stop", "be quiet", "quiet", "never mind", "cancel", "that's enough", "stop talking", "stop listening". The device goes idle, nothing is said, and the hub is not asked. "Stop the music in the kitchen" and other longer sentences still go to the hub.
+- Firmware patch 047 (taps): a tap that begins within 24 px of the top edge is ignored, so a swipe from the bezel no longer starts listening; a tap while listening now ends the turn (the persistent websocket made the stock close a no-op); the tap debounce is 0.8 s.
+
+### Fixed
+
+- After a stroke, shake or heart the neutral face comes back after 3 seconds, so the unit's open-mouthed happy face no longer lingers.
+
+### Added
+
 - Firmware patch 046, the only firmware change besides the already-pinned head-move cap of 40 a minute: the screen's touch path is reported both on the serial port and to the host, which logs each event as `unit touch: ...` (finger down with x and y, finger up, face pressed, face clicked, swipe direction, and a swipe ignored with why; counts and coordinates only, at most 20 a minute). Swipes and taps did nothing on the unit; one flash and 30 seconds of tapping and swiping says whether the controller reports nothing, the face is not the object touched, or the swipe is not recognised. The control-panel patch 045 stays parked, out of the build, until swipes work.
 
 ## [0.2.19] - 2026-10-21

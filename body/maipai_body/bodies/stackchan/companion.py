@@ -16,7 +16,15 @@ from maipai_body.hal.errors import BodyLost
 DANCES = frozenset({"happy", "robot", "panic", "look_around"})
 # Screen-touch diagnostics from firmware patch 046: logged by the host, never a reason to react.
 DIAGNOSTIC_KINDS = frozenset(
-    {"touch_down", "touch_up", "face_pressed", "face_clicked", "gesture", "gesture_ignored"}
+    {
+        "touch_down",
+        "touch_up",
+        "face_pressed",
+        "face_clicked",
+        "gesture",
+        "gesture_ignored",
+        "click_ignored",
+    }
 )
 EVENT_KINDS = (
     frozenset({"head_touch", "head_swipe_forward", "head_swipe_back", "shake", "level_changed"})

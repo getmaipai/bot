@@ -196,6 +196,7 @@ class StackChanBehavior:
         self.on_levels_changed: Callable[[int | None, int | None], None] | None = None
         # Gets the kinds of the events read ("head_touch", "shake", ...); set by the service wiring.
         self.reaction: Callable[[list[str]], object] | None = None
+        self.reaction_tick: Callable[[], object] | None = None
         self._last_event_poll = float("-inf")
         self._last_touch_wake = float("-inf")
         self._event_queue_drained = False
@@ -373,6 +374,11 @@ class StackChanBehavior:
                 self.wake_on_touch(now)
             except Exception:
                 self._warn_limited("touch", "StackChan touch wake check failed")
+            if self.reaction_tick is not None:
+                try:
+                    self.reaction_tick()
+                except Exception:
+                    self._warn_limited("reaction", "StackChan reaction timer failed")
             try:
                 self.rest_step(now)
             except Exception:
@@ -898,6 +904,7 @@ async def _serve_stackchan_channels(
             ),
         )
         behavior.reaction = reactions.on_events
+        behavior.reaction_tick = reactions.tick
         bridge.on_user_words = reactions.on_user_words
         bridge.on_reply_mood = reactions.on_reply_mood
         from maipai_body.selftest.stackchan_wiring import build_context, build_service_hooks

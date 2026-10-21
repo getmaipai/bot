@@ -262,6 +262,7 @@ apply_repo_patch 038-head-move-cap.patch "$SRC"
 apply_repo_patch 039-mcp-timing-log.patch "$SRC"
 apply_repo_patch 044-strongest-wifi-ap.patch "$SRC"
 apply_repo_patch 046-touch-diagnostics.patch "$SRC"
+apply_repo_patch 047-tap-handling.patch "$SRC"
 
 cat > "$FW/sdkconfig.defaults.local" <<CFG
 CONFIG_STACKCHAN_SERVER_URL="$AVATAR_SERVER_URL"

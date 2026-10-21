@@ -54,6 +54,7 @@ def test_dances_and_event_kinds_export_the_supported_sets():
             "face_clicked",
             "gesture",
             "gesture_ignored",
+            "click_ignored",
         }
     )
 

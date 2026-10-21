@@ -930,6 +930,15 @@ class StackChanTurnBridge:
             )
             outcome = self._classify(result)
             if outcome == "speech":
+                from maipai_body.bodies.stackchan.stop_phrases import is_stop_phrase
+
+                if is_stop_phrase(result.text):
+                    # "Stop", "never mind", "be quiet": end the turn here, nothing is said.
+                    LOG.info("StackChan voice: stop phrase heard; going idle without the hub")
+                    self._quiet_streak = 0
+                    await self._go_idle(device_id)
+                    return
+            if outcome == "speech":
                 self._breaker.note_real_final()
                 self._quiet_streak = 0
                 self._notify(self.on_user_words, result.text)
@@ -1179,6 +1188,9 @@ class StackChanTurnBridge:
             "" if self._quiet_streak == 1 else "s",
             " and waiting for the wake word" if self._quiet_streak >= 2 else "",
         )
+        await self._go_idle(device_id)
+
+    async def _go_idle(self, device_id: str) -> None:
         send_idle = getattr(self.server, "send_idle", None)
         if callable(send_idle):
             try:

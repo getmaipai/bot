@@ -136,3 +136,48 @@ monitor (which resets the unit when opened) is not needed. On the serial port: `
 LVGL event on the face; `face: gesture ignored (...)` when 036 drops a gesture. Read it as: no
 `touch down` means guess 1; `touch down` without `face: pressed` means guess 2; `pressed` without
 `gesture` or `clicked` means guess 3.
+
+## 4. First flash of 046: what the host log showed, and the tap changes (2026-10-21)
+
+Swipe up and down now open the stock panel, so the touch path works. The host log (`unit touch:`
+lines, 11:41 to 11:43) showed two things.
+
+**Swipes from the top bezel became taps.** The two taps that started listening were
+`touch_down y=16`, `face_pressed`, `touch_up`, `face_clicked` and `touch_down y=0`, then the same.
+A finger that starts on the very top edge reports one point at y 0 to 16 and loses it at the edge,
+so LVGL saw a press and a release with no movement: a tap. Patch 047 ignores a tap whose press began
+within 24 px of the top (serial line `face: tap ignored`, host event `click_ignored`).
+
+**Touches with no `face_pressed`.** The `touch_down y=132` at 11:42:11 came 0.1 s after the unit
+reconnected (`connection open`, `connection closed during a session`), so the boot cover, which is
+clickable and sits on top until the first STANDBY, took it. The burst at 11:43:01 (six down/up pairs
+at x 160 to 231, y 113 to 159) matches the quick-settings sliders and Wi-Fi buttons: while that
+panel is open it is on the top layer and takes the presses, so the face never sees them. No
+`gesture` event appears in the window. The likeliest reason is the diagnostic limits (12 queued
+events, 20 a minute) and the host not reading events during a turn; not proven. The next test should
+swipe once at idle, wait for the line, and then swipe again.
+
+**Tap to stop.** The stock tap handler toggles the chat state. While speaking it sends an abort,
+which the host already handles. While listening it called `CloseAudioChannel()`, which is a no-op
+with the persistent websocket (patch 003), so the tap did nothing. Patch 047 sends the host an
+abort (which cancels the turn and returns the device to idle) and sets the device idle itself. It
+also drops the debounce from 2 s to 0.8 s, so a tap can stop what a tap started.
+
+**Spoken stop.** At idle only the wake word is armed (`CONFIG_USE_AFE_WAKE_WORD`, "Hi, StackChan").
+While listening the host hears everything, so `stop_phrases.py` handles a whole-utterance stop
+("stop", "StackChan stop", "be quiet", "quiet", "never mind", "cancel", "that's enough", "stop
+talking", "stop listening", "enough", "stop it") locally: the turn ends, the device goes idle,
+nothing is said and the hub is not asked. "Mute" and "shut up" remain volume commands.
+
+**Stopping while it speaks.** In the speaking state xiaozhi turns voice processing off and keeps
+only the AFE wake word armed, and a wake word during speech calls `AbortSpeaking`. So "Hi,
+StackChan" can interrupt speech, but a plain "stop" cannot reach the host: the uplink is not
+streamed while speaking. Device AEC is not enabled in this build (`CONFIG_USE_DEVICE_AEC` and
+`CONFIG_USE_SERVER_AEC` are off), so the wake word hears the robot's own voice mixed in and is
+less reliable the louder it speaks. A spoken "stop" during speech needs firmware: an ESP-SR
+command-word model (MultiNet) next to the wake word, or an uplink kept open with AEC. Neither is
+in this batch.
+
+**Heart and surprise faces.** The unit's own stroke reaction sets the open-mouthed happy face and
+restores it 3 s after the hand lifts. The host now puts the neutral face back 3 s after any stroke,
+shake or heart (never during a conversation), so the open mouth cannot linger.
