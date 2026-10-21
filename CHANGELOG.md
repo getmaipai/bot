@@ -7,6 +7,13 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-10-20
+
+### Fixed
+
+- A quiet listen no longer waits out the 12 second final wait: the host gives up after 1.5 seconds when the hub sent no voice-activity message, and keeps the long wait only when speech was heard. Home answers a quiet end with no speech at once.
+- Every robot connect no longer freezes the host for 5 seconds: session listeners run on their own thread, a device call made on the event loop fails at once with a plain message, and the idle-motion flag is written by the one second tick instead of at connect.
+
 ## [0.2.9] - 2026-10-20
 
 ### Fixed
