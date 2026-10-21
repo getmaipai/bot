@@ -229,7 +229,16 @@ class StackChanBehavior:
 
     def render_turn_state(self, state: str, *, mood: str | None = None) -> None:
         self._active.set()
-        may_move = self.head_gate.allow(f"turn:{state}", response=True)
+        # Only states that really move the head ask the gate (and count toward its cap); the
+        # settle back to centre is essential and always passes.
+        moves = state in {"listening", "thinking", "speaking"}
+        may_move = (
+            self.head_gate.allow(f"turn:{state}", response=True)
+            if moves
+            else self.head_gate.allow(f"turn:{state}", essential=True)
+            if state == "settle"
+            else True
+        )
         if self.night_active():
             # One head turn to face whoever speaks, then rest; no other gestures.
             if state == "listening" and not self._night_turned:

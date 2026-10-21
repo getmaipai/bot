@@ -248,3 +248,21 @@ class MultiSentenceReplyTests(VoiceEndToEnd):
         # The echo guard starts when the unit has finished playing, not when the last frame left.
         ended = max(self.bridge._speech_ended.values())
         self.assertGreaterEqual(ended, times[-1])
+
+
+class UnansweredToolCallsTests(VoiceEndToEnd):
+    hub_options = {"stt_min_blocks": 2}
+
+    async def test_unanswered_tool_calls_start_the_watchdog_and_an_answer_clears_it(self):
+        self.device.drop_tool_replies = frozenset({"self.robot.get_head_angles"})
+        with self.assertRaises(TimeoutError):
+            await asyncio.to_thread(
+                self.service.call_device_tool, "self.robot.get_head_angles", {}, timeout=0.4
+            )
+        self.assertIsNotNone(self.service.watchdog._failing_since)
+        self.device.drop_tool_replies = frozenset()
+        await asyncio.to_thread(
+            self.service.call_device_tool, "self.robot.get_head_angles", {}, timeout=2.0
+        )
+        self.assertIsNone(self.service.watchdog._failing_since)
+        self.assertIsNotNone(self.service.watchdog._last_message_at)

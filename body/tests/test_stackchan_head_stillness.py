@@ -128,3 +128,37 @@ def test_every_head_move_call_site_is_audited():
         "bodies/stackchan/routines.py",
         "selftest/stackchan_wiring.py",
     }
+
+
+def test_a_return_to_centre_passes_after_the_cap_is_used_up_and_is_not_counted():
+    now = [0.0]
+    gate = HeadMotionGate(must_be_still=lambda: False, clock=lambda: now[0], max_moves_per_min=3)
+    assert [gate.allow("decorative", response=True) for _ in range(5)] == [True] * 3 + [False] * 2
+    assert gate.allow("turn:settle", essential=True) is True
+    assert gate.allow("turn:settle", essential=True) is True
+    now[0] += 61.0
+    assert [gate.allow("decorative", response=True) for _ in range(3)] == [True] * 3  # not used up
+
+
+def test_essential_moves_pass_even_when_the_robot_must_be_still():
+    gate = HeadMotionGate(must_be_still=lambda: True, resting=lambda: True)
+    assert gate.allow("ambient:attend") is False
+    assert gate.allow("turn:settle", essential=True) is True
+
+
+def test_a_settle_still_centres_the_head_after_a_burst_of_decorative_moves(behavior):
+    behavior.head_gate = HeadMotionGate(must_be_still=lambda: False, max_moves_per_min=2)
+    for _ in range(5):
+        behavior.render_turn_state("listening")
+    before = _moves(behavior.device)
+    assert before <= 2  # the cap held the decorative moves
+    behavior.render_turn_state("settle")
+    assert _moves(behavior.device) == before + 1  # the settle went through anyway
+
+
+def test_only_states_that_move_the_head_count_toward_the_cap(behavior):
+    gate = HeadMotionGate(must_be_still=lambda: False, max_moves_per_min=100)
+    behavior.head_gate = gate
+    for state in ("listening", "thinking", "reply_mood", "speaking", "settle"):
+        behavior.render_turn_state(state)
+    assert len(gate._recent) == 3  # listening, thinking, speaking; not reply_mood or settle

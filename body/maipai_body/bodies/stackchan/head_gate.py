@@ -18,8 +18,9 @@ from collections.abc import Callable
 
 logger = logging.getLogger("maipai_body.bodies.stackchan.head_gate")
 
-# A conversation needs about three head moves a turn; 12 a minute is far above any real use.
-MAX_MOVES_PER_MIN = 12
+# A fast back-and-forth is about four head moves a turn and up to six turns a minute (24); the cap
+# only stops loops, which move hundreds of times a minute.
+MAX_MOVES_PER_MIN = 30
 
 
 class HeadMotionGate:
@@ -42,8 +43,15 @@ class HeadMotionGate:
         self.allowed = 0
         self.denied = 0
 
-    def allow(self, source: str, *, response: bool = False) -> bool:
-        """Whether ``source`` may move the head now. ``response`` marks a move during a turn."""
+    def allow(self, source: str, *, response: bool = False, essential: bool = False) -> bool:
+        """Whether ``source`` may move the head now. ``response`` marks a move during a turn.
+
+        ``essential`` is a return to centre or a safety hold: it always passes, is never counted
+        and never uses up the cap (a refused settle left the head looking at the ceiling)."""
+        if essential:
+            self.allowed += 1
+            self._log(source, True, "return to centre or hold")
+            return True
         if response:
             verdict, reason = True, "answering a person"
         elif self._must_be_still():

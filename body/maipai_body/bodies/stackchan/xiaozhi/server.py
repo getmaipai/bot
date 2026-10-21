@@ -25,6 +25,7 @@ from maipai_body.bodies.stackchan.ws_logging import listener_logger
 from maipai_body.hal.errors import BodyLost, EstopEngaged, NotSupported, OutOfEnvelope
 
 from .pairing import PairingStore
+from .watchdog import DeviceWatchdog
 
 LOG = logging.getLogger(__name__)
 # Patch 016 opens the firmware's audio gate on the tts start message itself, so only the
@@ -316,6 +317,8 @@ class XiaozhiServer:
         self.max_photo_bytes = max_photo_bytes
         # BOT-SELF-TEST-01: set by the app; both are None until a robot is attached.
         self.session_listeners: list[Callable[[str], None]] = []
+        # Warns, and later restarts the unit, when it stays connected but stops answering tools.
+        self.watchdog = DeviceWatchdog(reboot=self._request_unit_restart)
         self.selftest_checks: Callable[[], list[dict[str, str]]] | None = None
         self.selftest_runner: Callable[[list[str] | None], list[dict[str, object]]] | None = None
         self.advertised_vision_url = advertised_vision_url
@@ -477,6 +480,7 @@ class XiaozhiServer:
                         ),
                     )
                     break
+                self.watchdog.note_message(audio=isinstance(message, bytes))
                 if isinstance(message, bytes):
                     if device_id in self._camera_streaming:
                         self._photos[device_id] = message
@@ -677,6 +681,12 @@ class XiaozhiServer:
                 status=403,
             )
         return None
+
+    def _request_unit_restart(self) -> None:
+        """Ask the connected unit to restart itself (called from a tool-call thread)."""
+        if self._loop is None:
+            return
+        asyncio.run_coroutine_threadsafe(self.send_system("reboot"), self._loop).result(timeout=5)
 
     async def send_system(self, command: str, **fields: object) -> None:
         """Send ``{"type": "system", "command": ...}`` to the one connected device."""
@@ -1105,14 +1115,17 @@ class XiaozhiServer:
                 self._send_device_tool(device_id, websocket, request_id, name, arguments),
                 self._loop,
             ).result(timeout=max(0, deadline - time.monotonic()))
-            return asyncio.run_coroutine_threadsafe(
+            reply = asyncio.run_coroutine_threadsafe(
                 self._await_device_reply(request_key, device_id, name, timeout), self._loop
             ).result(timeout=max(0, deadline - time.monotonic()))
+            self.watchdog.note_tool(True)
+            return reply
         except concurrent.futures.CancelledError as exc:
             raise EstopEngaged(
                 "head move was cancelled by the software stop; release it before moving again"
             ) from exc
         except concurrent.futures.TimeoutError as exc:
+            self.watchdog.note_tool(False, socket_open=device_id in self._sessions)
             raise TimeoutError(
                 f"StackChan did not answer {name} within {timeout:g} seconds. "
                 "Check its connection and retry."
