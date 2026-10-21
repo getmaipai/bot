@@ -56,3 +56,21 @@ def test_no_rest_stage_raises_the_head():
 
 def test_the_head_pose_type_still_accepts_the_level_pose():
     assert HeadPose(pitch=pitch_for(STACKCHAN_PROFILE)).pitch > 0
+
+
+def test_the_idle_face_is_always_the_calm_neutral_one():
+    # The sleepy face (u-shaped eyes, a small open mouth, a Zzz bubble) looked creepy at idle.
+    faces = {f.face for f in PRIMITIVE_BODY_MAP.values() if f.face in {"sleepy"}}
+    assert not faces
+    for stage, fraction in PITCH_FRACTION.items():
+        sent = []
+        client = _Client()
+        client.send_avatar_frame = sent.append
+        from maipai_body.bodies.stackchan.avatar.server import control_avatar
+
+        RestRenderer().render(
+            RestOutput(stage=stage, pose_pitch_fraction=fraction, face="sleepy"),
+            client,
+            STACKCHAN_PROFILE,
+        )
+        assert sent == [control_avatar("neutral")], stage

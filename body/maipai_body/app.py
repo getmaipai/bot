@@ -150,6 +150,7 @@ def _no_hub_discovery(timeout_s: float = 5.0):
 FACE_QUIET_S = 5.0
 # While drowsy or asleep the unit is asked for touch events this often; wakes repeat no sooner.
 LOOK_INTERVAL_S = 0.5  # two looks a second at most
+LOST_AFTER_LOOKS = 4  # two seconds without the face it was following: it was lost
 TOUCH_POLL_S = 5.0
 TOUCH_WAKE_COOLDOWN_S = 30.0
 FACE_REFRESH_S = 30.0
@@ -159,6 +160,7 @@ class StackChanBehavior:
     """Shared expression and bounded anonymous tracking for an attached StackChan."""
 
     def __init__(self, robot, *, vision_bridge=None, idle_interval_s: float = 8.0) -> None:
+        from maipai_body.bodies.stackchan.gaze import GazeState
         from maipai_body.bodies.stackchan.presence_watch import CameraStats, GreetingPolicy
         from maipai_body.bodies.stackchan.profile import STACKCHAN_PROFILE
         from maipai_body.expression.engine import ExpressionEngine
@@ -198,6 +200,8 @@ class StackChanBehavior:
         self._camera_stats = CameraStats(lambda: self.camera_counters())
         self._greeting = GreetingPolicy()
         self._last_look = float("-inf")
+        self._followed = False
+        self._missed_looks = 0
         self._warned: dict[str, float] = {}
         self.on_idle_level: Callable[[], None] = lambda: None
         # BOT-SC-ANIM-01: drowsy and asleep stages so an idle robot does not sit smiling for hours.
@@ -206,6 +210,11 @@ class StackChanBehavior:
         from maipai_body.expression.rest import RestPolicy
 
         self._rest = RestPolicy(time.monotonic(), quiet_hours_active=lambda: self.night_active())
+        # Why the head is where it is, for "what are you looking at?" (gaze.py).
+        self.gaze = GazeState(
+            asleep=lambda: self._rest.stage != "awake" or self.night_active(),
+            wandering=lambda: not self.idle_still(),
+        )
         from maipai_body.bodies.stackchan.head_gate import HeadMotionGate
 
         self.head_gate = HeadMotionGate(
@@ -263,6 +272,10 @@ class StackChanBehavior:
             if state == "settle"
             else True
         )
+        if state == "thinking":
+            from maipai_body.bodies.stackchan.gaze import GazeReason
+
+            self.gaze.note(GazeReason.THINKING)
         if self.night_active():
             # One head turn to face whoever speaks, then rest; no other gestures.
             if state == "listening" and not self._night_turned:
@@ -373,17 +386,31 @@ class StackChanBehavior:
             return False
         self._last_look = now
         started = time.monotonic()
+        self._followed = False
         target = self._vision.track_stream_frame(deadline_s=0.4, may_move=self._may_follow)
         self._camera_stats.looked(time.monotonic() - started, target.detected)
+        from maipai_body.bodies.stackchan.gaze import GazeReason
+
         if not target.detected:
+            self._missed_looks += 1
+            if (
+                self._missed_looks == LOST_AFTER_LOOKS
+                and self.gaze.reason is GazeReason.TRACK
+                and self.gaze.current() is GazeReason.TRACK
+            ):
+                self.gaze.note(GazeReason.SEARCH)  # a face it was following is gone
             return False
+        self._missed_looks = 0
         self._last_person_seen = now
+        if self._followed:
+            self.gaze.note(GazeReason.TRACK)
         if self._greeting.seen(now):
             self.greet()
         return True
 
     def _may_follow(self) -> bool:
-        return not self.idle_still() and self.head_gate.allow("ambient:track")
+        self._followed = (not self.idle_still()) and self.head_gate.allow("ambient:track")
+        return self._followed
 
     def greet(self) -> None:
         """A gesture greeting: a happy face for a moment, and a nod when the head may move.
@@ -740,8 +767,15 @@ async def _serve_stackchan_channels(
                 return "the unit is charging"
             return None
 
+        from maipai_body.bodies.stackchan.gaze import GazeReason
+
         head_commander = HeadCommander(
-            _move_head, blocked=_head_blocked, hold_pose=behavior.hold_pose
+            _move_head,
+            blocked=_head_blocked,
+            hold_pose=behavior.hold_pose,
+            on_done=lambda command: behavior.gaze.note(
+                GazeReason.COMMAND, command.direction or command.kind
+            ),
         )
 
         bridge = StackChanTurnBridge(
@@ -762,6 +796,7 @@ async def _serve_stackchan_channels(
                 on_set=lambda level, _command: night.set_owner_volume_from_voice(level),
             ),
             head_control=head_commander,
+            gaze_control=behavior.gaze,
         )
         voice.audio_handler = bridge.on_audio
         voice.turn_handler = bridge.listen

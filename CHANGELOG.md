@@ -7,6 +7,14 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+### Added
+
+- "What are you looking at?", "what are you looking for?" and "why are you looking over there?" are answered by the robot from why its head last moved (following a face, a spoken look command, a lost face, thinking, resting, or nothing in particular), with a few honest, friendly variants per case and no claims about anything it did not detect. "What do you see?" still goes to the hub.
+
+### Fixed
+
+- The idle face is always the calm neutral one. After ten quiet minutes the robot used to show the firmware's sleepy face (u-shaped eyes, a small open mouth, a Zzz bubble), which looked creepy; the listening and speaking cues no longer switch to the open-mouth happy face either. Drowsy and asleep now show as a level head and, at night, the dark face.
+
 ## [0.2.17] - 2026-10-21
 
 ### Fixed

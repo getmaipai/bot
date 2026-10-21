@@ -75,10 +75,10 @@ PRIMITIVE_BODY_MAP = {
     "glance": BodyAction("neutral", yaw_fraction=0.12),
     "tilt": BodyAction("neutral", pitch_fraction=0.08),
     "nod": BodyAction("happy", pitch_fraction=0.06),
-    "perk": BodyAction("happy", pitch_fraction=0.10),  # lifts: pitch only goes up from level
+    "perk": BodyAction("neutral", pitch_fraction=0.10),  # lifts: pitch only goes up from level
     "attend": BodyAction("neutral", pitch_fraction=0.04),
     "settle": BodyAction("neutral"),
-    "speak": BodyAction("happy", pitch_fraction=0.04),
+    "speak": BodyAction("neutral", pitch_fraction=0.04),
 }
 
 UNSUPPORTED_PRIMITIVES = {

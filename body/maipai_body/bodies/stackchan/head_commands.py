@@ -155,6 +155,7 @@ class HeadCommander:
         sleep: Callable[[float], None] = time.sleep,
         return_after_s: float = RETURN_AFTER_S,
         start_timer: Callable[[float, Callable[[], None]], object] | None = None,
+        on_done: Callable[[HeadCommand], object] | None = None,
     ) -> None:
         self._move = move
         self._blocked = blocked
@@ -163,6 +164,7 @@ class HeadCommander:
         self._sleep = sleep
         self._return_after_s = return_after_s
         self._start_timer = start_timer or self._thread_timer
+        self._on_done = on_done
         self._recent: deque[float] = deque()
         self._timer: threading.Timer | None = None
         self._lock = threading.Lock()
@@ -193,6 +195,8 @@ class HeadCommander:
         except Exception as exc:
             logger.warning("StackChan head command %s failed: %s", command.kind, exc)
             return CANT_NOW
+        if self._on_done is not None:
+            self._on_done(command)  # the gaze reason: "you asked me to look left"
         if command.kind != "centre":
             self._hold_pose(self._return_after_s + 1.0)
             self._schedule_return()
