@@ -39,7 +39,7 @@ class AvatarPeer:
 
     async def send_camera_frame(self, jpeg: bytes) -> None:
         assert self.websocket is not None
-        await self.websocket.send(bytes((0x01,)) + struct.pack(">I", len(jpeg)) + jpeg)
+        await self.websocket.send(bytes((0x02,)) + struct.pack(">I", len(jpeg)) + jpeg)
 
     async def close(self) -> None:
         if self.websocket is not None:

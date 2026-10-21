@@ -21,7 +21,8 @@ from .codec import MAX_FRAME_SIZE, decode_frame, encode_frame
 LOG = logging.getLogger(__name__)
 CONTROL_AVATAR = 0x03
 CONTROL_MOTION = 0x04
-CAMERA_FRAME = 0x01
+# The unit's DataType::Jpeg (hal_ws_avatar.cpp); 0x01 is Opus audio, which this socket ignores.
+CAMERA_FRAME = 0x02
 MAX_CAMERA_FRAME_SIZE = 2 * 1024 * 1024
 HELLO_TIMEOUT_S = 10.0
 MAX_HELLO_SIZE = 4096

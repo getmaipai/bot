@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.38] - 2026-10-21
+
+### Fixed
+- Camera frames were never counted: the host read the unit's camera frames as type 0x01, but the unit sends a JPEG as type 0x02 (0x01 is Opus audio), so every frame was ignored, the log said "0 frames" and the start retry never stopped. The host now reads type 0x02.
+
 ## [0.2.37] - 2026-10-21
 
 ### Changed
