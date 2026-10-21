@@ -43,7 +43,7 @@ level 3 is very sensitive, and the CoreS3 head touch is known for phantom pets; 
 
 The host now owns the rule: the heart is shown for a pet, for kind words from a short list ("you're so helpful", "thank you so much",
 "I love you", "you're the best", "good robot", "you're adorable", "you're so cute"), or when the reply mood from the cue is love,
-affection or adoration (a very cute picture), and never twice within 60 s. It asks the unit for `self.screen.show_symbol` with
+affection or adoration (a very cute picture), and never while an earlier one is still playing (about 3 s, no longer a 60 s cooldown). It asks the unit for `self.screen.show_symbol` with
 `{"name": "heart", "ms": 2500}`. That tool does not exist yet; until it does the host shows the smile instead and does not ask again for
 10 minutes. The unit's own heart on a stroke stays until the firmware change below.
 
