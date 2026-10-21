@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+### Added
+
+- Spoken screen brightness, like the volume: "set brightness to 50 percent", "brighter", "dimmer", "it's too bright", "dim your screen", "full brightness". The robot says "Brightness 50." The screen never goes below 10 (a request to turn it off is answered with how to dim it). By day the level is kept as the owner level; at night only the temporary night level changes and the day edge restores the day level exactly.
+- The robot reads `robot.volume` and `robot.brightness` from the hub as its default owner levels. A default applies when it changes, by day, and never overwrites the night level or a level the person set later with an unchanged default.
+- Levels set on the unit's own panel (the `level_changed` event) are kept as the owner levels, or the night levels at night, once the firmware sends them.
+
 ## [0.2.18] - 2026-10-21
 
 ### Added

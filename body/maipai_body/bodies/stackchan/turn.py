@@ -534,6 +534,7 @@ class StackChanTurnBridge:
         uplink_stats=None,
         side_executor=None,
         volume_control=None,
+        brightness_control=None,
         head_control=None,
         gaze_control=None,
         sight_control=None,
@@ -548,6 +549,8 @@ class StackChanTurnBridge:
         self.uplink_stats = uplink_stats
         # "Louder", "volume to 60": answered here, without asking the hub.
         self.volume_control = volume_control
+        # "Brightness 50", "dimmer": answered here too, on the same terms as the volume.
+        self.brightness_control = brightness_control
         # "Look left", "nod": answered here too, since the hub's model can only say "I can't".
         self.head_control = head_control
         # "What are you looking at?": answered from the head's own reason, never by the hub.
@@ -938,6 +941,24 @@ class StackChanTurnBridge:
             if outcome == "failed":
                 await asyncio.to_thread(self._speak_plain_error, playback, base, cookie)
                 return
+            if self.brightness_control is not None:
+                from maipai_body.bodies.stackchan import brightness as bright
+
+                bright_command = bright.parse_brightness_command(result.text or "")
+                if bright_command is not None:
+                    before, after = await asyncio.to_thread(
+                        self.brightness_control.apply, bright_command
+                    )
+                    LOG.info(
+                        "StackChan voice: brightness command %s (%d -> %d)",
+                        bright_command.kind,
+                        before,
+                        after,
+                    )
+                    line = bright.confirmation(bright_command, before, after)
+                    await asyncio.to_thread(self._say, playback, base, cookie, line)
+                    self._breaker.note_speech()
+                    return
             if self.volume_control is not None:
                 from maipai_body.bodies.stackchan.volume import confirmation, parse_volume_command
 

@@ -14,7 +14,9 @@ from dataclasses import dataclass
 from maipai_body.hal.errors import BodyLost
 
 DANCES = frozenset({"happy", "robot", "panic", "look_around"})
-EVENT_KINDS = frozenset({"head_touch", "head_swipe_forward", "head_swipe_back", "shake"})
+EVENT_KINDS = frozenset(
+    {"head_touch", "head_swipe_forward", "head_swipe_back", "shake", "level_changed"}
+)
 
 _NO_NETWORK_AT_INDEX = "no saved network at that position, list the networks again"
 
@@ -23,12 +25,21 @@ _NO_NETWORK_AT_INDEX = "no saved network at that position, list the networks aga
 class DeviceEvent:
     kind: str
     at_ms: int
+    # level_changed only: the speaker and screen levels the person set on the unit's panel.
+    volume: int | None = None
+    brightness: int | None = None
 
 
 @dataclass(frozen=True)
 class SavedNetwork:
     index: int
     ssid: str
+
+
+def _percent(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+        return None
+    return value
 
 
 class StackChanCompanion:
@@ -63,7 +74,14 @@ class StackChanCompanion:
                 continue
             if isinstance(at_ms, bool) or not isinstance(at_ms, int):
                 continue
-            events.append(DeviceEvent(kind=kind, at_ms=at_ms))
+            events.append(
+                DeviceEvent(
+                    kind=kind,
+                    at_ms=at_ms,
+                    volume=_percent(item.get("volume")),
+                    brightness=_percent(item.get("brightness")),
+                )
+            )
         return events
 
     def wifi_list(self) -> list[SavedNetwork]:

@@ -191,6 +191,8 @@ class StackChanBehavior:
         # Touch, swipe and shake events from the unit (patch 021) wake a drowsy or sleeping robot.
         # Set by the service wiring; None means no unit events are available.
         self.event_poll: Callable[[], list] | None = None
+        # The unit's own volume and brightness sliders: (volume, brightness), either may be None.
+        self.on_levels_changed: Callable[[int | None, int | None], None] | None = None
         # Gets the kinds of the events read ("head_touch", "shake", ...); set by the service wiring.
         self.reaction: Callable[[list[str]], object] | None = None
         self._last_event_poll = float("-inf")
@@ -487,6 +489,16 @@ class StackChanBehavior:
         paused = now - self._last_event_poll > 30.0
         self._last_event_poll = now
         events = self.event_poll()
+        # A slider the person moved on the unit is a level to keep, never old news to drain.
+        for event in events:
+            if getattr(event, "kind", None) == "level_changed" and self.on_levels_changed:
+                try:
+                    self.on_levels_changed(
+                        getattr(event, "volume", None), getattr(event, "brightness", None)
+                    )
+                except Exception:
+                    self._warn_limited("levels", "StackChan level sync failed")
+        events = [e for e in events if getattr(e, "kind", None) != "level_changed"]
         if paused or not self._event_queue_drained:
             self._event_queue_drained = True
             return False
@@ -751,6 +763,7 @@ async def _serve_stackchan_channels(
     )
     behavior.event_poll = voice.robot.client.companion().poll_events
     night = _start_stackchan_night(voice, behavior, link, stop_event)
+    behavior.on_levels_changed = night.set_levels_from_unit
     from maipai_body.bodies.stackchan.power_idle import PowerIdle
 
     power = PowerIdle(
@@ -806,6 +819,7 @@ async def _serve_stackchan_channels(
     if link is not None and offline is not None:
         import math
 
+        from maipai_body.bodies.stackchan.brightness import BrightnessControl
         from maipai_body.bodies.stackchan.head_commands import HeadCommander
         from maipai_body.bodies.stackchan.volume import VolumeControl
         from maipai_body.hal.seam import HeadPose
@@ -850,6 +864,9 @@ async def _serve_stackchan_channels(
                 voice.robot.client._call,
                 voice.robot.client.set_volume,
                 on_set=lambda level, _command: night.set_owner_volume_from_voice(level),
+            ),
+            brightness_control=BrightnessControl(
+                night.effective_brightness, night.set_brightness_from_voice
             ),
             head_control=head_commander,
             gaze_control=behavior.gaze,

@@ -179,6 +179,7 @@ class NightController:
         self.applied_volume = DEFAULT_OWNER_VOLUME
         self.night = False
         self.night_volume_override: int | None = None
+        self.night_brightness_override: int | None = None
         self._synced = True
         # Called after every edge so the power rule can write the idle-motion value it wants.
         self.after_edge: Callable[[], object] | None = None
@@ -217,6 +218,64 @@ class NightController:
                 self.owner_volume = level
                 self._sync_volume()
 
+    def effective_brightness(self) -> int:
+        """The level the screen is meant to show now (the night level at night)."""
+        return self.effective_brightness_for(self.night)
+
+    def effective_brightness_for(self, night: bool) -> int:
+        if night:
+            return self.night_brightness_override or NIGHT_BRIGHTNESS
+        return self.owner_brightness
+
+    def set_brightness_from_voice(self, level: int) -> None:
+        """A spoken brightness: by day the stored owner level, at night only the night level."""
+        level = max(0, min(100, int(level)))
+        with self._lock:
+            if self.night:
+                self.night_brightness_override = level
+            else:
+                self.owner_brightness = level
+            self._call(self._device.set_brightness, level)
+
+    def set_levels_from_unit(self, volume: int | None, brightness: int | None) -> None:
+        """The person moved the unit's own sliders: same rules as a spoken change.
+
+        The unit already applied the levels; this only records them (day: the owner levels,
+        night: the temporary night levels) so the next edge or reconnect restores them."""
+        with self._lock:
+            if volume is not None:
+                if self.night:
+                    self.night_volume_override = volume
+                else:
+                    self.owner_volume = volume
+                self.applied_volume = volume
+            if brightness is not None:
+                if self.night:
+                    self.night_brightness_override = brightness
+                else:
+                    self.owner_brightness = brightness
+
+    def apply_levels(self, volume: object, brightness: object) -> None:
+        """The hub's robot.volume and robot.brightness: the robot's default owner levels.
+
+        Stored as the owner levels when they are new; applied now by day. At night the night
+        level (and a spoken night override) stays, and the day level shows at the next day edge."""
+        if self._levels is None:
+            return
+        vol = volume if isinstance(volume, int) and not isinstance(volume, bool) else None
+        bri = (
+            brightness if isinstance(brightness, int) and not isinstance(brightness, bool) else None
+        )
+        with self._lock:
+            vol_new, bri_new = self._levels.note_hub_defaults(
+                None if vol is None else max(0, min(100, vol)),
+                None if bri is None else max(0, min(100, bri)),
+            )
+            if vol_new:
+                self._sync_volume()
+            if bri_new and not self.night:
+                self._call(self._device.set_brightness, self.owner_brightness)
+
     def on_connect(self) -> None:
         """Force a full state write on the next poll after a unit reconnects."""
         with self._lock:
@@ -238,6 +297,7 @@ class NightController:
 
     def apply_settings(self, values: Mapping[str, Any]) -> None:
         """Reads `robot.face.color` and `robot.night.mode`; a color change shows now."""
+        self.apply_levels(values.get("robot.volume"), values.get("robot.brightness"))
         with self._lock:
             if NIGHT_MODE_KEY in values:
                 self._policy.enabled = night_mode(values)
@@ -317,13 +377,14 @@ class NightController:
             self._synced = True
             if changed and not wanted:
                 self.night_volume_override = None
+                self.night_brightness_override = None
         self._sync_volume(force=reconnect_sync)
 
     def _edge(self, night: bool) -> bool:
         d = self._device
         if not self._call(d.set_face_background, self.color, night):
             return False
-        self._call(d.set_brightness, NIGHT_BRIGHTNESS if night else self.owner_brightness)
+        self._call(d.set_brightness, self.effective_brightness_for(night))
         if self._leds is not None:
             self._call(self._leds, not night)
         # Night turns the wandering off. Day never turns it back on here: whether the head may
