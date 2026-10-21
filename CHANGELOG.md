@@ -7,6 +7,18 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.15] - 2026-10-21
+
+### Added
+
+- Spoken head movement on the robot: "look left/right/up/down" (with "a little" or "all the way"), "turn left/right", "look straight", "look at me", "look around", "nod", "shake your head" and "stay". Left and right are the robot's own left and right. Requests it cannot do (spin, dance, turn around) get "I can look left, right, up or down.", and "I can't move right now." when it is charging, stopped, or the move fails. The head returns to centre after 5 seconds unless asked to stay.
+
+### Fixed
+
+- The camera stream start ran on the host's event loop at every start and reconnect, freezing the host for about 5 seconds and causing a failed first connection after a host restart. It now runs in a worker thread, and the loop guard also covers avatar frames and notifications.
+- The head-move cap no longer blocks a return to centre (settle and hold are always allowed) and is 30 moves a minute; a watchdog logs and reboots a unit that answers no commands for 120 seconds while connected.
+- Firmware is unchanged from 0.2.13.
+
 ### Added
 
 - Spoken head movement on the robot, answered before the hub: "look left / right / up / down" (with "a little" or "all the way"), "turn left", "look straight", "look at me", "look around", "nod", "say yes", "shake your head", "say no" and "stay". It says one short line ("Looking left."), then returns to centre after 5 seconds unless told to stay. If the unit is charging or the stop is latched it says "I can't move right now." Requests like "turn around", "spin" or "dance" get "I can look left, right, up or down." and never reach the hub. See `docs/dev/design-stackchan-head-commands-2026-10-21.md`.
