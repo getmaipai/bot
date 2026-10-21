@@ -7,6 +7,14 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.14] - 2026-10-21
+
+### Fixed
+
+- Spoken volume on the robot understands natural phrases: "set your volume to 100%", number words ("one hundred", "sixty five"), "half", "raise/lower your volume", "I can't hear you", "you're too loud", "too quiet". A bare "volume" asks "Louder or quieter?", and any other remark that mentions volume gets "Say louder, quieter, or a number." instead of reaching the hub. Short loudness remarks without the word volume get the same hint.
+- When no robot is connected the e-stop safe stop repeats at most every 30 seconds instead of about 8 times a second, and the ring light skips writes while no unit is connected.
+- Firmware is unchanged from 0.2.13 (patches 030, 032, 033, 034, 037, 038, 039, 044); the 0.2.14 firmware asset is the same build, so a unit on 0.2.13 does not need a reflash.
+
 ## [0.2.13] - 2026-10-20
 
 ### Fixed
