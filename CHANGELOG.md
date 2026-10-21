@@ -7,6 +7,19 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.18] - 2026-10-21
+
+### Added
+
+- Turning toward the speaker: on a wake word, tap or follow-up the head turns to the face seen in the last 5 seconds, holds through the reply and returns to level. "Can you see me?" is answered from what the camera last saw (it says it can see you, or that the camera is off, or that nobody is in view). "What are you looking at?" is answered from why the head last moved. "What do you see?" answers "I can look, but I can't describe pictures yet." until Home's vision contract lands.
+- Shake reaction: a shaken or abruptly moved robot makes a surprised face and says a short varied line (20 second cooldown, face only in quiet hours, never mid-reply). The host reads touch events while awake.
+
+### Fixed
+
+- The idle face is calm. The sleepy face (open mouth, squinted eyes) is no longer sent at rest; listening and speaking cues are neutral. Happy stays for happy replies and greetings.
+- The heart is earned: only on a pet, kind words, or a loving reply mood, at most once a minute.
+- Firmware is unchanged from 0.2.17.
+
 ### Added
 
 - The robot turns toward the person who starts talking to it: on a wake word, a tap or a follow-up it turns to the face it saw in the last 5 seconds, holds the turn while it listens and answers, and returns to level after. With no recent face it does nothing. Following a face now uses the camera's whole field of view (it turned only 10 degrees at the edge before).
