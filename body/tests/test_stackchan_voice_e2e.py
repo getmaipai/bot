@@ -216,3 +216,28 @@ class ConnectDoesNotFreezeTheLoopTests(VoiceEndToEnd):
         with self.assertRaisesRegex(RuntimeError, "asyncio.to_thread"):
             self.service.call_device_tool("self.robot.get_head_angles", {})
         self.assertLess(time.monotonic() - before, 0.05)
+
+
+class MultiSentenceReplyTests(VoiceEndToEnd):
+    hub_options = {
+        "stt_min_blocks": 2,
+        "tts_seconds": 0.5,
+        "reply_text": "First sentence is here. Second sentence follows it. Third one ends it.",
+    }
+
+    async def test_a_three_sentence_reply_is_one_stream_without_gaps(self):
+        # Fable review P1: stop() per sentence made a gap at every full stop.
+        await self.speak_a_phrase()
+        await self.wait_until(
+            lambda: any(f.get("state") == "stop" for _, f in self.device.tts_events), timeout=15
+        )
+        states = [f.get("state") for _, f in self.device.tts_events if f.get("type") == "tts"]
+        self.assertEqual(states.count("start"), 1, states)
+        self.assertEqual(states.count("stop"), 1, states)
+        self.assertGreaterEqual(len(self.hub.tts_requests), 3)
+        times = [t for t, _size in self.device.downlink_log]
+        gaps = [b - a for a, b in zip(times, times[1:], strict=False)]
+        self.assertLess(max(gaps[14:]), 0.2, f"a gap inside the reply: {max(gaps[14:]):.3f} s")
+        # The echo guard starts when the unit has finished playing, not when the last frame left.
+        ended = max(self.bridge._speech_ended.values())
+        self.assertGreaterEqual(ended, times[-1])

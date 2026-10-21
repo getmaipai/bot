@@ -37,6 +37,9 @@ MAX_BEHIND_FRAMES = 2
 # so the rest of the lost time is dropped from the schedule. 14 + 10 stays under the unit's 40.
 CATCH_UP_MAX_FRAMES = 10
 CATCH_UP_GAP_S = 0.015
+# After the unit's cushion ran dry mid-reply, hold the next frames until this many exist (0.36 s)
+# and send them as a burst, so playback does not restart on an empty buffer.
+REFILL_FRAMES = 6
 # Frames in flight (sent minus played at real time) above this are counted as over the soft cap.
 IN_FLIGHT_SOFT_CAP = 30
 STREAM_POLL_S = 0.01
@@ -156,6 +159,8 @@ class StackChanAudioPlayback(AudioPlayback):
         self._behind_events = 0
         self._max_in_flight = 0.0
         self._over_cap = 0
+        self._was_starved = False
+        self._refills = 0
         self._encoder = self._new_encoder()
         self._samples = np.zeros(0, dtype=np.float32)
         self._frames: list[bytes] = []
@@ -242,7 +247,12 @@ class StackChanAudioPlayback(AudioPlayback):
             )
 
     async def _sender(self) -> None:
-        """Send the lead at once, then the rest at real time; catch up a stall in bounded steps."""
+        """Send the lead at once, then the rest at real time; catch up a stall in bounded steps.
+
+        One stream carries the whole reply: sentence N+1 is synthesized while N plays, so a
+        sentence boundary costs nothing unless synthesis is slower than playback. If the unit's
+        cushion ran dry (the producer fell behind), the next frames are held until a small lead
+        exists and sent as a burst, instead of trickling to an empty buffer."""
         with self._lock:
             lead = self._frames[:LEAD_FRAMES]
             del self._frames[:LEAD_FRAMES]
@@ -260,19 +270,51 @@ class StackChanAudioPlayback(AudioPlayback):
             stop=False,
             prebuffer=len(lead),
         )
-        sent = len(lead)
+        total = len(lead)
+        sent = len(lead)  # since `began`, the last time the schedule was based
         self._note_flight(sent, began)
         deadline = self._clock()
         catching_up = False
         while not self._cancelled():
             with self._lock:
-                frame = self._frames.pop(0) if self._frames else None
                 finished = self._finished
-            if frame is None:
+                waiting = len(self._frames)
+                # Starved: nothing queued and the unit has (almost) nothing left to play. Hold the
+                # next frames until REFILL_FRAMES exist (or the reply is complete).
+                starved = waiting == 0 and sent - (self._clock() - began) / FRAME_S < 1.0
+            if waiting == 0:
                 if finished:
                     break
+                self._was_starved = self._was_starved or starved
                 await self._async_sleep(STREAM_POLL_S)
                 deadline = max(deadline, self._clock())  # a stalled producer: no burst after it
+                continue
+            if self._was_starved and waiting < REFILL_FRAMES and not finished:
+                await self._async_sleep(STREAM_POLL_S)
+                continue
+            if self._was_starved:
+                with self._lock:
+                    batch = self._frames[:REFILL_FRAMES]
+                    del self._frames[:REFILL_FRAMES]
+                self._was_starved = False
+                self._refills += 1
+                began = self._clock()
+                self._play_until = max(self._clock(), self._play_until) + len(batch) * FRAME_S
+                await self._server.send_audio(
+                    self._device_id,
+                    batch,
+                    sentence_start=False,
+                    start=False,
+                    stop=False,
+                    prebuffer=len(batch),
+                )
+                total += len(batch)
+                sent = len(batch)
+                deadline = self._clock()
+                continue
+            with self._lock:
+                frame = self._frames.pop(0) if self._frames else None
+            if frame is None:
                 continue
             deadline += FRAME_S
             now = self._clock()
@@ -298,10 +340,11 @@ class StackChanAudioPlayback(AudioPlayback):
             await self._server.send_audio(
                 self._device_id, [frame], sentence_start=False, start=False, stop=False
             )
+            total += 1
             sent += 1
             self._play_until = max(self._play_until, self._clock()) + FRAME_S
             self._note_flight(sent, began)
-        self._sent_frames += sent
+        self._sent_frames += total
 
     def _note_flight(self, sent: int, began: float) -> None:
         in_flight = sent - (self._clock() - began) / FRAME_S
@@ -314,7 +357,7 @@ class StackChanAudioPlayback(AudioPlayback):
         p95 = late[int(0.95 * (len(late) - 1))] if late else 0.0
         LOG.info(
             "StackChan playback: %d frames, lateness p95 %.0f ms max %.0f ms, behind %d times, "
-            "max in flight %.0f, over %d in flight %d times",
+            "max in flight %.0f, over %d in flight %d times, refilled %d times",
             self._sent_frames,
             p95 * 1000,
             (late[-1] if late else 0.0) * 1000,
@@ -322,6 +365,7 @@ class StackChanAudioPlayback(AudioPlayback):
             self._max_in_flight,
             IN_FLIGHT_SOFT_CAP,
             self._over_cap,
+            self._refills,
         )
 
     def _reset_sentence(self) -> None:
@@ -332,27 +376,43 @@ class StackChanAudioPlayback(AudioPlayback):
         self._behind_events = 0
         self._max_in_flight = 0.0
         self._over_cap = 0
+        self._was_starved = False
+        self._refills = 0
+
+    def _flush_sentence_locked(self) -> None:
+        if self._pitch_buffer:
+            from maipai_body.speech.pitch import shift_pitch
+
+            whole = np.concatenate(self._pitch_buffer)
+            self._pitch_buffer = []
+            self._frame_locked(shift_pitch(whole, 24000, self._pitch_semitones()))
+        if len(self._samples):
+            padded = np.pad(self._samples, (0, 1440 - len(self._samples)))
+            frame = av.AudioFrame.from_ndarray(
+                np.clip(padded * 32767, -32768, 32767).astype(np.int16).reshape(1, -1),
+                format="s16",
+                layout="mono",
+            )
+            frame.sample_rate = 24000
+            self._frames.extend(bytes(packet) for packet in self._encoder.encode(frame))
+        self._frames.extend(bytes(packet) for packet in self._encoder.encode(None))
+        self._samples = np.zeros(0, dtype=np.float32)
+        self._encoder = self._new_encoder()
+
+    def end_sentence(self) -> None:
+        """One sentence is fully synthesized. The reply stays one paced stream: flush this
+        sentence's encoder tail and let the sender carry on into the next sentence."""
+        with self._lock:
+            self._flush_sentence_locked()
+            if self._sender_future is None and self._frames and not self._cancelled():
+                # A short first sentence: fewer frames than the lead, so nothing has been sent yet.
+                self._sender_future = asyncio.run_coroutine_threadsafe(
+                    self._sender(), self._server._loop
+                )
 
     def stop_playing(self) -> None:
         with self._lock:
-            if self._pitch_buffer:
-                from maipai_body.speech.pitch import shift_pitch
-
-                whole = np.concatenate(self._pitch_buffer)
-                self._pitch_buffer = []
-                self._frame_locked(shift_pitch(whole, 24000, self._pitch_semitones()))
-            if len(self._samples):
-                padded = np.pad(self._samples, (0, 1440 - len(self._samples)))
-                frame = av.AudioFrame.from_ndarray(
-                    np.clip(padded * 32767, -32768, 32767).astype(np.int16).reshape(1, -1),
-                    format="s16",
-                    layout="mono",
-                )
-                frame.sample_rate = 24000
-                self._frames.extend(bytes(packet) for packet in self._encoder.encode(frame))
-            self._frames.extend(bytes(packet) for packet in self._encoder.encode(None))
-            self._samples = np.zeros(0, dtype=np.float32)
-            self._encoder = self._new_encoder()
+            self._flush_sentence_locked()
             self._finished = True
             if self._sender_future is None and self._frames and not self._cancelled():
                 # A short sentence: fewer frames than the lead, so nothing has been sent yet.
@@ -826,19 +886,31 @@ class StackChanTurnBridge:
                     synthesized_at = self._clock()
                     if cancel_event.is_set():
                         return
-                    # stop() sends the audio and waits on this event loop's own coroutine, so it
-                    # must run off the loop: inline it deadlocked until its 30 s timeout.
-                    await asyncio.to_thread(playback.stop)
+                    # The reply is one paced stream: this sentence's tail is flushed and the sender
+                    # carries on while the next sentence is synthesized (no stop() per sentence).
+                    end_sentence = getattr(playback, "end_sentence", None)
+                    if end_sentence is not None:
+                        await asyncio.to_thread(end_sentence)
+                    else:
+                        await asyncio.to_thread(playback.stop)
                     LOG.info(
-                        "StackChan voice: sentence %d synthesized in %.1f s, sent to the "
-                        "device in %.1f s",
+                        "StackChan voice: sentence %d synthesized in %.1f s",
                         index + 1,
                         synthesized_at - spoke_at,
-                        self._clock() - synthesized_at,
                     )
-                    self._states[session_id] = "listening"
-                    self._speech_ended[session_id] = self._clock()
+                if getattr(playback, "end_sentence", None) is not None:
+                    # stop() sends what is left and waits on this event loop's own coroutine, so it
+                    # must run off the loop: inline it deadlocked until its 30 s timeout.
+                    finish_started = self._clock()
+                    await asyncio.to_thread(playback.stop)
+                    LOG.info(
+                        "StackChan voice: reply sent to the device %.1f s after the last "
+                        "sentence was synthesized",
+                        self._clock() - finish_started,
+                    )
                 await asyncio.to_thread(playback.end)
+                self._states[session_id] = "listening"
+                self._speech_ended[session_id] = self._clock()
                 self._breaker.note_speech()
                 LOG.info("StackChan voice: reply finished playing")
             else:

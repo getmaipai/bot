@@ -276,3 +276,36 @@ def test_a_stall_is_caught_up_at_the_prebuffer_cadence_not_rebased(monkeypatch, 
     server._loop.call_soon_threadsafe(server._loop.stop)
     worker.join(timeout=1)
     server._loop.close()
+
+
+def test_a_drained_cushion_is_refilled_with_a_small_lead_not_a_trickle():
+    # Fable review P1: after a slow sentence the unit has nothing left; frames arriving one by
+    # one would play on an empty buffer. The sender holds them until six exist, then bursts.
+    clock = Clock()
+    calls = []
+    server = SimpleNamespace(_loop=None)
+
+    async def send_audio(device, frames, **kwargs):
+        calls.append((len(frames), kwargs.get("prebuffer")))
+
+    server.send_audio = send_audio
+    playback = StackChanAudioPlayback(
+        server, "device", clock=clock.monotonic, sleeper=clock.sleep, async_sleep=None
+    )
+    playback._frames = [bytes([i]) for i in range(14)]
+    arrivals = [(1.5, 3), (1.7, 5)]  # (clock time, frames that arrive), after the cushion drained
+
+    async def sleep(duration):
+        clock.sleep(duration)
+        while arrivals and clock.now >= arrivals[0][0]:
+            _when, count = arrivals.pop(0)
+            playback._frames.extend([bytes([9])] * count)
+            if not arrivals:
+                playback._finished = True
+
+    playback._async_sleep = sleep
+    asyncio.run(playback._sender())
+    assert calls[0] == (14, 14)
+    refills = [c for c in calls[1:] if c[1] and c[1] > 1]
+    assert refills and refills[0][0] >= 6
+    assert playback._refills == 1
