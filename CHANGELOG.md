@@ -7,6 +7,7 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.19] - 2026-10-21
 ### Added
 
 - Spoken screen brightness, like the volume: "set brightness to 50 percent", "brighter", "dimmer", "it's too bright", "dim your screen", "full brightness". The robot says "Brightness 50." The screen never goes below 10 (a request to turn it off is answered with how to dim it). By day the level is kept as the owner level; at night only the temporary night level changes and the day edge restores the day level exactly.
