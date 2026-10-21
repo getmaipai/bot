@@ -169,14 +169,11 @@ While listening the host hears everything, so `stop_phrases.py` handles a whole-
 talking", "stop listening", "enough", "stop it") locally: the turn ends, the device goes idle,
 nothing is said and the hub is not asked. "Mute" and "shut up" remain volume commands.
 
-**Stopping while it speaks.** In the speaking state xiaozhi turns voice processing off and keeps
-only the AFE wake word armed, and a wake word during speech calls `AbortSpeaking`. So "Hi,
-StackChan" can interrupt speech, but a plain "stop" cannot reach the host: the uplink is not
-streamed while speaking. Device AEC is not enabled in this build (`CONFIG_USE_DEVICE_AEC` and
-`CONFIG_USE_SERVER_AEC` are off), so the wake word hears the robot's own voice mixed in and is
-less reliable the louder it speaks. A spoken "stop" during speech needs firmware: an ESP-SR
-command-word model (MultiNet) next to the wake word, or an uplink kept open with AEC. Neither is
-in this batch.
+**Stopping while it speaks.** See `stackchan-spoken-stop-2026-10-21.md`. In short: while it speaks,
+xiaozhi keeps only the wake word armed and a wake word calls `AbortSpeaking`; a plain "stop" is
+not heard. The wake-word front end does run echo cancellation against the board's hardware
+reference channel, so "Hi, StackChan" over the robot's own voice may work; that is the first thing
+to test.
 
 **Heart and surprise faces.** The unit's own stroke reaction sets the open-mouthed happy face and
 restores it 3 s after the hand lifts. The host now puts the neutral face back 3 s after any stroke,
