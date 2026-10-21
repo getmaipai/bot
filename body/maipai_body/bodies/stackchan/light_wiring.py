@@ -157,6 +157,8 @@ def start_stackchan_light(
     leds = voice_robot.robot.leds
 
     def write(rgb: tuple[int, int, int]) -> object:
+        if not device_connected():
+            return None  # no unit to light: a write would only fail and latch the stop again
         return leds.many([{"index": index, "rgb": list(rgb)} for index in range(LED_COUNT)])
 
     indicator = StackChanRingIndicator(write)

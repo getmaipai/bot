@@ -25,6 +25,9 @@ from .api import PartContract, RobotApi, load_robot_api
 _PRIORITY = {"safety": 0, "person": 1, "expression": 2, "idle": 3}
 LOG = logging.getLogger(__name__)
 
+# A lost body re-runs the safe stop at most this often while the loss stays latched.
+SAFE_STOP_BACKOFF_S = 30.0
+
 
 @dataclass(frozen=True)
 class Lease:
@@ -91,6 +94,7 @@ class Robot:
         self._estop_engaged = False
         self._estop_cause: str | None = None
         self._last_safe_stop: tuple[str, ...] = ()
+        self._last_safe_stop_at = float("-inf")
 
     @property
     def capabilities(self) -> frozenset[str]:
@@ -220,10 +224,17 @@ class Robot:
         try:
             result = self._dispatch(part, verb, *applied_args, **applied_kwargs)
         except BodyLost:
+            already_lost = self._estop_engaged and self._estop_cause == "body_lost"
             self._estop_engaged = True
             if self._estop_cause != "user":
                 self._estop_cause = "body_lost"
-            self._safe_stop(include_estop=True)
+            now = time.monotonic()
+            # Every failing write (the ring light writes about 8 times a second) used to run the
+            # whole safe stop again, 41,000 failed head.hold lines in a day. Once the loss is
+            # latched, repeat it at most every SAFE_STOP_BACKOFF_S.
+            if not already_lost or now - self._last_safe_stop_at >= SAFE_STOP_BACKOFF_S:
+                self._last_safe_stop_at = now
+                self._safe_stop(include_estop=True)
             raise
         if result is not None:
             return result
