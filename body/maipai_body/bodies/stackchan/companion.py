@@ -14,8 +14,13 @@ from dataclasses import dataclass
 from maipai_body.hal.errors import BodyLost
 
 DANCES = frozenset({"happy", "robot", "panic", "look_around"})
-EVENT_KINDS = frozenset(
-    {"head_touch", "head_swipe_forward", "head_swipe_back", "shake", "level_changed"}
+# Screen-touch diagnostics from firmware patch 046: logged by the host, never a reason to react.
+DIAGNOSTIC_KINDS = frozenset(
+    {"touch_down", "touch_up", "face_pressed", "face_clicked", "gesture", "gesture_ignored"}
+)
+EVENT_KINDS = (
+    frozenset({"head_touch", "head_swipe_forward", "head_swipe_back", "shake", "level_changed"})
+    | DIAGNOSTIC_KINDS
 )
 
 _NO_NETWORK_AT_INDEX = "no saved network at that position, list the networks again"
@@ -28,6 +33,8 @@ class DeviceEvent:
     # level_changed only: the speaker and screen levels the person set on the unit's panel.
     volume: int | None = None
     brightness: int | None = None
+    # Diagnostic events only: the other small fields the unit sent (x, y, dir, why, ready).
+    extra: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -80,6 +87,15 @@ class StackChanCompanion:
                     at_ms=at_ms,
                     volume=_percent(item.get("volume")),
                     brightness=_percent(item.get("brightness")),
+                    extra=(
+                        {
+                            key: value
+                            for key, value in item.items()
+                            if key not in {"kind", "at_ms"} and isinstance(value, (int, str, bool))
+                        }
+                        if kind in DIAGNOSTIC_KINDS
+                        else None
+                    ),
                 )
             )
         return events

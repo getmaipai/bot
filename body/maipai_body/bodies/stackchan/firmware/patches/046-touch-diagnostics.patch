@@ -1,14 +1,16 @@
-# Intent: serial diagnostics for the face screen's touch path (2026-10-21; swipes and taps did nothing on the unit). One line when a finger goes down (with x and y) and when it lifts, one line for each LVGL event the face panel gets (pressed, clicked with the xiaozhi-ready flag, long pressed, scroll began, gesture with its direction), and one line when a gesture is ignored because boot is not done or the quick-settings panel is open. Transitions only, so it cannot flood the log.
-# Upstream: m5stack/StackChan firmware/main/hal/hal.cpp, hal/board/stackchan_display.cc, stackchan_display.h (MIT). Applies after 044 with --unidiff-zero.
-# Check after a flash: with the serial monitor open, touch the face: "touch down x= y=" and "touch up" appear; a tap adds "face: pressed" then "face: clicked"; a swipe adds "face: gesture dir=". No "touch down" line means the controller is not reporting (hardware or I2C); "touch down" without "face: pressed" means an object other than the face panel receives the touch; "pressed" without "gesture" on a swipe means LVGL did not recognise the swipe.
+# Intent: diagnostics for the face screen's touch path (2026-10-21; swipes and taps did nothing on the unit). Each finger down (with x and y) and up, and each LVGL event the face panel gets (pressed, clicked with the xiaozhi-ready flag, gesture with its direction, a gesture ignored and why), is written to the serial log and queued for the host as a low-rate event in patch 021's queue (kinds touch_down, touch_up, face_pressed, face_clicked, gesture, gesture_ignored; at most 20 a minute, none queued while the queue is nearly full). The host logs each as "unit touch: ..." (kinds and coordinates only).
+# Upstream: m5stack/StackChan firmware/main/hal/hal.cpp, hal/hal_mcp.cpp, hal/board/stackchan_display.cc, stackchan_display.h (MIT); new file hal/device_events.h. Applies after 044 with --unidiff-zero.
+# Check after a flash: touch and swipe the face for 30 s; the host log shows "unit touch:" lines. No touch_down means the controller reports nothing; touch_down without face_pressed means another object gets the touch; face_pressed without gesture or face_clicked means LVGL did not recognise the swipe or tap.
 diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
-index 78593d0..4712dad 100644
+index 78593d0..03e63c4 100644
 --- a/firmware/main/hal/board/stackchan_display.cc
 +++ b/firmware/main/hal/board/stackchan_display.cc
-@@ -284,0 +285,2 @@ void StackChanAvatarDisplay::SetupUI()
+@@ -25,0 +26 @@
++#include <hal/device_events.h>
+@@ -284,0 +286,2 @@ void StackChanAvatarDisplay::SetupUI()
 +    // Diagnostic (patch 046): every LVGL touch event the face panel receives, one line each.
 +    lv_obj_add_event_cb(avatar->getPanel()->get(), &StackChanAvatarDisplay::OnTouchDiag, LV_EVENT_ALL, this);
-@@ -390,0 +393,26 @@ void StackChanAvatarDisplay::BootRingTick(lv_timer_t* timer)
+@@ -390,0 +394,32 @@ void StackChanAvatarDisplay::BootRingTick(lv_timer_t* timer)
 +void StackChanAvatarDisplay::OnTouchDiag(lv_event_t* event)
 +{
 +    auto* self = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
@@ -16,9 +18,11 @@ index 78593d0..4712dad 100644
 +        case LV_EVENT_PRESSED:
 +            ESP_LOGI(TAG, "face: pressed (boot_done=%d, panel_open=%d)", self != nullptr && self->boot_done_,
 +                     self != nullptr && self->quick_panel_ != nullptr);
++            device_events_push_diag("face_pressed", "");
 +            break;
 +        case LV_EVENT_CLICKED:
 +            ESP_LOGI(TAG, "face: clicked (xiaozhi_ready=%d)", hal_bridge::is_xiaozhi_ready());
++            device_events_push_diag("face_clicked", hal_bridge::is_xiaozhi_ready() ? "\"ready\":true" : "\"ready\":false");
 +            break;
 +        case LV_EVENT_LONG_PRESSED:
 +            ESP_LOGI(TAG, "face: long pressed");
@@ -26,29 +30,53 @@ index 78593d0..4712dad 100644
 +        case LV_EVENT_SCROLL_BEGIN:
 +            ESP_LOGI(TAG, "face: scroll began");
 +            break;
-+        case LV_EVENT_GESTURE:
-+            ESP_LOGI(TAG, "face: gesture dir=%d (1 left, 2 right, 4 top, 8 bottom)",
-+                     static_cast<int>(lv_indev_get_gesture_dir(lv_indev_active())));
++        case LV_EVENT_GESTURE: {
++            const int dir = static_cast<int>(lv_indev_get_gesture_dir(lv_indev_active()));
++            ESP_LOGI(TAG, "face: gesture dir=%d (1 left, 2 right, 4 top, 8 bottom)", dir);
++            char extra[24];
++            snprintf(extra, sizeof(extra), "\"dir\":%d", dir);
++            device_events_push_diag("gesture", extra);
 +            break;
++        }
 +        default:
 +            break;
 +    }
 +}
 +
-@@ -397,0 +426,2 @@ void StackChanAvatarDisplay::OnGesture(lv_event_t* event)
+@@ -397,0 +433,3 @@ void StackChanAvatarDisplay::OnGesture(lv_event_t* event)
 +        ESP_LOGI(TAG, "face: gesture ignored (boot_done=%d, panel_open=%d)", self->boot_done_,
 +                 self->quick_panel_ != nullptr);
++        device_events_push_diag("gesture_ignored", !self->boot_done_ ? "\"why\":\"boot\"" : "\"why\":\"panel_open\"");
 diff --git a/firmware/main/hal/board/stackchan_display.h b/firmware/main/hal/board/stackchan_display.h
 index ff8b901..ae8bcb5 100644
 --- a/firmware/main/hal/board/stackchan_display.h
 +++ b/firmware/main/hal/board/stackchan_display.h
 @@ -46,0 +47 @@ private:
 +    static void OnTouchDiag(lv_event_t* event);
+diff --git a/firmware/main/hal/device_events.h b/firmware/main/hal/device_events.h
+new file mode 100644
+index 0000000..d6c0f45
+--- /dev/null
++++ b/firmware/main/hal/device_events.h
+@@ -0,0 +1,10 @@
++/*
++ * SPDX-License-Identifier: MIT
++ */
++#pragma once
++
++// A low-rate diagnostic event for the host (patch 046): kind must be a string literal, extra is
++// JSON object members without braces, for example "\"x\":12,\"y\":34", or empty. At most 20 a
++// minute are kept and none are queued when the queue is nearly full, so a diagnostic never pushes
++// a real touch or shake event out.
++void device_events_push_diag(const char* kind, const char* extra);
 diff --git a/firmware/main/hal/hal.cpp b/firmware/main/hal/hal.cpp
-index 84b8341..87eb4ce 100644
+index 84b8341..3dcb122 100644
 --- a/firmware/main/hal/hal.cpp
 +++ b/firmware/main/hal/hal.cpp
-@@ -307,0 +308,12 @@ static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
+@@ -6,0 +7,2 @@
++#include "device_events.h"
++#include <cstdio>
+@@ -307,0 +310,17 @@ static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
 +    // Diagnostic (patch 046): one line when a finger goes down or lifts, with where.
 +    static bool s_diag_down = false;
 +    const bool diag_down    = bridge_data.touchPoint.num != 0;
@@ -56,8 +84,60 @@ index 84b8341..87eb4ce 100644
 +        s_diag_down = diag_down;
 +        if (diag_down) {
 +            mclog::tagInfo(_tag, "touch down x={} y={}", bridge_data.touchPoint.x, bridge_data.touchPoint.y);
++            char extra[40];
++            snprintf(extra, sizeof(extra), "\"x\":%d,\"y\":%d", static_cast<int>(bridge_data.touchPoint.x),
++                     static_cast<int>(bridge_data.touchPoint.y));
++            device_events_push_diag("touch_down", extra);
 +        } else {
 +            mclog::tagInfo(_tag, "touch up");
++            device_events_push_diag("touch_up", "");
 +        }
 +    }
 +
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index 362a01e..0875804 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -19,0 +20,2 @@
++#include "device_events.h"
++#include <string>
+@@ -53,0 +56 @@ struct DeviceEvent {
++    std::string extra;  // JSON members without braces; diagnostics only
+@@ -65 +68,21 @@ void push_event(const char* kind)
+-    s_events.push_back({kind, static_cast<uint32_t>(esp_timer_get_time() / 1000)});
++    s_events.push_back({kind, static_cast<uint32_t>(esp_timer_get_time() / 1000), {}});
++}
++
++constexpr int kMaxDiagEventsPerMinute = 20;
++uint32_t s_diag_times_ms[kMaxDiagEventsPerMinute] = {};
++int s_diag_next                                   = 0;
++
++void push_diag_event(const char* kind, const char* extra)
++{
++    const uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
++    std::lock_guard<std::mutex> lock(s_events_mutex);
++    if (s_events.size() >= 12) {
++        return;
++    }
++    uint32_t oldest = s_diag_times_ms[s_diag_next];
++    if (oldest != 0 && now_ms - oldest < 60000) {
++        return;
++    }
++    s_diag_times_ms[s_diag_next] = now_ms == 0 ? 1 : now_ms;
++    s_diag_next                  = (s_diag_next + 1) % kMaxDiagEventsPerMinute;
++    s_events.push_back({kind, now_ms, extra != nullptr ? extra : ""});
+@@ -126,0 +150,5 @@ std::string json_escape(const std::string& input)
++void device_events_push_diag(const char* kind, const char* extra)
++{
++    push_diag_event(kind, extra);
++}
++
+@@ -427 +455,7 @@ void Hal::xiaozhi_mcp_init()
+-                                    result += fmt::format(R"({{"kind":"{}", "at_ms":{}}})", s_events[i].kind, s_events[i].at_ms);
++                                    if (s_events[i].extra.empty()) {
++                                        result += fmt::format(R"({{"kind":"{}", "at_ms":{}}})", s_events[i].kind,
++                                                              s_events[i].at_ms);
++                                    } else {
++                                        result += fmt::format(R"({{"kind":"{}", "at_ms":{}, {}}})", s_events[i].kind,
++                                                              s_events[i].at_ms, s_events[i].extra);
++                                    }

@@ -9,7 +9,7 @@ checklist (`docs/dev.md`).
 
 ### Added
 
-- Firmware patch 046 (not flashed): serial lines for the screen's touch path, so a unit where swipes and taps do nothing shows whether the controller reports a touch, whether the face receives it and whether LVGL recognises the swipe. The control-panel patch 045 is parked until swipes work.
+- Firmware patch 046, the only firmware change besides the already-pinned head-move cap of 40 a minute: the screen's touch path is reported both on the serial port and to the host, which logs each event as `unit touch: ...` (finger down with x and y, finger up, face pressed, face clicked, swipe direction, and a swipe ignored with why; counts and coordinates only, at most 20 a minute). Swipes and taps did nothing on the unit; one flash and 30 seconds of tapping and swiping says whether the controller reports nothing, the face is not the object touched, or the swipe is not recognised. The control-panel patch 045 stays parked, out of the build, until swipes work.
 
 ## [0.2.19] - 2026-10-21
 

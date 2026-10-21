@@ -128,8 +128,10 @@ see a touch. (2) Touches arrive but land on a different object than the face pan
 arrive but LVGL does not recognise the gesture or click. The three give different log lines, so
 one flash tells them apart.
 
-**Diagnostic: `046-touch-diagnostics.patch`** (in the recipe; compiled, applies after 044). With
-the serial monitor open: `HAL: touch down x= y=` and `touch up` per finger (transitions only);
+**Diagnostic: `046-touch-diagnostics.patch`** (in the recipe; compiled, applies after 044). Every
+line below also goes to the host as a low-rate event (patch 021's queue, at most 20 a minute, none
+while the queue is nearly full) and is logged there as `unit touch: <kind> <fields>`, so the serial
+monitor (which resets the unit when opened) is not needed. On the serial port: `HAL: touch down x= y=` and `touch up` per finger (transitions only);
 `face: pressed`, `clicked (xiaozhi_ready=)`, `long pressed`, `scroll began`, `gesture dir=` for each
 LVGL event on the face; `face: gesture ignored (...)` when 036 drops a gesture. Read it as: no
 `touch down` means guess 1; `touch down` without `face: pressed` means guess 2; `pressed` without

@@ -250,3 +250,27 @@ def test_a_touch_wake_brings_the_rest_policy_back_to_awake():
         assert behavior.rest_step(now + 5.0) == "awake"
     finally:
         behavior.close()
+
+
+def test_screen_touch_diagnostics_are_logged_and_never_wake_or_react(caplog):
+    import logging
+    from types import SimpleNamespace
+
+    behavior, _polls = _sleeping_behavior([])
+    batch = [
+        SimpleNamespace(kind="touch_down", extra={"x": 12, "y": 34}),
+        SimpleNamespace(kind="gesture", extra={"dir": 8}),
+    ]
+    queue = [[], batch]
+    behavior.event_poll = lambda: queue.pop(0) if queue else []
+    seen = []
+    behavior.reaction = seen.append
+    try:
+        behavior.wake_on_touch(0.0)  # drains
+        with caplog.at_level(logging.INFO, logger="maipai_body.app"):
+            assert behavior.wake_on_touch(5.0) is False  # asleep, yet a diagnostic never wakes
+        assert seen == []
+        lines = [r.getMessage() for r in caplog.records if "unit touch" in r.getMessage()]
+        assert lines == ["unit touch: touch_down x=12 y=34", "unit touch: gesture dir=8"]
+    finally:
+        behavior.close()

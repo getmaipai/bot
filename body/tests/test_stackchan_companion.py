@@ -42,7 +42,19 @@ def _names(calls: list[tuple[str, dict[str, object]]]) -> list[str]:
 def test_dances_and_event_kinds_export_the_supported_sets():
     assert DANCES == frozenset({"happy", "robot", "panic", "look_around"})
     assert EVENT_KINDS == frozenset(
-        {"head_touch", "head_swipe_forward", "head_swipe_back", "shake", "level_changed"}
+        {
+            "head_touch",
+            "head_swipe_forward",
+            "head_swipe_back",
+            "shake",
+            "level_changed",
+            "touch_down",
+            "touch_up",
+            "face_pressed",
+            "face_clicked",
+            "gesture",
+            "gesture_ignored",
+        }
     )
 
 
@@ -383,3 +395,16 @@ def test_the_real_device_client_hands_its_tool_call_to_the_companion():
     client.timeout = 1.0
     client.companion().dance("happy")
     assert calls == [("self.robot.dance", {"name": "happy"})]
+
+
+def test_diagnostic_events_keep_their_small_fields():
+    companion = StackChanCompanion(
+        lambda name, args: [
+            {"kind": "touch_down", "at_ms": 5, "x": 12, "y": 34},
+            {"kind": "gesture_ignored", "at_ms": 6, "why": "boot"},
+            {"kind": "shake", "at_ms": 7, "x": 1},
+        ]
+    )
+    down, ignored, shake = companion.poll_events()
+    assert down.extra == {"x": 12, "y": 34} and ignored.extra == {"why": "boot"}
+    assert shake.extra is None

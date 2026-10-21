@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from maipai_body.bodies.stackchan.companion import DIAGNOSTIC_KINDS
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.suppression import SuppressionContext
 from maipai_body.hal.errors import BodyLost
@@ -499,6 +500,13 @@ class StackChanBehavior:
                 except Exception:
                     self._warn_limited("levels", "StackChan level sync failed")
         events = [e for e in events if getattr(e, "kind", None) != "level_changed"]
+        for event in events:
+            if getattr(event, "kind", None) in DIAGNOSTIC_KINDS:
+                detail = " ".join(
+                    f"{k}={v}" for k, v in (getattr(event, "extra", None) or {}).items()
+                )
+                logger.info("unit touch: %s %s", event.kind, detail)
+        events = [e for e in events if getattr(e, "kind", None) not in DIAGNOSTIC_KINDS]
         if paused or not self._event_queue_drained:
             self._event_queue_drained = True
             return False
