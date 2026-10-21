@@ -194,13 +194,32 @@ def test_a_touch_wakes_a_sleeping_robot_after_the_first_look_empties_the_queue()
         behavior.close()
 
 
-def test_the_unit_is_not_asked_for_events_while_the_robot_is_awake():
-    behavior, polls = _sleeping_behavior([["head_touch"]])
+def test_an_awake_robot_reads_events_slowly_and_never_wakes_or_asks_during_a_turn():
+    behavior, polls = _sleeping_behavior([[], ["shake"]])
+    seen = []
     try:
         behavior._rest = type("Rest", (), {"stage": "awake"})()
-        for t in (0.0, 10.0, 20.0):
-            assert behavior.wake_on_touch(t) is False
-        assert polls == []
+        behavior.reaction = seen.append
+        assert behavior.wake_on_touch(0.0) is False  # first look: drains
+        assert behavior.wake_on_touch(1.0) is False  # inside the 2 s interval
+        assert behavior.wake_on_touch(2.5) is False  # awake: reacts but never "wakes"
+        assert seen == [["shake"]] and len(polls) == 2
+        behavior._active.set()
+        assert behavior.wake_on_touch(10.0) is False
+        assert len(polls) == 2  # nothing is asked of the unit during a turn
+    finally:
+        behavior.close()
+
+
+def test_events_after_a_long_pause_are_old_and_only_drain():
+    behavior, polls = _sleeping_behavior([["shake"], ["shake"]])
+    seen = []
+    try:
+        behavior._rest = type("Rest", (), {"stage": "awake"})()
+        behavior.reaction = seen.append
+        behavior.wake_on_touch(0.0)  # drains
+        behavior.wake_on_touch(100.0)  # 100 s later: that batch is old news
+        assert seen == []
     finally:
         behavior.close()
 

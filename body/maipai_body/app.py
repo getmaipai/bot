@@ -153,6 +153,7 @@ LOOK_INTERVAL_S = 0.5  # two looks a second at most
 TURN_FACE_FRESH_S = 5.0  # turn toward a face seen this recently when a turn starts
 LOST_AFTER_LOOKS = 4  # two seconds without the face it was following: it was lost
 TOUCH_POLL_S = 5.0
+EVENT_POLL_S = 2.0  # touch, swipe and shake events are read this often while the robot is awake
 TOUCH_WAKE_COOLDOWN_S = 30.0
 FACE_REFRESH_S = 30.0
 
@@ -190,6 +191,8 @@ class StackChanBehavior:
         # Touch, swipe and shake events from the unit (patch 021) wake a drowsy or sleeping robot.
         # Set by the service wiring; None means no unit events are available.
         self.event_poll: Callable[[], list] | None = None
+        # Gets the kinds of the events read ("head_touch", "shake", ...); set by the service wiring.
+        self.reaction: Callable[[list[str]], object] | None = None
         self._last_event_poll = float("-inf")
         self._last_touch_wake = float("-inf")
         self._event_queue_drained = False
@@ -457,27 +460,49 @@ class StackChanBehavior:
         if not self.idle_still():
             self.render_primitive("nod")
 
-    def wake_on_touch(self, now: float) -> bool:
-        """Wake a drowsy or sleeping robot when the unit reports a touch, swipe or shake.
+    def show_face(self, expression: str) -> None:
+        """Show a face for a moment; the face watchdog puts the idle face back."""
+        if self._active.is_set():
+            return
+        device = self.robot._driver("head").expression_device
+        if device is None:
+            return
+        from maipai_body.bodies.stackchan.avatar.server import control_avatar
 
-        Nothing is asked of the unit while the robot is awake. The first look after it drops off
-        only empties the unit's event queue (old events are not a reason to wake)."""
-        if self.event_poll is None or self._rest.stage == "awake":
+        device.send_avatar_frame(control_avatar(expression))
+        self._face_quiet_since = None  # the watchdog counts its quiet time from now
+
+    def wake_on_touch(self, now: float) -> bool:
+        """Read the unit's touch, swipe and shake events; wake a sleeper, tell the reactions.
+
+        The unit is asked every ``EVENT_POLL_S`` while awake and every ``TOUCH_POLL_S`` while
+        drowsy or asleep, and not at all during a turn. The first look after a pause only empties
+        the unit's queue (old events are not a reason to react). True when it woke the robot."""
+        if self.event_poll is None or self._active.is_set():
             self._event_queue_drained = False
             return False
-        if now - self._last_event_poll < TOUCH_POLL_S:
+        asleep = self._rest.stage != "awake"
+        if now - self._last_event_poll < (TOUCH_POLL_S if asleep else EVENT_POLL_S):
             return False
+        paused = now - self._last_event_poll > 30.0
         self._last_event_poll = now
         events = self.event_poll()
-        if not self._event_queue_drained:
+        if paused or not self._event_queue_drained:
             self._event_queue_drained = True
             return False
-        if not events or now - self._last_touch_wake < TOUCH_WAKE_COOLDOWN_S:
+        if not events:
+            return False
+        kinds = [str(getattr(event, "kind", event)) for event in events]
+        if self.reaction is not None:
+            try:
+                self.reaction(kinds)
+            except Exception:
+                self._warn_limited("reaction", "StackChan touch reaction failed")
+        if not asleep or now - self._last_touch_wake < TOUCH_WAKE_COOLDOWN_S:
             return False
         self._last_touch_wake = now
         self._last_person_seen = now  # the rest policy treats a person as activity and wakes
-        kinds = ", ".join(sorted({str(getattr(event, "kind", event)) for event in events}))
-        logger.info("StackChan woke up on touch (%s)", kinds)
+        logger.info("StackChan woke up on touch (%s)", ", ".join(sorted(set(kinds))))
         return True
 
     def _warn_limited(self, key: str, message: str) -> None:
@@ -836,6 +861,20 @@ async def _serve_stackchan_channels(
         )
         voice.audio_handler = bridge.on_audio
         voice.turn_handler = bridge.listen
+        from maipai_body.bodies.stackchan.reactions import Reactions
+
+        reactions = Reactions(
+            face=behavior.show_face,
+            say=bridge.speak_reaction,
+            quiet=lambda: night.night,
+            busy=lambda: behavior._active.is_set(),
+            symbol=lambda name: voice.robot.client._call(
+                "self.screen.show_symbol", {"name": name, "ms": 2500}
+            ),
+        )
+        behavior.reaction = reactions.on_events
+        bridge.on_user_words = reactions.on_user_words
+        bridge.on_reply_mood = reactions.on_reply_mood
         from maipai_body.selftest.stackchan_wiring import build_context, build_service_hooks
         from maipai_body.speech.turn_client import TurnClient
 

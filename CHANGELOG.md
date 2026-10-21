@@ -44,6 +44,7 @@ checklist (`docs/dev.md`).
 ### Added
 
 - Idle face watching, on by default behind `robot.camera.watch_level`: about twice a second the robot looks for a face in the unit's camera frame (local only, nothing stored). A face keeps it from drifting to sleep, the head follows it when the head gate allows, and a person returning after 10 minutes of an empty room gets one gesture greeting. The host logs one line a minute with the unit's camera frames and bytes. See `docs/dev/stackchan-face-watching-2026-10-21.md`.
+- Shaking the robot gets a surprised face and a short spoken line from a small set (three short startled lines that vary), at most once every 20 seconds, never during a reply, and only the face in quiet hours. A head touch is read by the host too. The loving heart is now rare: for a pet, kind words from a short list, or a loving reply mood, and never twice within a minute (the host asks the unit for a heart symbol; until the firmware has that tool it smiles). See `docs/dev/stackchan-touch-and-hearts-2026-10-21.md` for what the unit does with touch and what the firmware needs.
 
 - Face detection that works in the hub bundle: camera frames are decoded with the bundled PyAV (no OpenCV) and faces are found by the pinned YuNet model on the bundled ONNX Runtime (no Reachy SDK). Measured on the Mac Studio: JPEG decode 0.13 ms (320x240) and 0.44 ms (640x480), detection about 3 ms per frame on one thread. Frames stay in memory; only boxes are kept. The model arrives from Home like every other pinned model.
 

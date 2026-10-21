@@ -537,6 +537,8 @@ class StackChanTurnBridge:
         head_control=None,
         gaze_control=None,
         sight_control=None,
+        on_user_words=None,
+        on_reply_mood=None,
         clock=time.monotonic,
     ) -> None:
         self.server, self.link, self.offline = server, link, offline
@@ -552,6 +554,9 @@ class StackChanTurnBridge:
         self.gaze_control = gaze_control
         # "Can you see me?": answered from what the host knows, never "I can't see".
         self.sight_control = sight_control
+        # Kind words and loving replies earn the heart (reactions.py); both may be None.
+        self.on_user_words = on_user_words
+        self.on_reply_mood = on_reply_mood
         # The expression and light sinks make blocking device calls that wait on this very event
         # loop; run inline they froze it until each 5 s timeout (live log 2026-10-20: 5 s to start
         # a turn, 12 s to the first audio frame). One worker keeps their order.
@@ -924,6 +929,7 @@ class StackChanTurnBridge:
             if outcome == "speech":
                 self._breaker.note_real_final()
                 self._quiet_streak = 0
+                self._notify(self.on_user_words, result.text)
             if outcome == "silence":
                 # Nobody spoke (or it was not speech): end quietly and let the device go idle.
                 await self._end_quietly(session_id, device_id)
@@ -994,6 +1000,7 @@ class StackChanTurnBridge:
                 mood = next((value for value in reversed(moods) if value), None)
                 if mood:
                     self._emit_expression("reply_mood", mood=mood)
+                    self._notify(self.on_reply_mood, mood)
                 for index, sentence in enumerate(_sentences(reply)):
                     if asyncio.current_task().cancelling():
                         return
@@ -1073,6 +1080,49 @@ class StackChanTurnBridge:
                 frames,
                 size,
             )
+
+    def _notify(self, hook, value) -> None:
+        """Call an optional hook; a hook can never break the voice path."""
+        if hook is None:
+            return
+        try:
+            hook(value)
+        except Exception:
+            LOG.warning("StackChan voice hook failed", exc_info=True)
+
+    def speak_reaction(self, text: str) -> bool:
+        """Say one short line on the robot's own initiative (not an answer). False if it cannot.
+
+        It speaks through the same text-to-speech path as a reply, and never while a turn is on or
+        a reply is playing: the line is dropped, not queued."""
+        if self._tasks or any(state == "speaking" for state in self._states.values()):
+            return False
+        sessions = getattr(self.server, "_sessions", None)
+        if not sessions or len(sessions) != 1:
+            return False
+        device_id = next(iter(sessions))
+        try:
+            cookie = self.link.hub_client.session_cookie
+            pairing = self.link.pairing_store.load()
+            base = getattr(self.link.hub_client, "active_base_url", None) or (
+                pairing.base_url if pairing else None
+            )
+            if not cookie or not base:
+                return False
+            try:
+                playback = StackChanAudioPlayback(
+                    self.server,
+                    device_id,
+                    clock=self._clock,
+                    pitch_semitones=lambda: self.pitch_semitones(),
+                )
+            except TypeError:
+                playback = StackChanAudioPlayback(self.server, device_id)
+        except Exception:
+            LOG.warning("StackChan reaction line could not start", exc_info=True)
+            return False
+        self._say(playback, base, cookie, text)
+        return True
 
     def _offline_line(self, playback) -> None:
         if not self._breaker.allow():  # a canned error line: same loop breaker as the apology
