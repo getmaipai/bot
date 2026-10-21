@@ -284,6 +284,7 @@ apply_repo_patch 062-firmware-version-report.patch "$SRC"
 apply_repo_patch 063-avatar-device-id-and-barge-in.patch "$SRC"
 apply_repo_patch 064-camera-stream-stats.patch "$SRC"
 apply_repo_patch 065-barge-stats-and-light-channels.patch "$SRC"
+apply_repo_patch 066-camera-failure-stages.patch "$SRC"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"

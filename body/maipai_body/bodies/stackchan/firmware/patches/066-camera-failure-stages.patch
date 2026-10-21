@@ -1,0 +1,78 @@
+# Intent: tell apart the ways the camera can fail to send (host log 2026-10-21: the avatar socket connects and the host asks for a camera stream, yet no frame arrives). The minute "camera" event now also reports encode failures apart from capture failures, how many binary messages the avatar socket received and the type of the last one (5 means the start command arrived), and the avatar task's smallest free stack is added to the stack report.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_ws_avatar.cpp, hal_head_touch.cpp (MIT). Applies after 065.
+# Check after a flash: "unit camera: starts= captured= sent= failed= enc_failed= binary= last_type=" every minute. starts=0 with binary=0: the start never reached the unit; last_type=5, starts>0, captured=0: the capture fails; captured>0, sent=0: the JPEG encode fails; "avatar_ws" under about 1000 in "unit memory" means that task's stack is too small.
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index d314d84..42bb405 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -21,7 +21,8 @@
+ #include <application.h>
+ #include <cstring>
+ #include <atomic>
+-extern std::atomic<uint32_t> g_cam_starts, g_cam_captured, g_cam_sent, g_cam_failed;
++extern std::atomic<uint32_t> g_cam_starts, g_cam_captured, g_cam_sent, g_cam_failed, g_cam_enc_failed;
++extern std::atomic<uint32_t> g_avatar_binary, g_avatar_last_type;
+ #include <mooncake_log.h>
+ #include <freertos/FreeRTOS.h>
+ #include <freertos/task.h>
+@@ -241,10 +242,14 @@ static void _head_touch_update_task(void* param)
+             snprintf(fw, sizeof(fw), "\"version\":\"%s\",\"rssi\":%d", MAIPAI_FIRMWARE_VERSION, rssi);
+             device_events_push_diag("fw", fw);
+             // Camera stream counts for the minute (defined in hal_ws_avatar.cpp).
+-            char cam[96];
+-            snprintf(cam, sizeof(cam), "\"starts\":%u,\"captured\":%u,\"sent\":%u,\"failed\":%u",
++            char cam[160];
++            snprintf(cam, sizeof(cam),
++                     "\"starts\":%u,\"captured\":%u,\"sent\":%u,\"failed\":%u,\"enc_failed\":%u,"
++                     "\"binary\":%u,\"last_type\":%u",
+                      static_cast<unsigned>(g_cam_starts.exchange(0)), static_cast<unsigned>(g_cam_captured.exchange(0)),
+-                     static_cast<unsigned>(g_cam_sent.exchange(0)), static_cast<unsigned>(g_cam_failed.exchange(0)));
++                     static_cast<unsigned>(g_cam_sent.exchange(0)), static_cast<unsigned>(g_cam_failed.exchange(0)),
++                     static_cast<unsigned>(g_cam_enc_failed.exchange(0)), static_cast<unsigned>(g_avatar_binary.exchange(0)),
++                     static_cast<unsigned>(g_avatar_last_type.load()));
+             device_events_push_diag("camera", cam);
+             // Microphone level while the robot speaks (afe_wake_word.cc), to judge barge-in.
+             char barge[192];
+@@ -252,8 +257,8 @@ static void _head_touch_update_task(void* param)
+             device_events_push_diag("barge_stats", barge);
+             // The least stack ever left free in the big tasks (bytes), to size or move stacks.
+             const char* names[] = {"opus_codec", "audio_input", "audio_output", "ws_reconnect", "stackchan",
+-                                   "audio_detection"};
+-            char stacks[160];
++                                   "audio_detection", "avatar_ws"};
++            char stacks[192];
+             int used = 0;
+             for (const char* name : names) {
+                 TaskHandle_t task = xTaskGetHandle(name);
+diff --git a/firmware/main/hal/hal_ws_avatar.cpp b/firmware/main/hal/hal_ws_avatar.cpp
+index 08e3d60..9cca438 100644
+--- a/firmware/main/hal/hal_ws_avatar.cpp
++++ b/firmware/main/hal/hal_ws_avatar.cpp
+@@ -39,6 +39,9 @@ std::atomic<uint32_t> g_cam_starts{0};
+ std::atomic<uint32_t> g_cam_captured{0};
+ std::atomic<uint32_t> g_cam_sent{0};
+ std::atomic<uint32_t> g_cam_failed{0};
++std::atomic<uint32_t> g_cam_enc_failed{0};   // JPEG encodes that failed (g_cam_failed counts the capture side)
++std::atomic<uint32_t> g_avatar_binary{0};    // binary messages the avatar socket received
++std::atomic<uint32_t> g_avatar_last_type{0}; // type byte of the last one
+ 
+ static const std::string _setting_ns              = "stackchan";
+ static const std::string _setting_device_name_key = "device_name";
+@@ -240,6 +243,8 @@ public:
+             if (msg.data.size() < 1) return;
+             DataType type = static_cast<DataType>(msg.data[0]);
+             ESP_LOGI(_tag.c_str(), "Received binary type: %d, len: %d", (int)type, (int)msg.data.size());
++            g_avatar_binary++;
++            g_avatar_last_type = static_cast<uint32_t>(type);
+ 
+             switch (type) {
+                 // Opus handled in OnData Fast Path
+@@ -467,7 +472,7 @@ public:
+                     free(jpeg_data);
+                 }
+             } else {
+-                g_cam_failed++;
++                g_cam_enc_failed++;
+             }
+         }
+     }

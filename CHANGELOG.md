@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.35] - 2026-10-21
+
+### Added
+- Firmware patch 066: the minute "unit camera" line also reports encode failures apart from capture failures, how many binary messages the avatar socket received and the type of the last one (5 = the start command arrived), and the avatar task's smallest free stack joins "unit memory". It tells apart a start that never arrived, a failing capture, a failing JPEG encode and a too-small task stack.
+
 ## [0.2.34] - 2026-10-21
 
 ### Added
