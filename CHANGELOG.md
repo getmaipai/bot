@@ -7,6 +7,8 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.20] - 2026-10-21
+
 ### Added
 
 - A spoken "stop" while listening ends the turn on the robot: "stop", "StackChan stop", "be quiet", "quiet", "never mind", "cancel", "that's enough", "stop talking", "stop listening". The device goes idle, nothing is said, and the hub is not asked. "Stop the music in the kitchen" and other longer sentences still go to the hub.
@@ -16,14 +18,11 @@ checklist (`docs/dev.md`).
 
 - After a stroke, shake or heart the neutral face comes back after 3 seconds, so the unit's open-mouthed happy face no longer lingers.
 
-### Added
-
-- Firmware patch 046, the only firmware change besides the already-pinned head-move cap of 40 a minute: the screen's touch path is reported both on the serial port and to the host, which logs each event as `unit touch: ...` (finger down with x and y, finger up, face pressed, face clicked, swipe direction, and a swipe ignored with why; counts and coordinates only, at most 20 a minute). Swipes and taps did nothing on the unit; one flash and 30 seconds of tapping and swiping says whether the controller reports nothing, the face is not the object touched, or the swipe is not recognised. The control-panel patch 045 stays parked, out of the build, until swipes work.
-
 ## [0.2.19] - 2026-10-21
 
 ### Added
 
+- Firmware patch 046, the only firmware change besides the already-pinned head-move cap of 40 a minute: the screen's touch path is reported both on the serial port and to the host, which logs each event as `unit touch: ...` (finger down with x and y, finger up, face pressed, face clicked, swipe direction, and a swipe ignored with why; counts and coordinates only, at most 20 a minute). Swipes and taps did nothing on the unit; one flash and 30 seconds of tapping and swiping says whether the controller reports nothing, the face is not the object touched, or the swipe is not recognised. The control-panel patch 045 stays parked, out of the build, until swipes work.
 - Spoken screen brightness, like the volume: "set brightness to 50 percent", "brighter", "dimmer", "it's too bright", "dim your screen", "full brightness". The robot says "Brightness 50." The screen never goes below 10 (a request to turn it off is answered with how to dim it). By day the level is kept as the owner level; at night only the temporary night level changes and the day edge restores the day level exactly.
 - The robot reads `robot.volume` and `robot.brightness` from the hub as its default owner levels. A default applies when it changes, by day, and never overwrites the night level or a level the person set later with an unchanged default.
 - Levels set on the unit's own panel (the `level_changed` event) are kept as the owner levels, or the night levels at night, once the firmware sends them.
