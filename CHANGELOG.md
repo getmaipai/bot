@@ -7,6 +7,16 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-10-20
+
+### Fixed
+
+- Hearing: a follow-up listen no longer drops its first 0.3 seconds, a dropped speech-to-text connection reconnects up to twice instead of ending the turn with an apology, the give-up deadline has a 0.6 second grace, and the wait for the final transcript is 12 seconds.
+
+### Added
+
+- StackChan firmware patch 039: a log-only timing line when an MCP call, its reply or the audio send takes 100 ms or more (at most one line a second). Patches to flash since 0.2.2: 030, 032, 033, 034, 037, 038, 039.
+
 ## [0.2.8] - 2026-10-20
 
 ### Fixed
