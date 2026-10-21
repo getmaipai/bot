@@ -5,12 +5,27 @@ diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/bo
 index 78593d0..03e63c4 100644
 --- a/firmware/main/hal/board/stackchan_display.cc
 +++ b/firmware/main/hal/board/stackchan_display.cc
-@@ -25,0 +26 @@
+@@ -23,6 +23,7 @@
+ #include <stackchan/stackchan.h>
+ #include <assets/lang_config.h>
+ #include <hal/hal.h>
 +#include <hal/device_events.h>
-@@ -284,0 +286,2 @@ void StackChanAvatarDisplay::SetupUI()
+ 
+ using namespace stackchan;
+ using namespace stackchan::avatar;
+@@ -282,6 +283,8 @@ void StackChanAvatarDisplay::SetupUI()
+         }
+     });
+     lv_obj_add_event_cb(avatar->getPanel()->get(), &StackChanAvatarDisplay::OnGesture, LV_EVENT_GESTURE, this);
 +    // Diagnostic (patch 046): every LVGL touch event the face panel receives, one line each.
 +    lv_obj_add_event_cb(avatar->getPanel()->get(), &StackChanAvatarDisplay::OnTouchDiag, LV_EVENT_ALL, this);
-@@ -390,0 +394,32 @@ void StackChanAvatarDisplay::BootRingTick(lv_timer_t* timer)
+ 
+     stackchan.attachAvatar(std::move(avatar));
+     stackchan.addModifier(std::make_unique<BreathModifier>());
+@@ -388,6 +391,38 @@ void StackChanAvatarDisplay::BootRingTick(lv_timer_t* timer)
+     GetHAL().refreshRgb();
+ }
+ 
 +void StackChanAvatarDisplay::OnTouchDiag(lv_event_t* event)
 +{
 +    auto* self = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
@@ -43,16 +58,31 @@ index 78593d0..03e63c4 100644
 +    }
 +}
 +
-@@ -397,0 +433,3 @@ void StackChanAvatarDisplay::OnGesture(lv_event_t* event)
+ void StackChanAvatarDisplay::OnGesture(lv_event_t* event)
+ {
+     auto* self = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
+@@ -395,6 +430,9 @@ void StackChanAvatarDisplay::OnGesture(lv_event_t* event)
+         return;
+     }
+     if (!self->boot_done_ || self->quick_panel_ != nullptr) {
 +        ESP_LOGI(TAG, "face: gesture ignored (boot_done=%d, panel_open=%d)", self->boot_done_,
 +                 self->quick_panel_ != nullptr);
 +        device_events_push_diag("gesture_ignored", !self->boot_done_ ? "\"why\":\"boot\"" : "\"why\":\"panel_open\"");
+         return;
+     }
+ 
 diff --git a/firmware/main/hal/board/stackchan_display.h b/firmware/main/hal/board/stackchan_display.h
 index ff8b901..ae8bcb5 100644
 --- a/firmware/main/hal/board/stackchan_display.h
 +++ b/firmware/main/hal/board/stackchan_display.h
-@@ -46,0 +47 @@ private:
+@@ -44,6 +44,7 @@ private:
+     void HideBootCover();
+     static void BootRingTick(lv_timer_t* timer);
+     static void OnGesture(lv_event_t* event);
 +    static void OnTouchDiag(lv_event_t* event);
+     void ChangeVolume(int delta);
+     void ShowToast(const char* text);
+     void ToggleQuickSettings();
 diff --git a/firmware/main/hal/device_events.h b/firmware/main/hal/device_events.h
 new file mode 100644
 index 0000000..d6c0f45
@@ -73,10 +103,19 @@ diff --git a/firmware/main/hal/hal.cpp b/firmware/main/hal/hal.cpp
 index 84b8341..3dcb122 100644
 --- a/firmware/main/hal/hal.cpp
 +++ b/firmware/main/hal/hal.cpp
-@@ -6,0 +7,2 @@
+@@ -4,6 +4,8 @@
+  * SPDX-License-Identifier: MIT
+  */
+ #include "hal.h"
 +#include "device_events.h"
 +#include <cstdio>
-@@ -307,0 +310,17 @@ static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
+ #include <memory>
+ #include <mooncake_log.h>
+ #include <nvs_flash.h>
+@@ -305,6 +307,23 @@ static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
+     // mclog::tagInfo(_tag, "touchpoint: {}, x: {}, y: {}", bridge_data.touchPoint.num, bridge_data.touchPoint.x,
+     //                bridge_data.touchPoint.y);
+ 
 +    // Diagnostic (patch 046): one line when a finger goes down or lifts, with where.
 +    static bool s_diag_down = false;
 +    const bool diag_down    = bridge_data.touchPoint.num != 0;
@@ -94,16 +133,34 @@ index 84b8341..3dcb122 100644
 +        }
 +    }
 +
+     if (bridge_data.touchPoint.num == 0) {
+         data->state = LV_INDEV_STATE_RELEASED;
+     } else {
 diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
 index 362a01e..0875804 100644
 --- a/firmware/main/hal/hal_mcp.cpp
 +++ b/firmware/main/hal/hal_mcp.cpp
-@@ -19,0 +20,2 @@
+@@ -17,6 +17,8 @@
+ #include <deque>
+ #include <mutex>
+ #include "board/hal_bridge.h"
 +#include "device_events.h"
 +#include <string>
-@@ -53,0 +56 @@ struct DeviceEvent {
+ 
+ using namespace stackchan;
+ 
+@@ -51,6 +53,7 @@ bool head_move_allowed(uint32_t now_ms)
+ struct DeviceEvent {
+     const char* kind;
+     uint32_t at_ms;
 +    std::string extra;  // JSON members without braces; diagnostics only
-@@ -65 +68,21 @@ void push_event(const char* kind)
+ };
+ 
+ std::deque<DeviceEvent> s_events;
+@@ -62,7 +65,27 @@ void push_event(const char* kind)
+     if (s_events.size() >= 16) {
+         s_events.pop_front();
+     }
 -    s_events.push_back({kind, static_cast<uint32_t>(esp_timer_get_time() / 1000)});
 +    s_events.push_back({kind, static_cast<uint32_t>(esp_timer_get_time() / 1000), {}});
 +}
@@ -126,13 +183,25 @@ index 362a01e..0875804 100644
 +    s_diag_times_ms[s_diag_next] = now_ms == 0 ? 1 : now_ms;
 +    s_diag_next                  = (s_diag_next + 1) % kMaxDiagEventsPerMinute;
 +    s_events.push_back({kind, now_ms, extra != nullptr ? extra : ""});
-@@ -126,0 +150,5 @@ std::string json_escape(const std::string& input)
+ }
+ 
+ void ltr553_init()
+@@ -124,6 +147,11 @@ std::string json_escape(const std::string& input)
+ }
+ }  // namespace
+ 
 +void device_events_push_diag(const char* kind, const char* extra)
 +{
 +    push_diag_event(kind, extra);
 +}
 +
-@@ -427 +455,7 @@ void Hal::xiaozhi_mcp_init()
+ void Hal::xiaozhi_mcp_init()
+ {
+     mclog::tagInfo(_tag, "init");
+@@ -424,7 +452,13 @@ void Hal::xiaozhi_mcp_init()
+                                     if (i > 0) {
+                                         result += ", ";
+                                     }
 -                                    result += fmt::format(R"({{"kind":"{}", "at_ms":{}}})", s_events[i].kind, s_events[i].at_ms);
 +                                    if (s_events[i].extra.empty()) {
 +                                        result += fmt::format(R"({{"kind":"{}", "at_ms":{}}})", s_events[i].kind,
@@ -141,3 +210,6 @@ index 362a01e..0875804 100644
 +                                        result += fmt::format(R"({{"kind":"{}", "at_ms":{}, {}}})", s_events[i].kind,
 +                                                              s_events[i].at_ms, s_events[i].extra);
 +                                    }
+                                 }
+                                 s_events.clear();
+                             }

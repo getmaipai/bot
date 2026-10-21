@@ -5,7 +5,10 @@ diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/bo
 index 03e63c4..529b59e 100644
 --- a/firmware/main/hal/board/stackchan_display.cc
 +++ b/firmware/main/hal/board/stackchan_display.cc
-@@ -244,0 +245,7 @@ lv_disp_t* StackChanAvatarDisplay::GetLvglDisplay()
+@@ -242,6 +242,13 @@ lv_disp_t* StackChanAvatarDisplay::GetLvglDisplay()
+ 
+ #include <hal/board/hal_bridge.h>
+ 
 +// Where the finger last went down on the face. A swipe that starts on the top bezel reports a
 +// point at y 0 to 16 and then loses it at the edge, which LVGL reads as a tap and used to start
 +// listening (host log 2026-10-21), so a tap that began in the top strip is ignored.
@@ -13,7 +16,13 @@ index 03e63c4..529b59e 100644
 +constexpr int kTapEdgeDeadZonePx      = 24;
 +constexpr uint32_t kTapDebounceMs     = 800;
 +
-@@ -276 +283,6 @@ void StackChanAvatarDisplay::SetupUI()
+ void StackChanAvatarDisplay::SetupUI()
+ {
+     // Prevent duplicate calls - if already called, return early
+@@ -273,7 +280,12 @@ void StackChanAvatarDisplay::SetupUI()
+     avatar->getPanel()->onClick().connect([]() {
+         static uint32_t last_toggle_tick = 0;
+         const uint32_t now               = GetHAL().millis();
 -        if (last_toggle_tick != 0 && now - last_toggle_tick < 2000) {
 +        if (last_toggle_tick != 0 && now - last_toggle_tick < kTapDebounceMs) {
 +            return;
@@ -21,24 +30,42 @@ index 03e63c4..529b59e 100644
 +        if (s_face_press_y >= 0 && s_face_press_y <= kTapEdgeDeadZonePx) {
 +            ESP_LOGI(TAG, "face: tap ignored, it began at the top edge (y=%d)", s_face_press_y);
 +            device_events_push_diag("click_ignored", "\"why\":\"edge\"");
-@@ -398 +410,4 @@ void StackChanAvatarDisplay::OnTouchDiag(lv_event_t* event)
+             return;
+         }
+ 
+@@ -395,11 +407,15 @@ void StackChanAvatarDisplay::OnTouchDiag(lv_event_t* event)
+ {
+     auto* self = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
+     switch (lv_event_get_code(event)) {
 -        case LV_EVENT_PRESSED:
 +        case LV_EVENT_PRESSED: {
 +            lv_point_t point;
 +            lv_indev_get_point(lv_indev_active(), &point);
 +            s_face_press_y = point.y;
-@@ -402,0 +418 @@ void StackChanAvatarDisplay::OnTouchDiag(lv_event_t* event)
+             ESP_LOGI(TAG, "face: pressed (boot_done=%d, panel_open=%d)", self != nullptr && self->boot_done_,
+                      self != nullptr && self->quick_panel_ != nullptr);
+             device_events_push_diag("face_pressed", "");
+             break;
 +        }
+         case LV_EVENT_CLICKED:
+             ESP_LOGI(TAG, "face: clicked (xiaozhi_ready=%d)", hal_bridge::is_xiaozhi_ready());
+             device_events_push_diag("face_clicked", hal_bridge::is_xiaozhi_ready() ? "\"ready\":true" : "\"ready\":false");
 diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
 index d544b0c..91be19b 100644
 --- a/firmware/xiaozhi-esp32/main/application.cc
 +++ b/firmware/xiaozhi-esp32/main/application.cc
-@@ -771,0 +772,6 @@ void Application::HandleToggleChatEvent() {
+@@ -769,7 +769,14 @@ void Application::HandleToggleChatEvent() {
+     } else if (state == kDeviceStateSpeaking) {
+         AbortSpeaking(kAbortReasonNone);
+     } else if (state == kDeviceStateListening) {
 +#if CONFIG_STACKCHAN_PERSISTENT_WEBSOCKET
 +        // The persistent socket stays open, so closing the channel does nothing. Tell the host to
 +        // drop the turn, then go idle here.
 +        protocol_->SendAbortSpeaking(kAbortReasonNone);
 +        SetDeviceState(kDeviceStateIdle);
 +#else
-@@ -772,0 +779 @@ void Application::HandleToggleChatEvent() {
+         protocol_->CloseAudioChannel();
 +#endif
+     }
+ }
+ 

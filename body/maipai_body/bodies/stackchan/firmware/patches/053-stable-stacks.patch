@@ -5,9 +5,18 @@ diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_t
 index e97b9c7..d17ea0d 100644
 --- a/firmware/main/hal/hal_head_touch.cpp
 +++ b/firmware/main/hal/hal_head_touch.cpp
-@@ -11,0 +12 @@
+@@ -9,6 +9,7 @@
+ #include "device_events.h"
+ #include <cstdio>
+ #include <esp_heap_caps.h>
 +#include <esp_system.h>
-@@ -289,0 +291,7 @@ void Hal::head_touch_init()
+ #include <mooncake_log.h>
+ #include <freertos/FreeRTOS.h>
+ #include <freertos/task.h>
+@@ -287,6 +288,13 @@ void Hal::head_touch_init()
+ {
+     mclog::tagInfo(_tag, "init");
+ 
 +    // Why the unit last restarted (1 power on, 3 software, 4 panic, 5 interrupt watchdog, 6 task
 +    // watchdog, 7 other watchdog, 9 brownout), reported to the host so resets show up in its log.
 +    char reason[32];
@@ -15,11 +24,17 @@ index e97b9c7..d17ea0d 100644
 +    mclog::tagInfo(_tag, "boot: {}", reason);
 +    device_events_push_diag("boot", reason);
 +
+     auto i2c_bus = hal_bridge::board_get_i2c_bus();
+ 
+     si12t_config_t si12t_cfg = {
 diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.cc b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
 index f7cad6f..7769b3a 100644
 --- a/firmware/xiaozhi-esp32/main/audio/audio_service.cc
 +++ b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
-@@ -162,4 +162,5 @@ void AudioService::Start() {
+@@ -159,14 +159,15 @@ void AudioService::Start() {
+     }, "audio_output", 2048, this, 4, &audio_output_task_handle_);
+ #endif
+ 
 -    /* Start the opus codec task. Its 24 KB stack lives in PSRAM (patch 051): internal RAM is the
 -     * scarce resource on this unit (lowest free seen: 12.5 KB), and this one stack was the largest
 -     * single internal allocation. It never touches flash, so an external stack is safe. */
@@ -29,32 +44,51 @@ index f7cad6f..7769b3a 100644
 +     * external stack cannot run while a flash write (NVS) has the cache disabled. The measured least
 +     * stack left was 4,532 bytes, so it keeps its full size. */
 +    xTaskCreate([](void* arg) {
-@@ -169 +170 @@ void AudioService::Start() {
+         AudioService* audio_service = (AudioService*)arg;
+         audio_service->OpusCodecTask();
+         vTaskDelete(NULL);
 -    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_, MALLOC_CAP_SPIRAM);
 +    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
+ }
+ 
+ void AudioService::Stop() {
 diff --git a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
 index 0677d8a..babfe50 100644
 --- a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
 +++ b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
-@@ -96,3 +96,3 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
+@@ -93,13 +93,13 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
+ 
+     InitStopWord();
+ 
 -    // The detection task keeps its stack in PSRAM: the stop word's detect() needs a deeper stack
 -    // than the 4 KB it had, and internal RAM is the scarce resource here.
 -    xTaskCreateWithCaps([](void* arg) {
 +    // The detection task is back to the stock internal 4 KB stack (patch 053): an external stack is
 +    // unsafe when a flash write disables the cache, and the stop word's deeper detect() is off.
 +    xTaskCreate([](void* arg) {
-@@ -102 +102 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
+         auto this_ = (AfeWakeWord*)arg;
+         this_->AudioDetectionTask();
+         vTaskDelete(NULL);
 -    }, "audio_detection", 12288, this, 3, nullptr, MALLOC_CAP_SPIRAM);
 +    }, "audio_detection", 4096, this, 3, nullptr);
-@@ -143,0 +144,4 @@ constexpr StopCommand kStopCommands[] = {
+ 
+     return true;
+ }
+@@ -141,7 +141,17 @@ constexpr StopCommand kStopCommands[] = {
+ };
+ }  // namespace
+ 
 +// The stop word is off in this build. The first flash of it (0.2.24) came with stalls of 30 to 45 s
 +// and resets; until the cause is settled on the unit, it stays off rather than risk the unit.
 +constexpr bool kStopWordEnabled = false;
 +
-@@ -144,0 +149,6 @@ void AfeWakeWord::InitStopWord() {
+ void AfeWakeWord::InitStopWord() {
 +    if (!kStopWordEnabled) {
 +        ESP_LOGI(TAG, "Stop word off: disabled in this build");
 +        stop_disabled_ = true;
 +        device_events_push_diag("stop_word", "\"state\":\"off\",\"why\":\"build\"");
 +        return;
 +    }
+     const char* mn_name = esp_srmodel_filter(models_, ESP_MN_PREFIX, ESP_MN_ENGLISH);
+     if (mn_name == nullptr) {
+         ESP_LOGI(TAG, "Stop word off: no English command-word model in the assets");

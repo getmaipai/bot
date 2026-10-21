@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.29] - 2026-10-21
+
+### Fixed
+
+- Taps at rest did not start listening because firmware patch 047 landed in the wrong place in the real build: its insertion had no context lines, `git apply --unidiff-zero` placed it by line number, and the recipe's tree differs from the one it was written against by a few lines. In every build from 0.2.20 to 0.2.28 a tap at rest called "start listening" and then, in the same handler, an abort and a switch to idle (the host saw two `listen abort` lines and no `listen start`). Patches 046 to 059 now carry three lines of context in every hunk, so the apply check verifies where they go, and a test fails if a later patch has a hunk without context. Taps start, and stop, listening again.
+
 ## [0.2.28] - 2026-10-21
 
 ### Fixed

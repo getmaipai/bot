@@ -5,23 +5,46 @@ diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/bo
 index 3edf9e8..f6166b4 100644
 --- a/firmware/main/hal/board/stackchan_display.cc
 +++ b/firmware/main/hal/board/stackchan_display.cc
-@@ -141 +141 @@ StackChanAvatarDisplay::StackChanAvatarDisplay(esp_lcd_panel_io_handle_t panel_i
+@@ -138,7 +138,7 @@ StackChanAvatarDisplay::StackChanAvatarDisplay(esp_lcd_panel_io_handle_t panel_i
+         .io_handle      = panel_io_,
+         .panel_handle   = panel_,
+         .control_handle = nullptr,
 -        .buffer_size    = static_cast<uint32_t>(width_ * 20),
 +        .buffer_size    = static_cast<uint32_t>(width_ * 10),  // was 20 lines: 6,400 bytes of DMA RAM back
+         .double_buffer  = false,
+         .trans_size     = 0,
+         .hres           = static_cast<uint32_t>(width_),
 diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.cc b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
-index 7769b3a..2a44472 100644
+index fc57748..b165cf2 100644
 --- a/firmware/xiaozhi-esp32/main/audio/audio_service.cc
 +++ b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
-@@ -138 +138 @@ void AudioService::Start() {
+@@ -135,14 +135,14 @@ void AudioService::Start() {
+         AudioService* audio_service = (AudioService*)arg;
+         audio_service->AudioInputTask();
+         vTaskDelete(NULL);
 -    }, "audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 0);
 +    }, "audio_input", 2048 * 2, this, 8, &audio_input_task_handle_, 0);  // was 6144; peak use 2,336
-@@ -145 +145 @@ void AudioService::Start() {
+ 
+     /* Start the audio output task */
+     xTaskCreate([](void* arg) {
+         AudioService* audio_service = (AudioService*)arg;
+         audio_service->AudioOutputTask();
+         vTaskDelete(NULL);
 -    }, "audio_output", 2048 * 2, this, 4, &audio_output_task_handle_);
 +    }, "audio_output", 1024 * 3, this, 4, &audio_output_task_handle_);  // was 4096; peak use 1,416
+ #else
+     /* Start the audio input task */
+     xTaskCreate([](void* arg) {
 diff --git a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
 index a71f421..443f132 100644
 --- a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
 +++ b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
-@@ -42 +42 @@ bool WebsocketProtocol::Start() {
+@@ -39,7 +39,7 @@ bool WebsocketProtocol::Start() {
+         return true;
+     }
+     xEventGroupClearBits(event_group_handle_, WEBSOCKET_PROTOCOL_STOP_EVENT | WEBSOCKET_PROTOCOL_STOPPED_EVENT);
 -    if (xTaskCreate(ReconnectTask, "ws_reconnect", 6144, this, 3, &reconnect_task_handle_) != pdPASS) {
 +    if (xTaskCreate(ReconnectTask, "ws_reconnect", 4096, this, 3, &reconnect_task_handle_) != pdPASS) {
+         reconnect_task_handle_ = nullptr;
+         ESP_LOGE(TAG, "Failed to start websocket reconnect task");
+         return false;

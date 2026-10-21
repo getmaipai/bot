@@ -5,9 +5,18 @@ diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_t
 index f051ebe..d479399 100644
 --- a/firmware/main/hal/hal_head_touch.cpp
 +++ b/firmware/main/hal/hal_head_touch.cpp
-@@ -10,0 +11 @@
+@@ -8,6 +8,7 @@
+ #include "board/hal_bridge.h"
+ #include "device_events.h"
+ #include <cstdio>
 +#include <esp_heap_caps.h>
-@@ -210,0 +212,23 @@ static void _head_touch_update_task(void* param)
+ #include <mooncake_log.h>
+ #include <freertos/FreeRTOS.h>
+ #include <freertos/task.h>
+@@ -208,6 +209,29 @@ static void _head_touch_update_task(void* param)
+                      static_cast<unsigned>(recognizer.presses));
+             mclog::tagInfo(_tag, "minute: {}", extra);
+             device_events_push_diag("head_touch_stats", extra);
 +
 +            // Memory report, once a minute, so the internal RAM budget can be tuned from the host log.
 +            char mem[128];
@@ -31,27 +40,46 @@ index f051ebe..d479399 100644
 +                used += snprintf(stacks + used, sizeof(stacks) - used, "%s\"%s\":%d", used == 0 ? "" : ",", name, hwm);
 +            }
 +            device_events_push_diag("stack_stats", stacks);
+             stats_samples = stats_touched = stats_max = 0;
+             recognizer.blips = recognizer.presses = 0;
+             stats_start_ms = now_ms;
 diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.cc b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
 index 956f448..f7cad6f 100644
 --- a/firmware/xiaozhi-esp32/main/audio/audio_service.cc
 +++ b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
-@@ -2,0 +3 @@
+@@ -1,5 +1,6 @@
+ #include "audio_service.h"
+ #include <esp_log.h>
 +#include <freertos/idf_additions.h>
-@@ -161,2 +162,4 @@ void AudioService::Start() {
+ #include <cstring>
+ 
+ #define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)        \
+@@ -158,12 +159,14 @@ void AudioService::Start() {
+     }, "audio_output", 2048, this, 4, &audio_output_task_handle_);
+ #endif
+ 
 -    /* Start the opus codec task */
 -    xTaskCreate([](void* arg) {
 +    /* Start the opus codec task. Its 24 KB stack lives in PSRAM (patch 051): internal RAM is the
 +     * scarce resource on this unit (lowest free seen: 12.5 KB), and this one stack was the largest
 +     * single internal allocation. It never touches flash, so an external stack is safe. */
 +    xTaskCreateWithCaps([](void* arg) {
-@@ -166 +169 @@ void AudioService::Start() {
+         AudioService* audio_service = (AudioService*)arg;
+         audio_service->OpusCodecTask();
+         vTaskDelete(NULL);
 -    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
 +    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_, MALLOC_CAP_SPIRAM);
+ }
+ 
+ void AudioService::Stop() {
 diff --git a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
 index f7da70a..0677d8a 100644
 --- a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
 +++ b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
-@@ -118,4 +118,10 @@ constexpr int64_t kHitCooldownUs = 1500 * 1000;
+@@ -115,10 +115,16 @@ namespace {
+ constexpr float kModelThreshold = 0.5f;
+ constexpr float kAcceptProb = 0.85f;
+ constexpr int64_t kHitCooldownUs = 1500 * 1000;
 -// Internal RAM is the limit (lowest seen in a session: 12.5 KB). The model may cost at most this
 -// much of it, and arming is refused below this much free.
 -constexpr size_t kMaxModelInternalCost = 6 * 1024;
@@ -66,7 +94,13 @@ index f7da70a..0677d8a 100644
 +constexpr size_t kMaxModelInternalCost = 12 * 1024;
 +constexpr size_t kInitMinFreeAfter = 34 * 1024;
 +constexpr size_t kArmMinFreeInternal = 20 * 1024;
-@@ -157,3 +163,4 @@ void AfeWakeWord::InitStopWord() {
+ 
+ struct StopCommand {
+     const char* name;
+@@ -154,14 +160,16 @@ void AfeWakeWord::InitStopWord() {
+     size_t cost = before > after ? before - after : 0;
+     ESP_LOGI(TAG, "Stop word model %s: internal RAM %u -> %u bytes (cost %u)", mn_name,
+              static_cast<unsigned>(before), static_cast<unsigned>(after), static_cast<unsigned>(cost));
 -    if (cost > kMaxModelInternalCost) {
 -        ESP_LOGW(TAG, "Stop word off: it would use %u bytes of internal RAM (limit %u)",
 -                 static_cast<unsigned>(cost), static_cast<unsigned>(kMaxModelInternalCost));
@@ -74,11 +108,23 @@ index f7da70a..0677d8a 100644
 +        ESP_LOGW(TAG, "Stop word off: cost %u bytes (limit %u), %u bytes left free (need %u)",
 +                 static_cast<unsigned>(cost), static_cast<unsigned>(kMaxModelInternalCost),
 +                 static_cast<unsigned>(after), static_cast<unsigned>(kInitMinFreeAfter));
-@@ -164 +171,2 @@ void AfeWakeWord::InitStopWord() {
+         mn_->destroy(mn_data_);
+         mn_data_ = nullptr;
+         stop_disabled_ = true;
+         char extra[64];
 -        snprintf(extra, sizeof(extra), "\"state\":\"off\",\"cost\":%u", static_cast<unsigned>(cost));
 +        snprintf(extra, sizeof(extra), "\"state\":\"off\",\"cost\":%u,\"free\":%u", static_cast<unsigned>(cost),
 +                 static_cast<unsigned>(after));
-@@ -180 +188,2 @@ void AfeWakeWord::InitStopWord() {
+         device_events_push_diag("stop_word", extra);
+         return;
+     }
+@@ -177,7 +185,8 @@ void AfeWakeWord::InitStopWord() {
+     }
+     ESP_LOGI(TAG, "Stop word ready: %d commands, accept at %.2f", id - 1, kAcceptProb);
+     char extra[64];
 -    snprintf(extra, sizeof(extra), "\"state\":\"ready\",\"cost\":%u", static_cast<unsigned>(cost));
 +    snprintf(extra, sizeof(extra), "\"state\":\"ready\",\"cost\":%u,\"free\":%u", static_cast<unsigned>(cost),
 +             static_cast<unsigned>(after));
+     device_events_push_diag("stop_word", extra);
+ }
+ 

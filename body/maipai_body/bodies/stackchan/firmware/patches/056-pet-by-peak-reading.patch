@@ -5,9 +5,18 @@ diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_t
 index d17ea0d..3bc2d2f 100644
 --- a/firmware/main/hal/hal_head_touch.cpp
 +++ b/firmware/main/hal/hal_head_touch.cpp
-@@ -12,0 +13 @@
+@@ -10,6 +10,7 @@
+ #include <cstdio>
+ #include <esp_heap_caps.h>
+ #include <esp_system.h>
 +#include <settings.h>
-@@ -22,16 +23,16 @@ enum class TouchState { IDLE, TOUCHED, SWIPING };
+ #include <mooncake_log.h>
+ #include <freertos/FreeRTOS.h>
+ #include <freertos/task.h>
+@@ -19,22 +20,22 @@ static const std::string_view _tag = "HAL-HeadTouch";
+ // 触摸状态
+ enum class TouchState { IDLE, TOUCHED, SWIPING };
+ 
 -// The strip reports phantom touches with nobody there (host log 2026-10-21: isolated single-sample
 -// blips about every 10 s), and a real rub only ever reads 1 (readings are 0 to 3; the first flash of
 -// the 2-to-start rule registered no rub at all). So contact is told apart by how long and how dense
@@ -40,7 +49,13 @@ index d17ea0d..3bc2d2f 100644
 +constexpr int kPetSamples = 2;
 +constexpr int kRunGap     = 2;
 +constexpr int kLongRun    = 8;
-@@ -81,6 +82,8 @@ public:
+ 
+ // 配置参数
+ struct TouchConfig {
+@@ -78,67 +79,69 @@ public:
+     {
+     }
+ 
 -    // Counters reported once a minute (and cleared): isolated blips, presses, the longest unbroken
 -    // run of touched samples, and the number of runs of kLongRunSamples or more.
 -    uint32_t blips    = 0;
@@ -55,17 +70,21 @@ index d17ea0d..3bc2d2f 100644
 +    uint32_t runs_strong  = 0;  // runs that reached reading 2 or more
 +    uint32_t run_max      = 0;  // longest run of touched samples, any peak
 +    uint32_t strong_run_max = 0;
-@@ -89 +92 @@ public:
+ 
+     // 更新状态机，返回识别到的手势
 -    HeadPetGesture update(const TouchData& data, uint32_t now_ms)
 +    HeadPetGesture update(const TouchData& data)
-@@ -92,2 +95,2 @@ public:
+     {
+         HeadPetGesture gesture = HeadPetGesture::None;
 -        const bool touched     = data.is_touched();
 -        track_runs(touched, now_ms);
 +        const uint8_t reading  = data.get_max_intensity();
 +        const bool touched     = reading >= 1;
-@@ -94,0 +98 @@ public:
+         if (touched) {
 +            (reading >= kPetPeak ? samples_strong : samples_weak)++;
-@@ -98,35 +102,24 @@ public:
+             last_position = data.get_position();
+         }
+ 
 -        window = ((window << 1) | (touched ? 1u : 0u)) & ((1u << kWindowSamples) - 1);
 -        const int dense = __builtin_popcount(window);
 -        active          = window == 0 ? 0 : active + 1;  // samples since the strip last read quiet
@@ -125,7 +144,7 @@ index d17ea0d..3bc2d2f 100644
 +                } else if (delta < -config.swipe_threshold) {
 +                    current_state = TouchState::SWIPING;
 +                    gesture       = HeadPetGesture::SwipeBackward;
-@@ -134,6 +127,7 @@ public:
+                 }
 -                break;
 -
 -            case TouchState::SWIPING:
@@ -139,7 +158,7 @@ index d17ea0d..3bc2d2f 100644
 +                runs_strong++;
 +                if (run_len > strong_run_max) {
 +                    strong_run_max = run_len;
-@@ -141 +135,10 @@ public:
+                 }
 -                break;
 +            } else {
 +                runs_weak++;
@@ -151,7 +170,13 @@ index d17ea0d..3bc2d2f 100644
 +                current_state = TouchState::IDLE;
 +                gesture       = HeadPetGesture::Release;
 +            }
-@@ -153,38 +155,0 @@ private:
+         }
+ 
+         return gesture;
+@@ -150,57 +153,13 @@ public:
+     }
+ 
+ private:
 -    // Run bookkeeping for the statistics and the blip lockout.
 -    void track_runs(bool touched, uint32_t now_ms)
 -    {
@@ -190,7 +215,9 @@ index d17ea0d..3bc2d2f 100644
 -        }
 -    }
 -
-@@ -194,10 +159,4 @@ private:
+     TouchConfig config;
+     TouchState current_state;
+     int16_t initial_position;
 -    int16_t last_position                     = 0;
 -    uint32_t window                           = 0;
 -    int active                                = 0;
@@ -205,23 +232,44 @@ index d17ea0d..3bc2d2f 100644
 +    uint32_t run_len      = 0;
 +    uint8_t run_peak      = 0;
 +    int gap               = 0;
-@@ -217,2 +176,3 @@ static void _head_touch_update_task(void* param)
+ };
+ 
+ static void _head_touch_update_task(void* param)
+@@ -214,8 +173,9 @@ static void _head_touch_update_task(void* param)
+     GestureRecognizer recognizer;
+     HeadPetGesture gesture;
+ 
 -    // Baseline statistics for the host log, once a minute: how noisy the strip is at rest.
 -    uint32_t stats_samples = 0, stats_touched = 0, stats_max = 0, stats_start_ms = 0;
 +    // Baseline statistics for the host log, once a minute: how noisy the strip is at rest, and
 +    // what a pat looks like (weak and strong samples and runs counted apart).
 +    uint32_t stats_samples = 0, stats_max = 0, stats_start_ms = 0;
-@@ -230 +190 @@ static void _head_touch_update_task(void* param)
+ 
+     vTaskDelay(pdMS_TO_TICKS(200));
+ 
+@@ -227,29 +187,27 @@ static void _head_touch_update_task(void* param)
+ 
+         // Update and fire event
+         const uint32_t now_ms = data.timestamp * portTICK_PERIOD_MS;
 -        gesture               = recognizer.update(data, now_ms);
 +        gesture               = recognizer.update(data);
-@@ -236,3 +195,0 @@ static void _head_touch_update_task(void* param)
+         if (gesture != HeadPetGesture::None) {
+             GetHAL().onHeadPetGesture.emit(gesture);
+         }
+ 
+         stats_samples++;
 -        if (data.is_touched()) {
 -            stats_touched++;
 -        }
-@@ -245 +202 @@ static void _head_touch_update_task(void* param)
+         if (data.get_max_intensity() > stats_max) {
+             stats_max = data.get_max_intensity();
+         }
+         if (stats_start_ms == 0) {
+             stats_start_ms = now_ms;
+         } else if (now_ms - stats_start_ms >= 60000) {
 -            char extra[160];
 +            char extra[200];
-@@ -247,6 +204,7 @@ static void _head_touch_update_task(void* param)
+             snprintf(extra, sizeof(extra),
 -                     "\"samples\":%u,\"touched\":%u,\"max\":%u,\"blips\":%u,\"presses\":%u,\"run_max\":%u,"
 -                     "\"long_runs\":%u",
 -                     static_cast<unsigned>(stats_samples), static_cast<unsigned>(stats_touched),
@@ -235,13 +283,25 @@ index d17ea0d..3bc2d2f 100644
 +                     static_cast<unsigned>(recognizer.presses), static_cast<unsigned>(recognizer.runs_weak),
 +                     static_cast<unsigned>(recognizer.runs_strong), static_cast<unsigned>(recognizer.run_max),
 +                     static_cast<unsigned>(recognizer.strong_run_max));
-@@ -278,2 +236,3 @@ static void _head_touch_update_task(void* param)
+             mclog::tagInfo(_tag, "minute: {}", extra);
+             device_events_push_diag("head_touch_stats", extra);
+ 
+@@ -275,8 +233,9 @@ static void _head_touch_update_task(void* param)
+                 used += snprintf(stacks + used, sizeof(stacks) - used, "%s\"%s\":%d", used == 0 ? "" : ",", name, hwm);
+             }
+             device_events_push_diag("stack_stats", stacks);
 -            stats_samples = stats_touched = stats_max = 0;
 -            recognizer.blips = recognizer.presses = recognizer.run_max = recognizer.long_runs = 0;
 +            stats_samples = stats_max = 0;
 +            recognizer.presses = recognizer.samples_weak = recognizer.samples_strong = 0;
 +            recognizer.runs_weak = recognizer.runs_strong = recognizer.run_max = recognizer.strong_run_max = 0;
-@@ -293,2 +252,14 @@ void Hal::head_touch_init()
+             stats_start_ms = now_ms;
+         }
+ 
+@@ -290,8 +249,20 @@ void Hal::head_touch_init()
+ 
+     // Why the unit last restarted (1 power on, 3 software, 4 panic, 5 interrupt watchdog, 6 task
+     // watchdog, 7 other watchdog, 9 brownout), reported to the host so resets show up in its log.
 -    char reason[32];
 -    snprintf(reason, sizeof(reason), "\"reason\":%d", static_cast<int>(esp_reset_reason()));
 +    // A crash-type restart (panic, interrupt or task watchdog, other watchdog) is also counted in
@@ -258,21 +318,36 @@ index d17ea0d..3bc2d2f 100644
 +    }
 +    char reason[48];
 +    snprintf(reason, sizeof(reason), "\"reason\":%d,\"crash_resets\":%d", why, crash_resets);
-@@ -306 +277 @@ void Hal::head_touch_init()
+     mclog::tagInfo(_tag, "boot: {}", reason);
+     device_events_push_diag("boot", reason);
+ 
+@@ -303,7 +274,7 @@ void Hal::head_touch_init()
+     };
+     static si12t_handle_t si12t;
+     si12t_init(&si12t_cfg, &si12t);
 -    si12t_setup(si12t, SI12T_TYPE_LOW, SI12T_SENSITIVITY_LEVEL_3);
 +    si12t_setup(si12t, kSensitivityType, kSensitivityLevel);
+ 
+     // xTaskCreateWithCaps(_head_touch_update_task, "headtouch", 1024 * 6, si12t, 2, NULL, MALLOC_CAP_SPIRAM);
+     xTaskCreatePinnedToCoreWithCaps(_head_touch_update_task, "headtouch", 1024 * 6, si12t, 2, NULL, 1,
 diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
 index de51513..2c52698 100644
 --- a/firmware/main/hal/hal_mcp.cpp
 +++ b/firmware/main/hal/hal_mcp.cpp
-@@ -169,2 +169,2 @@ void Hal::xiaozhi_mcp_init()
+@@ -166,12 +166,12 @@ void Hal::xiaozhi_mcp_init()
+         (void)imu_connection_id;
+         headpet_connection_id = GetHAL().onHeadPetGesture.connect([](HeadPetGesture gesture) {
+             if (gesture == HeadPetGesture::Press) {
 -                // A press now means contact held for 400 ms (hal_head_touch.cpp); the host trusts that.
 -                push_event("head_touch", "\"held_ms\":400");
 +                // A press now means a run that reached reading 2 or more (hal_head_touch.cpp); the host trusts it.
 +                push_event("head_touch", "\"strong\":1");
-@@ -172 +172 @@ void Hal::xiaozhi_mcp_init()
+             } else if (gesture == HeadPetGesture::SwipeForward) {
 -                push_event("head_swipe_forward", "\"held_ms\":400");
 +                push_event("head_swipe_forward", "\"strong\":1");
-@@ -174 +174 @@ void Hal::xiaozhi_mcp_init()
+             } else if (gesture == HeadPetGesture::SwipeBackward) {
 -                push_event("head_swipe_back", "\"held_ms\":400");
 +                push_event("head_swipe_back", "\"strong\":1");
+             }
+         });
+         imu_connection_id = GetHAL().onImuMotionEvent.connect([](ImuMotionEvent event) {

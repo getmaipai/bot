@@ -5,7 +5,10 @@ diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.cc b/firmware/xiaoz
 index 7769b3a..fc57748 100644
 --- a/firmware/xiaozhi-esp32/main/audio/audio_service.cc
 +++ b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
-@@ -162,5 +162,5 @@ void AudioService::Start() {
+@@ -159,15 +159,15 @@ void AudioService::Start() {
+     }, "audio_output", 2048, this, 4, &audio_output_task_handle_);
+ #endif
+ 
 -    /* Start the opus codec task. Its 24 KB stack is back in internal RAM (patch 053): with it in
 -     * PSRAM (patch 051) the unit stalled for 30 to 45 s and reset, most likely because a task with an
 -     * external stack cannot run while a flash write (NVS) has the cache disabled. The measured least
@@ -16,6 +19,11 @@ index 7769b3a..fc57748 100644
 +     * the stack. If the unit is stable through volume changes and a long conversation, it frees
 +     * 24 KB of internal RAM for the camera and avatar channel. */
 +    xTaskCreateWithCaps([](void* arg) {
-@@ -170 +170 @@ void AudioService::Start() {
+         AudioService* audio_service = (AudioService*)arg;
+         audio_service->OpusCodecTask();
+         vTaskDelete(NULL);
 -    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
 +    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_, MALLOC_CAP_SPIRAM);
+ }
+ 
+ void AudioService::Stop() {

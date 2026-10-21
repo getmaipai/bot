@@ -5,23 +5,44 @@ diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/bo
 index 529b59e..3edf9e8 100644
 --- a/firmware/main/hal/board/stackchan_display.cc
 +++ b/firmware/main/hal/board/stackchan_display.cc
-@@ -952,0 +953 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
+@@ -950,6 +950,7 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
+ 
+     } else if (strcmp(status, Lang::Strings::STANDBY) == 0) {
+         _is_xiaozhi_ready = true;
 +        GetHAL().startAvatarChannel();  // idempotent; opens the camera and avatar socket (patch 054)
+ 
+         if (speaking_modifier_id_ >= 0) {
+             // Stop speaking
 diff --git a/firmware/main/hal/hal.h b/firmware/main/hal/hal.h
 index b8d3c80..af8f854 100644
 --- a/firmware/main/hal/hal.h
 +++ b/firmware/main/hal/hal.h
-@@ -254,0 +255 @@ public:
+@@ -252,6 +252,7 @@ public:
+     uitk::Signal<CommonLogLevel, std::string_view> onWsLog;
+ 
+     void startWebSocketAvatarService(std::function<void(std::string_view)> onStartLog);
 +    void startAvatarChannel();
+ 
+     /* ----------------------------------- IMU ---------------------------------- */
+     uitk::Signal<ImuMotionEvent> onImuMotionEvent;
 diff --git a/firmware/main/hal/hal_ws_avatar.cpp b/firmware/main/hal/hal_ws_avatar.cpp
 index 67421ac..fe9d76b 100644
 --- a/firmware/main/hal/hal_ws_avatar.cpp
 +++ b/firmware/main/hal/hal_ws_avatar.cpp
-@@ -27,0 +28,3 @@
+@@ -25,6 +25,9 @@
+ #include <wifi_manager.h>
+ #include "utils/jpeg_to_image/jpeg_decoder.h"
+ #include "utils/secret_logic/secret_logic.h"
 +#include "device_events.h"
 +#include <freertos/FreeRTOS.h>
 +#include <freertos/task.h>
-@@ -66 +69,9 @@ public:
+ 
+ static std::string _tag = "WS-Avatar";
+ 
+@@ -63,7 +66,15 @@ public:
+ 
+     void init()
+     {
 -        _url = fmt::format("{}/stackChan/ws?deviceType=StackChan", secret_logic::get_server_url());
 +        // The enroll image stores the hub's avatar address as http://host:port; the websocket
 +        // client needs ws:// (or wss://).
@@ -32,7 +53,13 @@ index 67421ac..fe9d76b 100644
 +            base = "wss://" + base.substr(8);
 +        }
 +        _url = fmt::format("{}/stackChan/ws?deviceType=StackChan", base);
-@@ -527,0 +539,44 @@ void Hal::startWebSocketAvatarService(std::function<void(std::string_view)> onSt
+ 
+         connect();
+ 
+@@ -525,3 +536,47 @@ void Hal::startWebSocketAvatarService(std::function<void(std::string_view)> onSt
+     onStartLog("Connecting to\nserver...");
+     mooncake::GetMooncake().extensionManager()->createAbility(std::make_unique<WebsocketAvatarWorker>());
+ }
 +
 +// The avatar channel in AI-agent mode (patch 054). WebsocketAvatarWorker is a Mooncake ability that
 +// only AppAvatar creates, and the firmware boots straight into the voice agent without Mooncake

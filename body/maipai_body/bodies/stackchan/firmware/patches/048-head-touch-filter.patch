@@ -5,10 +5,19 @@ diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_t
 index 3847d9e..f051ebe 100644
 --- a/firmware/main/hal/hal_head_touch.cpp
 +++ b/firmware/main/hal/hal_head_touch.cpp
-@@ -8,0 +9,2 @@
+@@ -6,6 +6,8 @@
+ #include "hal.h"
+ #include "drivers/Si12T/Si12T.h"
+ #include "board/hal_bridge.h"
 +#include "device_events.h"
 +#include <cstdio>
-@@ -16 +18,11 @@ static const std::string_view _tag = "HAL-HeadTouch";
+ #include <mooncake_log.h>
+ #include <freertos/FreeRTOS.h>
+ #include <freertos/task.h>
+@@ -13,7 +15,17 @@
+ static const std::string_view _tag = "HAL-HeadTouch";
+ 
+ // 触摸状态
 -enum class TouchState { IDLE, TOUCHED, SWIPING };
 +enum class TouchState { IDLE, CANDIDATE, TOUCHED, SWIPING };
 +
@@ -21,25 +30,34 @@ index 3847d9e..f051ebe 100644
 +constexpr int kBlipCountToLock  = 3;
 +constexpr uint32_t kBlipWindowMs = 10000;
 +constexpr uint32_t kLockoutMs    = 10000;
-@@ -59,0 +72,3 @@ public:
+ 
+ // 配置参数
+ struct TouchConfig {
+@@ -57,18 +69,48 @@ public:
+     {
+     }
+ 
 +    uint32_t blips   = 0;  // short contacts dropped as noise, since the last report
 +    uint32_t presses = 0;
 +
-@@ -61 +76 @@ public:
+     // 更新状态机，返回识别到的手势
 -    HeadPetGesture update(const TouchData& data)
 +    HeadPetGesture update(const TouchData& data, uint32_t now_ms)
-@@ -64,0 +80,5 @@ public:
+     {
+         HeadPetGesture gesture = HeadPetGesture::None;
+ 
 +        if (now_ms < locked_until_ms) {
 +            current_state = TouchState::IDLE;
 +            return gesture;
 +        }
 +
-@@ -67,2 +87,2 @@ public:
+         switch (current_state) {
+             case TouchState::IDLE:
 -                if (data.is_touched()) {
 -                    current_state    = TouchState::TOUCHED;
 +                if (data.get_max_intensity() >= kPressIntensity) {
 +                    current_state    = TouchState::CANDIDATE;
-@@ -70,2 +90,24 @@ public:
+                     initial_position = data.get_position();
 -                    gesture          = HeadPetGesture::Press;
 -                    // mclog::tagInfo(_tag, "Touch detected at position: {}", initial_position);
 +                    held_samples     = 1;
@@ -66,21 +84,42 @@ index 3847d9e..f051ebe 100644
 +                    if (oldest != 0 && now_ms - oldest < kBlipWindowMs) {
 +                        locked_until_ms = now_ms + kLockoutMs;
 +                    }
-@@ -115,0 +158,5 @@ private:
+                 }
+                 break;
+ 
+@@ -113,6 +155,11 @@ private:
+     TouchConfig config;
+     TouchState current_state;
+     int16_t initial_position;
 +    int held_samples                          = 0;
 +    int gap_samples                           = 0;
 +    uint32_t locked_until_ms                  = 0;
 +    uint32_t blip_times_ms[kBlipCountToLock]  = {};
 +    int blip_next                             = 0;
-@@ -128,0 +176,3 @@ static void _head_touch_update_task(void* param)
+ };
+ 
+ static void _head_touch_update_task(void* param)
+@@ -126,6 +173,9 @@ static void _head_touch_update_task(void* param)
+     GestureRecognizer recognizer;
+     HeadPetGesture gesture;
+ 
 +    // Baseline statistics for the host log, once a minute: how noisy the strip is at rest.
 +    uint32_t stats_samples = 0, stats_touched = 0, stats_max = 0, stats_start_ms = 0;
 +
-@@ -138 +188,2 @@ static void _head_touch_update_task(void* param)
+     vTaskDelay(pdMS_TO_TICKS(200));
+ 
+     while (1) {
+@@ -135,11 +185,34 @@ static void _head_touch_update_task(void* param)
+         data.timestamp = xTaskGetTickCount();
+ 
+         // Update and fire event
 -        gesture = recognizer.update(data);
 +        const uint32_t now_ms = data.timestamp * portTICK_PERIOD_MS;
 +        gesture               = recognizer.update(data, now_ms);
-@@ -142,0 +194,22 @@ static void _head_touch_update_task(void* param)
+         if (gesture != HeadPetGesture::None) {
+             GetHAL().onHeadPetGesture.emit(gesture);
+         }
+ 
 +        stats_samples++;
 +        if (data.is_touched()) {
 +            stats_touched++;
@@ -103,37 +142,68 @@ index 3847d9e..f051ebe 100644
 +            stats_start_ms = now_ms;
 +        }
 +
+         vTaskDelay(pdMS_TO_TICKS(50));
+     }
+ }
 diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
 index 0875804..de51513 100644
 --- a/firmware/main/hal/hal_mcp.cpp
 +++ b/firmware/main/hal/hal_mcp.cpp
-@@ -62 +62 @@ std::mutex s_events_mutex;
+@@ -59,13 +59,13 @@ struct DeviceEvent {
+ std::deque<DeviceEvent> s_events;
+ std::mutex s_events_mutex;
+ 
 -void push_event(const char* kind)
 +void push_event(const char* kind, const char* extra = "")
-@@ -68 +68 @@ void push_event(const char* kind)
+ {
+     std::lock_guard<std::mutex> lock(s_events_mutex);
+     if (s_events.size() >= 16) {
+         s_events.pop_front();
+     }
 -    s_events.push_back({kind, static_cast<uint32_t>(esp_timer_get_time() / 1000), {}});
 +    s_events.push_back({kind, static_cast<uint32_t>(esp_timer_get_time() / 1000), extra});
-@@ -169 +169,2 @@ void Hal::xiaozhi_mcp_init()
+ }
+ 
+ constexpr int kMaxDiagEventsPerMinute = 20;
+@@ -166,11 +166,12 @@ void Hal::xiaozhi_mcp_init()
+         (void)imu_connection_id;
+         headpet_connection_id = GetHAL().onHeadPetGesture.connect([](HeadPetGesture gesture) {
+             if (gesture == HeadPetGesture::Press) {
 -                push_event("head_touch");
 +                // A press now means contact held for 400 ms (hal_head_touch.cpp); the host trusts that.
 +                push_event("head_touch", "\"held_ms\":400");
-@@ -171 +172 @@ void Hal::xiaozhi_mcp_init()
+             } else if (gesture == HeadPetGesture::SwipeForward) {
 -                push_event("head_swipe_forward");
 +                push_event("head_swipe_forward", "\"held_ms\":400");
-@@ -173 +174 @@ void Hal::xiaozhi_mcp_init()
+             } else if (gesture == HeadPetGesture::SwipeBackward) {
 -                push_event("head_swipe_back");
 +                push_event("head_swipe_back", "\"held_ms\":400");
+             }
+         });
+         imu_connection_id = GetHAL().onImuMotionEvent.connect([](ImuMotionEvent event) {
 diff --git a/firmware/main/stackchan/modifiers/head_pet.h b/firmware/main/stackchan/modifiers/head_pet.h
 index 7548767..3285cc7 100644
 --- a/firmware/main/stackchan/modifiers/head_pet.h
 +++ b/firmware/main/stackchan/modifiers/head_pet.h
-@@ -16,0 +17,4 @@ namespace stackchan {
+@@ -14,6 +14,10 @@
+ 
+ namespace stackchan {
+ 
 +// The stock stroke reaction (open-mouthed happy face, heart and shy decorators, a head motion) is
 +// off: the host decides what a pet looks like. Set true to bring the stock reaction back.
 +constexpr bool kUnitPetReaction = false;
 +
-@@ -47 +51,3 @@ public:
+ /**
+  * @brief
+  *
+@@ -44,7 +48,9 @@ public:
+         // 处理“被抚摸中”事件
+         if (_event_swipe) {
+             _event_swipe = false;
 -            handle_swipe(stackchan);
 +            if (kUnitPetReaction) {
 +                handle_swipe(stackchan);
 +            }
+             // 只要在摸，就推迟恢复时间
+             _is_waiting_restore = false;
+         }

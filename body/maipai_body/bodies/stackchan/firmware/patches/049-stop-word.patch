@@ -5,7 +5,10 @@ diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32
 index 91be19b..0a42c95 100644
 --- a/firmware/xiaozhi-esp32/main/application.cc
 +++ b/firmware/xiaozhi-esp32/main/application.cc
-@@ -86,0 +87,8 @@ void Application::Initialize() {
+@@ -84,6 +84,14 @@ void Application::Initialize() {
+         xEventGroupSetBits(event_group_, MAIN_EVENT_VAD_CHANGE);
+     };
+     audio_service_.SetCallbacks(callbacks);
 +    // The on-unit stop word (patch 049): a hit while speaking aborts the reply; the abort message
 +    // tells the host to end the turn, and nothing is said.
 +    audio_service_.SetStopWordCallback([this]() {
@@ -14,26 +17,50 @@ index 91be19b..0a42c95 100644
 +            AbortSpeaking(kAbortReasonNone);
 +        });
 +    });
-@@ -936,0 +945,3 @@ void Application::HandleStateChangedEvent() {
+ 
+     // Add state change listeners
+     state_machine_.AddStateChangeListener([this](DeviceState old_state, DeviceState new_state) {
+@@ -934,6 +942,9 @@ void Application::HandleStateChangedEvent() {
+     auto led = board.GetLed();
+     led->OnStateChanged();
+     
 +    if (new_state != kDeviceStateSpeaking) {
 +        audio_service_.SetStopWordArmed(false);
 +    }
-@@ -985,0 +997 @@ void Application::HandleStateChangedEvent() {
+     switch (new_state) {
+         case kDeviceStateUnknown:
+         case kDeviceStateIdle:
+@@ -983,6 +994,7 @@ void Application::HandleStateChangedEvent() {
+             }
+             break;
+         case kDeviceStateSpeaking:
 +            audio_service_.SetStopWordArmed(true);
+             display->SetStatus(Lang::Strings::SPEAKING);
+             // Keep the radio awake while audio streams in; modem sleep delays packets by seconds.
+             Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
 diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.cc b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
 index fda3842..956f448 100644
 --- a/firmware/xiaozhi-esp32/main/audio/audio_service.cc
 +++ b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
-@@ -744,3 +744,2 @@ void AudioService::SetModelsList(srmodel_list_t* models_list) {
+@@ -741,10 +741,11 @@ void AudioService::SetModelsList(srmodel_list_t* models_list) {
+     models_list_ = models_list;
+ 
+ #if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32P4
 -    if (esp_srmodel_filter(models_list_, ESP_MN_PREFIX, NULL) != nullptr) {
 -        wake_word_ = std::make_unique<CustomWakeWord>();
 -    } else if (esp_srmodel_filter(models_list_, ESP_WN_PREFIX, NULL) != nullptr) {
 +    // A wakenet model wins: a multinet model beside it is the stop word, not a custom wake word.
 +    if (esp_srmodel_filter(models_list_, ESP_WN_PREFIX, NULL) != nullptr) {
-@@ -747,0 +747,2 @@ void AudioService::SetModelsList(srmodel_list_t* models_list) {
+         wake_word_ = std::make_unique<AfeWakeWord>();
 +    } else if (esp_srmodel_filter(models_list_, ESP_MN_PREFIX, NULL) != nullptr) {
 +        wake_word_ = std::make_unique<CustomWakeWord>();
-@@ -765,0 +767,22 @@ void AudioService::SetModelsList(srmodel_list_t* models_list) {
+     } else {
+         wake_word_ = nullptr;
+     }
+@@ -763,6 +764,28 @@ void AudioService::SetModelsList(srmodel_list_t* models_list) {
+             }
+         });
+     }
 +    ApplyStopWordCallback();
 +}
 +
@@ -56,46 +83,81 @@ index fda3842..956f448 100644
 +        afe->SetStopWordArmed(armed);
 +    }
 +#endif
+ }
+ 
+ bool AudioService::IsAfeWakeWord() {
 diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.h b/firmware/xiaozhi-esp32/main/audio/audio_service.h
 index a654711..20a4138 100644
 --- a/firmware/xiaozhi-esp32/main/audio/audio_service.h
 +++ b/firmware/xiaozhi-esp32/main/audio/audio_service.h
-@@ -122,0 +123,3 @@ public:
+@@ -120,6 +120,9 @@ public:
+     bool IsWakeWordRunning() const { return xEventGroupGetBits(event_group_) & AS_EVENT_WAKE_WORD_RUNNING; }
+     bool IsAudioProcessorRunning() const { return xEventGroupGetBits(event_group_) & AS_EVENT_AUDIO_PROCESSOR_RUNNING; }
+     bool IsAfeWakeWord();
 +    // The stop word (patch 049): a short command-word list heard only while the robot speaks.
 +    void SetStopWordCallback(std::function<void()> callback);
 +    void SetStopWordArmed(bool armed);
-@@ -187,0 +191,2 @@ private:
+ 
+     void EnableWakeWordDetection(bool enable);
+     void EnableVoiceProcessing(bool enable);
+@@ -185,6 +188,8 @@ private:
+     std::deque<uint32_t> timestamp_queue_;
+ 
+     bool wake_word_initialized_ = false;
 +    std::function<void()> stop_word_callback_;
 +    void ApplyStopWordCallback();
+     bool audio_processor_initialized_ = false;
+     bool voice_detected_ = false;
+     bool service_stopped_ = true;
 diff --git a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
 index 8fc5fef..f7da70a 100644
 --- a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
 +++ b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
-@@ -3,0 +4,6 @@
+@@ -1,7 +1,14 @@
+ #include "afe_wake_word.h"
+ #include "audio_service.h"
+ #include <esp_log.h>
 +#include <esp_heap_caps.h>
 +#include <esp_timer.h>
 +#include <esp_mn_models.h>
 +#include <esp_mn_speech_commands.h>
 +#include <freertos/idf_additions.h>
 +#include <cstdio>
-@@ -4,0 +11 @@
+ #include <sstream>
 +#include <hal/device_events.h>
-@@ -18,0 +26,4 @@ AfeWakeWord::~AfeWakeWord() {
+ 
+ #define DETECTION_RUNNING_EVENT 1
+ 
+@@ -16,6 +23,10 @@ AfeWakeWord::AfeWakeWord()
+ }
+ 
+ AfeWakeWord::~AfeWakeWord() {
 +    if (mn_data_ != nullptr && mn_ != nullptr) {
 +        mn_->destroy(mn_data_);
 +        mn_data_ = nullptr;
 +    }
-@@ -83 +94,5 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
+     if (afe_data_ != nullptr) {
+         afe_iface_->destroy(afe_data_);
+     }
+@@ -80,15 +91,154 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
+     afe_iface_ = esp_afe_handle_from_config(afe_config);
+     afe_data_ = afe_iface_->create_from_config(afe_config);
+ 
 -    xTaskCreate([](void* arg) {
 +    InitStopWord();
 +
 +    // The detection task keeps its stack in PSRAM: the stop word's detect() needs a deeper stack
 +    // than the 4 KB it had, and internal RAM is the scarce resource here.
 +    xTaskCreateWithCaps([](void* arg) {
-@@ -87 +102 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
+         auto this_ = (AfeWakeWord*)arg;
+         this_->AudioDetectionTask();
+         vTaskDelete(NULL);
 -    }, "audio_detection", 4096, this, 3, nullptr);
 +    }, "audio_detection", 12288, this, 3, nullptr, MALLOC_CAP_SPIRAM);
-@@ -91,0 +107,135 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
+ 
+     return true;
+ }
+ 
 +// ---- the stop word (patch 049) -------------------------------------------------------------
 +//
 +// A small MultiNet command list ("stop", "be quiet", ...) runs on the same echo-cancelled audio as
@@ -231,7 +293,13 @@ index 8fc5fef..f7da70a 100644
 +    }
 +}
 +
-@@ -151,0 +302,11 @@ void AfeWakeWord::AudioDetectionTask() {
+ void AfeWakeWord::OnWakeWordDetected(std::function<void(const std::string& wake_word)> callback) {
+     wake_word_detected_callback_ = callback;
+ }
+@@ -149,6 +299,17 @@ void AfeWakeWord::AudioDetectionTask() {
+         // Store the wake word data for voice recognition, like who is speaking
+         StoreWakeWordData(res->data, res->data_size / sizeof(int16_t));
+ 
 +        // The stop word listens to the same cleaned audio, but only while the robot speaks.
 +        bool stop_armed = stop_armed_.load();
 +        if (stop_armed && mn_data_ != nullptr) {
@@ -243,19 +311,37 @@ index 8fc5fef..f7da70a 100644
 +        }
 +        stop_was_armed_ = stop_armed;
 +
+         if (res->wakeup_state == WAKENET_DETECTED) {
+             Stop();
+             last_detected_wake_word_ = wake_words_[res->wakenet_model_index - 1];
 diff --git a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.h b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.h
 index 6c2bf72..b4d0534 100644
 --- a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.h
 +++ b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.h
-@@ -9,0 +10,2 @@
+@@ -7,6 +7,8 @@
+ 
+ #include <esp_afe_sr_models.h>
+ #include <esp_nsn_models.h>
 +#include <esp_mn_iface.h>
 +#include <atomic>
-@@ -36,0 +39,4 @@ public:
+ #include <model_path.h>
+ 
+ #include <deque>
+@@ -34,6 +36,10 @@ public:
+     bool GetWakeWordOpus(std::vector<uint8_t>& opus);
+     const std::string& GetLastDetectedWakeWord() const { return last_detected_wake_word_; }
+ 
 +    // The stop word: a short command-word list, heard only while armed (the robot is speaking).
 +    void OnStopWord(std::function<void()> callback) { stop_word_callback_ = std::move(callback); }
 +    void SetStopWordArmed(bool armed);
 +
-@@ -59,0 +66,11 @@ private:
+ private:
+     srmodel_list_t *models_ = nullptr;
+     const esp_afe_sr_iface_t* afe_iface_ = nullptr;
+@@ -57,6 +63,17 @@ private:
+ 
+     void StoreWakeWordData(const int16_t* data, size_t size);
+     void AudioDetectionTask();
 +
 +    void InitStopWord();
 +    void StopWordStep(const int16_t* data, size_t samples);
@@ -267,13 +353,22 @@ index 6c2bf72..b4d0534 100644
 +    std::vector<int16_t> stop_buffer_;
 +    std::function<void()> stop_word_callback_;
 +    int64_t stop_last_hit_us_ = 0;
+ };
+ 
+ #endif
 diff --git a/firmware/xiaozhi-esp32/scripts/build_default_assets.py b/firmware/xiaozhi-esp32/scripts/build_default_assets.py
-index 9ca1464..a147106 100755
+index 9ca1464..a147106 100644
 --- a/firmware/xiaozhi-esp32/scripts/build_default_assets.py
 +++ b/firmware/xiaozhi-esp32/scripts/build_default_assets.py
-@@ -864,2 +864,3 @@ def main():
+@@ -861,8 +861,9 @@ def main():
+         print("Please select appropriate CONFIG_SR_MN_* options in menuconfig, or disable USE_CUSTOM_WAKE_WORD")
+         sys.exit(1)
+     
 -    # 3. Only package multinet models if USE_CUSTOM_WAKE_WORD=y
 -    if wake_word_config['use_custom_wake_word']:
 +    # 3. Package multinet models for the custom wake word, and for the StackChan stop word that
 +    #    runs beside the AFE wake word (it is the only reason a multinet model is selected then).
 +    if wake_word_config['use_custom_wake_word'] or wake_word_config['use_afe_wake_word']:
+         multinet_model_paths = get_multinet_model_paths(multinet_model_names, args.esp_sr_model_path)
+     elif multinet_model_names:
+         print(f"  Note: Found multinet models {multinet_model_names} but USE_CUSTOM_WAKE_WORD is disabled, skipping")
