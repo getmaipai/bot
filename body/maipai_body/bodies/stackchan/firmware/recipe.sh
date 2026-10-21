@@ -281,6 +281,7 @@ apply_repo_patch 059-wake-and-tap-visibility.patch "$SRC"
 apply_repo_patch 060-avatar-socket-credentials.patch "$SRC"
 apply_repo_patch 061-stop-while-speaking.patch "$SRC"
 apply_repo_patch 062-firmware-version-report.patch "$SRC"
+apply_repo_patch 063-avatar-device-id-and-barge-in.patch "$SRC"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"

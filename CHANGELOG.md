@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.32] - 2026-10-21
+
+### Fixed
+- Firmware patch 063: the unit's avatar socket now sends its MAC as Device-Id and its UUID as Client-Id (the empty build-time ids Kconfig defaults to were sent instead, so the hub still logged "device missing"), which lets the camera channel connect.
+- Firmware patch 063: a wake word heard while the robot speaks now also drops the reply frames queued on the unit, like a tap, before it starts listening.
+
 ## [0.2.31] - 2026-10-21
 
 ### Added

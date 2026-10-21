@@ -1,0 +1,52 @@
+# Intent: (1) let the hub accept the unit's avatar socket: 0.2.30 still logged "token present, device missing" because Kconfig defaults STACKCHAN_DEVICE_ID and STACKCHAN_CLIENT_ID to "", which counts as defined, so patch 060's #ifdef sent an empty Device-Id and Client-Id and its MAC and UUID fallback never ran; the build-time ids are now used only when non-empty. (2) Barge-in: a wake word heard while the robot speaks already aborted the reply and started listening; it now also drops the frames still queued on the unit, as a tap does, so the old reply stops at once.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_ws_avatar.cpp (MIT); 78/xiaozhi-esp32 main/application.cc. Applies after 062.
+# Check after a flash: the host log shows "StackChan avatar: connected (device ...)" without "refused"; saying "Hi, StackChan" while it speaks logs "unit wake: wake state=6" and the reply stops.
+diff --git a/firmware/main/hal/hal_ws_avatar.cpp b/firmware/main/hal/hal_ws_avatar.cpp
+index d8d7bc9..844fd66 100644
+--- a/firmware/main/hal/hal_ws_avatar.cpp
++++ b/firmware/main/hal/hal_ws_avatar.cpp
+@@ -134,16 +134,24 @@ public:
+             token = "Bearer " + token;
+         }
+         _websocket->SetHeader("Authorization", token.c_str());
++        // The build-time ids default to "" (Kconfig), which counts as defined, so the #ifdef above
++        // sent an empty Device-Id and the hub logged "device missing". Use them only when set.
++        std::string device_id;
++        std::string client_id;
+ #ifdef CONFIG_STACKCHAN_DEVICE_ID
+-        _websocket->SetHeader("Device-Id", CONFIG_STACKCHAN_DEVICE_ID);
+-#else
+-        _websocket->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
++        device_id = CONFIG_STACKCHAN_DEVICE_ID;
+ #endif
+ #ifdef CONFIG_STACKCHAN_CLIENT_ID
+-        _websocket->SetHeader("Client-Id", CONFIG_STACKCHAN_CLIENT_ID);
+-#else
+-        _websocket->SetHeader("Client-Id", Board::GetInstance().GetUuid().c_str());
++        client_id = CONFIG_STACKCHAN_CLIENT_ID;
+ #endif
++        if (device_id.empty()) {
++            device_id = SystemInfo::GetMacAddress();
++        }
++        if (client_id.empty()) {
++            client_id = Board::GetInstance().GetUuid();
++        }
++        _websocket->SetHeader("Device-Id", device_id.c_str());
++        _websocket->SetHeader("Client-Id", client_id.c_str());
+ 
+         // 设置回调
+         _websocket->OnConnected([this]() {
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index 82ba9f9..745f2f5 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -939,6 +939,9 @@ void Application::HandleWakeWordDetectedEvent() {
+             // Re-enable wake word detection as it was stopped by the detection itself
+             audio_service_.EnableWakeWordDetection(true);
+         } else {
++            // Barge-in: the person spoke over the reply. Like a tap, drop the frames already
++            // queued here (the host streams a whole reply faster than it plays), then listen.
++            audio_service_.ResetDecoder();
+             // Play popup sound and start listening again
+             play_popup_on_listening_ = true;
+             SetListeningMode(GetDefaultListeningMode());
