@@ -1,7 +1,11 @@
 # StackChan brightness, default levels and the swipe-down control panel (2026-10-21)
 
 Owner request, relayed by the firmware session. Part 1 is host code (shipped with the next batch).
-Part 2 is firmware design only: nothing here is compiled or flashed.
+Part 2 is `firmware/patches/045-control-panel.patch`: written, checked with
+`git apply --unidiff-zero --check` against the tree after patches 037, 038 and 044, and the two touched
+objects (`stackchan_display.cc`, `hal_mcp.cpp`) compile in the scratch ESP-IDF tree. It has not been
+flashed. Patches 040, 041 and 043 are not in the recipe; when one returns it must be regenerated
+against the tree that includes 045, because zero-context hunks are placed by line number.
 
 ## 1. Host: spoken brightness and the hub's default levels
 
@@ -82,10 +86,16 @@ levels follow the unit.
 6. At night (quiet hours) drag brightness: the screen follows; after day returns, the earlier
    day brightness is back.
 
+### Decisions (firmware session, 2026-10-21)
+
+The design is approved as written, including that a swipe down starting in the top 30 px no longer
+stops talking. A swipe down anywhere else still does. A left or right volume swipe also queues
+`level_changed`. The Wi-Fi list keeps its own Done button and closes after 20 s without touch.
+
 ### Risks
 
 - The start point of a gesture is the thing to prove on the unit (the LVGL indev point after
   `GESTURE` is the release point, so the start must be saved on `PRESSED`).
-- Not compiled: the scratch ESP-IDF tree compiles touched objects only. The patch gets
-  `git apply --unidiff-zero --check` and a compile of `stackchan_display.cc` and `hal_mcp.cpp`
-  before it is listed as ready.
+- Only the two touched objects were compiled; the scratch tree cannot link a full image.
+- The sheet is sized to its content; if three rows do not fit the 240 px screen height with the
+  8 px padding, the Wi-Fi button is the one that clips. Look at it on the first flash.

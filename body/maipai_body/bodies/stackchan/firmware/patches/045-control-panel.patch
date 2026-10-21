@@ -1,0 +1,244 @@
+# Intent: a control panel that drops from the top of the screen (owner request 2026-10-21). A swipe down that begins in the top 30 px opens a sheet with the volume and brightness sliders and a Wi-Fi button (the saved-networks list from 036); a swipe down anywhere else still stops talking, and a swipe up no longer opens anything. The sheet closes on a swipe up, a tap outside it, or 5 s without touch (20 s on the Wi-Fi list). Letting go of a slider, or a left or right volume swipe, queues one level_changed event {volume, brightness} (patch 021's queue) so the host keeps its stored owner levels in step; a pending level_changed is replaced, never stacked.
+# Upstream: m5stack/StackChan firmware/main/hal/board/stackchan_display.cc, stackchan_display.h, hal/hal_mcp.cpp (MIT); new file hal/device_events.h. Applies after 044 with --unidiff-zero.
+# Check after a flash: swipe down from the very top edge shows the sheet with both sliders at the current levels; dragging changes the level live; about 2 s after release the host's owner_levels.json holds the new level; 5 s without touch closes it (a drag keeps it open); tap outside and swipe up close it; the Wi-Fi button opens the list; a swipe down through the middle of the face while it speaks stops it and shows no sheet.
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index 78593d0..02c17ef 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -25,0 +26 @@
++#include <hal/device_events.h>
+@@ -284,0 +286 @@ void StackChanAvatarDisplay::SetupUI()
++    lv_obj_add_event_cb(avatar->getPanel()->get(), &StackChanAvatarDisplay::OnPressed, LV_EVENT_PRESSED, this);
+@@ -390,0 +393,11 @@ void StackChanAvatarDisplay::BootRingTick(lv_timer_t* timer)
++void StackChanAvatarDisplay::OnPressed(lv_event_t* event)
++{
++    auto* self = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
++    if (self == nullptr) {
++        return;
++    }
++    lv_point_t point;
++    lv_indev_get_point(lv_indev_active(), &point);
++    self->press_y_ = point.y;
++}
++
+@@ -407,5 +420,8 @@ void StackChanAvatarDisplay::OnGesture(lv_event_t* event)
+-        Application::GetInstance().Schedule([]() {
+-            Application::GetInstance().AbortSpeaking(kAbortReasonNone);
+-        });
+-    } else if (dir == LV_DIR_TOP) {
+-        self->ToggleQuickSettings();
++        // A swipe down that began in the top 30 px opens the control panel; elsewhere it stops talking.
++        if (self->press_y_ >= 0 && self->press_y_ <= 30) {
++            self->OpenQuickSettings();
++        } else {
++            Application::GetInstance().Schedule([]() {
++                Application::GetInstance().AbortSpeaking(kAbortReasonNone);
++            });
++        }
+@@ -423,0 +440 @@ void StackChanAvatarDisplay::ChangeVolume(int delta)
++    ReportLevels();
+@@ -473 +490,17 @@ void StackChanAvatarDisplay::ToggleQuickSettings()
+-void StackChanAvatarDisplay::OpenQuickSettings()
++void StackChanAvatarDisplay::ReportLevels()
++{
++    auto codec      = Board::GetInstance().GetAudioCodec();
++    auto* backlight = Board::GetInstance().GetBacklight();
++    if (codec != nullptr && backlight != nullptr) {
++        device_events_push_level(codec->output_volume(), backlight->brightness());
++    }
++}
++
++void StackChanAvatarDisplay::ResetQuickTimer()
++{
++    if (quick_timer_ != nullptr) {
++        lv_timer_reset(quick_timer_);
++    }
++}
++
++void StackChanAvatarDisplay::OpenQuickSettings(bool full)
+@@ -478,0 +512,17 @@ void StackChanAvatarDisplay::OpenQuickSettings()
++    if (!full) {
++        // Tapping anywhere outside the sheet closes it.
++        quick_catcher_ = lv_obj_create(lv_layer_top());
++        lv_obj_set_size(quick_catcher_, lv_pct(100), lv_pct(100));
++        lv_obj_set_style_bg_opa(quick_catcher_, LV_OPA_TRANSP, 0);
++        lv_obj_set_style_border_width(quick_catcher_, 0, 0);
++        lv_obj_remove_flag(quick_catcher_, LV_OBJ_FLAG_SCROLLABLE);
++        lv_obj_add_event_cb(quick_catcher_,
++                            [](lv_event_t* event) {
++                                auto* display = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
++                                if (display != nullptr) {
++                                    display->CloseQuickSettings();
++                                }
++                            },
++                            LV_EVENT_CLICKED, this);
++    }
++
+@@ -480 +530,2 @@ void StackChanAvatarDisplay::OpenQuickSettings()
+-    lv_obj_set_size(quick_panel_, lv_pct(100), lv_pct(100));
++    lv_obj_set_size(quick_panel_, lv_pct(100), full ? lv_pct(100) : LV_SIZE_CONTENT);
++    lv_obj_align(quick_panel_, LV_ALIGN_TOP_MID, 0, 0);
+@@ -499,3 +550,5 @@ void StackChanAvatarDisplay::OpenQuickSettings()
+-    lv_obj_t* title = make_label(quick_panel_, "Quick settings");
+-    lv_obj_set_width(title, LV_PCT(100));
+-    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
++    if (full) {
++        lv_obj_t* title = make_label(quick_panel_, "Quick settings");
++        lv_obj_set_width(title, LV_PCT(100));
++        lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
++    }
+@@ -526,0 +580,17 @@ void StackChanAvatarDisplay::OpenQuickSettings()
++    lv_obj_add_event_cb(volume_slider,
++                        [](lv_event_t* event) {
++                            auto* display = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
++                            if (display != nullptr) {
++                                display->ReportLevels();
++                            }
++                        },
++                        LV_EVENT_RELEASED, this);
++    lv_obj_add_event_cb(volume_slider,
++                        [](lv_event_t* event) {
++                            auto* display = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
++                            if (display != nullptr) {
++                                display->ResetQuickTimer();
++                            }
++                        },
++                        LV_EVENT_PRESSING, this);
++
+@@ -550,0 +621,18 @@ void StackChanAvatarDisplay::OpenQuickSettings()
++    lv_obj_add_event_cb(brightness_slider,
++                        [](lv_event_t* event) {
++                            auto* display = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
++                            if (display != nullptr) {
++                                display->ReportLevels();
++                            }
++                        },
++                        LV_EVENT_RELEASED, this);
++    lv_obj_add_event_cb(brightness_slider,
++                        [](lv_event_t* event) {
++                            auto* display = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
++                            if (display != nullptr) {
++                                display->ResetQuickTimer();
++                            }
++                        },
++                        LV_EVENT_PRESSING, this);
++
++    if (full) {
+@@ -590,0 +679,17 @@ void StackChanAvatarDisplay::OpenQuickSettings()
++    } else {
++        lv_obj_t* wifi_button = lv_button_create(quick_panel_);
++        lv_obj_set_width(wifi_button, LV_PCT(100));
++        lv_obj_add_flag(wifi_button, LV_OBJ_FLAG_FLEX_IN_NEW_TRACK);
++        lv_obj_t* wifi_label = make_label(wifi_button, "Wi-Fi");
++        lv_obj_center(wifi_label);
++        lv_obj_add_event_cb(wifi_button,
++                            [](lv_event_t* event) {
++                                auto* display = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
++                                if (display != nullptr) {
++                                    display->CloseQuickSettings();
++                                    display->OpenQuickSettings(true);
++                                }
++                            },
++                            LV_EVENT_CLICKED, this);
++    }
++
+@@ -603,0 +709,18 @@ void StackChanAvatarDisplay::OpenQuickSettings()
++    lv_obj_add_event_cb(quick_panel_,
++                        [](lv_event_t* event) {
++                            auto* display = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
++                            if (display != nullptr) {
++                                display->ResetQuickTimer();
++                            }
++                        },
++                        LV_EVENT_PRESSING, this);
++    // No touch for a while closes the panel: 5 s for the sheet, longer for the Wi-Fi list.
++    quick_timer_ = lv_timer_create(
++        [](lv_timer_t* timer) {
++            auto* display = static_cast<StackChanAvatarDisplay*>(lv_timer_get_user_data(timer));
++            if (display != nullptr) {
++                display->CloseQuickSettings();
++            }
++        },
++        full ? 20000 : 5000, this);
++
+@@ -608,0 +732,8 @@ void StackChanAvatarDisplay::CloseQuickSettings()
++    if (quick_timer_ != nullptr) {
++        lv_timer_delete(quick_timer_);
++        quick_timer_ = nullptr;
++    }
++    if (quick_catcher_ != nullptr) {
++        lv_obj_delete_async(quick_catcher_);
++        quick_catcher_ = nullptr;
++    }
+diff --git a/firmware/main/hal/board/stackchan_display.h b/firmware/main/hal/board/stackchan_display.h
+index ff8b901..250514d 100644
+--- a/firmware/main/hal/board/stackchan_display.h
++++ b/firmware/main/hal/board/stackchan_display.h
+@@ -40,0 +41,3 @@ private:
++    lv_obj_t*   quick_catcher_ = nullptr;
++    lv_timer_t* quick_timer_   = nullptr;
++    int         press_y_       = -1;
+@@ -50 +53 @@ private:
+-    void OpenQuickSettings();
++    void OpenQuickSettings(bool full = false);
+@@ -51,0 +55,3 @@ private:
++    void ReportLevels();
++    void ResetQuickTimer();
++    static void OnPressed(lv_event_t* event);
+diff --git a/firmware/main/hal/device_events.h b/firmware/main/hal/device_events.h
+new file mode 100644
+index 0000000..c09e02b
+--- /dev/null
++++ b/firmware/main/hal/device_events.h
+@@ -0,0 +1,8 @@
++/*
++ * SPDX-License-Identifier: MIT
++ */
++#pragma once
++
++// The person moved the volume or brightness on the unit itself. Queues one level_changed event
++// for the host (a pending one is replaced, so a run of drags never fills the queue).
++void device_events_push_level(int volume, int brightness);
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index 362a01e..58fdf89 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -19,0 +20,2 @@
++#include "device_events.h"
++#include <string_view>
+@@ -53,0 +56,2 @@ struct DeviceEvent {
++    int volume     = -1;  // level_changed only
++    int brightness = -1;
+@@ -67,0 +72,15 @@ void push_event(const char* kind)
++void push_level_event(int volume, int brightness)
++{
++    std::lock_guard<std::mutex> lock(s_events_mutex);
++    for (auto it = s_events.begin(); it != s_events.end(); ++it) {
++        if (std::string_view(it->kind) == "level_changed") {
++            s_events.erase(it);
++            break;
++        }
++    }
++    if (s_events.size() >= 16) {
++        s_events.pop_front();
++    }
++    s_events.push_back({"level_changed", static_cast<uint32_t>(esp_timer_get_time() / 1000), volume, brightness});
++}
++
+@@ -126,0 +146,5 @@ std::string json_escape(const std::string& input)
++void device_events_push_level(int volume, int brightness)
++{
++    push_level_event(volume, brightness);
++}
++
+@@ -427 +451,9 @@ void Hal::xiaozhi_mcp_init()
+-                                    result += fmt::format(R"({{"kind":"{}", "at_ms":{}}})", s_events[i].kind, s_events[i].at_ms);
++                                    if (s_events[i].volume >= 0 || s_events[i].brightness >= 0) {
++                                        result += fmt::format(
++                                            R"({{"kind":"{}", "at_ms":{}, "volume":{}, "brightness":{}}})",
++                                            s_events[i].kind, s_events[i].at_ms, s_events[i].volume,
++                                            s_events[i].brightness);
++                                    } else {
++                                        result += fmt::format(R"({{"kind":"{}", "at_ms":{}}})", s_events[i].kind,
++                                                              s_events[i].at_ms);
++                                    }
