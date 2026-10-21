@@ -146,7 +146,7 @@ unused margin there are the next candidates to shrink or move.
 
 **Night lux.** Four afternoon readings that started night mode were 4.6, 7.0, 7.5 and 7.0 lux
 (threshold 8). A room at midday is normally far brighter, so the sensor is either shadowed behind
-the screen or the formula reads low. The host now logs the light sensor every 10 minutes
+the screen or the formula reads low. The host now logs the light sensor every minute
 (`StackChan light sensor: lux=..., night=...`) so a day of readings can be compared with the room.
 
 ## 0.2.24 stalled; the stop word is off again (2026-10-21, patch 053)

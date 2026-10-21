@@ -19,10 +19,10 @@ logger = logging.getLogger("maipai_body.bodies.stackchan.reactions")
 
 SHAKE_LINES = ("Whoa!", "Hey! Easy!", "Eep! Where are we going?")
 SHAKE_COOLDOWN_S = 20.0
-PET_COOLDOWN_S = 10.0
-HEART_COOLDOWN_S = 60.0
 # How long a reaction face (heart, surprise) stays before the neutral face is put back. The unit's
-# own happy face after a stroke is open-mouthed and was left on far too long.
+# own happy face after a stroke is open-mouthed and was left on far too long. It is also the only
+# gap between two pet reactions: while one plays no new one starts, and the next real pet reacts at
+# once when it ends (owner ruling 2026-10-21: no cooldown after the petted animation).
 FACE_HOLD_S = 3.0
 SYMBOL_RETRY_S = 600.0
 
@@ -66,8 +66,7 @@ class Reactions:
         self._clock = clock
         self._rng = rng or random.Random()
         self._last_shake = float("-inf")
-        self._last_pet = float("-inf")
-        self._last_heart = float("-inf")
+        self._playing_until = float("-inf")
         self._symbol_retry_at = float("-inf")
         self._last_line: str | None = None
         self._neutral_at: float | None = None
@@ -83,7 +82,7 @@ class Reactions:
         if any(kind in _PET_EVENTS for kind in kinds) or any(k in _SWIPE_EVENTS for k in kinds):
             # The unit shows its own open-mouthed happy face for a stroke; take it back soon.
             self._hold_face()
-        if any(kind in _PET_EVENTS for kind in kinds):
+        if any(kind in _PET_EVENTS or kind in _SWIPE_EVENTS for kind in kinds):
             self._petted()
         # A stroke across the head already makes the unit show its own happy face and heart.
 
@@ -107,12 +106,8 @@ class Reactions:
         return self._last_line
 
     def _petted(self) -> None:
-        now = self._clock()
-        if now - self._last_pet < PET_COOLDOWN_S:
-            return
-        self._last_pet = now
-        logger.info("StackChan was petted")
-        self.heart("petted")
+        if self.heart("petted"):
+            logger.info("StackChan was petted")
 
     def _hold_face(self) -> None:
         self._neutral_at = self._clock() + FACE_HOLD_S
@@ -136,11 +131,11 @@ class Reactions:
             self.heart("a loving reply")
 
     def heart(self, reason: str) -> bool:
-        """Show the heart (or, until the unit can, a smile). At most once a minute."""
+        """Show the heart (or, until the unit can, a smile), unless one is still playing."""
         now = self._clock()
-        if now - self._last_heart < HEART_COOLDOWN_S:
+        if now < self._playing_until:
             return False
-        self._last_heart = now
+        self._playing_until = now + FACE_HOLD_S
         shown = False
         if self._symbol is not None and now >= self._symbol_retry_at:
             try:

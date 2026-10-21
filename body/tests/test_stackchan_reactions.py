@@ -12,7 +12,7 @@ from maipai_body.bodies.stackchan.expression_map import (
     REPLY_MOOD_FACE_MAP,
 )
 from maipai_body.bodies.stackchan.reactions import (
-    HEART_COOLDOWN_S,
+    FACE_HOLD_S,
     SHAKE_COOLDOWN_S,
     SHAKE_LINES,
     Reactions,
@@ -77,15 +77,23 @@ def test_nothing_happens_while_a_reply_or_turn_is_on():
     assert rig.faces == [] and rig.said == [] and rig.symbols == []
 
 
-def test_a_pet_shows_the_heart_through_the_unit_and_not_twice_in_a_minute():
+def test_a_pet_shows_the_heart_through_the_unit_and_reacts_again_when_the_animation_ends():
     rig = _Rig()
     rig.reactions.on_events(["head_touch"])
     assert rig.symbols == ["heart"] and rig.faces == []
-    rig.now[0] += 30
-    rig.reactions.on_events(["head_touch"])
+    rig.now[0] += FACE_HOLD_S - 0.5
+    rig.reactions.on_events(["head_touch"])  # still playing: no second reaction
     assert rig.symbols == ["heart"]
-    rig.now[0] += HEART_COOLDOWN_S
+    rig.now[0] += 0.6  # the animation is over: the next real pet reacts at once
     rig.reactions.on_events(["head_touch"])
+    assert rig.symbols == ["heart", "heart"]
+
+
+def test_a_swipe_across_the_head_is_a_pet_too_and_is_not_held_back_by_a_cooldown():
+    rig = _Rig()
+    rig.reactions.on_events(["head_swipe_forward"])
+    rig.now[0] += FACE_HOLD_S + 0.1
+    rig.reactions.on_events(["head_swipe_back"])
     assert rig.symbols == ["heart", "heart"]
 
 
@@ -93,7 +101,7 @@ def test_without_a_symbol_tool_on_the_unit_a_pet_is_a_smile_and_the_tool_is_not_
     rig = _Rig(symbol="missing")
     rig.reactions.on_events(["head_touch"])
     assert rig.faces == ["happy"]
-    rig.now[0] += HEART_COOLDOWN_S
+    rig.now[0] += FACE_HOLD_S + 0.1
     rig.reactions.on_events(["head_touch"])
     assert rig.faces == ["happy", "happy"] and rig.symbols == []
 

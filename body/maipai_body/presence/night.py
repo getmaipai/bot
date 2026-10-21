@@ -336,8 +336,10 @@ class NightController:
             if self._clock() - self._last_debug_log >= 60.0:
                 logger.debug("StackChan light reading: lux=%s camera_luma=%s", lux, luma)
                 self._last_debug_log = self._clock()
-            if self._clock() - self._last_info_log >= 600.0:
-                # Ten-minute record of the light sensor, to judge its readings against the room.
+            if self._clock() - self._last_info_log >= 60.0:
+                # A record of the light sensor every minute until night is calibrated from data:
+                # the unit reads about 1 to 2 percent of the true lux (it sits behind the screen
+                # glass), and the firmware does not expose the raw channel counts.
                 logger.info("StackChan light sensor: lux=%s, night=%s", lux, self.night)
                 self._last_info_log = self._clock()
             if wanted != self.night:

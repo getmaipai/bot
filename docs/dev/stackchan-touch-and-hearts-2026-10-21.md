@@ -30,7 +30,7 @@ is not detected: the pick-up check in `hal_imu.cpp` is commented out. That needs
 - A shake: a surprised face, and one of three lines (three short startled lines that vary), never the same line twice
   in a row, at most once every 20 s, never during a turn or a reply, and in quiet hours only the face. The line is spoken by the same
   voice as a reply, through the hub's text-to-speech; the chat model is not asked.
-- A pet (`head_touch`): the heart, at most once a minute (below).
+- A pet (`head_touch`, or a swipe across the head): the heart or a smile for about 3 seconds, then neutral; the next pet reacts when that ends. No cooldown (owner ruling 2026-10-21).
 
 ## The heart: where it comes from
 
