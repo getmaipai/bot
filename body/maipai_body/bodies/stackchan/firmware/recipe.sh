@@ -262,7 +262,6 @@ apply_repo_patch 038-head-move-cap.patch "$SRC"
 apply_repo_patch 039-mcp-timing-log.patch "$SRC"
 apply_repo_patch 040-audio-decode-priority.patch "$SRC"
 apply_repo_patch 041-update-task-sleep-outside-lock.patch "$SRC"
-apply_repo_patch 042-uplink-opus-speech.patch "$SRC"
 apply_repo_patch 043-head-angles-from-animation.patch "$SRC"
 
 cat > "$FW/sdkconfig.defaults.local" <<CFG
