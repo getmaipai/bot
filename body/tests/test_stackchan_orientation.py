@@ -160,3 +160,29 @@ def test_reset_restores_neutral_without_speech_and_rotates_even_when_upright():
     assert h.holds[-1] is False
     assert h.faces[-1] == "neutral"
     assert h.lines == lines
+
+
+def test_every_pool_is_large_short_and_free_of_em_dashes():
+    from maipai_body.bodies.stackchan.orientation import LINE_POOLS, POSES
+
+    assert set(LINE_POOLS) == set(POSES)
+    for pose, lines in LINE_POOLS.items():
+        assert len(lines) >= 8, pose
+        assert len(set(lines)) == len(lines), pose
+        for line in lines:
+            assert 10 <= len(line) <= 90, line
+            assert "—" not in line, line
+
+
+def test_no_line_repeats_within_the_last_ten_spoken():
+    from maipai_body.bodies.stackchan.orientation import RECENT_LINES
+
+    h = Harness()
+    spoken = []
+    for i in range(120):
+        h.now += 200.0
+        h.event("+x" if i % 2 == 0 else "-y")  # side, upright, side, upright ...
+    spoken = h.lines
+    assert len(spoken) == 120
+    for i, line in enumerate(spoken):
+        assert line not in spoken[max(0, i - RECENT_LINES) : i], (i, line)

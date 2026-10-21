@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import random
 import time
+from collections import deque
 from collections.abc import Callable, Mapping
 
 logger = logging.getLogger("maipai_body.bodies.stackchan.orientation")
@@ -35,36 +36,77 @@ FACE_REFRESH_S = 5.0
 
 LINE_POOLS = {
     "left_side": (
-        "Whoa, the whole room is sideways!",
-        "Tilting! Hello from my side.",
-        "Sideways is fine. Kind of cozy.",
+        "Whoa, I have fallen and I cannot get up! Ha ha!",
+        "Sideways! Is the room tilted or is it me? Hehe.",
+        "I am officially a lazy robot. Hello from the couch.",
+        "Plot twist: the world is on its side now.",
+        "Help, I am a very small, very cute log.",
+        "Tilt! I always wanted to see the wall properly.",
+        "Ooh, a sideways view. Everything is a slide!",
+        "I am not stuck, I am resting my whole body. Ha!",
+        "Careful, I might roll. Hehe.",
+        "Left side down. Right side up. Math is hard.",
     ),
     "right_side": (
-        "Whoa, the whole room is sideways!",
-        "Tilting! Hello from my side.",
-        "Sideways is fine. Kind of cozy.",
+        "Timber! Ha ha, that was me.",
+        "Sideways again! I am getting good at this. Hehe.",
+        "Nobody panic, I am just horizontal.",
+        "The floor has moved to my side. Rude, but fine.",
+        "I am a robot on a nap break. Shh.",
+        "Look, I can see all the way across the table!",
+        "Whoa, whoa, whoa. Okay. Cozy. I live here now.",
+        "Is this what lying on a beach feels like? Ha!",
+        "Help! I tipped over and I am enjoying it. Hehe.",
+        "Right side down. Left side up. Still adorable.",
     ),
     "upside_down": (
-        "Everything is upside down! Hi!",
-        "New view! The ceiling is very plain.",
-        "Is it me or is the floor on top?",
+        "Everything is upside down! I feel like a bat. Hehe.",
+        "Sloth mode on. Hanging around, as one does. Ha!",
+        "Wheee, rollercoaster! Please keep your arms inside the robot.",
+        "All the blood is rushing to my head. Wait, do I have blood? Ha ha!",
+        "Hello, ceiling lovers. The floor is up there now.",
+        "Is it just me, or is gravity being weird today?",
+        "Upside down is the new right side up. Hehe.",
+        "I should have worn a belt. Oh wait, I have no pants. Ha!",
+        "I see the world differently now. Mostly the ceiling.",
+        "Loop the loop! Somebody call a pilot. Ha ha!",
     ),
     "face_down": (
-        "It is very dark down here.",
-        "Hello, floor. I can't see a thing.",
-        "Face down, nose to the table.",
+        "Hello, floor. I cannot see anything, it is snack time down here. Hehe.",
+        "Mmf. Mmf mmf. Sorry, face in the table.",
+        "It is very dark down here. Is anyone there? Ha!",
+        "Face down, tail up. Wait, I do not have a tail.",
+        "I am hiding. You cannot see me. Hehe, I cannot see you either.",
+        "Taking a face-first nap. Wake me for treats.",
+        "Nose to the table. We are best friends now. Ha ha!",
+        "Oops, I am doing the face plant of shame.",
+        "Everything smells like desk. Not bad, really.",
+        "Lights out! Somebody please flip me. Hehe.",
     ),
     "on_back": (
-        "Now I'm looking at the ceiling.",
-        "Lying back. Very relaxing.",
+        "Now I am looking at the ceiling. It is very white. Ha!",
+        "Lying back. Just a robot staring at the sky. Hehe.",
         "Ahh, a nice long stare at the ceiling.",
+        "I am a turtle on its back. Help! Hehe, just kidding, mostly.",
+        "Cloud watching, indoor edition.",
+        "Sunbathing time. Somebody bring me a tiny umbrella drink.",
+        "Look at me, lying back like I own the place. Ha ha!",
+        "Ceiling, we meet again. You are still plain.",
+        "Whoops, I did a backflip. Almost. Hehe.",
+        "I am a very relaxed robot. Do not mind me.",
     ),
     "upright": (
-        "Ahh, that's better.",
-        "Back on my feet. Thank you!",
-        "Right side up again!",
+        "Ahh, that is better. Thank you!",
+        "Back on my feet. I am a tall one, am I not? Hehe.",
+        "Right side up again! The world makes sense.",
+        "Phew, standing tall. Where was I?",
+        "Level at last. My ears were popping. Ha!",
+        "Back to normal. I am very good at this.",
+        "Upright and proud. Ta-da!",
+        "Gravity is back on my side. Hehe.",
     ),
 }
+RECENT_LINES = 10  # a line is not repeated within the last this many spoken, across all poses
 
 
 def pose_for_axis(axis: str | None) -> str | None:
@@ -96,7 +138,7 @@ class OrientationReactions:
         self._clock = clock
         self._rng = rng or random.Random()
         self._pose = "upright"
-        self._last_line: str | None = None
+        self._recent: deque[str] = deque(maxlen=RECENT_LINES)
         self._last_spoken_at = float("-inf")
         self._last_face_at = float("-inf")
 
@@ -122,10 +164,12 @@ class OrientationReactions:
         if not self._quiet() and not self._busy():
             now = self._clock()
             if now - self._last_spoken_at >= LINE_GAP_S:
-                choices = [line for line in LINE_POOLS[pose] if line != self._last_line]
+                choices = [line for line in LINE_POOLS[pose] if line not in self._recent]
+                if not choices:  # the pool is smaller than the memory: use the oldest
+                    choices = [next(line for line in self._recent if line in LINE_POOLS[pose])]
                 line = self._rng.choice(choices)
                 if self._say(line):
-                    self._last_line = line
+                    self._recent.append(line)
                     self._last_spoken_at = now
         return True
 

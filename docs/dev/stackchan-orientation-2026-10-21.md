@@ -11,6 +11,6 @@ Host side is `bodies/stackchan/orientation.py`; wiring is `_wire_orientation` in
   (`PowerIdle.set_orientation_hold`) and resume when upright. Motor torque is never changed.
 - Screen: `self.screen.set_rotation {degrees: 180}` when upside down, `0` otherwise; also `0` on every connect and whenever the unit
   is gone, so the screen cannot stay flipped. Until the firmware tool exists the call fails quietly (one warning a minute).
-- Speech: one line per change from a small original pool, never twice in a row, at most one per 120 s, not at night, asleep, in quiet
+- Speech: one line per change from a pool of about ten original, jokey lines per pose (laugh cues written into the text), none repeated within the last ten spoken, at most one per 120 s, not at night, asleep, in quiet
   hours or during a turn.
 - Check-in: `orientation` (a pose name or null) joins the robot check-in payload.
