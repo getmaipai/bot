@@ -231,10 +231,10 @@ def _follow_pose(target: FaceTrackTarget) -> HeadPose:
     The head only travels up from level, so a face below the middle of the frame is level."""
     import math
 
-    from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
+    from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG, FOLLOW_PITCH_SPAN_DEG
 
     assert target.x is not None and target.y is not None
-    up_degrees = max(0.0, 0.5 - target.y) * 40.0
+    up_degrees = max(0.0, 0.5 - target.y) * FOLLOW_PITCH_SPAN_DEG
     return HeadPose(
         yaw=float((target.x - 0.5) * 0.35), pitch=math.radians(CENTRE_PITCH_DEG + up_degrees)
     )

@@ -42,6 +42,8 @@ LED_CHANNEL_MAX = 168
 # default pose. The middle of the 5..85 profile range (45) is therefore 45 degrees UP, which is
 # why the head always looked at the ceiling. If 5 does not look level by eye, change this number.
 CENTRE_PITCH_DEG = 5
+# A face at the top of the frame turns the head up by half this many degrees (frame middle: none).
+FOLLOW_PITCH_SPAN_DEG = 40
 EXPRESSION_YAW_FRACTION = 0.12
 EXPRESSION_PITCH_FRACTION = 0.08
 
