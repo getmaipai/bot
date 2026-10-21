@@ -76,7 +76,11 @@ class Reactions:
     def on_events(self, kinds: list[str]) -> None:
         """Touch, swipe and shake events read from the unit since the last look."""
         if self._busy():
-            return  # in a conversation: the reply owns the face and the voice
+            # In a conversation the reply owns the face and the voice; say so once a look.
+            logger.info(
+                "StackChan touch reaction skipped: a conversation is on (%s)", ", ".join(kinds)
+            )
+            return
         if "shake" in kinds:
             self._shaken()
         if any(kind in _PET_EVENTS for kind in kinds) or any(k in _SWIPE_EVENTS for k in kinds):

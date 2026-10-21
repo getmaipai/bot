@@ -912,6 +912,12 @@ class XiaozhiServer:
 
     async def send_expression_frame(self, frame: bytes) -> None:
         expression = getattr(frame, "expression", None)
+        if expression is not None and expression in FIRMWARE_EMOTIONS:
+            # The face is always set over the voice socket: it works in AI-agent mode, where the
+            # unit has no handler for expression frames on the avatar socket. That socket carries
+            # the camera only.
+            await self.send_emotion(expression)
+            return
         try:
             await self._send_expression_over_avatar(frame)
         except ConnectionError:

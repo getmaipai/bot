@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from maipai_body.bodies.stackchan.companion import DIAGNOSTIC_KINDS
-from maipai_body.bodies.stackchan.head_touch_filter import HeadTouchFilter
+from maipai_body.bodies.stackchan.head_touch_filter import HEAD_KINDS, HeadTouchFilter
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.suppression import SuppressionContext
 from maipai_body.hal.errors import BodyLost
@@ -134,6 +134,9 @@ else:
 
 
 logger = logging.getLogger("maipai_body.app")
+
+# Unit events that are logged one line each: the head touch kinds and the shake.
+_LOGGED_UNIT_EVENTS = HEAD_KINDS | {"shake"}
 
 
 def _stackchan_selected(environ: Mapping[str, str] | None = None) -> bool:
@@ -531,6 +534,18 @@ class StackChanBehavior:
                 logger.info("%s: %s %s", label, event.kind, detail)
         events = [e for e in events if getattr(e, "kind", None) not in DIAGNOSTIC_KINDS]
         events = self._head_filter.accept(now, events)
+        for event in events:
+            if getattr(event, "kind", None) in _LOGGED_UNIT_EVENTS:
+                extra = getattr(event, "extra", None) or {}
+                detail = " ".join(f"{k}={v}" for k, v in extra.items())
+                logger.info(
+                    "unit touch: %s %s%s",
+                    event.kind,
+                    detail,
+                    " (first look after a pause: not acted on)"
+                    if paused or not self._event_queue_drained
+                    else "",
+                )
         if paused or not self._event_queue_drained:
             self._event_queue_drained = True
             return False

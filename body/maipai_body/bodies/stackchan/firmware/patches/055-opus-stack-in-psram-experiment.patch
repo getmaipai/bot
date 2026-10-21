@@ -1,0 +1,21 @@
+# Intent: EXPERIMENT, not in the recipe. The opus codec task's 24 KB stack in PSRAM with the stop word OFF. 0.2.24 stalled the unit with this change and the stop word running together; this isolates the stack. If the unit is stable through volume changes and long conversations, it frees 24 KB of internal RAM, which the camera and avatar channel (patch 054) need: internal RAM free was about 18 KB with a minimum of 10 KB in 0.2.25, and 054 asks for 32 KB free.
+# Upstream: 78/xiaozhi-esp32 main/audio/audio_service.cc (MIT). Applies after 053 with --unidiff-zero.
+# Check after a flash: volume changes by voice and from the panel, a ten-minute conversation, no stalls in the host log ("did not answer" lines) and unit boot reason 1 or 3 only; then int_free in "unit memory" is about 24 KB higher.
+diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.cc b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
+index 7769b3a..fc57748 100644
+--- a/firmware/xiaozhi-esp32/main/audio/audio_service.cc
++++ b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
+@@ -162,5 +162,5 @@ void AudioService::Start() {
+-    /* Start the opus codec task. Its 24 KB stack is back in internal RAM (patch 053): with it in
+-     * PSRAM (patch 051) the unit stalled for 30 to 45 s and reset, most likely because a task with an
+-     * external stack cannot run while a flash write (NVS) has the cache disabled. The measured least
+-     * stack left was 4,532 bytes, so it keeps its full size. */
+-    xTaskCreate([](void* arg) {
++    /* EXPERIMENT (patch 055, not in the recipe): the opus codec task's 24 KB stack in PSRAM, with the
++     * stop word still off. 0.2.24 stalled with this change AND the stop word running; this isolates
++     * the stack. If the unit is stable through volume changes and a long conversation, it frees
++     * 24 KB of internal RAM for the camera and avatar channel. */
++    xTaskCreateWithCaps([](void* arg) {
+@@ -170 +170 @@ void AudioService::Start() {
+-    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
++    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_, MALLOC_CAP_SPIRAM);

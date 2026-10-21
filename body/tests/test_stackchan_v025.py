@@ -55,6 +55,33 @@ def test_with_no_avatar_channel_the_face_is_set_over_the_voice_socket():
     assert asyncio.run(scenario()) == ["doubt", "happy"]
 
 
+def test_a_named_firmware_face_goes_over_the_voice_socket_even_when_the_avatar_channel_is_up():
+    from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiServer
+
+    async def scenario() -> tuple[list[str], list[bytes]]:
+        server = XiaozhiServer(PairingStore(), robot=None)
+        faces: list[str] = []
+        frames: list[bytes] = []
+
+        async def fake_send_emotion(expression: str) -> str:
+            faces.append(expression)
+            return expression
+
+        async def avatar_sender(device_id, frame):
+            frames.append(frame)
+
+        server.send_emotion = fake_send_emotion  # type: ignore[method-assign]
+        server._sessions["device"] = object()
+        server._avatar_frame_sender = avatar_sender
+        await server.send_expression_frame(control_avatar("happy"))
+        return faces, frames
+
+    faces, frames = asyncio.run(scenario())
+    assert (
+        faces == ["happy"] and frames == []
+    )  # the unit has no handler for it on the avatar socket
+
+
 def test_a_frame_without_a_name_still_raises_when_the_avatar_channel_is_down():
     from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiServer
 

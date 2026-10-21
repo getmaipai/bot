@@ -1,0 +1,79 @@
+# Intent: open the camera and avatar socket in AI-agent mode (owner report 2026-10-21: the unit cannot say what it sees; the host log shows "StackChan camera stream could not start ... avatar channel is not connected" on every connect and "0 frames" every minute). Root cause: the avatar websocket client is a Mooncake ability (WebsocketAvatarWorker) that only AppAvatar::onOpen creates, and the firmware boots straight into the voice agent without Mooncake apps (main.cpp skips them), so the avatar socket was never opened; the host comment says as much ("AI-agent mode never starts it"). This runs the same worker from a plain task once the voice agent reports ready (first STANDBY), and turns the avatar address that the enroll image stores (http://host:port) into ws://host:port, since the websocket client needs a ws scheme. It starts only if an avatar address is saved and at least 32 KB of internal RAM is free for the task stack and client; otherwise it stays off and says why (avatar_channel event). The host sends faces over the voice socket (this firmware has no expression handler on the avatar socket in agent mode) and uses the avatar socket for the camera only.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_ws_avatar.cpp, hal.h, hal/board/stackchan_display.cc (MIT). Applies after 053 with --unidiff-zero.
+# Check after a flash: the host log shows "unit touch: avatar_channel state=started" (or state=off with why=ram and the free bytes), no "avatar channel is not connected" after that, and "StackChan camera: N frames" with N above 0 once the camera stream starts.
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index 529b59e..3edf9e8 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -952,0 +953 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
++        GetHAL().startAvatarChannel();  // idempotent; opens the camera and avatar socket (patch 054)
+diff --git a/firmware/main/hal/hal.h b/firmware/main/hal/hal.h
+index b8d3c80..af8f854 100644
+--- a/firmware/main/hal/hal.h
++++ b/firmware/main/hal/hal.h
+@@ -254,0 +255 @@ public:
++    void startAvatarChannel();
+diff --git a/firmware/main/hal/hal_ws_avatar.cpp b/firmware/main/hal/hal_ws_avatar.cpp
+index 67421ac..fe9d76b 100644
+--- a/firmware/main/hal/hal_ws_avatar.cpp
++++ b/firmware/main/hal/hal_ws_avatar.cpp
+@@ -27,0 +28,3 @@
++#include "device_events.h"
++#include <freertos/FreeRTOS.h>
++#include <freertos/task.h>
+@@ -66 +69,9 @@ public:
+-        _url = fmt::format("{}/stackChan/ws?deviceType=StackChan", secret_logic::get_server_url());
++        // The enroll image stores the hub's avatar address as http://host:port; the websocket
++        // client needs ws:// (or wss://).
++        std::string base = secret_logic::get_server_url();
++        if (base.rfind("http://", 0) == 0) {
++            base = "ws://" + base.substr(7);
++        } else if (base.rfind("https://", 0) == 0) {
++            base = "wss://" + base.substr(8);
++        }
++        _url = fmt::format("{}/stackChan/ws?deviceType=StackChan", base);
+@@ -527,0 +539,44 @@ void Hal::startWebSocketAvatarService(std::function<void(std::string_view)> onSt
++
++// The avatar channel in AI-agent mode (patch 054). WebsocketAvatarWorker is a Mooncake ability that
++// only AppAvatar creates, and the firmware boots straight into the voice agent without Mooncake
++// apps, so the avatar socket (camera frames, expression frames) was never opened at all. This runs
++// the same worker from a plain task once the voice agent is ready. It needs internal RAM for the
++// task stack and the websocket client, so it starts only when enough is free; otherwise it says why.
++static void _avatar_channel_task(void*)
++{
++    WebsocketAvatarWorker worker;
++    while (true) {
++        worker.onRunning();
++        vTaskDelay(pdMS_TO_TICKS(20));
++    }
++}
++
++void Hal::startAvatarChannel()
++{
++    static bool started = false;
++    if (started) {
++        return;
++    }
++    constexpr size_t kMinFreeInternal = 32 * 1024;
++    constexpr uint32_t kStackBytes    = 8192;
++    if (secret_logic::get_server_url().empty()) {
++        started = true;
++        mclog::tagInfo(_tag, "avatar channel off: no avatar address in the saved settings");
++        device_events_push_diag("avatar_channel", "\"state\":\"off\",\"why\":\"no_url\"");
++        return;
++    }
++    size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
++    if (free_internal < kMinFreeInternal) {
++        mclog::tagInfo(_tag, "avatar channel not started: {} bytes of internal RAM free (need {})", free_internal,
++                       kMinFreeInternal);
++        char extra[64];
++        snprintf(extra, sizeof(extra), "\"state\":\"off\",\"why\":\"ram\",\"free\":%u",
++                 static_cast<unsigned>(free_internal));
++        device_events_push_diag("avatar_channel", extra);
++        return;
++    }
++    started = true;
++    mclog::tagInfo(_tag, "start avatar channel ({} bytes of internal RAM free)", free_internal);
++    xTaskCreate(_avatar_channel_task, "avatar_ws", kStackBytes, nullptr, 2, nullptr);
++    device_events_push_diag("avatar_channel", "\"state\":\"started\"");
++}

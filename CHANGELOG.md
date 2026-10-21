@@ -7,6 +7,14 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.27] - 2026-10-21
+
+### Fixed
+
+- The camera had never worked in the voice-agent firmware: the avatar websocket (camera frames) is created only by an app the firmware skips at boot. Firmware patch 054 opens it from a plain task once the voice agent is ready, and turns the stored `http://` avatar address into `ws://`. It starts only when 32 KB of internal RAM is free, so it stays off in this build until RAM is freed (experiment patch 055, not in the recipe). See `docs/dev/stackchan-vision-channel-2026-10-21.md`.
+- Faces are always set over the voice socket, so they keep working once the avatar socket is up (it carries the camera only).
+- The host logs one line for every head or shake event it reads and one when a conversation suppresses a touch reaction, so a pet that does nothing can be traced.
+
 ## [0.2.26] - 2026-10-21
 
 ### Changed
