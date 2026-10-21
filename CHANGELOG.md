@@ -11,6 +11,8 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- A touch, swipe or shake on a drowsy or sleeping robot wakes it (the unit already queues these; the host now looks every 5 seconds, only while the robot is drowsy or asleep, and at most one wake every 30 seconds). Waking on a loud sound needs a small firmware event and is on the firmware list.
+
 - Spoken head movement on the robot: "look left/right/up/down" (with "a little" or "all the way"), "turn left/right", "look straight", "look at me", "look around", "nod", "shake your head" and "stay". Left and right are the robot's own left and right. Requests it cannot do (spin, dance, turn around) get "I can look left, right, up or down.", and "I can't move right now." when it is charging, stopped, or the move fails. The head returns to centre after 5 seconds unless asked to stay.
 
 ### Fixed

@@ -148,6 +148,9 @@ def _no_hub_discovery(timeout_s: float = 5.0):
 # The face watchdog (see StackChanBehavior.face_watchdog): quiet seconds before a stuck face is
 # repaired, and how often the idle face is resent while all is well.
 FACE_QUIET_S = 5.0
+# While drowsy or asleep the unit is asked for touch events this often; wakes repeat no sooner.
+TOUCH_POLL_S = 5.0
+TOUCH_WAKE_COOLDOWN_S = 30.0
 FACE_REFRESH_S = 30.0
 
 
@@ -179,6 +182,12 @@ class StackChanBehavior:
         # True once any move left the head off centre; the post-turn settle only runs then.
         self._head_off_centre = False
         self._hold_until = float("-inf")
+        # Touch, swipe and shake events from the unit (patch 021) wake a drowsy or sleeping robot.
+        # Set by the service wiring; None means no unit events are available.
+        self.event_poll: Callable[[], list] | None = None
+        self._last_event_poll = float("-inf")
+        self._last_touch_wake = float("-inf")
+        self._event_queue_drained = False
         self._warned: dict[str, float] = {}
         self.on_idle_level: Callable[[], None] = lambda: None
         # BOT-SC-ANIM-01: drowsy and asleep stages so an idle robot does not sit smiling for hours.
@@ -326,6 +335,10 @@ class StackChanBehavior:
                 except Exception:
                     self._warn_limited("tracking", "StackChan anonymous tracking failed")
             try:
+                self.wake_on_touch(now)
+            except Exception:
+                self._warn_limited("touch", "StackChan touch wake check failed")
+            try:
                 self.rest_step(now)
             except Exception:
                 self._warn_limited("rest", "StackChan rest routine failed")
@@ -333,6 +346,29 @@ class StackChanBehavior:
                 self.face_watchdog(now)
             except Exception:
                 self._warn_limited("watchdog", "StackChan face watchdog failed")
+
+    def wake_on_touch(self, now: float) -> bool:
+        """Wake a drowsy or sleeping robot when the unit reports a touch, swipe or shake.
+
+        Nothing is asked of the unit while the robot is awake. The first look after it drops off
+        only empties the unit's event queue (old events are not a reason to wake)."""
+        if self.event_poll is None or self._rest.stage == "awake":
+            self._event_queue_drained = False
+            return False
+        if now - self._last_event_poll < TOUCH_POLL_S:
+            return False
+        self._last_event_poll = now
+        events = self.event_poll()
+        if not self._event_queue_drained:
+            self._event_queue_drained = True
+            return False
+        if not events or now - self._last_touch_wake < TOUCH_WAKE_COOLDOWN_S:
+            return False
+        self._last_touch_wake = now
+        self._last_person_seen = now  # the rest policy treats a person as activity and wakes
+        kinds = ", ".join(sorted({str(getattr(event, "kind", event)) for event in events}))
+        logger.info("StackChan woke up on touch (%s)", kinds)
+        return True
 
     def _warn_limited(self, key: str, message: str) -> None:
         """One warning with its traceback per minute per cause: a loop that fails five times a
@@ -568,6 +604,7 @@ async def _serve_stackchan_channels(
     except Exception:
         logger.warning("StackChan anonymous tracking is unavailable", exc_info=True)
     behavior = StackChanBehavior(voice.robot.robot, vision_bridge=vision)
+    behavior.event_poll = voice.robot.client.companion().poll_events
     night = _start_stackchan_night(voice, behavior, link, stop_event)
     from maipai_body.bodies.stackchan.power_idle import PowerIdle
 

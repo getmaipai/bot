@@ -163,3 +163,71 @@ def test_only_states_that_move_the_head_count_toward_the_cap(behavior):
     for state in ("listening", "thinking", "reply_mood", "speaking", "settle"):
         behavior.render_turn_state(state)
     assert len(gate._recent) == 3  # listening, thinking, speaking; not reply_mood or settle
+
+
+def _sleeping_behavior(events):
+    from types import SimpleNamespace
+
+    device = FakeStackChanDeviceClient()
+    behavior = StackChanBehavior(StackChanRobotAdapter(device).robot)
+    behavior._rest = type("Rest", (), {"stage": "asleep", "update": behavior._rest.update})()
+    polls = []
+
+    def poll():
+        polls.append(1)
+        return [SimpleNamespace(kind=kind) for kind in events.pop(0)] if events else []
+
+    behavior.event_poll = poll
+    return behavior, polls
+
+
+def test_a_touch_wakes_a_sleeping_robot_after_the_first_look_empties_the_queue():
+    behavior, polls = _sleeping_behavior([["head_touch"], ["head_touch"]])
+    try:
+        assert behavior.wake_on_touch(100.0) is False  # old events: drained, not a reason to wake
+        assert behavior.wake_on_touch(101.0) is False  # polled too soon
+        assert len(polls) == 1
+        assert behavior.wake_on_touch(106.0) is True
+        assert behavior._last_person_seen == 106.0
+        assert behavior.wake_on_touch(112.0) is False  # nothing new
+    finally:
+        behavior.close()
+
+
+def test_the_unit_is_not_asked_for_events_while_the_robot_is_awake():
+    behavior, polls = _sleeping_behavior([["head_touch"]])
+    try:
+        behavior._rest = type("Rest", (), {"stage": "awake"})()
+        for t in (0.0, 10.0, 20.0):
+            assert behavior.wake_on_touch(t) is False
+        assert polls == []
+    finally:
+        behavior.close()
+
+
+def test_touch_wakes_have_a_cooldown():
+    behavior, polls = _sleeping_behavior([[], ["shake"], ["shake"], ["shake"]])
+    try:
+        behavior.wake_on_touch(0.0)  # drain
+        assert behavior.wake_on_touch(5.0) is True
+        assert behavior.wake_on_touch(10.0) is False  # inside the 30 s cooldown
+        assert behavior.wake_on_touch(40.0) is True
+    finally:
+        behavior.close()
+
+
+def test_a_touch_wake_brings_the_rest_policy_back_to_awake():
+    from types import SimpleNamespace
+
+    device = FakeStackChanDeviceClient()
+    behavior = StackChanBehavior(StackChanRobotAdapter(device).robot)
+    try:
+        behavior._rest._stage = "asleep"
+        queue = [[], [SimpleNamespace(kind="head_touch")]]
+        behavior.event_poll = lambda: queue.pop(0) if queue else []
+        now = 1000.0
+        behavior.wake_on_touch(now)
+        behavior.wake_on_touch(now + 5.0)
+        assert behavior.rest_step(now + 5.0) == "awake"
+    finally:
+        behavior.close()
