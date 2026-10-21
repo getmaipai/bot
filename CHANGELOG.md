@@ -7,6 +7,18 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.22] - 2026-10-21
+
+### Fixed
+
+- Head touch: a press needs a pad reading of 2 held for 400 ms, three short blips in 10 seconds lock the sensor out for 10 seconds, and the unit's stock stroke face, heart and head motion are off, so the host drives every reaction. Press and swipe events carry the held time. Once a minute the unit reports head touch statistics to the host log. This stops the false pets that made the robot show a heart and an open-mouth grin on its own.
+- A tap that begins in the top 24 pixels of the screen is ignored, so a swipe from the top edge no longer starts listening, and a tap while it listens or speaks now stops it.
+
+### Added
+
+- A spoken stop word while the robot is speaking: "stop", "stackchan stop", "be quiet", "quiet", "that's enough", "never mind" and "cancel" end its reply, using a small on-unit command-word model that runs on the wake word's echo-cancelled audio. It is armed only while the robot speaks, checks free internal memory before it arms, and turns itself off if it costs too much. The host log records each hit and near-miss as a command name and a score, never audio or words.
+- The firmware assets are pruned (unused launcher icons and artwork) to make room for the model in the 4 MB assets partition. Patches to flash since 0.2.13: 038, 046, 047, 048, 049 (plus 037, 039, 044 already flashed).
+
 ### Added
 
 - Firmware patch 049 (not flashed): a stop word that works while the robot is talking. A small command-word model on the unit (stop, stackchan stop, be quiet, quiet, that's enough, never mind, cancel) listens only while it speaks; a clear hit aborts the reply and the host ends the turn silently. The host log shows every hit and near-miss as `unit stop word: heard 'stop', score 91 ...` (command name and score only). The model drops itself if it would use more than 6 KB of internal RAM, and the build prunes unused launcher icons so the assets still fit the 4 MB partition.
