@@ -10,6 +10,7 @@ retried, so a failed write is never lost.
 from __future__ import annotations
 
 import logging
+import time
 
 import pytest
 
@@ -346,5 +347,8 @@ def test_a_hello_notifies_the_session_listeners_and_a_failing_one_is_isolated():
     server = XiaozhiServer(PairingStore(), robot=None)
     server.session_listeners.append(seen.append)
     server.session_listeners.insert(0, lambda device_id: (_ for _ in ()).throw(RuntimeError("x")))
-    server._notify_session_listeners("device-1")
+    server._notify_session_listeners("device-1")  # listeners run on their own thread
+    deadline = time.monotonic() + 2.0
+    while not seen and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert seen == ["device-1"]
