@@ -36,8 +36,9 @@ until every row of that design's section 13 is true.
 ## StackChan
 
 StackChan is a small robot that can turn and nod its head, light its ring,
-play and hear sound, and take pictures. The ring turns red whenever the
-camera is looking. The Bot reads the battery level.
+show a face, play and hear sound, and take pictures. The ring turns pink for
+a moment when a picture is taken, and a green ring means sound is going to
+your Home. The ring is never red. The Bot reads the battery level.
 
 StackChan needs MaiPai's custom firmware, flashed once before setup. The Bot
 host runs a translator that connects the robot to MaiPai. Its audio and camera
@@ -48,7 +49,7 @@ Audio and camera data are not encrypted while they travel on your home
 network. Keep StackChan and the Bot host on a trusted network. StackChan has
 not yet been verified on real hardware.
 
-See the [StackChan firmware guide](body/maipai_body/bodies/stackchan/firmware/README.md)
+See [Your StackChan](docs/user/stackchan.md) for what it can do and why the MaiPai firmware, the [StackChan firmware guide](body/maipai_body/bodies/stackchan/firmware/README.md)
 and [household setup steps](docs/user/stackchan-setup.md).
 
 ## Development

@@ -1,5 +1,7 @@
 # Set up a StackChan
 
+After setup, see [Your StackChan](stackchan.md) for what it can do.
+
 You need a StackChan, a USB-C data cable, a Bot host, a phone, and a computer with ESP-IDF 5.5.4.
 
 Setup never uses the M5 app or an M5 account. Your Wi-Fi password goes from your phone straight to the robot.
