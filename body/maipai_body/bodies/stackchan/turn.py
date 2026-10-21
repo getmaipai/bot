@@ -534,6 +534,7 @@ class StackChanTurnBridge:
         uplink_stats=None,
         side_executor=None,
         volume_control=None,
+        head_control=None,
         clock=time.monotonic,
     ) -> None:
         self.server, self.link, self.offline = server, link, offline
@@ -543,6 +544,8 @@ class StackChanTurnBridge:
         self.uplink_stats = uplink_stats
         # "Louder", "volume to 60": answered here, without asking the hub.
         self.volume_control = volume_control
+        # "Look left", "nod": answered here too, since the hub's model can only say "I can't".
+        self.head_control = head_control
         # The expression and light sinks make blocking device calls that wait on this very event
         # loop; run inline they froze it until each 5 s timeout (live log 2026-10-20: 5 s to start
         # a turn, 12 s to the first audio frame). One worker keeps their order.
@@ -933,6 +936,17 @@ class StackChanTurnBridge:
                         "StackChan voice: volume command %s (%d -> %d)", command.kind, before, after
                     )
                     line = confirmation(command, before, after)
+                    if line:
+                        await asyncio.to_thread(self._say, playback, base, cookie, line)
+                        self._breaker.note_speech()
+                    return
+            if self.head_control is not None:
+                from maipai_body.bodies.stackchan.head_commands import parse_head_command
+
+                head_command = parse_head_command(result.text or "")
+                if head_command is not None:
+                    line = await asyncio.to_thread(self.head_control.run, head_command)
+                    LOG.info("StackChan voice: head command %s (%r)", head_command.kind, line)
                     if line:
                         await asyncio.to_thread(self._say, playback, base, cookie, line)
                         self._breaker.note_speech()

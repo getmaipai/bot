@@ -178,6 +178,7 @@ class StackChanBehavior:
         self.idle_level = "still"
         # True once any move left the head off centre; the post-turn settle only runs then.
         self._head_off_centre = False
+        self._hold_until = float("-inf")
         self._warned: dict[str, float] = {}
         self.on_idle_level: Callable[[], None] = lambda: None
         # BOT-SC-ANIM-01: drowsy and asleep stages so an idle robot does not sit smiling for hours.
@@ -215,6 +216,10 @@ class StackChanBehavior:
                 if self.robot.lease_holder == self._holder:
                     self.robot.lease.release(holder=self._holder)
             return True
+
+    def hold_pose(self, seconds: float) -> None:
+        """Keep the post-turn settle from undoing a head pose the person just asked for."""
+        self._hold_until = time.monotonic() + seconds
 
     def render_primitive(self, primitive: str) -> bool:
         if self.night_active():
@@ -263,7 +268,7 @@ class StackChanBehavior:
             if state == "settle":
                 # Only a head that actually left centre is brought back: a quiet turn that moved
                 # nothing must not move the head again (the unit was settling after every turn).
-                if self._head_off_centre and may_move:
+                if self._head_off_centre and may_move and time.monotonic() >= self._hold_until:
                     self._head_off_centre = False
                     self._expression.render_ambient("settle", SuppressionContext())
                 return
@@ -609,7 +614,27 @@ async def _serve_stackchan_channels(
 
     uplink = UplinkStats()
     if link is not None and offline is not None:
+        import math
+
+        from maipai_body.bodies.stackchan.head_commands import HeadCommander
         from maipai_body.bodies.stackchan.volume import VolumeControl
+        from maipai_body.hal.seam import HeadPose
+
+        def _move_head(yaw_deg: int, pitch_deg: int, speed: int) -> None:
+            pose = HeadPose(yaw=math.radians(yaw_deg), pitch=math.radians(pitch_deg))
+            if not behavior._with_lease(lambda: voice.robot.robot.head.set(pose=pose, speed=speed)):
+                raise RuntimeError("another part of the robot is using the head")
+
+        def _head_blocked() -> str | None:
+            if voice.robot.robot.estop_engaged:
+                return "the emergency stop is latched"
+            if power.charging:
+                return "the unit is charging"
+            return None
+
+        head_commander = HeadCommander(
+            _move_head, blocked=_head_blocked, hold_pose=behavior.hold_pose
+        )
 
         bridge = StackChanTurnBridge(
             voice,
@@ -624,6 +649,7 @@ async def _serve_stackchan_channels(
             live_sink=light.cue_live,
             uplink_stats=uplink,
             volume_control=VolumeControl(voice.robot.client._call, voice.robot.client.set_volume),
+            head_control=head_commander,
         )
         voice.audio_handler = bridge.on_audio
         voice.turn_handler = bridge.listen

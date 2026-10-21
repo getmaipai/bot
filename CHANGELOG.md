@@ -7,6 +7,16 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+### Added
+
+- Spoken head movement on the robot, answered before the hub: "look left / right / up / down" (with "a little" or "all the way"), "turn left", "look straight", "look at me", "look around", "nod", "say yes", "shake your head", "say no" and "stay". It says one short line ("Looking left."), then returns to centre after 5 seconds unless told to stay. If the unit is charging or the stop is latched it says "I can't move right now." Requests like "turn around", "spin" or "dance" get "I can look left, right, up or down." and never reach the hub. See `docs/dev/design-stackchan-head-commands-2026-10-21.md`.
+
+### Fixed
+
+- Starting the robot service no longer freezes the event loop for 5 seconds: the presence start runs in a worker thread, and a device call made on the loop fails at once instead of waiting.
+- A return to centre is never refused by the head-move cap; only real head moves count, and the cap is 30 a minute.
+- A StackChan that stays connected but stops answering tool calls is logged after 60 seconds (with the age of its last audio frame and last message) and asked to restart itself after 120 seconds.
+
 ## [0.2.14] - 2026-10-21
 
 ### Fixed
