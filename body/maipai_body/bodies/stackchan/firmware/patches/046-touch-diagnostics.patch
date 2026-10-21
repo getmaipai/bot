@@ -1,0 +1,63 @@
+# Intent: serial diagnostics for the face screen's touch path (2026-10-21; swipes and taps did nothing on the unit). One line when a finger goes down (with x and y) and when it lifts, one line for each LVGL event the face panel gets (pressed, clicked with the xiaozhi-ready flag, long pressed, scroll began, gesture with its direction), and one line when a gesture is ignored because boot is not done or the quick-settings panel is open. Transitions only, so it cannot flood the log.
+# Upstream: m5stack/StackChan firmware/main/hal/hal.cpp, hal/board/stackchan_display.cc, stackchan_display.h (MIT). Applies after 044 with --unidiff-zero.
+# Check after a flash: with the serial monitor open, touch the face: "touch down x= y=" and "touch up" appear; a tap adds "face: pressed" then "face: clicked"; a swipe adds "face: gesture dir=". No "touch down" line means the controller is not reporting (hardware or I2C); "touch down" without "face: pressed" means an object other than the face panel receives the touch; "pressed" without "gesture" on a swipe means LVGL did not recognise the swipe.
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index 78593d0..4712dad 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -284,0 +285,2 @@ void StackChanAvatarDisplay::SetupUI()
++    // Diagnostic (patch 046): every LVGL touch event the face panel receives, one line each.
++    lv_obj_add_event_cb(avatar->getPanel()->get(), &StackChanAvatarDisplay::OnTouchDiag, LV_EVENT_ALL, this);
+@@ -390,0 +393,26 @@ void StackChanAvatarDisplay::BootRingTick(lv_timer_t* timer)
++void StackChanAvatarDisplay::OnTouchDiag(lv_event_t* event)
++{
++    auto* self = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
++    switch (lv_event_get_code(event)) {
++        case LV_EVENT_PRESSED:
++            ESP_LOGI(TAG, "face: pressed (boot_done=%d, panel_open=%d)", self != nullptr && self->boot_done_,
++                     self != nullptr && self->quick_panel_ != nullptr);
++            break;
++        case LV_EVENT_CLICKED:
++            ESP_LOGI(TAG, "face: clicked (xiaozhi_ready=%d)", hal_bridge::is_xiaozhi_ready());
++            break;
++        case LV_EVENT_LONG_PRESSED:
++            ESP_LOGI(TAG, "face: long pressed");
++            break;
++        case LV_EVENT_SCROLL_BEGIN:
++            ESP_LOGI(TAG, "face: scroll began");
++            break;
++        case LV_EVENT_GESTURE:
++            ESP_LOGI(TAG, "face: gesture dir=%d (1 left, 2 right, 4 top, 8 bottom)",
++                     static_cast<int>(lv_indev_get_gesture_dir(lv_indev_active())));
++            break;
++        default:
++            break;
++    }
++}
++
+@@ -397,0 +426,2 @@ void StackChanAvatarDisplay::OnGesture(lv_event_t* event)
++        ESP_LOGI(TAG, "face: gesture ignored (boot_done=%d, panel_open=%d)", self->boot_done_,
++                 self->quick_panel_ != nullptr);
+diff --git a/firmware/main/hal/board/stackchan_display.h b/firmware/main/hal/board/stackchan_display.h
+index ff8b901..ae8bcb5 100644
+--- a/firmware/main/hal/board/stackchan_display.h
++++ b/firmware/main/hal/board/stackchan_display.h
+@@ -46,0 +47 @@ private:
++    static void OnTouchDiag(lv_event_t* event);
+diff --git a/firmware/main/hal/hal.cpp b/firmware/main/hal/hal.cpp
+index 84b8341..87eb4ce 100644
+--- a/firmware/main/hal/hal.cpp
++++ b/firmware/main/hal/hal.cpp
+@@ -307,0 +308,12 @@ static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
++    // Diagnostic (patch 046): one line when a finger goes down or lifts, with where.
++    static bool s_diag_down = false;
++    const bool diag_down    = bridge_data.touchPoint.num != 0;
++    if (diag_down != s_diag_down) {
++        s_diag_down = diag_down;
++        if (diag_down) {
++            mclog::tagInfo(_tag, "touch down x={} y={}", bridge_data.touchPoint.x, bridge_data.touchPoint.y);
++        } else {
++            mclog::tagInfo(_tag, "touch up");
++        }
++    }
++

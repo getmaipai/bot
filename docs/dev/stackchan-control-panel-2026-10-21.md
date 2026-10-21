@@ -99,3 +99,38 @@ stops talking. A swipe down anywhere else still does. A left or right volume swi
 - Only the two touched objects were compiled; the scratch tree cannot link a full image.
 - The sheet is sized to its content; if three rows do not fit the 240 px screen height with the
   8 px padding, the Wi-Fi button is the one that clips. Look at it on the first flash.
+
+## 3. Why swipes and taps do nothing on the face (investigation 2026-10-21)
+
+Owner report: the swipe-up quick-settings panel from patch 036 never opened, swipes do nothing on
+the face, and earlier a tap did nothing. Patch 045 is parked (kept in `patches/`, taken out of
+`recipe.sh`) until swipes work; the stock panel may then be enough.
+
+**What the code shows, end to end.** The FT6336 is created at I2C 0x38 and polled every 20 ms by
+`PollTouchpad` in `hal/board/stackchan.cc`; it stores (points, x, y) with `hal_bridge::set_touch_point`.
+`Hal::lvgl_init` makes a pointer indev whose read callback copies that point
+(`hal/hal.cpp`). The face is a 320x240 `Container` made by `MintAvatar::init`, non-scrollable, with
+non-clickable children that bubble to it. 036 hangs `LV_EVENT_GESTURE` on that container, and the
+stock tap handler (`onClick`, toggles chat, only when `is_xiaozhi_ready()`, 2 s apart) is on the
+same object. The boot cover and the boot logo do not sit above it: the cover is hidden by flag
+after STANDBY, and the logo is created first, so below the face. LVGL 9.4 defaults (gesture limit 50 px,
+minimum velocity 3 px per read) suit a normal swipe at the 33 ms read period. Nothing in the code
+blocks touch input, so the cause is not visible from reading.
+
+**What the serial captures show.** `serial*.log` (2026-10-20) have `Init FT6336`,
+`create lvgl touchpad indev` and no `FT6336 read failed` warning, so the controller answers on the
+bus. They cannot show touches at all: the only per-touch log line in the firmware is commented out
+in `lvgl_read_cb`, and the `HAL-HeadTouch` lines are the head sensor, not the screen.
+
+**Ranked guesses.** (1) The controller answers but reports no points (num stays 0): wrong work
+mode, a reset line the board does not release, or a lost interrupt; nothing above it would then
+see a touch. (2) Touches arrive but land on a different object than the face panel. (3) Presses
+arrive but LVGL does not recognise the gesture or click. The three give different log lines, so
+one flash tells them apart.
+
+**Diagnostic: `046-touch-diagnostics.patch`** (in the recipe; compiled, applies after 044). With
+the serial monitor open: `HAL: touch down x= y=` and `touch up` per finger (transitions only);
+`face: pressed`, `clicked (xiaozhi_ready=)`, `long pressed`, `scroll began`, `gesture dir=` for each
+LVGL event on the face; `face: gesture ignored (...)` when 036 drops a gesture. Read it as: no
+`touch down` means guess 1; `touch down` without `face: pressed` means guess 2; `pressed` without
+`gesture` or `clicked` means guess 3.

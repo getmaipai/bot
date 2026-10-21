@@ -7,12 +7,16 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+### Added
+
+- Firmware patch 046 (not flashed): serial lines for the screen's touch path, so a unit where swipes and taps do nothing shows whether the controller reports a touch, whether the face receives it and whether LVGL recognises the swipe. The control-panel patch 045 is parked until swipes work.
+
 ## [0.2.19] - 2026-10-21
+
 ### Added
 
 - Spoken screen brightness, like the volume: "set brightness to 50 percent", "brighter", "dimmer", "it's too bright", "dim your screen", "full brightness". The robot says "Brightness 50." The screen never goes below 10 (a request to turn it off is answered with how to dim it). By day the level is kept as the owner level; at night only the temporary night level changes and the day edge restores the day level exactly.
 - The robot reads `robot.volume` and `robot.brightness` from the hub as its default owner levels. A default applies when it changes, by day, and never overwrites the night level or a level the person set later with an unchanged default.
-- Firmware patch 045 (not flashed, not in a build yet): a control panel that drops from the top of the screen with the volume and brightness sliders, closes on a swipe up, a tap outside or 5 seconds without touch, and tells the host when a level changes. A swipe down that starts in the top 30 px opens it; a swipe down elsewhere still stops talking.
 - Levels set on the unit's own panel (the `level_changed` event) are kept as the owner levels, or the night levels at night, once the firmware sends them.
 
 ## [0.2.18] - 2026-10-21
