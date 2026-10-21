@@ -20,7 +20,7 @@ from maipai_body.speaker_evidence import SpeakerEvidenceError, speaker_evidence
 from maipai_body.speech.capture import BLOCK_SAMPLES
 from maipai_body.speech.offline_clips import UNREACHABLE
 from maipai_body.speech.playback import AudioPlayback
-from maipai_body.speech.stt_stream import WAKE_PATIENCE_S, SttStreamClient
+from maipai_body.speech.stt_stream import WAKE_PATIENCE_S, SttStreamClient, SttStreamError
 from maipai_body.speech.tts_playback import TtsAuthFailed, TtsPlaybackClient
 from maipai_body.speech.turn_client import TurnAuthFailed, TurnClient, TurnLinkLost
 
@@ -45,6 +45,8 @@ FOLLOW_UP_S = 8.0
 FOLLOW_UP_AFTER_S = 2.0
 # Voiced audio the hub must have called speech before a failure is worth an apology.
 MIN_SPEECH_S = 0.5
+# Fresh speech-to-text streams opened after a dropped socket before the turn gives up.
+STT_RECONNECTS = 2
 FRAME_S = 0.06
 # Decode and speaker delay after the last frame's play time, before the stop.
 STOP_TAIL_S = 0.12
@@ -473,7 +475,13 @@ class StackChanTurnBridge:
         elif now - self._speech_ended.get(session_id, float("-inf")) < 0.18:
             self._uplink_dropped += 1
             return
-        if capture is not None and now - self._capture_started.get(session_id, -1e9) < POPUP_HOLD_S:
+        # A follow-up listen opens with no tone (the firmware plays it only for a wake word or a
+        # tap), so nothing is held back there: the first word of "yes" or "again" is speech.
+        if (
+            capture is not None
+            and not self._followup.get(session_id, False)
+            and now - self._capture_started.get(session_id, -1e9) < POPUP_HOLD_S
+        ):
             self._popup_dropped += 1
             return
         if capture is not None:
@@ -573,6 +581,7 @@ class StackChanTurnBridge:
         window = self.follow_up_s if followup else WAKE_PATIENCE_S
         deadline = started_at + window
         first = True
+        retries = 0
         while True:
             stt = self.stt_factory(base, cookie)
             self._set_live(True)
@@ -584,6 +593,21 @@ class StackChanTurnBridge:
                 else:
                     remaining = max(0.5, deadline - self._clock())
                     result = await asyncio.to_thread(stt.run, capture, patience_s=remaining)
+            except SttStreamError:
+                # A stalled or dropped socket on this Wi-Fi is not the end of the turn: the capture
+                # still holds the audio, so open a new stream while the window has time left.
+                retries += 1
+                if retries > STT_RECONNECTS or self._clock() >= deadline - 1.0:
+                    raise
+                LOG.warning(
+                    "StackChan voice: the speech-to-text link dropped; reconnecting (%d of %d)",
+                    retries,
+                    STT_RECONNECTS,
+                    exc_info=True,
+                )
+                first = False
+                await asyncio.sleep(0.2)
+                continue
             finally:
                 self._set_live(False)
             first = False

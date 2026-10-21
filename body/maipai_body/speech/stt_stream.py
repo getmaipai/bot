@@ -39,6 +39,13 @@ _MAX_KEPT_BLOCKS = 1900  # about 60 s of 32 ms blocks
 # The hub's vad message trails the audio by its own latency; start the kept
 # span this many blocks before it so the first syllable is inside.
 _VAD_LEAD_BLOCKS = 10
+# Speech that starts just before the patience window ends is still in flight: the hub's vad message
+# trails the audio (and the Wi-Fi hop adds to it). Wait this long past the deadline before giving
+# up, so a word at the 6 s mark is not cut off by an early end.
+_GIVE_UP_GRACE_S = 0.6
+# After the end request the hub finalises what it has; transcribing can take seconds when the Mac
+# is busy, and a timeout here throws away words the hub would have answered.
+_FINAL_WAIT_S = 12.0
 
 
 class SttStreamError(RuntimeError):
@@ -149,7 +156,7 @@ class SttStreamClient:
                         speech_total += now - speech_started
                         speech_started = None
 
-            if not speaking_seen and time.monotonic() >= deadline:
+            if not speaking_seen and time.monotonic() >= deadline + _GIVE_UP_GRACE_S:
                 return self._give_up(ws)
 
     @staticmethod
@@ -200,7 +207,7 @@ class SttStreamClient:
         still a successful give-up, not a transport error."""
         try:
             ws.send(json.dumps({"t": "end"}))
-            raw = ws.recv(timeout=5)
+            raw = ws.recv(timeout=_FINAL_WAIT_S)
             message = json.loads(raw)
             result = self._handle_message(message)
             if result is not None:

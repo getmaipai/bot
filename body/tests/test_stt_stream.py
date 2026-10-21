@@ -271,3 +271,30 @@ def test_only_audio_after_the_wake_leaves_the_body_and_none_after_the_final(stt_
     assert min(sent) >= first_after_wake  # nothing from before the wake
     assert sent == list(range(first_after_wake, first_after_wake + len(sent)))  # the span, in order
     assert mic.next_index == first_after_wake + len(sent)  # nothing polled or sent after the final
+
+
+def test_speech_starting_at_the_deadline_is_not_cut_off_by_an_early_end(stt_server):
+    """The hub vad trails the audio; a grace past the deadline comes before giving up."""
+    import time
+
+    from maipai_body.speech import stt_stream
+
+    server, handler = stt_server(
+        [(0.35, {"t": "vad", "speaking": True, "rms": 0.1}), (0.1, {"t": "final", "v": "hi"})]
+    )
+    client = SttStreamClient(
+        f"http://127.0.0.1:{server.socket.getsockname()[1]}", "cookie-abc", wake_patience_s=0.2
+    )
+    capture, _ = _capture_with_fixture()
+    assert stt_stream._GIVE_UP_GRACE_S >= 0.5
+    started = time.monotonic()
+    result = client.run(capture)
+    assert result.kind == "final" and result.text == "hi"
+    assert {"t": "end"} not in handler.received_text
+    assert time.monotonic() - started < 3
+
+
+def test_the_wait_for_the_final_after_end_covers_a_slow_transcription():
+    from maipai_body.speech import stt_stream
+
+    assert stt_stream._FINAL_WAIT_S >= 10.0

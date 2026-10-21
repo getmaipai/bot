@@ -726,3 +726,87 @@ def test_an_abnormal_end_while_speaking_sends_a_tts_stop_so_the_mouth_closes(mon
     loop.run_until_complete(bridge._run("session", "device", FakeCapture()))
     loop.close()
     assert server.stops == ["device"]
+
+
+def test_a_follow_up_listen_holds_nothing_back_because_no_tone_plays(monkeypatch):
+    import maipai_body.bodies.stackchan.turn as turn_module
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    now = [10.0]
+    import threading
+
+    release = threading.Event()
+
+    class WaitingStt(FakeStt):
+        def run(self, capture, patience_s=None):
+            release.wait(5)
+            return self.result
+
+    bridge = StackChanTurnBridge(
+        server,
+        Link(),
+        Offline(),
+        stt_factory=WaitingStt,
+        turn_factory=FakeTurn,
+        tts_factory=FakeTts,
+        side_executor=InlineExecutor(),
+        clock=lambda: now[0],
+    )
+    bridge._last_turn_end["session-follow"] = now[0] - 0.5  # a reply just ended
+    loop.run_until_complete(bridge.listen("session-follow", "device", "start"))
+    assert bridge._followup["session-follow"] is True
+    now[0] += 0.05
+    loop.run_until_complete(bridge.on_audio("session-follow", b"\x01\x02"))  # "yes"
+    assert bridge._popup_dropped == 0
+    assert bridge._captures["session-follow"] is not None  # the audio was not held back
+    release.set()
+    loop.run_until_complete(bridge._tasks["session-follow"])
+    loop.close()
+
+
+def test_a_dropped_stt_socket_reconnects_instead_of_ending_the_turn():
+    from maipai_body.speech.stt_stream import SttStreamError
+
+    calls = []
+
+    class FlakyStt:
+        def __init__(self, base, cookie):
+            pass
+
+        def run(self, capture, patience_s=None):
+            calls.append(patience_s)
+            if len(calls) == 1:
+                raise SttStreamError("hub stt connection failed: reset")
+            return SttStreamResult(kind="final", text="hello")
+
+    bridge = StackChanTurnBridge(
+        FakeServer(), Link(), Offline(), stt_factory=FlakyStt, side_executor=InlineExecutor()
+    )
+    bridge._current_session = "s"
+    capture = SimpleNamespace(closed=False)
+    result = asyncio.run(bridge._recognise("b", "c", capture, bridge._clock()))
+    assert result.kind == "final" and len(calls) == 2
+
+
+def test_a_dropped_stt_socket_near_the_deadline_still_raises():
+    from maipai_body.speech.stt_stream import SttStreamError
+
+    class DeadStt:
+        def __init__(self, base, cookie):
+            pass
+
+        def run(self, capture, patience_s=None):
+            raise SttStreamError("down")
+
+    bridge = StackChanTurnBridge(
+        FakeServer(), Link(), Offline(), stt_factory=DeadStt, side_executor=InlineExecutor()
+    )
+    bridge._current_session = "s"
+    with pytest.raises(SttStreamError):
+        asyncio.run(
+            bridge._recognise("b", "c", SimpleNamespace(closed=False), bridge._clock() - 10.0)
+        )
