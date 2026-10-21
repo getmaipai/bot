@@ -103,6 +103,9 @@ class AvatarServer:
         self._server: Any = None
         self._sessions: dict[str, ServerConnection] = {}
         self.on_camera_frame: Any = None
+        # Asked on every connect: True when the camera should already be streaming (local watching
+        # is on). The body's one start at boot comes before the unit's socket exists.
+        self.start_camera_on_connect: Any = None
         self._camera_frames: dict[str, tuple[bytes, float]] = {}
         self._camera_events: dict[str, asyncio.Event] = {}
         self._camera_disconnects: dict[str, asyncio.Event] = {}
@@ -180,6 +183,9 @@ class AvatarServer:
                 return
             await websocket.send(json.dumps({"type": "hello", "session_id": uuid.uuid4().hex}))
             LOG.info("StackChan avatar: connected (device %s)", device_id[-5:])
+            if callable(self.start_camera_on_connect) and self.start_camera_on_connect():
+                await websocket.send(encode_frame(0x05))
+                LOG.info("StackChan avatar: asked the unit to start its camera stream")
             async for message in websocket:
                 if not self.pairing.authorize(device_id, client_id, token):
                     await websocket.close(1008, "Pairing was revoked; reconnect after approval.")

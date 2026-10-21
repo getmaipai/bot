@@ -1,0 +1,92 @@
+# Intent: show why the camera sends no frames (host log 2026-10-21: "0 frames and 0 KB from the unit in 1.0 min" on a connected avatar socket). The body's start command was in the wrong wire form (fixed on the host in 0.2.33), and the unit gave no sign of whether it ever got a start, captured or sent. Once a minute the unit now pushes a "camera" event with the counts since the last one: start commands received, frames captured, frames sent, and captures or JPEG encodes that failed.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_ws_avatar.cpp, hal_head_touch.cpp (MIT). Applies after 063.
+# Check after a flash: the host log shows "unit camera: starts=1 captured=N sent=N failed=0" with N above 0 once the host has asked for the stream; starts=0 means the host's start never arrived, failed above 0 means the capture or encode runs out of memory.
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index 1730273..2ba294e 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -20,6 +20,8 @@
+ #include <settings.h>
+ #include <application.h>
+ #include <cstring>
++#include <atomic>
++extern std::atomic<uint32_t> g_cam_starts, g_cam_captured, g_cam_sent, g_cam_failed;
+ #include <mooncake_log.h>
+ #include <freertos/FreeRTOS.h>
+ #include <freertos/task.h>
+@@ -238,6 +240,12 @@ static void _head_touch_update_task(void* param)
+             char fw[96];
+             snprintf(fw, sizeof(fw), "\"version\":\"%s\",\"rssi\":%d", MAIPAI_FIRMWARE_VERSION, rssi);
+             device_events_push_diag("fw", fw);
++            // Camera stream counts for the minute (defined in hal_ws_avatar.cpp).
++            char cam[96];
++            snprintf(cam, sizeof(cam), "\"starts\":%u,\"captured\":%u,\"sent\":%u,\"failed\":%u",
++                     static_cast<unsigned>(g_cam_starts.exchange(0)), static_cast<unsigned>(g_cam_captured.exchange(0)),
++                     static_cast<unsigned>(g_cam_sent.exchange(0)), static_cast<unsigned>(g_cam_failed.exchange(0)));
++            device_events_push_diag("camera", cam);
+             // The least stack ever left free in the big tasks (bytes), to size or move stacks.
+             const char* names[] = {"opus_codec", "audio_input", "audio_output", "ws_reconnect", "stackchan",
+                                    "audio_detection"};
+diff --git a/firmware/main/hal/hal_ws_avatar.cpp b/firmware/main/hal/hal_ws_avatar.cpp
+index 844fd66..08e3d60 100644
+--- a/firmware/main/hal/hal_ws_avatar.cpp
++++ b/firmware/main/hal/hal_ws_avatar.cpp
+@@ -13,6 +13,7 @@
+ #include <web_socket.h>
+ #include <esp_log.h>
+ #include <arpa/inet.h>
++#include <atomic>
+ #include <jpg/image_to_jpeg.h>
+ #include <wifi_station.h>
+ #include <ArduinoJson.hpp>
+@@ -32,6 +33,13 @@
+ 
+ static std::string _tag = "WS-Avatar";
+ 
++// Camera stream counts since the last minute report (hal_head_touch.cpp reads and clears them):
++// start commands received, frames captured, frames sent, captures or encodes that failed.
++std::atomic<uint32_t> g_cam_starts{0};
++std::atomic<uint32_t> g_cam_captured{0};
++std::atomic<uint32_t> g_cam_sent{0};
++std::atomic<uint32_t> g_cam_failed{0};
++
+ static const std::string _setting_ns              = "stackchan";
+ static const std::string _setting_device_name_key = "device_name";
+ 
+@@ -245,6 +253,7 @@ public:
+                 // }
+                 case DataType::StartCameraStream: {
+                     ESP_LOGI(_tag.c_str(), "Start Camera Stream");
++                    g_cam_starts++;
+                     setStreamingEnabled(true);
+                     _websocket->Send("camera stream started");
+                     break;
+@@ -423,11 +432,15 @@ public:
+ 
+         auto camera = hal_bridge::board_get_camera();
+         if (!camera) {
++            g_cam_failed++;
+             return;
+         }
+ 
+         _time_count = esp_timer_get_time();
+-        if (camera->StreamCaptures()) {
++        if (!camera->StreamCaptures()) {
++            g_cam_failed++;
++        } else {
++            g_cam_captured++;
+             _interval = esp_timer_get_time() - _time_count;
+             mclog::info("camera capture time: {} ms", _interval / 1000);
+ 
+@@ -450,8 +463,11 @@ public:
+ 
+                 if (jpeg_data) {
+                     sendPacket(DataType::Jpeg, jpeg_data, jpeg_len);  // Type 2 for JPEG
++                    g_cam_sent++;
+                     free(jpeg_data);
+                 }
++            } else {
++                g_cam_failed++;
+             }
+         }
+     }

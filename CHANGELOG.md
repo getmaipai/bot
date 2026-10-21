@@ -7,6 +7,14 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.33] - 2026-10-21
+
+### Fixed
+- The camera never streamed: the body's start command used the 0xAA55 envelope, but the unit's avatar socket reads `[type][4-byte length][payload]`, so it ignored the command. The body now sends the unit's own form (start 0x05, stop 0x06), and asks the unit to start the stream whenever its avatar socket connects while local watching is allowed (the one start at boot came before the socket existed).
+
+### Added
+- Firmware patch 064: once a minute the unit reports its camera counts (`camera` event, logged as "unit camera"): start commands received, frames captured, frames sent, failures.
+
 ## [0.2.32] - 2026-10-21
 
 ### Fixed

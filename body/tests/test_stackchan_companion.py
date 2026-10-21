@@ -69,6 +69,7 @@ def test_dances_and_event_kinds_export_the_supported_sets():
             "state_guard",
             "touch_path",
             "fw",
+            "camera",
         }
     )
 

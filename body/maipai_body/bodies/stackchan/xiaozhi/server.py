@@ -20,7 +20,11 @@ from aiohttp import web
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
-from maipai_body.bodies.stackchan.avatar_frames import AvatarCommand, decode_frame
+from maipai_body.bodies.stackchan.avatar_frames import (
+    AvatarCommand,
+    decode_frame,
+    unit_camera_frame,
+)
 from maipai_body.bodies.stackchan.ws_logging import listener_logger
 from maipai_body.hal.errors import BodyLost, EstopEngaged, NotSupported, OutOfEnvelope
 
@@ -950,7 +954,7 @@ class XiaozhiServer:
             raise ConnectionError(
                 "Select one authenticated StackChan before sending an expression."
             )
-        await self._avatar_frame_sender(next(iter(self._sessions)), frame)
+        await self._avatar_frame_sender(next(iter(self._sessions)), unit_camera_frame(frame))
 
     async def _stop_camera(self, device_id: str) -> None:
         self._camera_streaming.discard(device_id)

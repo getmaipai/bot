@@ -8,6 +8,10 @@ from enum import IntEnum
 from pathlib import Path
 
 
+UNIT_START_CAMERA = 0x05
+UNIT_STOP_CAMERA = 0x06
+
+
 class AvatarCommand(IntEnum):
     START_CAMERA_STREAM = 0x05
 
@@ -53,3 +57,19 @@ def start_camera_stream() -> bytes:
 
 def stop_camera_stream() -> bytes:
     return encode_frame(AvatarCommand.START_CAMERA_STREAM, b"\x00")
+
+
+def unit_camera_frame(frame: bytes) -> bytes:
+    """The camera start or stop command in the unit's avatar-socket form.
+
+    The body builds camera commands in the 0xAA55 envelope above, but the unit's avatar socket reads
+    [type][4-byte length][payload] (hal_ws_avatar.cpp), so the envelope was ignored and no camera
+    frame was ever sent. Start is type 0x05 and stop 0x06. Any other frame passes unchanged."""
+    if frame[:2] != b"\xaa\x55":
+        return frame
+    decoded = decode_frame(frame)
+    if decoded.command != AvatarCommand.START_CAMERA_STREAM:
+        return frame
+    from .avatar.codec import encode_frame as encode_unit_frame
+
+    return encode_unit_frame(UNIT_STOP_CAMERA if decoded.payload == b"\x00" else UNIT_START_CAMERA)

@@ -38,6 +38,7 @@ DIAGNOSTIC_KINDS = frozenset(
         "state_guard",
         "touch_path",
         "fw",
+        "camera",
     }
 )
 EVENT_KINDS = (

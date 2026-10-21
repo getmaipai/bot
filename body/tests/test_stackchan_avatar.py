@@ -53,6 +53,15 @@ class StackChanAvatarTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await peer.close()
 
+    async def test_connect_starts_the_camera_when_watching_is_on(self):
+        self.app.start_camera_on_connect = lambda: True
+        peer = self.peer()
+        await peer.connect()
+        try:
+            self.assertEqual(await peer.recv_frame(), b"\x05\x00\x00\x00\x00")
+        finally:
+            await peer.close()
+
     async def test_unpaired_device_refused(self):
         peer = self.peer(
             device_id="02:00:00:00:00:16",
@@ -130,3 +139,21 @@ class StackChanAvatarTests(unittest.IsolatedAsyncioTestCase):
             decode_frame(b"\x03\x00")
         with self.assertRaises(ValueError):
             decode_frame(b"\x03\x00\x00\x00\x03{}")
+
+
+class UnitCameraFrameTests(unittest.TestCase):
+    def test_start_and_stop_become_the_units_type_length_payload_frames(self):
+        from maipai_body.bodies.stackchan.avatar_frames import (
+            start_camera_stream,
+            stop_camera_stream,
+            unit_camera_frame,
+        )
+
+        self.assertEqual(unit_camera_frame(start_camera_stream()), b"\x05\x00\x00\x00\x00")
+        self.assertEqual(unit_camera_frame(stop_camera_stream()), b"\x06\x00\x00\x00\x00")
+
+    def test_other_frames_pass_unchanged(self):
+        from maipai_body.bodies.stackchan.avatar_frames import unit_camera_frame
+
+        frame = encode_frame(3, b"{}")
+        self.assertEqual(unit_camera_frame(frame), frame)

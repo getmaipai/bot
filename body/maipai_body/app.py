@@ -543,6 +543,7 @@ class StackChanBehavior:
                 label = {
                     "stop_word": "unit stop word",
                     "fw": "unit firmware",
+                    "camera": "unit camera",
                     "heap_stats": "unit memory",
                     "stack_stats": "unit memory",
                     "boot": "unit boot",
@@ -808,6 +809,10 @@ async def _serve_stackchan_channels(
     tls_context = server_ssl_context(cert_path, key_path)
     voice.robot = StackChanRobotAdapter(XiaozhiDeviceClient(voice))
     voice._avatar_frame_sender = avatar.send_frame
+    camera_driver = voice.robot.robot._driver("camera")
+    avatar.start_camera_on_connect = lambda: (
+        not voice.robot.robot.estop_engaged and camera_driver.watch_allowed()
+    )
     vision = None
     try:
         from maipai_body.bodies.stackchan.vision_bridge import StackChanVisionBridge
