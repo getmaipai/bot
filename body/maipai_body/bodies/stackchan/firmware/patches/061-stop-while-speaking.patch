@@ -1,0 +1,162 @@
+# Intent: stopping a reply that is already playing (owner report 2026-10-21: tapping or saying "Hi, StackChan" while the robot speaks does not stop it). Three parts. (1) A tap while Speaking only told the host to abort; the host streams a whole reply faster than the unit plays it (438 frames were queued on the unit for a 34 s reply), so the unit kept playing from its own buffer. The tap now also drops the queued frames and goes idle. (2) Taps and touch events never reached the host during that reply, not even touch_down, so the touch path is now measured: the controller poll (count, failures, longest gap) and the display read (count, longest gap), reported once a minute as touch_path. A long gap or failures while it speaks would show the touch is starved. (3) The wake word was armed while speaking (armed=1, fetches continuing) but did not fire; wake_stats gains vad_speech, the number of audio chunks the front end heard as speech, to show whether it hears the person over the reply at all.
+# Upstream: 78/xiaozhi-esp32 main/application.cc, main/audio/wake_words/afe_wake_word.cc; m5stack/StackChan firmware/main/hal/hal.cpp, hal/hal_head_touch.cpp, hal/board/stackchan.cc, hal/device_events.h (MIT). Applies after 060 with --unidiff-zero.
+# Check after a flash: tap the face while it speaks a long reply: "unit tap: decision=stop state=6 why=speaking" and the voice stops at once. Each minute "unit touch: touch_path polls=~3000 poll_fail=0 poll_gap_max_ms=... reads=... read_gap_max_ms=..." and "unit wake: wake_stats ... vad_speech=N". Say "Hi, StackChan" over a long reply: a "unit wake: wake state=6" line and the reply stops, or vad_speech stays near zero in that minute.
+diff --git a/firmware/main/hal/board/stackchan.cc b/firmware/main/hal/board/stackchan.cc
+index 2f8f927..97e1020 100644
+--- a/firmware/main/hal/board/stackchan.cc
++++ b/firmware/main/hal/board/stackchan.cc
+@@ -19,6 +19,7 @@
+ #include <algorithm>
+ #include "stackchan_camera.h"
+ #include "hal_bridge.h"
++#include <hal/device_events.h>
+ 
+ #define TAG "M5Stack-StackChan-Board"
+ 
+@@ -447,8 +448,10 @@ private:
+     void PollTouchpad()
+     {
+         if (!ft6336_->UpdateTouchPoint()) {
++            device_events_touch_note_poll(false);
+             return;
+         }
++        device_events_touch_note_poll(true);
+         auto& touch_point = ft6336_->GetTouchPoint();
+ 
+         // Update hal touch point
+diff --git a/firmware/main/hal/device_events.h b/firmware/main/hal/device_events.h
+index 4d979f6..bb056e3 100644
+--- a/firmware/main/hal/device_events.h
++++ b/firmware/main/hal/device_events.h
+@@ -13,3 +13,11 @@ void device_events_push_diag(const char* kind, const char* extra);
+ // Fills out with the wake word detection task's counters since the last call, as JSON members
+ // (armed, fetches, fetch_errors, detections, ms_since_fetch), and clears them. Patch 059.
+ void device_events_wake_stats(char* out, size_t size);
++
++// Touch path health (patch 061): the board's 20 ms controller poll and the display's read of it.
++// note_poll is called once per poll, ok=false when the controller read failed; note_read once per
++// display read. stats fills out with counts and the longest gap between calls (ms) since the last
++// call, and clears them. A tap that never reaches the unit shows up as a long gap or failures.
++void device_events_touch_note_poll(bool ok);
++void device_events_touch_note_read();
++void device_events_touch_stats(char* out, size_t size);
+diff --git a/firmware/main/hal/hal.cpp b/firmware/main/hal/hal.cpp
+index 3dcb122..81121de 100644
+--- a/firmware/main/hal/hal.cpp
++++ b/firmware/main/hal/hal.cpp
+@@ -299,8 +299,45 @@ uint8_t Hal::getSpeakerVolume()
+ #include "board/hal_bridge.h"
+ #include <stackchan/stackchan.h>
+ 
++// Counters for the touch path report (device_events_touch_stats).
++static uint32_t s_polls = 0, s_poll_fail = 0, s_poll_gap_max_ms = 0, s_last_poll_ms = 0;
++static uint32_t s_reads = 0, s_read_gap_max_ms = 0, s_last_read_ms = 0;
++
++void device_events_touch_note_poll(bool ok)
++{
++    const uint32_t now = static_cast<uint32_t>(esp_timer_get_time() / 1000);
++    if (s_last_poll_ms != 0 && now - s_last_poll_ms > s_poll_gap_max_ms) {
++        s_poll_gap_max_ms = now - s_last_poll_ms;
++    }
++    s_last_poll_ms = now;
++    s_polls++;
++    if (!ok) {
++        s_poll_fail++;
++    }
++}
++
++void device_events_touch_note_read()
++{
++    const uint32_t now = static_cast<uint32_t>(esp_timer_get_time() / 1000);
++    if (s_last_read_ms != 0 && now - s_last_read_ms > s_read_gap_max_ms) {
++        s_read_gap_max_ms = now - s_last_read_ms;
++    }
++    s_last_read_ms = now;
++    s_reads++;
++}
++
++void device_events_touch_stats(char* out, size_t size)
++{
++    snprintf(out, size, "\"polls\":%u,\"poll_fail\":%u,\"poll_gap_max_ms\":%u,\"reads\":%u,\"read_gap_max_ms\":%u",
++             static_cast<unsigned>(s_polls), static_cast<unsigned>(s_poll_fail),
++             static_cast<unsigned>(s_poll_gap_max_ms), static_cast<unsigned>(s_reads),
++             static_cast<unsigned>(s_read_gap_max_ms));
++    s_polls = s_poll_fail = s_poll_gap_max_ms = s_reads = s_read_gap_max_ms = 0;
++}
++
+ static void lvgl_read_cb(lv_indev_t* indev, lv_indev_data_t* data)
+ {
++    device_events_touch_note_read();
+     hal_bridge::lock();
+     auto& bridge_data = hal_bridge::get_data();
+ 
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index a05a74c..57cc3df 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -247,6 +247,12 @@ static void _head_touch_update_task(void* param)
+             snprintf(wake + used_wake, sizeof(wake) - used_wake, ",\"state\":%d",
+                      static_cast<int>(Application::GetInstance().GetDeviceState()));
+             device_events_push_diag("wake_stats", wake);
++
++            // Does the touch reach the unit while it speaks? Polls and failures of the controller,
++            // the longest gap between polls and between display reads, in ms.
++            char path[160];
++            device_events_touch_stats(path, sizeof(path));
++            device_events_push_diag("touch_path", path);
+             stats_samples = stats_max = 0;
+             recognizer.presses = recognizer.samples_weak = recognizer.samples_strong = 0;
+             recognizer.runs_weak = recognizer.runs_strong = recognizer.run_max = recognizer.strong_run_max = 0;
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index c4388e1..82ba9f9 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -814,6 +814,11 @@ void Application::HandleToggleChatEvent() {
+     } else if (state == kDeviceStateSpeaking) {
+         report_tap("stop", (int)state, "speaking");
+         AbortSpeaking(kAbortReasonNone);
++        // The host streams a whole reply faster than it plays (438 frames were queued on the unit
++        // for a 34 s reply), so telling the host is not enough: drop what is already queued here
++        // and go idle at once, instead of playing it out until the host's tts stop arrives.
++        audio_service_.ResetDecoder();
++        SetDeviceState(kDeviceStateIdle);
+     } else if (state == kDeviceStateListening) {
+         report_tap("stop", (int)state, "listening");
+ #if CONFIG_STACKCHAN_PERSISTENT_WEBSOCKET
+diff --git a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
+index eaa0ca4..3fd9ec3 100644
+--- a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
++++ b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
+@@ -19,6 +19,7 @@
+ static std::atomic<uint32_t> s_fetches{0};
+ static std::atomic<uint32_t> s_fetch_errors{0};
+ static std::atomic<uint32_t> s_detections{0};
++static std::atomic<uint32_t> s_vad_speech{0};
+ static std::atomic<uint32_t> s_last_fetch_ms{0};
+ static EventGroupHandle_t s_wake_event_group = nullptr;
+ 
+@@ -27,10 +28,12 @@ void device_events_wake_stats(char* out, size_t size)
+     const uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+     const uint32_t last   = s_last_fetch_ms.load();
+     const bool armed      = s_wake_event_group != nullptr && (xEventGroupGetBits(s_wake_event_group) & DETECTION_RUNNING_EVENT);
+-    snprintf(out, size, "\"armed\":%d,\"fetches\":%u,\"fetch_errors\":%u,\"detections\":%u,\"ms_since_fetch\":%d",
++    snprintf(out, size,
++             "\"armed\":%d,\"fetches\":%u,\"fetch_errors\":%u,\"detections\":%u,\"vad_speech\":%u,"
++             "\"ms_since_fetch\":%d",
+              armed ? 1 : 0, static_cast<unsigned>(s_fetches.exchange(0)),
+              static_cast<unsigned>(s_fetch_errors.exchange(0)), static_cast<unsigned>(s_detections.exchange(0)),
+-             last == 0 ? -1 : static_cast<int>(now_ms - last));
++             static_cast<unsigned>(s_vad_speech.exchange(0)), last == 0 ? -1 : static_cast<int>(now_ms - last));
+ }
+ 
+ AfeWakeWord::AfeWakeWord()
+@@ -336,6 +339,9 @@ void AfeWakeWord::AudioDetectionTask() {
+             continue;;
+         }
+         s_fetches++;
++        if (res->vad_state == VAD_SPEECH) {
++            s_vad_speech++;  // chunks the front end heard as speech: does it hear the person over the reply?
++        }
+         s_last_fetch_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+ 
+         // Store the wake word data for voice recognition, like who is speaking

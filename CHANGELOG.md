@@ -7,6 +7,14 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.30] - 2026-10-21
+
+### Fixed
+
+- A tap while the robot is speaking now drops the frames already queued on the unit and goes idle at once (firmware patch 061). The host streams a whole reply faster than the unit plays it, so telling the host to abort was not enough.
+- The touch path and the wake word's hearing are measured once a minute (`unit touch: touch_path polls poll_fail poll_gap_max_ms reads read_gap_max_ms`, and `vad_speech` in `unit wake: wake_stats`), because taps and the wake word did nothing while it spoke and the log could not say why.
+- The hub refused the unit's avatar (camera) socket as "not authorized (token missing, device missing)". Firmware patch 060 sends the same credentials as the voice socket: the saved token as a Bearer token, the unit's MAC as Device-Id and its UUID as Client-Id. The hub still accepts only a paired unit.
+
 ## [0.2.29] - 2026-10-21
 
 ### Fixed

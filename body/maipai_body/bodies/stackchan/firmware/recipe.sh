@@ -277,6 +277,8 @@ apply_repo_patch 056-pet-by-peak-reading.patch "$SRC"
 apply_repo_patch 057-shake-threshold.patch "$SRC"
 apply_repo_patch 058-internal-ram-trims.patch "$SRC"
 apply_repo_patch 059-wake-and-tap-visibility.patch "$SRC"
+apply_repo_patch 060-avatar-socket-credentials.patch "$SRC"
+apply_repo_patch 061-stop-while-speaking.patch "$SRC"
 
 # Room in the 4 MB assets partition for the stop-word model (mn5q8_en, about 2.2 MB): drop the
 # launcher icons and artwork of the Mooncake apps, which this firmware never starts (it boots
