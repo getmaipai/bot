@@ -73,12 +73,10 @@ def _service(*, settings=None, presence=None, minute=DAY, funnel=None):
     return service, ring, clock, state
 
 
-def test_idle_facts_show_the_white_idle_look():
+def test_idle_facts_leave_the_ring_dark():
     service, ring, _, _ = _service()
     service.refresh()
-    assert ring.current is not None
-    assert ring.current.colour is Palette.WHITE
-    assert ring.current.style is LookStyle.STEADY
+    assert ring.current is None
 
 
 def test_live_shows_green_and_outranks_everything():

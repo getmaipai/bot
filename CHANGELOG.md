@@ -7,6 +7,10 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+### Changed
+
+- The ring is dark when the robot is awake and idle. Owner ruling: no lights for idle. The status lights stay for real states (blue listening, green live, magenta thinking, white speaking, pink camera flash, amber fault or offline, green charging breathe). The light standard and its tests are updated; `robot.indicator.enabled` still turns every status light off.
+
 ## [0.2.22] - 2026-10-21
 
 ### Fixed

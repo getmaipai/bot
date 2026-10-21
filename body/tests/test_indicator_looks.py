@@ -91,9 +91,8 @@ def test_live_outranks_camera_alarm_held_muted_and_the_funnel():
 
 def test_alarm_needs_its_setting_and_blinks_between_two_levels():
     off_setting = IndicatorSettings(alarm=False)
-    assert resolve(_request(alarm=True, alarm_on=True, settings=off_setting)).colour is not (
-        Palette.AMBER
-    )
+    quiet = resolve(_request(alarm=True, alarm_on=True, settings=off_setting))
+    assert quiet is None or quiet.colour is not Palette.AMBER
     on = resolve(_request(alarm=True, alarm_on=True))
     dim = resolve(_request(alarm=True, alarm_on=False))
     assert on.colour is dim.colour is Palette.AMBER
@@ -103,7 +102,6 @@ def test_alarm_needs_its_setting_and_blinks_between_two_levels():
 @pytest.mark.parametrize(
     ("state", "key"),
     [
-        (FunnelState.IDLE, LookKey.IDLE),
         (FunnelState.LISTENING, LookKey.LISTENING),
         (FunnelState.THINKING, LookKey.THINKING),
         (FunnelState.SPEAKING, LookKey.SPEAKING),
@@ -112,6 +110,10 @@ def test_alarm_needs_its_setting_and_blinks_between_two_levels():
 def test_each_funnel_state_shows_its_table_row(state, key):
     look = resolve(_request(funnel=state))
     assert look.colour is looks.LOOKS[key][0]
+
+
+def test_idle_awake_is_dark():
+    assert resolve(_request(funnel=FunnelState.IDLE)) is None
 
 
 def test_held_and_muted_rows_outrank_the_funnel_state():

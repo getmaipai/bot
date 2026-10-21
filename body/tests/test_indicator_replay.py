@@ -92,10 +92,7 @@ def test_a_fast_turn_replays_with_no_funnel_look_flash():
         )
         clock.advance(1.0)
         director.tick()
-        _wait_for(
-            lambda: eyes.current_look is not None and eyes.current_look.colour is Palette.WHITE,
-            timeout=3.0,
-        )
+        _wait_for(lambda: eyes.current_look is None, timeout=3.0)  # idle, awake is dark
     finally:
         _stop(stop_event, thread)
         director.close()
@@ -103,9 +100,7 @@ def test_a_fast_turn_replays_with_no_funnel_look_flash():
     assert Palette.GREEN in {c.look.colour for c in looks_sent}, "the voice was sent: green"
     # The final idle paint must follow the real settle gate. Cue paints are
     # intentionally immediate and excluded from this state-transition check.
-    white = [c for c in looks_sent if c.look.colour is Palette.WHITE]
-    assert white
-    idle_after_cue = [
-        c for c in white if any(g.t_s < c.t_s for g in looks_sent if g.look.colour in CUE_COLOURS)
-    ]
-    assert idle_after_cue
+    offs = [c for c in eyes.commands if c.kind == "off"]
+    assert offs
+    last_cue = max(c.t_s for c in looks_sent if c.look.colour in CUE_COLOURS)
+    assert any(c.t_s > last_cue for c in offs), "the ring goes dark after the cue"

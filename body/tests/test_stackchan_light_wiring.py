@@ -322,8 +322,7 @@ def test_start_builds_the_light_and_starts_stoppable_threads():
     first = voice.robot.leds.calls[0]
     assert [entry["index"] for entry in first] == list(range(12))
     values = {tuple(entry["rgb"]) for entry in first}
-    assert len(values) == 1
-    assert values.pop() != (0, 0, 0)
+    assert values == {(0, 0, 0)}  # idle, awake is dark
 
 
 def test_start_works_without_a_link_object():

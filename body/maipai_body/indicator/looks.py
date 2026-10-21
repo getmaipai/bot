@@ -75,7 +75,8 @@ LOOKS: dict[LookKey, tuple[Palette, float, LookStyle]] = {
     LookKey.ALARM_DIM: (Palette.AMBER, 0.15, LookStyle.STEADY),
     LookKey.HELD: (Palette.MAGENTA, 0.5, LookStyle.STEADY),
     LookKey.MUTED: (Palette.AMBER, 0.4, LookStyle.STEADY),
-    LookKey.IDLE: (Palette.WHITE, 0.35, LookStyle.STEADY),
+    # Idle, awake is dark (owner ruling 2026-10-21: no lights for idle); weight 0 resolves to None.
+    LookKey.IDLE: (Palette.WHITE, 0.0, LookStyle.STEADY),
     LookKey.LISTENING: (Palette.BLUE, 1.0, LookStyle.STEADY),
     LookKey.THINKING: (Palette.MAGENTA, 0.8, LookStyle.BREATHE),
     LookKey.SPEAKING: (Palette.WHITE, 1.0, LookStyle.STEADY),

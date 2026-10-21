@@ -31,7 +31,7 @@ table means, extends it, and says how each body shows it. Status: DRAFT, pending
 | Listening to the person (turn open, local) | blue | steady | day level | |
 | Thinking | magenta | slow breathe, 3 s | 0.8 of the day level | NEW style |
 | Speaking | white | steady | day level | |
-| Idle, awake | white | steady, dim | 0.35 of the day level | |
+| Idle, awake | dark | | | owner ruling 2026-10-21: no lights for idle; the ring lights only for a real state |
 | Sleep or night idle | blue | steady, very dim, or off (`sleep_eyes`) | 0.3 of the night level | |
 | **NEW** Connecting to Wi-Fi or the hub | blue | slow pulse, 2 s | 0.5 | after power on or a Wi-Fi switch; ends in idle or offline |
 | **NEW** Offline (hub not reachable, robot still works) | amber | two short pulses every 10 s | 0.3 | local mode; never alarming |
@@ -115,12 +115,12 @@ updating and dancing flags have no caller yet. Nothing here has run on a unit.
 | Power on, joining Wi-Fi | plain "Connecting to Wi-Fi..." text, no face | blue slow pulse | none | firmware (patch 033, planned): the host is not connected yet |
 | Wi-Fi needs a person (setup) | the setup instructions | cyan slow pulse | none | firmware (patch 033, planned) |
 | Wi-Fi joined, opening the hub session | plain "Connecting to Home..." text, no face | blue slow pulse | none | firmware (patch 033, planned) |
-| Ready (hub session open) | the face appears | settles to idle white, dim | one short soft chime (the firmware's success sound) | face and chime: firmware; ring: host (the `connecting` fact clears when the device session opens) |
+| Ready (hub session open) | the face appears | settles to dark (idle) | one short soft chime (the firmware's success sound) | face and chime: firmware; ring: host (the `connecting` fact clears when the device session opens) |
 | Wake word heard or a tap opens a turn | head lifts and the face brightens (`perk`) | blue steady | the firmware's rising pop-up tone | host: ring and `perk`; tone: firmware (already plays) |
 | Audio streaming to the hub | listening face | green steady (the live cue outranks blue and is held 0.5 s) | none | host |
 | Thinking | `neutral` face (round eyes, soft smile), head attends | magenta slow breathe | none | host |
 | Speaking | speaking face | white steady | the reply | host |
-| Turn over | settle | idle white, dim | none | host |
+| Turn over | settle | dark (idle) | none | host |
 | Hub unreachable after ready | face stays | amber double pulse, two short pulses every 10 s | none | host |
 
 Notes: the firmware has no wide-eyed emotion (its six are neutral, happy, angry, sad, doubt, sleepy), so "it heard you" is the head lift

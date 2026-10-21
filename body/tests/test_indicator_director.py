@@ -56,7 +56,7 @@ def test_the_funnel_view_drives_the_table_row():
     director.on_view(FunnelView(shown=FunnelState.THINKING))
     assert _colour(eyes) is looks.LOOKS[looks.LookKey.THINKING][0]
     director.on_view(FunnelView(shown=FunnelState.IDLE))
-    assert _colour(eyes) is looks.LOOKS[looks.LookKey.IDLE][0]
+    assert _colour(eyes) is None  # idle, awake is dark
 
 
 def test_an_unchanged_look_is_not_resent():
@@ -137,7 +137,7 @@ def test_the_alarm_stops_when_it_clears():
     director, eyes, clock, _ = _director()
     director.on_view(FunnelView(shown=FunnelState.IDLE, alarm=True))
     director.on_view(FunnelView(shown=FunnelState.IDLE, alarm=False))
-    assert _colour(eyes) is looks.LOOKS[looks.LookKey.IDLE][0]
+    assert _colour(eyes) is None  # back to idle, which is dark
     sent = len(eyes.commands)
     clock.now += 5.0
     director.tick()
