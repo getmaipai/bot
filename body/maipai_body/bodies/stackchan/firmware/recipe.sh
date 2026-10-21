@@ -185,6 +185,8 @@ PY
   else
     rm -f "$SDKCONFIG"
   fi
+  # Put back the launcher assets the build pruned (patch 049's assets step) so the pinned tree is clean.
+  git -C "$SRC" checkout -- firmware/main/assets/assets_bin
   if [[ -n "$(git -C "$SRC" status --porcelain)" ]]; then
     echo "Firmware recipe left changes in $SRC. Inspect this source tree before retrying." >&2
     return 1
