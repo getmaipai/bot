@@ -266,3 +266,36 @@ class UnansweredToolCallsTests(VoiceEndToEnd):
         )
         self.assertIsNone(self.service.watchdog._failing_since)
         self.assertIsNotNone(self.service.watchdog._last_message_at)
+
+
+class StartupDoesNotBlockTheLoopTests(VoiceEndToEnd):
+    hub_options = {"stt_min_blocks": 2}
+
+    async def test_the_avatar_frame_and_notify_calls_fail_at_once_on_the_loop(self):
+        from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient
+
+        client = XiaozhiDeviceClient(self.service)
+        before = time.monotonic()
+        with self.assertRaises(Exception) as caught:
+            client.send_avatar_frame(control_avatar("neutral"))
+        self.assertLess(time.monotonic() - before, 0.1)
+        self.assertIn("event loop", str(caught.exception))
+        before = time.monotonic()
+        with self.assertRaises(Exception):
+            client.notify("http://192.0.2.1/x.mp3")
+        self.assertLess(time.monotonic() - before, 0.1)
+
+    async def test_the_same_calls_work_from_a_worker_thread(self):
+        from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiDeviceClient
+
+        client = XiaozhiDeviceClient(self.service)
+        await asyncio.to_thread(client.send_avatar_frame, control_avatar("neutral"))
+
+
+def test_the_presence_start_runs_off_the_event_loop():
+    import inspect
+
+    from maipai_body import app
+
+    source = inspect.getsource(app._serve_stackchan_channels)
+    assert "asyncio.to_thread(behavior.start_presence" in source

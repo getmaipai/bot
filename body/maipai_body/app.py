@@ -657,7 +657,8 @@ async def _serve_stackchan_channels(
         while not stop_event.is_set() and not voice._session_ready.is_set():
             await asyncio.sleep(0.1)
         if voice._session_ready.is_set() and not stop_event.is_set():
-            behavior.start_presence(stop_event)
+            # start_presence makes device calls that wait on this loop: run it off the loop.
+            await asyncio.to_thread(behavior.start_presence, stop_event)
         await asyncio.to_thread(stop_event.wait)
     finally:
         behavior.close()

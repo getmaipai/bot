@@ -168,6 +168,7 @@ class XiaozhiDeviceClient:
         return self.server.create_notification_audio(message)
 
     def notify(self, audio_url: str) -> object:
+        self.server.refuse_on_loop("notify", self.timeout)
         try:
             return asyncio.run_coroutine_threadsafe(
                 self.server.send_notify(audio_url), self.server._loop
@@ -181,6 +182,7 @@ class XiaozhiDeviceClient:
         return self._call("self.camera.take_photo", {"question": "Describe what you see."})
 
     def send_avatar_frame(self, frame: bytes) -> object:
+        self.server.refuse_on_loop("send_avatar_frame", self.timeout)
         try:
             return asyncio.run_coroutine_threadsafe(
                 self.server.send_expression_frame(frame), self.server._loop
@@ -1066,19 +1068,23 @@ class XiaozhiServer:
         except Exception:
             LOG.debug("StackChan neutral face before tts stop failed", exc_info=True)
 
-    def call_device_tool(
-        self, name: str, arguments: dict[str, object], *, timeout: float = 5.0
-    ) -> object:
+    def refuse_on_loop(self, name: str, timeout: float) -> None:
+        """A blocking device call made on the event loop can only time out (it waits for the loop
+        to answer itself), so it fails at once with a plain message instead of freezing the loop."""
         try:
             running = asyncio.get_running_loop()
         except RuntimeError:
-            running = None
-        if running is not None and running is self._loop:
-            # The call waits for the loop to answer, so on the loop it can only time out.
+            return
+        if running is self._loop:
             raise RuntimeError(
                 f"{name} was called on the StackChan event loop, which would freeze it for "
                 f"{timeout:g} seconds. Run the call with asyncio.to_thread."
             )
+
+    def call_device_tool(
+        self, name: str, arguments: dict[str, object], *, timeout: float = 5.0
+    ) -> object:
+        self.refuse_on_loop(name, timeout)
         if not self._sessions:
             raise ConnectionError(
                 "No StackChan is connected. Connect and pair the robot, then retry."
