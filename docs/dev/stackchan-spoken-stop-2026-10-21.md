@@ -101,3 +101,50 @@ flash may ride the next firmware batch.
 - **Not verified on a unit.** The model's internal-RAM cost, its CPU cost on the audio core, and
   its false-accept rate with the robot's own voice and a TV are unknown until a flash; the
   start-up line and the hit lines give those numbers.
+
+## Internal RAM budget for the stop word (first flash of 049, 2026-10-21; patch 051)
+
+**Measured on the unit.** The stop word turned itself off at start-up (`state=off cost=10752`): the
+model needs 10,752 bytes of internal RAM and the limit was 6 KB. Internal RAM free was 53 to 55 KB
+after boot, 23 to 34 KB in steady use, and 12.5 KB at the lowest, so after the model the margin
+would have been about 2 KB.
+
+**Where internal RAM goes (from the sources and `sdkconfig`).** Internal allocations that are task stacks:
+
+| Stack | Size | In patch 051 |
+|---|---|---|
+| `opus_codec` (audio_service.cc, `2048 * 12`) | 24,576 bytes | moves to PSRAM: frees 24 KB |
+| `activation` (transient, deleted after start-up) | 8,192 bytes | unchanged |
+| `ws_reconnect` (websocket_protocol.cc) | 6,144 bytes | unchanged: it reads NVS, and a flash call needs an internal stack |
+| `audio_input` | 4,096 or 6,144 bytes | unchanged: on the audio path |
+| `audio_output` | 2,048 or 4,096 bytes | unchanged |
+| `stackchan` (hal.cpp) | 4,096 bytes | unchanged |
+| main task / event task / timer | 8,192 / 4,096 / 3,584 | unchanged (IDF tasks) |
+
+`audio_detection` already moved to PSRAM in patch 049. The head-touch and IMU tasks have PSRAM
+stacks already. `CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL` is 64 KB and `ALWAYSINTERNAL` is 512
+bytes, so general allocations over 512 bytes already prefer PSRAM; the Wi-Fi buffers
+(`DYNAMIC_TX_BUFFER_NUM=32`, `DYNAMIC_RX_BUFFER_NUM=6`, 3 static RX) are not moved because
+the IDF option for it (`SPIRAM_TRY_ALLOCATE_WIFI_LWIP`) trades throughput on a link that already
+carries live audio, and the stack move alone covers the target.
+
+**The change.** Moving `opus_codec`'s stack frees 24,576 bytes (the exact allocation size). The
+model costs 10,752. Expected steady-state minimum: 12.5 KB + 24.0 KB - 10.5 KB = about 26 KB, against
+the 14 KB target. The risk is the opus task running slower with its stack in PSRAM; the playback
+lines in the host log (`lateness p95`, `behind 0 times`, `max in flight`) show it, and the baseline
+before the patch was `lateness p95 1 ms max 2 ms, behind 0 times`. If they get worse, revert the
+stack move and keep `Hi, StackChan` as the interrupt.
+
+**The budget, explicit** (`afe_wake_word.cc`): the model costs at most 12 KB; at least 34 KB must
+be free after it is created (start-up then loses about 22 KB more, which keeps the 12.5 KB floor);
+arming needs 20 KB free. Any failure turns the stop word off for that boot and reports the numbers.
+
+**Measure after the flash.** `unit memory: heap_stats int_free=... int_min=... int_big=... psram_free=...`
+each minute, and `unit memory: stack_stats` with the least stack left, in bytes, for `opus_codec`,
+`audio_input`, `audio_output`, `ws_reconnect`, `stackchan` and `audio_detection`. Stacks with a big
+unused margin there are the next candidates to shrink or move.
+
+**Night lux.** Four afternoon readings that started night mode were 4.6, 7.0, 7.5 and 7.0 lux
+(threshold 8). A room at midday is normally far brighter, so the sensor is either shadowed behind
+the screen or the formula reads low. The host now logs the light sensor every 10 minutes
+(`StackChan light sensor: lux=..., night=...`) so a day of readings can be compared with the room.

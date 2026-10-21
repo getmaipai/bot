@@ -184,6 +184,7 @@ class NightController:
         # Called after every edge so the power rule can write the idle-motion value it wants.
         self.after_edge: Callable[[], object] | None = None
         self._last_debug_log = float("-inf")
+        self._last_info_log = float("-inf")
         self._traceback_at: dict[str, float] = {}
         self._next_reason = "reconnect"
 
@@ -332,6 +333,10 @@ class NightController:
             if self._clock() - self._last_debug_log >= 60.0:
                 logger.debug("StackChan light reading: lux=%s camera_luma=%s", lux, luma)
                 self._last_debug_log = self._clock()
+            if self._clock() - self._last_info_log >= 600.0:
+                # Ten-minute record of the light sensor, to judge its readings against the room.
+                logger.info("StackChan light sensor: lux=%s, night=%s", lux, self.night)
+                self._last_info_log = self._clock()
             if wanted != self.night:
                 if quiet:
                     reason = "quiet hours"

@@ -7,6 +7,10 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+### Added
+
+- Firmware patch 051 (not flashed): frees 24 KB of internal RAM by moving the opus codec task's stack to PSRAM, makes the stop word's internal-RAM budget explicit (model at most 12 KB, at least 34 KB free after it, 20 KB free to arm), and reports memory and task-stack headroom once a minute (`unit memory: ...`). The host also logs the light sensor reading every 10 minutes.
+
 ## [0.2.23] - 2026-10-21
 
 ### Fixed

@@ -1,0 +1,84 @@
+# Intent: free internal RAM so the stop word can run (host log 2026-10-21: the model costs 10,752 bytes of internal RAM and turned itself off against a 6 KB limit; the lowest free internal RAM seen was 12.5 KB). The opus codec task's 24 KB stack, the largest single internal allocation, moves to PSRAM (it never touches flash). The stop word's budget is now explicit in afe_wake_word.cc: the model may cost at most 12 KB, at least 34 KB must stay free after it is created (the free amount at start-up falls about 22 KB more before steady state, so this keeps the 12.5 KB floor), and arming needs 20 KB free. A once-a-minute memory report (internal free, minimum, largest block, PSRAM free and minimum) and a stack report (least stack left, in bytes, for the audio, websocket, stackchan and detection tasks) go to the serial log and the host log so the numbers can be checked.
+# Upstream: 78/xiaozhi-esp32 main/audio/audio_service.cc, main/audio/wake_words/afe_wake_word.cc (MIT); m5stack/StackChan firmware/main/hal/hal_head_touch.cpp. Applies after 050 with --unidiff-zero.
+# Check after a flash: the host log shows "unit memory: heap_stats ..." with int_free about 24 KB higher than before the patch (53 KB at boot, 23 KB steady before), "unit stop word: ... state=ready cost=10752 free=N" instead of state=off, and the playback lines ("lateness p95", "behind 0 times") no worse than before, since the opus task now runs with its stack in PSRAM.
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index f051ebe..d479399 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -10,0 +11 @@
++#include <esp_heap_caps.h>
+@@ -210,0 +212,23 @@ static void _head_touch_update_task(void* param)
++
++            // Memory report, once a minute, so the internal RAM budget can be tuned from the host log.
++            char mem[128];
++            snprintf(mem, sizeof(mem),
++                     "\"int_free\":%u,\"int_min\":%u,\"int_big\":%u,\"psram_free\":%u,\"psram_min\":%u",
++                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
++                     static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL)),
++                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)),
++                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)),
++                     static_cast<unsigned>(heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM)));
++            mclog::tagInfo(_tag, "memory: {}", mem);
++            device_events_push_diag("heap_stats", mem);
++            // The least stack ever left free in the big tasks (bytes), to size or move stacks.
++            const char* names[] = {"opus_codec", "audio_input", "audio_output", "ws_reconnect", "stackchan",
++                                   "audio_detection"};
++            char stacks[160];
++            int used = 0;
++            for (const char* name : names) {
++                TaskHandle_t task = xTaskGetHandle(name);
++                int hwm = task != nullptr ? static_cast<int>(uxTaskGetStackHighWaterMark(task)) : -1;
++                used += snprintf(stacks + used, sizeof(stacks) - used, "%s\"%s\":%d", used == 0 ? "" : ",", name, hwm);
++            }
++            device_events_push_diag("stack_stats", stacks);
+diff --git a/firmware/xiaozhi-esp32/main/audio/audio_service.cc b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
+index 956f448..f7cad6f 100644
+--- a/firmware/xiaozhi-esp32/main/audio/audio_service.cc
++++ b/firmware/xiaozhi-esp32/main/audio/audio_service.cc
+@@ -2,0 +3 @@
++#include <freertos/idf_additions.h>
+@@ -161,2 +162,4 @@ void AudioService::Start() {
+-    /* Start the opus codec task */
+-    xTaskCreate([](void* arg) {
++    /* Start the opus codec task. Its 24 KB stack lives in PSRAM (patch 051): internal RAM is the
++     * scarce resource on this unit (lowest free seen: 12.5 KB), and this one stack was the largest
++     * single internal allocation. It never touches flash, so an external stack is safe. */
++    xTaskCreateWithCaps([](void* arg) {
+@@ -166 +169 @@ void AudioService::Start() {
+-    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
++    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_, MALLOC_CAP_SPIRAM);
+diff --git a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
+index f7da70a..0677d8a 100644
+--- a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
++++ b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
+@@ -118,4 +118,10 @@ constexpr int64_t kHitCooldownUs = 1500 * 1000;
+-// Internal RAM is the limit (lowest seen in a session: 12.5 KB). The model may cost at most this
+-// much of it, and arming is refused below this much free.
+-constexpr size_t kMaxModelInternalCost = 6 * 1024;
+-constexpr size_t kArmMinFreeInternal = 16 * 1024;
++// The internal RAM budget (measured on the unit: the model costs 10,752 bytes; before patch 051 the
++// steady-state minimum was 12.5 KB free, about 22 KB below the free amount at start-up):
++//  - the model may cost at most kMaxModelInternalCost;
++//  - after it is created, at least kInitMinFreeAfter must remain free, which leaves the 12.5 KB
++//    floor intact once the rest of start-up has taken its usual ~22 KB;
++//  - arming is refused below kArmMinFreeInternal free.
++// Failing any of them turns the stop word off for the boot, with the numbers logged and reported.
++constexpr size_t kMaxModelInternalCost = 12 * 1024;
++constexpr size_t kInitMinFreeAfter = 34 * 1024;
++constexpr size_t kArmMinFreeInternal = 20 * 1024;
+@@ -157,3 +163,4 @@ void AfeWakeWord::InitStopWord() {
+-    if (cost > kMaxModelInternalCost) {
+-        ESP_LOGW(TAG, "Stop word off: it would use %u bytes of internal RAM (limit %u)",
+-                 static_cast<unsigned>(cost), static_cast<unsigned>(kMaxModelInternalCost));
++    if (cost > kMaxModelInternalCost || after < kInitMinFreeAfter) {
++        ESP_LOGW(TAG, "Stop word off: cost %u bytes (limit %u), %u bytes left free (need %u)",
++                 static_cast<unsigned>(cost), static_cast<unsigned>(kMaxModelInternalCost),
++                 static_cast<unsigned>(after), static_cast<unsigned>(kInitMinFreeAfter));
+@@ -164 +171,2 @@ void AfeWakeWord::InitStopWord() {
+-        snprintf(extra, sizeof(extra), "\"state\":\"off\",\"cost\":%u", static_cast<unsigned>(cost));
++        snprintf(extra, sizeof(extra), "\"state\":\"off\",\"cost\":%u,\"free\":%u", static_cast<unsigned>(cost),
++                 static_cast<unsigned>(after));
+@@ -180 +188,2 @@ void AfeWakeWord::InitStopWord() {
+-    snprintf(extra, sizeof(extra), "\"state\":\"ready\",\"cost\":%u", static_cast<unsigned>(cost));
++    snprintf(extra, sizeof(extra), "\"state\":\"ready\",\"cost\":%u,\"free\":%u", static_cast<unsigned>(cost),
++             static_cast<unsigned>(after));

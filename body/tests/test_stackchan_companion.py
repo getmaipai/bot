@@ -57,6 +57,8 @@ def test_dances_and_event_kinds_export_the_supported_sets():
             "click_ignored",
             "head_touch_stats",
             "stop_word",
+            "heap_stats",
+            "stack_stats",
         }
     )
 

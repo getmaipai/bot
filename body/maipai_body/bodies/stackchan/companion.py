@@ -26,6 +26,8 @@ DIAGNOSTIC_KINDS = frozenset(
         "click_ignored",
         "head_touch_stats",
         "stop_word",
+        "heap_stats",
+        "stack_stats",
     }
 )
 EVENT_KINDS = (
