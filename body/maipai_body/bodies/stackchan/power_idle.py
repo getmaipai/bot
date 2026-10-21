@@ -85,10 +85,12 @@ class PowerIdle:
         self.refresh()
 
     def on_reconnect(self) -> None:
-        """The unit (re)connected: its idle-motion flag may have reset, so write it again."""
+        """The unit (re)connected: its idle-motion flag may have reset, so write it again.
+
+        Only marks the flag unknown; the one-second tick writes it. A write here ran inside the
+        connect and the unit is not ready to answer tool calls yet."""
         self._applied = None
         self._next_try = float("-inf")
-        self.refresh()
 
     def tick(self) -> None:
         """Call about every second: an unknown or stale power state turns idle motion off."""

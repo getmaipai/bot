@@ -285,9 +285,12 @@ def test_a_reconnect_writes_the_idle_motion_flag_again():
     power.on_battery_status(False)
     assert motion.writes == [True]
     power.on_reconnect()  # the unit came back; its flag may have reset
+    assert motion.writes == [True]  # marked unknown only; the tick writes it
+    power.tick()
     assert motion.writes == [True, True]
     power.on_battery_status(True)
     power.on_reconnect()
+    power.tick()
     assert motion.writes[-1] is False  # charging: it is told to stay still again
 
 

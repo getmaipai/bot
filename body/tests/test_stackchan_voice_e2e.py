@@ -6,6 +6,7 @@ never plays, a frozen event loop) without the unit.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 import unittest
 from types import SimpleNamespace
@@ -190,3 +191,28 @@ class SilentRoomTests(VoiceEndToEnd):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConnectDoesNotFreezeTheLoopTests(VoiceEndToEnd):
+    hub_options = {"stt_min_blocks": 2}
+
+    async def test_a_slow_session_listener_does_not_block_the_event_loop(self):
+        started = threading.Event()
+
+        def slow_listener(_device_id: str) -> None:
+            started.set()
+            time.sleep(0.5)  # stands in for a device tool call that waits for an answer
+
+        self.service.session_listeners.append(slow_listener)
+        before = time.monotonic()
+        self.service._notify_session_listeners(DEVICE_ID)
+        self.assertLess(time.monotonic() - before, 0.05)
+        await asyncio.to_thread(started.wait, 1.0)
+        await asyncio.sleep(0.1)
+        self.assertLess(max(self.lag), 0.1)
+
+    async def test_a_device_call_on_the_event_loop_fails_at_once_instead_of_freezing_it(self):
+        before = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, "asyncio.to_thread"):
+            self.service.call_device_tool("self.robot.get_head_angles", {})
+        self.assertLess(time.monotonic() - before, 0.05)

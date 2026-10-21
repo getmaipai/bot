@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import ssl
+import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -857,12 +858,23 @@ class XiaozhiServer:
         await self.stream_camera(enabled)
 
     def _notify_session_listeners(self, device_id: str) -> None:
-        """Tell the registered listeners that a device (re)connected; a listener never raises."""
-        for listener in tuple(self.session_listeners):
-            try:
-                listener(device_id)
-            except Exception:
-                LOG.warning("StackChan session listener failed", exc_info=True)
+        """Tell the registered listeners that a device (re)connected; a listener never raises.
+
+        Listeners may call the device (a tool call waits for the loop), so they run on their own
+        thread: run inline on the loop, one call froze it for the whole 5 s timeout on every
+        connect (no hello reply, no audio)."""
+        listeners = tuple(self.session_listeners)
+        if not listeners:
+            return
+
+        def run() -> None:
+            for listener in listeners:
+                try:
+                    listener(device_id)
+                except Exception:
+                    LOG.warning("StackChan session listener failed", exc_info=True)
+
+        threading.Thread(target=run, name="stackchan-session-listeners", daemon=True).start()
 
     async def _call_turn_handler(
         self, session_id: str, device_id: str, state: str, mode: object, aec: object
@@ -1046,6 +1058,16 @@ class XiaozhiServer:
     def call_device_tool(
         self, name: str, arguments: dict[str, object], *, timeout: float = 5.0
     ) -> object:
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is not None and running is self._loop:
+            # The call waits for the loop to answer, so on the loop it can only time out.
+            raise RuntimeError(
+                f"{name} was called on the StackChan event loop, which would freeze it for "
+                f"{timeout:g} seconds. Run the call with asyncio.to_thread."
+            )
         if not self._sessions:
             raise ConnectionError(
                 "No StackChan is connected. Connect and pair the robot, then retry."
