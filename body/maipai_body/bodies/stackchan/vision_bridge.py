@@ -219,12 +219,10 @@ class StackChanVisionBridge:
 
 
 def _decode_jpeg(data: bytes) -> npt.NDArray[np.uint8]:
-    import cv2
+    """Decode a streamed JPEG with the bundled PyAV (the hub bundle has no OpenCV)."""
+    from maipai_body.vision.jpeg import decode_jpeg
 
-    frame = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
-    if frame is None:
-        raise ValueError("StackChan camera frame is not a decodable JPEG; capture another frame")
-    return frame
+    return decode_jpeg(data)
 
 
 __all__ = ["StackChanVisionBridge"]

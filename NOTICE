@@ -15,3 +15,9 @@ credit to Pollen Robotics and Hugging Face. The files are never vendored:
 the hub downloads them at a pinned revision with a sha256 checksum, and
 only when the package is installed. The move format and the community
 moves tag are Pollen's: reachy_mini_community_moves.
+
+YuNet face detector (Wei Wu, Hanyang Peng, Shiqi Yu), MIT, as the unmodified OpenCV Zoo
+model redistributed by Pollen Robotics (pollen-robotics/face_detection_yunet_2026may). The
+hub syncs it at a pinned revision with a sha256 checksum; it is never vendored. The
+decoding in body/maipai_body/vision/yunet.py follows reachy_mini.vision.face_detector
+(Apache-2.0, Pollen Robotics).

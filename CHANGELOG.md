@@ -20,6 +20,8 @@ checklist (`docs/dev.md`).
 
 ### Added
 
+- Face detection that works in the hub bundle: camera frames are decoded with the bundled PyAV (no OpenCV) and faces are found by the pinned YuNet model on the bundled ONNX Runtime (no Reachy SDK). Measured on the Mac Studio: JPEG decode 0.13 ms (320x240) and 0.44 ms (640x480), detection about 3 ms per frame on one thread. Frames stay in memory; only boxes are kept. The model arrives from Home like every other pinned model.
+
 - A touch, swipe or shake on a drowsy or sleeping robot wakes it (the unit already queues these; the host now looks every 5 seconds, only while the robot is drowsy or asleep, and at most one wake every 30 seconds). Waking on a loud sound needs a small firmware event and is on the firmware list.
 
 - Spoken head movement on the robot: "look left/right/up/down" (with "a little" or "all the way"), "turn left/right", "look straight", "look at me", "look around", "nod", "shake your head" and "stay". Left and right are the robot's own left and right. Requests it cannot do (spin, dance, turn around) get "I can look left, right, up or down.", and "I can't move right now." when it is charging, stopped, or the move fails. The head returns to centre after 5 seconds unless asked to stay.
