@@ -207,6 +207,9 @@ class StackChanBehavior:
         self.reaction_tick: Callable[[], object] | None = None
         # Orientation: the pose logic, its timer, and whether a pose face is being held.
         self.orientation: Any = None
+        self.vision_poster: Any = None  # vision_post.VisionPoster: scene descriptions from Home
+        self._vision_posting = False
+        self._vision_last: tuple[int, str | None] | None = None
         self.orientation_tick: Callable[[], object] | None = None
         self.pose_held: Callable[[], bool] = lambda: False
         self._last_event_poll = float("-inf")
@@ -380,6 +383,7 @@ class StackChanBehavior:
                     self._warn_limited("idle", "StackChan idle expression failed")
             try:
                 self.watch_for_faces(now)
+                self.post_scene(now)
             except Exception:
                 self._warn_limited("tracking", "StackChan face watching failed")
             line = self._camera_stats.report(now)
@@ -411,6 +415,79 @@ class StackChanBehavior:
                 self.face_watchdog(now)
             except Exception:
                 self._warn_limited("watchdog", "StackChan face watchdog failed")
+
+    def post_scene(self, now: float) -> None:
+        """Send Home one camera picture now and then so it can describe the room (never in a turn).
+
+        Idle only, not at night, not when watching is off, not while a post is on its way. A picture
+        goes when the face count or the brightness changed (at most every 10 s) or once a minute;
+        the frame is dropped as soon as it is posted."""
+        poster = self.vision_poster
+        if (
+            poster is None
+            or self._vision is None
+            or self._vision_posting
+            or self._active.is_set()
+            or self.night_active()
+            or self.watch_level() == "off"
+        ):
+            return
+        from maipai_body.bodies.stackchan.vision_post import light_bucket
+
+        look = self._vision.latest_look(max_age_s=3.0)
+        if look is None:
+            return
+        _jpeg, people, luma = look
+        bucket = light_bucket(luma)
+        state = (people, bucket)
+        if not poster.scene_due(now, changed=state != self._vision_last):
+            return
+        taken = self._vision.latest_look(max_age_s=3.0, take=True)
+        if taken is None:
+            return
+        self._vision_posting = True
+        threading.Thread(
+            target=self._post_scene_now,
+            args=(taken[0], people, bucket, state),
+            name="stackchan-vision-post",
+            daemon=True,
+        ).start()
+
+    def _post_scene_now(
+        self, jpeg: bytes, people: int, bucket: str | None, state: tuple[int, str | None]
+    ) -> None:
+        try:
+            result = self.vision_poster.post(jpeg, purpose="scene", people=people, light=bucket)
+            if result.ok:
+                self._vision_last = state
+        except Exception:
+            self._warn_limited("vision", "StackChan scene post failed")
+        finally:
+            self._vision_posting = False
+
+    def vision_ask(self, kind: str) -> bool:
+        """Post a picture for a question about what it sees; True when Home described it.
+
+        Camera frames pause while a turn is on, so this uses the newest picture from just before
+        the person spoke to the robot. Nothing is kept: the picture is posted and dropped."""
+        poster = self.vision_poster
+        if (
+            poster is None
+            or self._vision is None
+            or self.watch_level() == "off"
+            or not poster.ask_possible()
+        ):
+            return False
+        from maipai_body.bodies.stackchan.vision_post import light_bucket
+
+        look = self._vision.latest_look(max_age_s=20.0, take=True)
+        if look is None:
+            return False
+        jpeg, people, luma = look
+        result = poster.post(
+            jpeg, purpose="ask", people=people, light=light_bucket(luma), timeout=5.0
+        )
+        return result.ok
 
     def watch_for_faces(self, now: float) -> bool:
         """Look for a face in the unit's latest camera frame about twice a second.
@@ -748,6 +825,8 @@ def _start_stackchan_night(
             # as still until the default itself changes. "lively" is always a choice.
             behavior.idle_level = _effective_idle_level(idle)
             behavior.on_idle_level()
+        if "robot.vision" in values and behavior.vision_poster is not None:
+            behavior.vision_poster.set_mode(values.get("robot.vision"))
         night.apply_settings(values)
 
     if link is not None:
@@ -855,6 +934,10 @@ async def _serve_stackchan_channels(
         avatar.camera_bytes_received,
     )
     behavior.event_poll = voice.robot.client.companion().poll_events
+    if link is not None:
+        from maipai_body.bodies.stackchan.vision_post import VisionPoster
+
+        behavior.vision_poster = VisionPoster(_hub_credentials_reader(link, ""))
     if link is not None:
         _start_robot_checkin(voice, behavior, link, stop_event)
     night = _start_stackchan_night(voice, behavior, link, stop_event)
@@ -969,8 +1052,10 @@ async def _serve_stackchan_channels(
                 face_age=behavior.face_age,
                 camera_on=lambda: behavior.watch_level() != "off",
                 detector_ready=lambda: getattr(getattr(vision, "detector", None), "ready", True),
+                light=lambda: _light_from_last_look(vision),
             ),
         )
+        bridge.vision_ask = behavior.vision_ask
         voice.audio_handler = bridge.on_audio
         voice.turn_handler = bridge.listen
         from maipai_body.bodies.stackchan.reactions import Reactions
@@ -1732,6 +1817,16 @@ def _alarm_backstop(alarm: AlarmController, stop_event: threading.Event) -> None
             alarm.tick()
         except Exception:
             logger.warning("alarm backstop failed", exc_info=True)
+
+
+def _light_from_last_look(vision: Any) -> str | None:
+    """Dark, dim or bright from the newest camera frame (kept in memory for the next post)."""
+    if vision is None:
+        return None
+    from maipai_body.bodies.stackchan.vision_post import light_bucket
+
+    look = vision.latest_look(max_age_s=60.0)
+    return light_bucket(look[2]) if look is not None else None
 
 
 def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power: Any) -> None:

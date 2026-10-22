@@ -91,3 +91,27 @@ def test_the_same_line_is_not_repeated_back_to_back():
     answers = _answers(age=1.0)
     lines = [answers.answer("can you see me") for _ in range(6)]
     assert all(a != b for a, b in zip(lines, lines[1:], strict=False))
+
+
+def test_light_and_looking_questions_have_their_own_kind():
+    answers = _answers(age=None, ready=True)
+    assert answers.kind("is the light on") == "light"
+    assert answers.kind("are the lights off in here") == "light"
+    assert answers.kind("is it dark in here") == "light"
+    assert answers.kind("what are you looking at") == "picture"
+    assert answers.kind("can you see me") == "see_me"
+    assert answers.kind("what time is it") is None
+
+
+def test_the_host_answer_for_the_light_comes_from_the_brightness():
+    answers = SightAnswers(
+        face_age=lambda: None,
+        camera_on=lambda: True,
+        light=lambda: "dark",
+        rng=random.Random(1),
+    )
+    assert "dark" in answers.answer("is the light on")
+    answers = SightAnswers(face_age=lambda: None, camera_on=lambda: True, light=lambda: "bright")
+    assert "bright" in answers.answer("are the lights on")
+    answers = SightAnswers(face_age=lambda: None, camera_on=lambda: True)
+    assert answers.answer("are the lights on") in NOT_READY

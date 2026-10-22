@@ -18,8 +18,16 @@ _CAN_SEE_ME = re.compile(
     r"\b(can|could|do|did|are you able to)\b.*\b(see|spot|find|notice)\b"
     r".*\b(me|us|anyone|anybody)\b"
 )
+_LIGHT = re.compile(
+    r"\b(is|are) (the |any |there a )?(light|lights|lamp|lamps)\b.*\b(on|off)\b|"
+    r"\bis it (dark|bright|light|dim)\b|\bhow (bright|dark) is it\b|"
+    r"\bturn(ed)? (the )?lights? (on|off)\b"
+)
 _PICTURE = re.compile(
-    r"^(what do you see|what can you see|what are you seeing|what am i holding|"
+    r"^(what do you see|what can you see|what are you seeing|what are you looking at|"
+    r"what do you see in here|describe what you see|what is in front of you|"
+    r"what'?s in front of you|"
+    r"what am i holding|"
     r"what am i showing you|look at this|take a look at this|what is this|what is that|"
     r"what'?s this|what'?s that|what do i have|what is in my hand|what'?s in my hand)$"
 )
@@ -39,8 +47,12 @@ CAMERA_OFF = (
     "My camera is turned off at the moment.",
 )
 NOT_READY = (
-    "My camera is on, and my face finding is still starting up. Ask me again in a minute.",
+    "My camera is on and still warming up. Ask me again in a minute.",
+    "I'm just waking my camera up. Give me a minute and ask again.",
 )
+DARK = ("It looks dark in here, so the lights are probably off.",)
+DIM = ("It's fairly dim in here.",)
+BRIGHT = ("It looks bright in here, so the lights are probably on.",)
 PICTURES_LATER = (
     "I can look, but I can't describe pictures yet.",
     "I can look at you, but I can't tell you what's in a picture yet.",
@@ -54,26 +66,49 @@ class SightAnswers:
         face_age: Callable[[], float | None],
         camera_on: Callable[[], bool],
         detector_ready: Callable[[], bool] = lambda: True,
+        light: Callable[[], str | None] = lambda: None,
         rng: random.Random | None = None,
     ) -> None:
         self._face_age = face_age
         self._camera_on = camera_on
         self._detector_ready = detector_ready
+        self._light = light
         self._rng = rng or random.Random()
         self._last: dict[str, str] = {}
 
-    def answer(self, text: str | None) -> str | None:
-        """The line to say, or None when the words are not a sight question."""
+    def kind(self, text: str | None) -> str | None:
+        """What sort of sight question this is: "light", "picture", "see_me", or None."""
         spoken = re.sub(r"[^\w' ]+", " ", (text or "").lower())
         spoken = re.sub(r"\s+", " ", _FILLERS.sub(" ", spoken)).strip()
         if not spoken:
             return None
+        if _LIGHT.search(spoken):
+            return "light"
         if _PICTURE.match(spoken):
-            return self._pick("pictures", PICTURES_LATER)
-        if not _CAN_SEE_ME.search(spoken):
+            return "picture"
+        if _CAN_SEE_ME.search(spoken):
+            return "see_me"
+        return None
+
+    def answer(self, text: str | None) -> str | None:
+        """The line to say from what this host knows alone, or None for other words.
+
+        Used when Home cannot describe a picture (no scene is available)."""
+        kind = self.kind(text)
+        if kind is None:
             return None
+        if kind == "picture":
+            return self._pick("pictures", PICTURES_LATER)
         if not self._camera_on():
             return self._pick("off", CAMERA_OFF)
+        if kind == "light":
+            bucket = self._light()
+            lines = {"dark": DARK, "dim": DIM, "bright": BRIGHT}.get(bucket or "")
+            return (
+                self._pick(f"light_{bucket}", lines)
+                if lines
+                else self._pick("not_ready", NOT_READY)
+            )
         age = self._face_age()
         if age is not None and age <= FACE_FRESH_S:
             return self._pick("yes", YES)

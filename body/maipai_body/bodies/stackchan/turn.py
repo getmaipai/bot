@@ -12,6 +12,7 @@ import re
 import threading
 import time
 import wave
+from collections.abc import Callable
 from pathlib import Path
 
 import av
@@ -570,6 +571,8 @@ class StackChanTurnBridge:
         self.gaze_control = gaze_control
         # "Can you see me?": answered from what the host knows, never "I can't see".
         self.sight_control = sight_control
+        # (kind) -> True when Home described a fresh picture for this question; set by the app.
+        self.vision_ask: Callable[[str], bool] | None = None
         # Kind words and loving replies earn the heart (reactions.py); both may be None.
         self.on_user_words = on_user_words
         self.on_reply_mood = on_reply_mood
@@ -1062,7 +1065,18 @@ class StackChanTurnBridge:
                     self._breaker.note_speech()
                     return
             if self.sight_control is not None:
-                sight_line = self.sight_control.answer(result.text or "")
+                sight_kind = self.sight_control.kind(result.text or "")
+                described = False
+                if sight_kind in {"see_me", "light", "picture"} and self.vision_ask is not None:
+                    # Ask Home to describe one picture now; the hub then answers the question
+                    # itself with that description in the turn's context (nothing here keeps it).
+                    described = bool(await asyncio.to_thread(self.vision_ask, sight_kind))
+                    LOG.info(
+                        "StackChan voice: sight question (%s): %s",
+                        sight_kind,
+                        "Home described a picture" if described else "no description, host answer",
+                    )
+                sight_line = None if described else self.sight_control.answer(result.text or "")
                 if sight_line:
                     LOG.info("StackChan voice: sight question answered (%r)", sight_line)
                     await asyncio.to_thread(self._say, playback, base, cookie, sight_line)

@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.44] - 2026-10-22
+
+### Added
+- The robot describes what it sees. The body posts a camera picture to Home (`POST /api/devices/me/vision`, the robot's session cookie) so Home's chat model can keep one plain sentence about the room for 90 seconds, which the robot's turns then know: a picture every ten seconds at most while idle when the face count or the brightness changed, once a minute otherwise; never during a turn, at night, or when camera watching is off; stopped for good by `robot.vision` none or on demand (the `settings_changed` value is read), backed off on 429 and 503. The picture is held in memory only until it is posted, and only counts and codes are logged.
+- Questions about sight ("can you see me", "what are you looking at", "is the light on") first ask Home to describe a picture and then go to the normal turn, so the hub answers from that description. When Home cannot describe one, the host answers from what it knows: a face seen a moment ago, or how bright the frame is ("it looks dark in here, so the lights are probably off"). It no longer says that its face finding is not ready; it says the camera is warming up.
+
 ## [0.2.43] - 2026-10-22
 
 ### Added
