@@ -52,7 +52,7 @@ STREAM_POLL_S = 0.01
 # recognition (the hub answers one short voiced burst with no_speech). UNMEASURED default.
 POPUP_HOLD_S = 0.3
 # A listen the device re-opens by itself right after a reply is a follow-up: the person has this
-# long to speak before the turn ends quietly (default 5, so a quiet room does not keep it listening).
+# long to speak before the turn ends quietly (default 5; a quiet room must not keep it listening).
 FOLLOW_UP_S = 5.0
 FOLLOW_UP_AFTER_S = 2.0
 # The unit can end up listening without having told the host (no "listen start" arrives after a
@@ -1128,7 +1128,7 @@ class StackChanTurnBridge:
                     if asyncio.current_task().cancelling():
                         return
                     if index == 0:
-                        # The face talks when the first frames reach the unit, not at synthesis time.
+                        # The face talks as the first frames reach the unit, not at synthesis.
                         playback.on_first_audio = lambda: self._emit_expression("speaking")
                     self._states[session_id] = "speaking"
                     self._speaking_since[session_id] = self._clock()
