@@ -1059,10 +1059,10 @@ async def _serve_stackchan_channels(
             sight_control=SightAnswers(
                 face_age=behavior.face_age,
                 camera_on=lambda: behavior.watch_level() != "off",
-                detector_ready=lambda: getattr(getattr(vision, "detector", None), "ready", True),
                 light=lambda: _light_from_last_look(
                     vision, getattr(voice.robot.client, "last_lux", None)
                 ),
+                camera_running_s=avatar.camera_running_s,
             ),
         )
         bridge.vision_ask = behavior.vision_ask

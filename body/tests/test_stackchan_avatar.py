@@ -176,3 +176,15 @@ class UnitCameraFrameTests(unittest.TestCase):
 
         frame = encode_frame(3, b"{}")
         self.assertEqual(unit_camera_frame(frame), frame)
+
+
+class CameraRunningTests(unittest.TestCase):
+    def test_running_seconds_start_at_the_first_frame(self):
+        import time
+
+        from maipai_body.bodies.stackchan.xiaozhi.pairing import PairingStore
+
+        server = AvatarServer(PairingStore())
+        self.assertIsNone(server.camera_running_s())
+        server._stream_since["unit"] = time.monotonic() - 12.0
+        self.assertGreaterEqual(server.camera_running_s(), 12.0)

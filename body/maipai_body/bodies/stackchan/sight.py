@@ -38,25 +38,24 @@ YES = (
     "Yes, there you are!",
     "I can see you, hi!",
 )
-NOBODY = (
-    "I can't spot anyone right now, but my camera is on.",
-    "Not at the moment. My camera is on, so step into view and I'll find you.",
-)
 CAMERA_OFF = (
     "My camera is off right now.",
     "My camera is turned off at the moment.",
 )
+STARTING_S = 60.0  # a camera that has streamed for less than this is still starting up
 NOT_READY = (
-    "My camera is on and still warming up. Ask me again in a minute.",
-    "I'm just waking my camera up. Give me a minute and ask again.",
+    "My camera is just starting up. Ask me again in a few seconds.",
+    "I'm just waking my camera up. Ask me again in a few seconds.",
 )
+# The camera has been running a while, but nothing here can describe the room: say so plainly.
+ROOM_LOOKS = {
+    "dark": "the room looks dark",
+    "dim": "the room looks dim",
+    "bright": "the room looks bright",
+}
 DARK = ("It looks dark in here, so the lights are probably off.",)
 DIM = ("It's fairly dim in here.",)
 BRIGHT = ("It looks bright in here, so the lights are probably on.",)
-PICTURES_LATER = (
-    "I can look, but I can't describe pictures yet.",
-    "I can look at you, but I can't tell you what's in a picture yet.",
-)
 
 
 class SightAnswers:
@@ -65,14 +64,14 @@ class SightAnswers:
         *,
         face_age: Callable[[], float | None],
         camera_on: Callable[[], bool],
-        detector_ready: Callable[[], bool] = lambda: True,
         light: Callable[[], str | None] = lambda: None,
+        camera_running_s: Callable[[], float | None] = lambda: STARTING_S,
         rng: random.Random | None = None,
     ) -> None:
         self._face_age = face_age
         self._camera_on = camera_on
-        self._detector_ready = detector_ready
         self._light = light
+        self._camera_running_s = camera_running_s
         self._rng = rng or random.Random()
         self._last: dict[str, str] = {}
 
@@ -97,24 +96,32 @@ class SightAnswers:
         kind = self.kind(text)
         if kind is None:
             return None
-        if kind == "picture":
-            return self._pick("pictures", PICTURES_LATER)
         if not self._camera_on():
             return self._pick("off", CAMERA_OFF)
-        if kind == "light":
-            bucket = self._light()
-            lines = {"dark": DARK, "dim": DIM, "bright": BRIGHT}.get(bucket or "")
-            return (
-                self._pick(f"light_{bucket}", lines)
-                if lines
-                else self._pick("not_ready", NOT_READY)
-            )
-        age = self._face_age()
-        if age is not None and age <= FACE_FRESH_S:
-            return self._pick("yes", YES)
-        if not self._detector_ready():
+        if kind == "see_me":
+            age = self._face_age()
+            if age is not None and age <= FACE_FRESH_S:
+                return self._pick("yes", YES)
+        running = self._camera_running_s()
+        if running is None or running < STARTING_S:
             return self._pick("not_ready", NOT_READY)
-        return self._pick("nobody", NOBODY)
+        bucket = self._light()
+        if kind == "light":
+            lines = {"dark": DARK, "dim": DIM, "bright": BRIGHT}.get(bucket or "")
+            if lines:
+                return self._pick(f"light_{bucket}", lines)
+            return "My camera is on, but I can't tell how bright it is."
+        room = ROOM_LOOKS.get(bucket or "")
+        if kind == "picture":
+            if room:
+                return f"My camera is on and {room}, but I can't describe what's in it yet."
+            return "My camera is on, but I can't describe what's in the room yet."
+        if room:
+            return (
+                f"I can't spot anyone right now. My camera is on and {room}, "
+                "but I can't describe it yet."
+            )
+        return "I can't spot anyone right now. My camera is on, but I can't describe the room yet."
 
     def _pick(self, key: str, lines: tuple[str, ...]) -> str:
         choices = [line for line in lines if line != self._last.get(key)] or list(lines)

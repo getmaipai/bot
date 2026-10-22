@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.46] - 2026-10-22
+
+### Changed
+- "Can you see me", "what do you see" and "is the light on" now depend on how long the camera has been streaming. In its first minute the robot says the camera is just starting up and to ask again in a few seconds. Once it has run a while and nothing can describe the room, it says plainly that the camera is on, whether the room looks bright, dim or dark from the frame, and that it cannot describe the room yet, with no promise to retry. A face seen a moment ago still gets a yes.
+
 ## [0.2.45] - 2026-10-22
 
 ### Changed

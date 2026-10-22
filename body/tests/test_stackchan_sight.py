@@ -8,19 +8,18 @@ import pytest
 
 from maipai_body.bodies.stackchan.sight import (
     CAMERA_OFF,
-    NOBODY,
     NOT_READY,
-    PICTURES_LATER,
     YES,
     SightAnswers,
 )
 
 
-def _answers(*, age=None, camera=True, ready=True):
+def _answers(*, age=None, camera=True, running=120.0, light=None):
     return SightAnswers(
         face_age=lambda: age,
         camera_on=lambda: camera,
-        detector_ready=lambda: ready,
+        light=lambda: light,
+        camera_running_s=lambda: running,
         rng=random.Random(1),
     )
 
@@ -40,8 +39,8 @@ def test_with_a_face_seen_a_moment_ago_it_says_yes(text):
 
 
 def test_a_face_seen_long_ago_is_not_claimed():
-    assert _answers(age=60.0).answer("can you see me") in NOBODY
-    assert _answers(age=None).answer("can you see me") in NOBODY
+    assert _answers(age=60.0).answer("can you see me").startswith("I can't spot anyone right now")
+    assert _answers(age=None).answer("can you see me").startswith("I can't spot anyone right now")
 
 
 def test_with_the_camera_off_it_says_so_plainly():
@@ -49,11 +48,12 @@ def test_with_the_camera_off_it_says_so_plainly():
 
 
 def test_when_face_finding_is_not_ready_it_says_that_not_nobody():
-    assert _answers(age=None, ready=False).answer("can you see me") in NOT_READY
+    assert _answers(age=None, running=5.0).answer("can you see me") in NOT_READY
+    assert _answers(age=None, running=None).answer("can you see me") in NOT_READY
 
 
 def test_it_never_answers_with_a_flat_i_cannot_see():
-    lines = YES + NOBODY + CAMERA_OFF + NOT_READY + PICTURES_LATER
+    lines = YES + CAMERA_OFF + NOT_READY
     assert not any(line.lower().startswith(("no, i can't see", "i can't see")) for line in lines)
 
 
@@ -70,7 +70,7 @@ def test_it_never_answers_with_a_flat_i_cannot_see():
     ],
 )
 def test_picture_questions_get_the_interim_line_not_the_hub(text):
-    assert _answers(age=1.0).answer(text) in PICTURES_LATER
+    assert _answers(age=1.0).answer(text).startswith("My camera is on")
 
 
 @pytest.mark.parametrize(
@@ -94,7 +94,7 @@ def test_the_same_line_is_not_repeated_back_to_back():
 
 
 def test_light_and_looking_questions_have_their_own_kind():
-    answers = _answers(age=None, ready=True)
+    answers = _answers(age=None)
     assert answers.kind("is the light on") == "light"
     assert answers.kind("are the lights off in here") == "light"
     assert answers.kind("is it dark in here") == "light"
@@ -114,4 +114,29 @@ def test_the_host_answer_for_the_light_comes_from_the_brightness():
     answers = SightAnswers(face_age=lambda: None, camera_on=lambda: True, light=lambda: "bright")
     assert "bright" in answers.answer("are the lights on")
     answers = SightAnswers(face_age=lambda: None, camera_on=lambda: True)
-    assert answers.answer("are the lights on") in NOT_READY
+    assert "can't tell how bright" in answers.answer("are the lights on")
+
+
+def test_a_camera_that_has_run_a_while_says_plainly_what_it_can_and_cannot_do():
+    answer = _answers(age=None, running=300.0, light="dim").answer("can you see me")
+    assert "camera is on" in answer and "the room looks dim" in answer
+    assert "can't describe" in answer and "ask me again" not in answer.lower()
+    picture = _answers(running=300.0, light="bright").answer("what do you see")
+    assert (
+        picture
+        == "My camera is on and the room looks bright, but I can't describe what's in it yet."
+    )
+    assert "can't describe what's in the room" in _answers(running=300.0).answer("what do you see")
+
+
+def test_a_camera_that_has_just_started_says_it_is_starting_and_a_face_still_wins():
+    answers = _answers(age=None, running=10.0, light="dim")
+    assert answers.answer("what do you see") in NOT_READY
+    assert answers.answer("can you see me") in NOT_READY
+    assert _answers(age=1.0, running=10.0).answer("can you see me") in YES
+
+
+def test_the_light_answer_waits_for_the_camera_then_uses_the_brightness():
+    assert _answers(running=3.0, light="dark").answer("is the light on") in NOT_READY
+    assert "dark" in _answers(running=100.0, light="dark").answer("is the light on")
+    assert "can't tell how bright" in _answers(running=100.0).answer("is the light on")

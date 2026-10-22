@@ -110,6 +110,9 @@ class AvatarServer:
         # is on). The body's one start at boot comes before the unit's socket exists.
         self.start_camera_on_connect: Any = None
         self._camera_seen: set[str] = set()
+        self._stream_since: dict[
+            str, float
+        ] = {}  # when each unit's first frame of this stream came
         self._camera_frames: dict[str, tuple[bytes, float]] = {}
         self._camera_events: dict[str, asyncio.Event] = {}
         self._camera_disconnects: dict[str, asyncio.Event] = {}
@@ -209,6 +212,7 @@ class AvatarServer:
                         LOG.warning("discarded malformed StackChan camera frame")
                         continue
                     self._camera_seen.add(device_id)
+                    self._stream_since.setdefault(device_id, time.monotonic())
                     self._camera_frames[device_id] = (frame.payload, time.monotonic())
                     self.camera_frames_received += 1
                     self.camera_bytes_received += len(frame.payload)
@@ -231,6 +235,7 @@ class AvatarServer:
             if start_task is not None:
                 start_task.cancel()
             self._camera_seen.discard(device_id)
+            self._stream_since.pop(device_id, None)
             if self._sessions.get(device_id) is websocket:
                 self._sessions.pop(device_id, None)
                 self.clear_camera_frame(device_id)
@@ -238,6 +243,12 @@ class AvatarServer:
                 event = self._camera_events.get(device_id)
                 if event is not None:
                     event.clear()
+
+    def camera_running_s(self) -> float | None:
+        """Seconds the (single) unit's camera has been streaming; None before its first frame."""
+        if len(self._stream_since) != 1:
+            return None
+        return time.monotonic() - next(iter(self._stream_since.values()))
 
     async def _start_camera_until_streaming(
         self, websocket: ServerConnection, device_id: str
