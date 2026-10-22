@@ -186,3 +186,21 @@ def test_no_line_repeats_within_the_last_ten_spoken():
     assert len(spoken) == 120
     for i, line in enumerate(spoken):
         assert line not in spoken[max(0, i - RECENT_LINES) : i], (i, line)
+
+
+def test_the_rotation_is_asked_again_every_minute_while_upside_down():
+    from maipai_body.bodies.stackchan.orientation import ROTATION_REFRESH_S
+
+    h = Harness()
+    h.event("+y")
+    assert h.rotations == [180]
+    h.now += ROTATION_REFRESH_S - 1
+    h.reactions.tick()
+    assert h.rotations == [180]
+    h.now += 2
+    h.reactions.tick()
+    assert h.rotations == [180, 180]
+    h.event("-y")  # upright
+    h.now += 3 * ROTATION_REFRESH_S
+    h.reactions.tick()
+    assert h.rotations == [180, 180, 0]

@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.39] - 2026-10-21
+
+### Added
+- Firmware patch 067: the unit reports which way gravity points (an `orientation` event on every change and once a minute, with the dominant axis and the filtered vector in milli-g) and has a `self.screen.set_rotation` tool (0 or 180) that flips the screen when it is upside down. A 180 lasts 150 seconds unless sent again, so the screen cannot stay flipped if the host goes away; the host re-sends it every minute while upside down. With this the orientation reactions of 0.2.36 and 0.2.37 become live: pose faces, spoken lines, the held head and the check-in `orientation` field. The axis-to-pose table is a first guess, fixed from the owner's calibration test without a flash.
+
 ## [0.2.38] - 2026-10-21
 
 ### Fixed

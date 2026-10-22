@@ -1,0 +1,227 @@
+# Intent: the robot knows when it is on its side or upside down (owner request 2026-10-21). (1) hal_imu.cpp now also tracks which way gravity points: a low-passed vector, the dominant axis (+x -x +y -y +z -z) when the pull is at least 6.5 m/s^2 and the total is between 0.8 and 1.2 g, a new axis only when it beats the old one by 2 m/s^2 and holds for about a second. Each change, and once a minute while it stays, pushes an "orientation" event {axis, gx, gy, gz in milli-g}; the host maps axes to poses so a wrong guess about the sensor mounting is fixed without a flash. (2) New MCP tool self.screen.set_rotation {degrees 0|180} flips the panel (mirror x and y) so an upside-down unit shows its face right-way-up; a 180 lasts 150 s unless sent again (the host re-sends every minute) and the IMU task puts it back to 0 when the lease ends, so a screen can never stay flipped when the host goes away; a boot always starts at 0.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_imu.cpp, hal_mcp.cpp, board/stackchan.cc, board/hal_bridge.h (MIT). Applies after 066.
+# Check after a flash: hold the unit upright, on its left side, right side, upside down, face down and on its back for 3 s each: the host log shows "unit orientation: orientation axis=... gx=... gy=... gz=..." for each, and "StackChan orientation: <pose>" once the axis table is right; upside down flips the screen and returns it when set upright again.
+diff --git a/firmware/main/hal/board/hal_bridge.h b/firmware/main/hal/board/hal_bridge.h
+index 6c39e3e..3a4afd9 100644
+--- a/firmware/main/hal/board/hal_bridge.h
++++ b/firmware/main/hal/board/hal_bridge.h
+@@ -50,6 +50,11 @@ void disply_lvgl_unlock();
+ lv_disp_t* display_get_lvgl_display();
+ bool display_set_face_palette(const char* palette, bool night);
+ void display_set_idle_motion_enabled(bool enabled);
++// Screen rotation for a unit that is upside down: 180 flips the panel (mirror x and y), 0 puts it back.
++// A 180 only lasts display_rotation_lease_ms (the host asks again every minute), and the IMU task calls
++// display_rotation_tick, so a screen can never stay flipped if the host goes away.
++void display_set_rotation(int degrees);
++void display_rotation_tick();
+ 
+ void xiaozhi_board_init();
+ void start_xiaozhi_app();
+diff --git a/firmware/main/hal/board/stackchan.cc b/firmware/main/hal/board/stackchan.cc
+index 97e1020..3625f0a 100644
+--- a/firmware/main/hal/board/stackchan.cc
++++ b/firmware/main/hal/board/stackchan.cc
+@@ -21,6 +21,11 @@
+ #include "hal_bridge.h"
+ #include <hal/device_events.h>
+ 
++static esp_lcd_panel_handle_t s_panel = nullptr;  // for hal_bridge::display_set_rotation
++static bool s_rotated                 = false;
++static int64_t s_rotated_until_us      = 0;
++static constexpr int64_t kRotationLeaseUs = 150LL * 1000 * 1000;
++
+ #define TAG "M5Stack-StackChan-Board"
+ 
+ #define XPOWERS_AXP2101_ICC_CHG_SET (0x62)
+@@ -544,6 +549,7 @@ private:
+         esp_lcd_panel_invert_color(panel, true);
+         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
+         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
++        s_panel = panel;
+ 
+         // display_ = new StackChanLcdDisplay(panel_io, panel, DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X,
+         //                                    DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
+@@ -673,6 +679,35 @@ i2c_master_bus_handle_t hal_bridge::board_get_i2c_bus()
+     return board.GetI2cBus();
+ }
+ 
++void hal_bridge::display_set_rotation(int degrees)
++{
++    if (s_panel == nullptr) {
++        return;
++    }
++    const bool flip = degrees == 180;
++    if (flip) {
++        s_rotated_until_us = esp_timer_get_time() + kRotationLeaseUs;
++    }
++    if (flip == s_rotated) {
++        return;
++    }
++    s_rotated = flip;
++    esp_lcd_panel_mirror(s_panel, DISPLAY_MIRROR_X != flip, DISPLAY_MIRROR_Y != flip);
++    auto display = Board::GetInstance().GetDisplay();
++    if (display != nullptr) {
++        DisplayLockGuard lock(display);
++        lv_obj_invalidate(lv_screen_active());  // draw the whole screen again in the new orientation
++    }
++    ESP_LOGI(TAG, "screen rotation %d", flip ? 180 : 0);
++}
++
++void hal_bridge::display_rotation_tick()
++{
++    if (s_rotated && esp_timer_get_time() > s_rotated_until_us) {
++        display_set_rotation(0);
++    }
++}
++
+ StackChanCamera* hal_bridge::board_get_camera()
+ {
+     auto& board = Board::GetInstance();
+diff --git a/firmware/main/hal/hal_imu.cpp b/firmware/main/hal/hal_imu.cpp
+index e0c377f..c42cf29 100644
+--- a/firmware/main/hal/hal_imu.cpp
++++ b/firmware/main/hal/hal_imu.cpp
+@@ -10,12 +10,97 @@
+ #include <mooncake_log.h>
+ #include <memory>
+ #include <cstdio>
++#include <cmath>
+ #include "device_events.h"
+ 
+ static const std::string_view _tag = "HAL-IMU";
+ 
+ static std::unique_ptr<BMI270> _bmi270;
+ 
++// Which way is down: the axis the gravity vector mostly lies along ("+x", "-y", ...), kept steady by a
++// low-pass filter, a minimum pull, a margin over the axis it replaces and a hold of about a second, so
++// carrying or shaking the unit does not flap. The host maps the axis to a pose (orientation.py), so a
++// wrong guess about how the sensor sits in the body is fixed there without a flash.
++struct OrientationTracker {
++    float filt[3]       = {0, 0, 0};
++    bool primed         = false;
++    int current         = -1;  // 0..5 = +x -x +y -y +z -z
++    int candidate       = -1;
++    int hold            = 0;
++    uint32_t reported_ms = 0;
++
++    static constexpr float kAlpha       = 0.3f;
++    static constexpr float kMinPull     = 6.5f;   // m/s^2 along the axis (gravity is 9.8)
++    static constexpr float kMargin      = 2.0f;   // new axis must beat the old one by this much
++    static constexpr float kMinMag      = 7.8f;   // total pull outside 0.8 to 1.2 g means moving
++    static constexpr float kMaxMag      = 11.8f;
++    static constexpr int kHoldSamples   = 10;     // samples 100 ms apart
++
++    static int index_for(int axis, float value) { return axis * 2 + (value < 0 ? 1 : 0); }
++
++    void report(const char* why)
++    {
++        static const char* names[] = {"+x", "-x", "+y", "-y", "+z", "-z"};
++        char extra[96];
++        snprintf(extra, sizeof(extra), "\"axis\":\"%s\",\"gx\":%d,\"gy\":%d,\"gz\":%d", names[current],
++                 static_cast<int>(filt[0] * 101.97f), static_cast<int>(filt[1] * 101.97f),
++                 static_cast<int>(filt[2] * 101.97f));
++        mclog::tagInfo(_tag, "orientation {} ({})", extra, why);
++        device_events_push_diag("orientation", extra);
++        reported_ms = pdTICKS_TO_MS(xTaskGetTickCount());
++    }
++
++    void update(float x, float y, float z)
++    {
++        const float in[3] = {x, y, z};
++        for (int i = 0; i < 3; i++) {
++            filt[i] = primed ? filt[i] + kAlpha * (in[i] - filt[i]) : in[i];
++        }
++        primed = true;
++        const float mag = std::sqrt(filt[0] * filt[0] + filt[1] * filt[1] + filt[2] * filt[2]);
++        if (mag < kMinMag || mag > kMaxMag) {
++            hold = 0;
++            return;
++        }
++        int axis = 0;
++        for (int i = 1; i < 3; i++) {
++            if (std::fabs(filt[i]) > std::fabs(filt[axis])) {
++                axis = i;
++            }
++        }
++        const float pull = std::fabs(filt[axis]);
++        const int idx    = index_for(axis, filt[axis]);
++        if (pull < kMinPull) {
++            hold = 0;
++            return;
++        }
++        if (idx == current) {
++            hold = 0;
++            // Say it again once a minute so a host that connected later learns the pose.
++            if (pdTICKS_TO_MS(xTaskGetTickCount()) - reported_ms >= 60000) {
++                report("still");
++            }
++            return;
++        }
++        if (current >= 0) {
++            const int cur_axis = current / 2;
++            if (pull < std::fabs(filt[cur_axis]) + kMargin) {
++                hold = 0;
++                return;
++            }
++        }
++        if (idx != candidate) {
++            candidate = idx;
++            hold      = 0;
++        }
++        if (++hold >= kHoldSamples) {
++            current = idx;
++            hold    = 0;
++            report("changed");
++        }
++    }
++};
++
+ static void _imu_task(void* param)
+ {
+     auto motion_detector = std::make_unique<MotionDetector>();
+@@ -25,6 +110,7 @@ static void _imu_task(void* param)
+     motion_detector->setShakeThreshold(kShakeThreshold);
+     uint32_t stats_start_ms = 0;
+     uint32_t shakes         = 0;
++    OrientationTracker orientation;
+ 
+     while (1) {
+         if (_bmi270 && _bmi270->update()) {
+@@ -32,6 +118,7 @@ static void _imu_task(void* param)
+             // mclog::debug("IMU Accel: {:.2f}\t{:.2f}\t{:.2f}", data.accel_x, data.accel_y, data.accel_z);
+ 
+             motion_detector->update(data.accel_x, data.accel_y, data.accel_z);
++            orientation.update(data.accel_x, data.accel_y, data.accel_z);
+ 
+             if (motion_detector->isShakeDetected()) {
+                 shakes++;
+@@ -60,6 +147,7 @@ static void _imu_task(void* param)
+             //     GetHAL().onImuMotionEvent.emit(ImuMotionEvent::PickUp);
+             // }
+         }
++        hal_bridge::display_rotation_tick();
+         vTaskDelay(pdMS_TO_TICKS(100));
+     }
+ }
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index 18da3d1..b8262ab 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -351,6 +351,17 @@ void Hal::xiaozhi_mcp_init()
+                            return fmt::format(R"({{"lux": {:.1f}, "ch0": {:.0f}, "ch1": {:.0f}}})", lux, ch0, ch1);
+                        });
+ 
++    mclog::tagInfo(_tag, "add screen.set_rotation tool");
++    mcp_server.AddTool("self.screen.set_rotation",
++                       "Rotate the screen 180 degrees (the robot is upside down) or back to 0. A 180 lasts about two "
++                       "minutes unless it is sent again.",
++                       PropertyList({Property("degrees", kPropertyTypeInteger, 0, 0, 180)}),
++                       [this](const PropertyList& properties) -> ReturnValue {
++                           int degrees = properties["degrees"].value<int>();
++                           hal_bridge::display_set_rotation(degrees >= 90 ? 180 : 0);
++                           return true;
++                       });
++
+     mclog::tagInfo(_tag, "add robot.create_reminder tool");
+     mcp_server.AddTool("self.robot.create_reminder",
+                        "Create a reminder. Duration is in seconds. Message is what to say when time is up. Set repeat "

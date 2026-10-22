@@ -7,7 +7,7 @@
 # against our own app the same way it can against a vendor app whose
 # entry point and distribution names don't match.
 name = "maipai-bot"
-version = "0.2.38"
+version = "0.2.39"
 description = "MaiPai Bot: the Python body that owns hardware behind the HAL seam, one profile per supported body."
 requires-python = ">=3.12"
 dependencies = [

@@ -33,6 +33,9 @@ FACE_FOR_POSE = {
 }
 LINE_GAP_S = 120.0
 FACE_REFRESH_S = 5.0
+# The unit keeps a 180 degree rotation for 150 s unless told again (so it cannot stay flipped
+# when the host goes away); ask again this often while upside down.
+ROTATION_REFRESH_S = 60.0
 
 LINE_POOLS = {
     "left_side": (
@@ -141,6 +144,7 @@ class OrientationReactions:
         self._recent: deque[str] = deque(maxlen=RECENT_LINES)
         self._last_spoken_at = float("-inf")
         self._last_face_at = float("-inf")
+        self._last_rotate_at = float("-inf")
 
     @property
     def pose(self) -> str:
@@ -157,7 +161,7 @@ class OrientationReactions:
 
         self._pose = pose
         logger.info("StackChan orientation: %s", pose)
-        self._rotate(180 if pose == "upside_down" else 0)
+        self._send_rotation()
         self._hold_motion(pose != "upright")
         if not self._busy():
             self._send_face()
@@ -173,12 +177,21 @@ class OrientationReactions:
                     self._last_spoken_at = now
         return True
 
+    def _send_rotation(self) -> None:
+        self._rotate(180 if self._pose == "upside_down" else 0)
+        self._last_rotate_at = self._clock()
+
     def _send_face(self) -> None:
         self._face(FACE_FOR_POSE[self._pose])
         self._last_face_at = self._clock()
 
     def tick(self) -> None:
         """Refresh the pose face while the robot remains away from upright."""
+        if (
+            self._pose == "upside_down"
+            and self._clock() - self._last_rotate_at >= ROTATION_REFRESH_S
+        ):
+            self._send_rotation()
         if self._pose == "upright" or self._busy():
             return
         if self._clock() - self._last_face_at >= FACE_REFRESH_S:
