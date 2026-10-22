@@ -1867,7 +1867,7 @@ def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power:
         busy=behavior.reaction_blocked,
     )
     behavior.orientation = orientation
-    night.sensors_blocked = lambda: orientation.pose != "upright"
+    night.sensors_blocked = orientation.sensors_untrusted
     behavior.pose_held = lambda: orientation.pose != "upright"
 
     def tick() -> None:

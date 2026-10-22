@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.50] - 2026-10-22
+
+### Fixed
+- Firmware patch 071: the unit reported its first pose change and then nothing, not even the once-a-minute repeat (pose test, 2026-10-22). The tracker of patch 067 required a new axis to beat the absolute pull along the current one, which turning from one ear to the other can never do. It now compares against the signed pull in the current pose's direction.
+- The light sensor and camera are also ignored for 30 seconds after the unit is upright again, so a sensor that was just covered cannot start night mode.
+
 ## [0.2.49] - 2026-10-22
 
 ### Fixed

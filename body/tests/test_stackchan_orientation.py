@@ -246,3 +246,19 @@ def test_a_quiet_reason_from_the_caller_is_logged(caplog):
         h.event("+x")
     assert "skipped: night mode is on" in caplog.text
     assert h.lines == []
+
+
+def test_the_sensors_are_untrusted_while_tilted_and_for_thirty_seconds_after():
+    from maipai_body.bodies.stackchan.orientation import SENSOR_SETTLE_S
+
+    h = Harness()
+    assert not h.reactions.sensors_untrusted()  # never moved
+    h.event("+x")
+    assert h.reactions.sensors_untrusted()
+    h.now += 100
+    h.event("+y")  # upright
+    assert h.reactions.sensors_untrusted()
+    h.now += SENSOR_SETTLE_S - 1
+    assert h.reactions.sensors_untrusted()
+    h.now += 2
+    assert not h.reactions.sensors_untrusted()

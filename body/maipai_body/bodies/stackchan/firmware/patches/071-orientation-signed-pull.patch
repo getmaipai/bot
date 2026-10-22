@@ -1,0 +1,26 @@
+# Intent: the orientation tracker of patch 067 stopped reporting after its first change (host log 2026-10-22, pose test: upright to right ear down was reported, then neither the turn to the other ear nor even the once-a-minute repeat). To accept a new axis it required the new pull to beat the ABSOLUTE pull along the current axis plus a margin; turning from one ear to the other runs along the same axis, whose magnitude it can never beat, so the tracker locked. It now compares against the SIGNED pull in the current pose's direction (positive while the unit stays in the pose, negative once it has turned to the opposite side).
+# Upstream: m5stack/StackChan firmware/main/hal/hal_imu.cpp (MIT). Applies after 070.
+# Check after a flash: tip the unit onto one ear, then the other, then upright: each is an "orientation" event within about two seconds, and a repeat arrives every minute while it stays.
+diff --git a/firmware/main/hal/hal_imu.cpp b/firmware/main/hal/hal_imu.cpp
+index 98d8aac..806edb3 100644
+--- a/firmware/main/hal/hal_imu.cpp
++++ b/firmware/main/hal/hal_imu.cpp
+@@ -118,8 +118,16 @@ struct OrientationTracker {
+             return;
+         }
+         if (current >= 0) {
+-            const int cur_axis = current / 2;
+-            if (pull < std::fabs(filt[cur_axis]) + kMargin) {
++            // How strongly gravity still pulls the way the current pose says: positive while the
++            // unit stays in it, negative once it has turned to the opposite side. The new axis
++            // must beat that by the margin. Comparing against the absolute value locked the
++            // tracker after the first change: turning from one ear to the other along the same
++            // axis can never beat its own magnitude, so no further event, not even the minute
++            // repeat, ever came (host log 2026-10-22).
++            const int cur_axis    = current / 2;
++            const float cur_sign  = (current % 2 == 0) ? 1.0f : -1.0f;
++            const float cur_value = filt[cur_axis] * cur_sign;
++            if (pull < cur_value + kMargin) {
+                 hold = 0;
+                 return;
+             }

@@ -43,6 +43,9 @@ SCREEN_ROTATION_ENABLED = False
 # The unit keeps a 180 degree rotation for 150 s unless told again (so it cannot stay flipped
 # when the host goes away); ask again this often while upside down.
 ROTATION_REFRESH_S = 60.0
+# After the unit is upright again its light sensor and camera may still be settling: they are
+# ignored for this long (night mode must not start from a sensor that was just covered).
+SENSOR_SETTLE_S = 30.0
 
 LINE_POOLS = {
     "left_side": (
@@ -148,10 +151,17 @@ class OrientationReactions:
         self._clock = clock
         self._rng = rng or random.Random()
         self._pose = "upright"
+        self._changed_at: float | None = None
         self._recent: deque[str] = deque(maxlen=RECENT_LINES)
         self._last_spoken_at = float("-inf")
         self._last_face_at = float("-inf")
         self._last_rotate_at = float("-inf")
+
+    def sensors_untrusted(self) -> bool:
+        """True while the unit is not upright and for SENSOR_SETTLE_S after it is upright again."""
+        if self._pose != "upright":
+            return True
+        return self._changed_at is not None and self._clock() - self._changed_at < SENSOR_SETTLE_S
 
     @property
     def pose(self) -> str:
@@ -167,6 +177,7 @@ class OrientationReactions:
             return False
 
         self._pose = pose
+        self._changed_at = self._clock()
         logger.info("StackChan orientation: %s", pose)
         self._send_rotation()
         self._hold_motion(pose != "upright")
@@ -225,6 +236,8 @@ class OrientationReactions:
         """Restore the boot pose and clear orientation controls without speech."""
         was_upright = self._pose == "upright"
         self._pose = "upright"
+        if not was_upright:
+            self._changed_at = self._clock()
         self._rotate(0)
         if not was_upright:
             self._hold_motion(False)
