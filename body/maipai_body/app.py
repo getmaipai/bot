@@ -158,7 +158,7 @@ LOOK_INTERVAL_S = 0.5  # two looks a second at most
 TURN_FACE_FRESH_S = 5.0  # turn toward a face seen this recently when a turn starts
 LOST_AFTER_LOOKS = 4  # two seconds without the face it was following: it was lost
 TOUCH_POLL_S = 5.0
-EVENT_POLL_S = 2.0  # touch, swipe and shake events are read this often while the robot is awake
+EVENT_POLL_S = 1.0  # touch, swipe and shake events are read this often while the robot is awake
 TOUCH_WAKE_COOLDOWN_S = 30.0
 FACE_REFRESH_S = 30.0
 
@@ -385,6 +385,10 @@ class StackChanBehavior:
             line = self._camera_stats.report(now)
             if line:
                 logger.info(line)
+            if self._vision is not None:
+                check = self._vision.frame_check.report(now)
+                if check:
+                    logger.info(check)
             try:
                 self.wake_on_touch(now)
             except Exception:

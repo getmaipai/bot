@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
+from maipai_body.bodies.stackchan.frame_check import FrameCheck
 from maipai_body.hal.seam import FaceTrackTarget, HeadPose
 from maipai_body.vision.gallery import FaceVerdict
 
@@ -42,6 +43,7 @@ class StackChanVisionBridge:
         self.frame_provider = frame_provider
         self._timer: threading.Timer | None = None
         self._lock = threading.Lock()
+        self.frame_check = FrameCheck()
 
     def track_stream_frame(
         self, *, deadline_s: float = 0.4, may_move: Callable[[], bool] | None = None
@@ -68,6 +70,8 @@ class StackChanVisionBridge:
             if self.clock() - started > deadline_s:
                 return FaceTrackTarget(detected=False)
             faces = self.detector.detect(frame)
+            if not faces:
+                self.frame_check.note(self.detector, frame, len(frame_bytes))
             if not faces or self.clock() - started > deadline_s:
                 return FaceTrackTarget(detected=False)
             x, y, width, height = faces[0].bbox

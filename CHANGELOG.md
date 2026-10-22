@@ -7,6 +7,15 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.43] - 2026-10-22
+
+### Added
+- A once-a-minute "StackChan frame check" log line while the face detector finds nobody: the frame size, the average JPEG size, and the detector's best score for the frame as it is and rotated, mirrored, flipped or colour-swapped (a rotated or mirrored frame defeats the detector). Nothing is stored; only the scores are kept.
+- The orientation reaction logs what it did with its spoken line (said, or why it was skipped: quiet, a conversation on, one said under two minutes ago, or the voice could not start it).
+
+### Changed
+- The unit's events (touch, swipe, shake, orientation) are read every second instead of every two, so a tilt reaches the robot sooner.
+
 ## [0.2.42] - 2026-10-22
 
 ### Added

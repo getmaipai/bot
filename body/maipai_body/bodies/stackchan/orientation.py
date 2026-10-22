@@ -172,17 +172,32 @@ class OrientationReactions:
         self._hold_motion(pose != "upright")
         if not self._busy():
             self._send_face()
-        if not self._quiet() and not self._busy():
-            now = self._clock()
-            if now - self._last_spoken_at >= LINE_GAP_S:
-                choices = [line for line in LINE_POOLS[pose] if line not in self._recent]
-                if not choices:  # the pool is smaller than the memory: use the oldest
-                    choices = [next(line for line in self._recent if line in LINE_POOLS[pose])]
-                line = self._rng.choice(choices)
-                if self._say(line):
-                    self._recent.append(line)
-                    self._last_spoken_at = now
+        self._maybe_say()
         return True
+
+    def _maybe_say(self) -> None:
+        """One line for the new pose, unless quiet, a conversation is on, or one was just said."""
+        pose = self._pose
+        if self._quiet():
+            logger.info("StackChan orientation line skipped: quiet (night, asleep or quiet hours)")
+            return
+        if self._busy():
+            logger.info("StackChan orientation line skipped: a conversation is on")
+            return
+        now = self._clock()
+        if now - self._last_spoken_at < LINE_GAP_S:
+            logger.info("StackChan orientation line skipped: one was said less than 2 minutes ago")
+            return
+        choices = [line for line in LINE_POOLS[pose] if line not in self._recent]
+        if not choices:  # the pool is smaller than the memory: use the oldest
+            choices = [next(line for line in self._recent if line in LINE_POOLS[pose])]
+        line = self._rng.choice(choices)
+        if self._say(line):
+            self._recent.append(line)
+            self._last_spoken_at = now
+            logger.info("StackChan orientation line said: %r", line)
+        else:
+            logger.info("StackChan orientation line not said: the voice could not start it")
 
     def _send_rotation(self) -> None:
         self._rotate(180 if self._pose == "upside_down" else 0)

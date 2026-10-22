@@ -86,6 +86,8 @@ class YuNetDetector:
         self._output_names = [o.name for o in self._session.get_outputs()]
         self._score_threshold = score_threshold
         self._nms_threshold = nms_threshold
+        # The best score of the last detect, before the threshold: how close a miss came.
+        self.last_best_score = 0.0
 
     def detect(self, frame_bgr: npt.NDArray[np.uint8]) -> list[Face]:
         """Every face in a BGR frame; coordinates are in the frame's own pixels."""
@@ -111,10 +113,13 @@ class YuNetDetector:
         boxes: list[tuple[float, float, float, float]] = []
         scores: list[float] = []
         faces: list[Face] = []
+        best = 0.0
         for stride in _STRIDES:
             cls = outputs[f"cls_{stride}"][0, :, 0]
             obj = outputs[f"obj_{stride}"][0, :, 0]
             score = np.sqrt(np.clip(cls, 0.0, 1.0) * np.clip(obj, 0.0, 1.0))
+            if score.size:
+                best = max(best, float(score.max()))
             idx = np.nonzero(score >= self._score_threshold)[0]
             if idx.size == 0:
                 continue
@@ -149,6 +154,7 @@ class YuNetDetector:
                         score=float(score[idx[k]]),
                     )
                 )
+        self.last_best_score = best
         return [faces[i] for i in _nms(boxes, scores, self._nms_threshold)]
 
 
@@ -190,6 +196,11 @@ class LazyFaceDetector:
     @property
     def ready(self) -> bool:
         return self._detector is not None
+
+    @property
+    def best_score(self) -> float:
+        """The best score of the last detect, before the threshold (0 until the model loads)."""
+        return self._detector.last_best_score if self._detector is not None else 0.0
 
     def detect(self, frame_bgr: npt.NDArray[np.uint8]) -> list[Face]:
         detector = self._get()
