@@ -1731,9 +1731,14 @@ def _alarm_backstop(alarm: AlarmController, stop_event: threading.Event) -> None
 
 def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power: Any) -> None:
     """Pose faces, lines, screen rotation and the motion hold for the unit's orientation events."""
-    from maipai_body.bodies.stackchan.orientation import OrientationReactions
+    from maipai_body.bodies.stackchan.orientation import (
+        SCREEN_ROTATION_ENABLED,
+        OrientationReactions,
+    )
 
     def rotate(degrees: int) -> None:
+        if not SCREEN_ROTATION_ENABLED:
+            return
         try:
             voice.robot.client._call("self.screen.set_rotation", {"degrees": degrees})
         except Exception:

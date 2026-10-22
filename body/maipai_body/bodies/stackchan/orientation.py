@@ -15,9 +15,11 @@ from collections.abc import Callable, Mapping
 logger = logging.getLogger("maipai_body.bodies.stackchan.orientation")
 
 POSES = ("upright", "left_side", "right_side", "upside_down", "face_down", "on_back")
+# Measured 2026-10-22: an accelerometer reads +1 g along the axis that points UP, and the unit
+# standing normally reads axis +y, so +y is upright and -y is upside down.
 AXIS_POSES: dict[str, str] = {
-    "-y": "upright",
-    "+y": "upside_down",
+    "+y": "upright",
+    "-y": "upside_down",
     "+x": "left_side",
     "-x": "right_side",
     "-z": "face_down",
@@ -33,6 +35,11 @@ FACE_FOR_POSE = {
 }
 LINE_GAP_S = 120.0
 FACE_REFRESH_S = 5.0
+# Off since 2026-10-22: after the screen was flipped the unit's screen-locked tool calls (LEDs,
+# head, events) timed out and the face froze, which fits the panel mirror command racing the
+# display transfer. The face and the lines still follow the pose; the flip returns once the firmware does
+# it safely (a separate patch).
+SCREEN_ROTATION_ENABLED = False
 # The unit keeps a 180 degree rotation for 150 s unless told again (so it cannot stay flipped
 # when the host goes away); ask again this often while upside down.
 ROTATION_REFRESH_S = 60.0

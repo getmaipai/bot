@@ -13,7 +13,6 @@ import numpy.typing as npt
 
 from maipai_body.hal.seam import FaceTrackTarget, HeadPose
 from maipai_body.vision.gallery import FaceVerdict
-from maipai_body.vision.recognize import recognize_face
 
 
 class StackChanVisionBridge:
@@ -161,6 +160,10 @@ class StackChanVisionBridge:
         frame_bytes = self.robot.camera.frame()
         if not frame_bytes:
             return None
+        # Imported here: it pulls the Reachy SDK, which the hub bundle does not have, and plain
+        # face watching (the common case) never recognises anyone.
+        from maipai_body.vision.recognize import recognize_face
+
         try:
             frame = self.decode(frame_bytes)
             return recognize_face(

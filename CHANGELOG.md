@@ -7,6 +7,13 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.40] - 2026-10-22
+
+### Fixed
+- The face was drawn upside down: the first guess of the orientation table was inverted. The accelerometer reads +1 g along the axis that points up, and the unit standing normally reads axis +y, so +y is now upright and -y upside down.
+- The camera showed "looked at 0" with frames arriving: the installed bot could not load face watching (`No module named 'huggingface_hub'`, then the Reachy SDK, which the hub bundle does not have) because the camera bridge imported the face-recognition module at load. It is now imported only when someone is recognised, and a test loads the bridge with those packages missing.
+- The unit stopped answering screen-locked tool calls (LEDs, head, events) soon after the screen was flipped, with the face frozen and listening stuck. The flip of the screen is switched off on the host until the firmware does it safely; pose faces and lines still work.
+
 ## [0.2.39] - 2026-10-21
 
 ### Added

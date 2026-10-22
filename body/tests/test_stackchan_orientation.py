@@ -103,7 +103,7 @@ def test_line_gap_and_skipped_line_does_not_start_gap():
     h.event("-x")
     assert len(h.lines) == 1
     h.now += 1
-    h.event("+y")
+    h.event("-y")
     assert len(h.lines) == 2
 
     skipped = Harness(say_result=False)
@@ -140,7 +140,7 @@ def test_tick_refreshes_face_at_interval_and_respects_upright_and_busy():
     h.reactions.tick()
     assert len(h.faces) == 2
     h.busy = False
-    h.event("-y")
+    h.event("+y")
     before = len(h.faces)
     h.now += FACE_REFRESH_S
     h.reactions.tick()
@@ -152,7 +152,7 @@ def test_reset_restores_neutral_without_speech_and_rotates_even_when_upright():
     h.reactions.reset()
     assert h.rotations == [0]
     assert h.holds == h.faces == h.lines == []
-    h.event("+y")
+    h.event("-y")
     lines = list(h.lines)
     h.reactions.reset()
     assert h.reactions.pose == "upright"
@@ -181,7 +181,7 @@ def test_no_line_repeats_within_the_last_ten_spoken():
     spoken = []
     for i in range(120):
         h.now += 200.0
-        h.event("+x" if i % 2 == 0 else "-y")  # side, upright, side, upright ...
+        h.event("+x" if i % 2 == 0 else "+y")  # side, upright, side, upright ...
     spoken = h.lines
     assert len(spoken) == 120
     for i, line in enumerate(spoken):
@@ -192,7 +192,7 @@ def test_the_rotation_is_asked_again_every_minute_while_upside_down():
     from maipai_body.bodies.stackchan.orientation import ROTATION_REFRESH_S
 
     h = Harness()
-    h.event("+y")
+    h.event("-y")
     assert h.rotations == [180]
     h.now += ROTATION_REFRESH_S - 1
     h.reactions.tick()
@@ -200,7 +200,33 @@ def test_the_rotation_is_asked_again_every_minute_while_upside_down():
     h.now += 2
     h.reactions.tick()
     assert h.rotations == [180, 180]
-    h.event("-y")  # upright
+    h.event("+y")  # upright
     h.now += 3 * ROTATION_REFRESH_S
     h.reactions.tick()
     assert h.rotations == [180, 180, 0]
+
+
+def test_a_unit_standing_normally_is_upright_and_the_opposite_axis_is_upside_down():
+    assert pose_for_axis("+y") == "upright"
+    assert pose_for_axis("-y") == "upside_down"
+
+
+def test_the_screen_flip_is_off_until_the_firmware_does_it_safely():
+    from maipai_body.bodies.stackchan.orientation import SCREEN_ROTATION_ENABLED
+
+    assert SCREEN_ROTATION_ENABLED is False
+
+
+def test_face_watching_imports_without_the_reachy_sdk_or_huggingface_hub():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys\n"
+        "for m in ('reachy_mini', 'huggingface_hub', 'huggingface_hub.errors', 'cv2'):\n"
+        "    sys.modules[m] = None\n"
+        "import maipai_body.bodies.stackchan.vision_bridge\n"
+        "from maipai_body.vision.yunet import LazyFaceDetector\n"
+    )
+    result = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
