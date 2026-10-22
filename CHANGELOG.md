@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.51] - 2026-10-22
+
+### Changed
+- Firmware patch 072: a tilt shows up faster. The orientation tracker filters at 0.5 instead of 0.3 and holds a new axis for 5 samples instead of 10, so a pose is reported in under a second instead of about 1.5 seconds. The pull, total-gravity and margin guards are unchanged. Parked for the next flash.
+
 ## [0.2.50] - 2026-10-22
 
 ### Fixed

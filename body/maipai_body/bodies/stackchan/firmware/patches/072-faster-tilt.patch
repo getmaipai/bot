@@ -1,0 +1,22 @@
+# Intent: a tilt shows up faster (owner report 2026-10-22: "tipping over is slow and unreliable"). The orientation tracker of patch 067 filtered the vector at 0.3 per 100 ms sample and then held a new axis for 10 samples, about 1.5 seconds before the unit reported it (and the host then read events every 2 s). It now filters at 0.5 (settles in about three samples) and holds a new axis for 5 samples, so a pose shows up in under a second. The other guards stay: the pull must be at least 6.5 m/s^2, the total must be 0.8 to 1.2 g (carrying or shaking is ignored) and a new axis must beat the old pose by 2 m/s^2.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_imu.cpp (MIT). Applies after 071.
+# Check after a flash: tip the unit onto an ear: the host log shows "unit orientation: orientation axis=..." within about a second, and carrying it across the room does not produce a flurry of events.
+diff --git a/firmware/main/hal/hal_imu.cpp b/firmware/main/hal/hal_imu.cpp
+index 806edb3..fe2d7e9 100644
+--- a/firmware/main/hal/hal_imu.cpp
++++ b/firmware/main/hal/hal_imu.cpp
+@@ -64,12 +64,12 @@ struct OrientationTracker {
+     int hold            = 0;
+     uint32_t reported_ms = 0;
+ 
+-    static constexpr float kAlpha       = 0.3f;
++    static constexpr float kAlpha       = 0.5f;  // was 0.3: settles in about three samples
+     static constexpr float kMinPull     = 6.5f;   // m/s^2 along the axis (gravity is 9.8)
+     static constexpr float kMargin      = 2.0f;   // new axis must beat the old one by this much
+     static constexpr float kMinMag      = 7.8f;   // total pull outside 0.8 to 1.2 g means moving
+     static constexpr float kMaxMag      = 11.8f;
+-    static constexpr int kHoldSamples   = 10;     // samples 100 ms apart
++    static constexpr int kHoldSamples   = 5;      // samples 100 ms apart (was 10: a tilt took 1.5 s or more to show)
+ 
+     static int index_for(int axis, float value) { return axis * 2 + (value < 0 ? 1 : 0); }
+ 
