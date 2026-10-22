@@ -54,6 +54,12 @@ POPUP_HOLD_S = 0.3
 # long to speak before the turn ends quietly (robot.follow_up.seconds, default 8).
 FOLLOW_UP_S = 8.0
 FOLLOW_UP_AFTER_S = 2.0
+# The unit can end up listening without having told the host (no "listen start" arrives after a
+# reply, host log 2026-10-22: audio frames flow, nothing answers, until the unit's own guard resets
+# it). This many frames in a row, right after a turn, start the listen from the audio itself.
+STRAY_FRAMES_TO_LISTEN = 6
+STRAY_GAP_S = 0.5
+STRAY_WINDOW_S = 120.0
 # The microphone queue holds at most this many 32 ms blocks (about 2 s); older ones are dropped.
 CAPTURE_QUEUE_BLOCKS = 64
 # The level line covers the first two seconds heard (16 kHz).
@@ -602,6 +608,7 @@ class StackChanTurnBridge:
         self._current_session = ""
         self._last_turn_end: dict[str, float] = {}
         self._followup: dict[str, bool] = {}
+        self._stray: dict[str, tuple[int, float]] = {}
         self.follow_up_s = FOLLOW_UP_S
         # The selected voice record's pitch_semitones (-12 to 12); 0 changes nothing.
         self.pitch_semitones = lambda: 0.0
@@ -621,6 +628,9 @@ class StackChanTurnBridge:
         capture = self._captures.get(session_id)
         self._record_uplink(len(data), getattr(capture, "peak", 0.0))
         now = self._clock()
+        if capture is None and self._states.get(session_id, "idle") == "idle":
+            if await self._listen_from_stray_audio(session_id, now):
+                return
         if self._states.get(session_id) == "speaking":
             if not self._aec.get(session_id, False):
                 self._uplink_dropped += 1
@@ -648,6 +658,34 @@ class StackChanTurnBridge:
                 await asyncio.to_thread(capture.feed_opus, data)
             except Exception:
                 LOG.exception("StackChan Opus input could not be decoded")
+
+    async def _listen_from_stray_audio(self, session_id: str, now: float) -> bool:
+        """Audio is arriving with no listen start: after a turn, begin the listen from the audio."""
+        count, last = self._stray.get(session_id, (0, float("-inf")))
+        count = count + 1 if now - last <= STRAY_GAP_S else 1
+        self._stray[session_id] = (count, now)
+        if count < STRAY_FRAMES_TO_LISTEN:
+            return False
+        if now - self._last_turn_end.get(session_id, float("-inf")) > STRAY_WINDOW_S:
+            return False
+        device_id = next(
+            (
+                device
+                for device, sid in getattr(self.server, "_session_ids", {}).items()
+                if sid == session_id
+            ),
+            None,
+        )
+        if device_id is None:
+            return False
+        self._stray.pop(session_id, None)
+        LOG.info(
+            "StackChan voice: audio is arriving with no listen start; starting the turn from it "
+            "(session %s)",
+            session_id[:8],
+        )
+        await self.listen(session_id, device_id, "start", mode="auto")
+        return True
 
     async def listen(
         self, session_id: str, device_id: str, state: str, *, mode="auto", aec=None

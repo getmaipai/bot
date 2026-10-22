@@ -1,0 +1,51 @@
+# Intent: stop the unit leaving a turn half done (owner report 2026-10-22: "it answered one question and stopped responding"; host log: the state guard of patch 059 fired two seconds into a listen with held_s=4294967292, and after a reply the unit listened but the host never heard a listen start). (1) The guard measured time against clock_ticks_, which HandleStateChangedEvent resets to 0 on every state change, so "held" wrapped to a huge number and sent a unit that had just started listening back to idle. It now counts its own seconds. The Listening limit also drops from 45 s to 20 s. (2) When the reply ends (tts stop) and the unit is already Listening, the audio processor was still running so entering Listening sent no listen start; it now sends one, so the host starts the turn. The host also starts a turn by itself from stray audio (bot 0.2.41), so this patch is the second layer.
+# Upstream: 78/xiaozhi-esp32 main/application.cc (MIT). Applies after 067.
+# Check after a flash: no "unit wake: state_guard ... held_s=" line within a few seconds of a listen start; after a reply the host logs "listen start (mode auto)" again, or a question asked right after the answer is answered.
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index a2c68e9..8319c47 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -281,14 +281,19 @@ void Application::Run() {
+ 
+             // State guard (patch 059): a unit that is stuck connecting, or listening with nobody
+             // answering, cannot hear the wake word or a tap. Put it back to idle after a while.
++            // clock_ticks_ is reset on every state change, so the guard counts its own seconds:
++            // measured against the reset counter it read a huge "held" time (4294967292 s in the
++            // host log) and sent a unit that had just started listening back to idle.
++            static uint32_t guard_clock = 0;
++            guard_clock++;
+             auto guard_state = GetDeviceState();
+             if (guard_state != guard_last_state_) {
+                 guard_last_state_ = guard_state;
+-                guard_since_tick_ = clock_ticks_;
++                guard_since_tick_ = static_cast<int>(guard_clock);
+             } else {
+-                const uint32_t held = static_cast<uint32_t>(clock_ticks_ - guard_since_tick_);
++                const uint32_t held = guard_clock - static_cast<uint32_t>(guard_since_tick_);
+                 if ((guard_state == kDeviceStateConnecting && held >= 8) ||
+-                    (guard_state == kDeviceStateListening && held >= 45)) {
++                    (guard_state == kDeviceStateListening && held >= 20)) {
+                     char extra[64];
+                     snprintf(extra, sizeof(extra), "\"state\":%d,\"held_s\":%u", (int)guard_state,
+                              static_cast<unsigned>(held));
+@@ -296,7 +301,7 @@ void Application::Run() {
+                              DeviceStateMachine::GetStateName(guard_state), static_cast<unsigned>(held));
+                     device_events_push_diag("state_guard", extra);
+                     SetDeviceState(kDeviceStateIdle);
+-                    guard_since_tick_ = clock_ticks_;
++                    guard_since_tick_ = static_cast<int>(guard_clock);
+                 }
+             }
+         }
+@@ -624,6 +629,11 @@ void Application::InitializeProtocol() {
+                         } else {
+                             SetDeviceState(kDeviceStateListening);
+                         }
++                    } else if (GetDeviceState() == kDeviceStateListening && listening_mode_ != kListeningModeManualStop) {
++                        // Listening with the reply over, yet the host heard no "listen start" (the
++                        // audio processor was still running, so entering Listening sent none): say it
++                        // again, or the host ignores the audio and nothing answers.
++                        protocol_->SendStartListening(listening_mode_);
+                     }
+                 });
+             } else if (strcmp(state->valuestring, "sentence_start") == 0) {

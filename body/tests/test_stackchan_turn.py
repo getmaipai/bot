@@ -810,3 +810,43 @@ def test_a_dropped_stt_socket_near_the_deadline_still_raises():
         asyncio.run(
             bridge._recognise("b", "c", SimpleNamespace(closed=False), bridge._clock() - 10.0)
         )
+
+
+def test_audio_with_no_listen_start_after_a_turn_starts_the_listen():
+    from maipai_body.bodies.stackchan import turn as turn_module
+
+    started = []
+    bridge = object.__new__(turn_module.StackChanTurnBridge)
+    bridge._stray = {}
+    bridge._last_turn_end = {"s1": 100.0}
+    bridge._clock = lambda: 101.0
+    bridge.server = SimpleNamespace(_session_ids={"dev-1": "s1"})
+
+    async def listen(session_id, device_id, state, *, mode="auto", aec=None):
+        started.append((session_id, device_id, state, mode))
+
+    bridge.listen = listen
+    loop = asyncio.new_event_loop()
+    results = [
+        loop.run_until_complete(bridge._listen_from_stray_audio("s1", 101.0 + i * 0.06))
+        for i in range(turn_module.STRAY_FRAMES_TO_LISTEN)
+    ]
+    loop.close()
+    assert results == [False] * (turn_module.STRAY_FRAMES_TO_LISTEN - 1) + [True]
+    assert started == [("s1", "dev-1", "start", "auto")]
+
+
+def test_stray_audio_long_after_the_last_turn_is_ignored():
+    from maipai_body.bodies.stackchan import turn as turn_module
+
+    bridge = object.__new__(turn_module.StackChanTurnBridge)
+    bridge._stray = {}
+    bridge._last_turn_end = {"s1": 0.0}
+    bridge.server = SimpleNamespace(_session_ids={"dev-1": "s1"})
+    loop = asyncio.new_event_loop()
+    results = [
+        loop.run_until_complete(bridge._listen_from_stray_audio("s1", 500.0 + i * 0.06))
+        for i in range(10)
+    ]
+    loop.close()
+    assert results == [False] * 10

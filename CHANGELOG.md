@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.41] - 2026-10-22
+
+### Fixed
+- The robot answered one question and then stopped responding. Two causes: after a reply the unit can listen without telling the host (no "listen start" arrives, so the audio is ignored), and the unit's own state guard counted its time against a clock that resets on every state change, so a unit that had just begun listening was sent back to idle two seconds in. The host now starts the turn from audio that arrives with no listen start (six frames in a row within two minutes of the last turn), and firmware patch 068 fixes the guard arithmetic, drops its Listening limit to 20 seconds, and sends the listen start again when a reply ends while the unit is already listening.
+- Face watching that cannot load now logs one line with the cause instead of a traceback.
+
 ## [0.2.40] - 2026-10-22
 
 ### Fixed

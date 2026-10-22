@@ -842,8 +842,9 @@ async def _serve_stackchan_channels(
             embedder=None,
             gallery=None,
         )
-    except Exception:
-        logger.warning("StackChan face watching is unavailable", exc_info=True)
+    except Exception as exc:
+        # One line, not a traceback: the cause is almost always a package the bundle lacks.
+        logger.warning("StackChan face watching is unavailable (%s: %s)", type(exc).__name__, exc)
     behavior = StackChanBehavior(voice.robot.robot, vision_bridge=vision)
     behavior.camera_counters = lambda: (
         avatar.camera_frames_received,
