@@ -257,3 +257,9 @@ def test_thumbnails_tell_a_changed_scene_from_noise():
     assert not differs(a, thumbnail(np.full((240, 320, 3), 103, dtype=np.uint8)))
     assert differs(a, thumbnail(np.full((240, 320, 3), 140, dtype=np.uint8)))
     assert differs(None, a)
+
+
+def test_picture_posts_are_held_off_until_the_look_design_is_ruled_on():
+    from maipai_body.bodies.stackchan.vision_post import PICTURE_POSTS_ENABLED
+
+    assert PICTURE_POSTS_ENABLED is False

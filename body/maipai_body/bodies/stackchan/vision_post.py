@@ -13,6 +13,10 @@ import requests
 
 logger = logging.getLogger("maipai_body.bodies.stackchan.vision_post")
 
+# Held off 2026-10-22 (owner): no picture goes to Home for a model caption until the Look design
+# (docs/design/look-component-2026-10-22.md in the home repo) is ruled on. The poster stays, tested,
+# for when it is wanted again; the app does not create one while this is False.
+PICTURE_POSTS_ENABLED = False
 MAX_FRAME_BYTES = 512 * 1024
 SCENE_MIN_GAP_S = 10.0
 SCENE_REFRESH_S = 60.0

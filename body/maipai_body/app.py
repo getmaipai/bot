@@ -942,9 +942,10 @@ async def _serve_stackchan_channels(
     )
     behavior.event_poll = voice.robot.client.companion().poll_events
     if link is not None:
-        from maipai_body.bodies.stackchan.vision_post import VisionPoster
+        from maipai_body.bodies.stackchan.vision_post import PICTURE_POSTS_ENABLED, VisionPoster
 
-        behavior.vision_poster = VisionPoster(_hub_credentials_reader(link, ""))
+        if PICTURE_POSTS_ENABLED:
+            behavior.vision_poster = VisionPoster(_hub_credentials_reader(link, ""))
     if link is not None:
         _start_robot_checkin(voice, behavior, link, stop_event)
     night = _start_stackchan_night(voice, behavior, link, stop_event)

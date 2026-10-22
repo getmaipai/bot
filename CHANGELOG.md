@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.45] - 2026-10-22
+
+### Changed
+- No camera picture goes to Home for a model caption (owner, 2026-10-22: the proper design, "Look", comes first). The poster of 0.2.44 stays in the code, tested, behind `PICTURE_POSTS_ENABLED = False`. Everything else of 0.2.44 stands: the frame type fix, the start retries, light questions answered from the frame brightness, and "my camera is warming up" instead of "face finding is not ready"; sight questions are answered by the host from a face seen a moment ago or the brightness.
+
 ## [0.2.44] - 2026-10-22
 
 ### Added
