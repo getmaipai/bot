@@ -58,6 +58,9 @@ FOLLOW_UP_AFTER_S = 2.0
 # reply, host log 2026-10-22: audio frames flow, nothing answers, until the unit's own guard resets
 # it). This many frames in a row, right after a turn, start the listen from the audio itself.
 STRAY_FRAMES_TO_LISTEN = 6
+# A frame whose loudest sample is above this counts as speech-level sound, to time how long the
+# speech-to-text took to answer after the person stopped (a level, never audio).
+LOUD_PEAK = 0.1
 STRAY_GAP_S = 0.5
 STRAY_WINDOW_S = 120.0
 # The microphone queue holds at most this many 32 ms blocks (about 2 s); older ones are dropped.
@@ -91,6 +94,7 @@ class StackChanAudioCapture:
         self._resampler = av.AudioResampler(format="flt", layout="mono", rate=16000)
         self._leftover = np.zeros(0, dtype=np.float32)
         self.peak = 0.0  # loudest sample seen (0..1); a level, never audio
+        self.last_loud_at: float | None = None  # when a frame last had speech-level sound
         self._square_sum = 0.0
         self._level_samples = 0
         # Opt-in debug recording (MAIPAI_STACKCHAN_DEBUG_WAV_DIR): the decoded uplink, kept in
@@ -112,7 +116,10 @@ class StackChanAudioCapture:
             for converted in self._resampler.resample(frame):
                 samples = converted.to_ndarray().reshape(-1).astype(np.float32)
                 if samples.size:
-                    self.peak = max(self.peak, min(1.0, float(np.max(np.abs(samples)))))
+                    frame_peak = min(1.0, float(np.max(np.abs(samples))))
+                    self.peak = max(self.peak, frame_peak)
+                    if frame_peak > LOUD_PEAK:
+                        self.last_loud_at = time.monotonic()
                     if self._level_samples < LEVEL_WINDOW_SAMPLES:
                         self._square_sum += float(np.sum(np.square(samples, dtype=np.float64)))
                         self._level_samples += samples.size
@@ -961,10 +968,17 @@ class StackChanTurnBridge:
             result = await self._recognise(base, cookie, capture, started_at)
             self._log_uplink_level(session_id, capture)
             capture.close()  # recognition is over: stop buffering the microphone
+            last_loud = getattr(capture, "last_loud_at", None)
+            after = (
+                f", {time.monotonic() - last_loud:.1f} s after the last loud sound"
+                if last_loud is not None
+                else ""
+            )
             LOG.info(
-                "StackChan voice: speech-to-text ended (%s, %d characters)",
+                "StackChan voice: speech-to-text ended (%s, %d characters%s)",
                 result.kind,
                 len(result.text or ""),
+                after,
             )
             outcome = self._classify(result)
             if outcome == "speech":

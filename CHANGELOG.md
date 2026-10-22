@@ -15,6 +15,7 @@ checklist (`docs/dev.md`).
 
 ### Changed
 - The unit's events (touch, swipe, shake, orientation) are read every second instead of every two, so a tilt reaches the robot sooner.
+- The "speech-to-text ended" log line now says how long after the last loud sound it came (the wait for the end of speech), so a slow answer can be split into hearing, thinking and speaking.
 
 ## [0.2.42] - 2026-10-22
 
