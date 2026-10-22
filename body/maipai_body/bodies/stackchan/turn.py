@@ -52,8 +52,8 @@ STREAM_POLL_S = 0.01
 # recognition (the hub answers one short voiced burst with no_speech). UNMEASURED default.
 POPUP_HOLD_S = 0.3
 # A listen the device re-opens by itself right after a reply is a follow-up: the person has this
-# long to speak before the turn ends quietly (robot.follow_up.seconds, default 8).
-FOLLOW_UP_S = 8.0
+# long to speak before the turn ends quietly (default 5, so a quiet room does not keep it listening).
+FOLLOW_UP_S = 5.0
 FOLLOW_UP_AFTER_S = 2.0
 # The unit can end up listening without having told the host (no "listen start" arrives after a
 # reply, host log 2026-10-22: audio frames flow, nothing answers, until the unit's own guard resets
@@ -244,6 +244,10 @@ class StackChanAudioPlayback(AudioPlayback):
         self._aborted = threading.Event()
         # When the robot finishes playing what was sent; the stop waits for it.
         self._play_until = 0.0
+        # Called once, just before the first reply frames go to the unit (the face starts talking
+        # then, not a second earlier at synthesis time).
+        self.on_first_audio: Callable[[], object] | None = None
+        self._announced = False
         super().__init__(self)
 
     def get_output_audio_samplerate(self) -> int:
@@ -335,6 +339,13 @@ class StackChanAudioPlayback(AudioPlayback):
         self._sentence_start = False
         began = self._clock()
         self._play_until = max(self._clock(), self._play_until) + len(lead) * FRAME_S
+        if not self._announced:
+            self._announced = True
+            if self.on_first_audio is not None:
+                try:
+                    self.on_first_audio()
+                except Exception:
+                    LOG.debug("StackChan first-audio hook failed", exc_info=True)
         await self._server.send_audio(
             self._device_id,
             lead,
@@ -619,6 +630,7 @@ class StackChanTurnBridge:
         self._last_turn_end: dict[str, float] = {}
         self._followup: dict[str, bool] = {}
         self._stray: dict[str, tuple[int, float]] = {}
+        self._quiet_idle: set[str] = set()  # sessions the host sent idle after a silent turn
         self.follow_up_s = FOLLOW_UP_S
         # The selected voice record's pitch_semitones (-12 to 12); 0 changes nothing.
         self.pitch_semitones = lambda: 0.0
@@ -671,6 +683,10 @@ class StackChanTurnBridge:
 
     async def _listen_from_stray_audio(self, session_id: str, now: float) -> bool:
         """Audio is arriving with no listen start: after a turn, begin the listen from the audio."""
+        if session_id in self._quiet_idle:
+            # The host just told the unit to go idle after a silent turn; audio still in flight
+            # is not a new turn. A real listen start (or a wake) clears this.
+            return False
         count, last = self._stray.get(session_id, (0, float("-inf")))
         count = count + 1 if now - last <= STRAY_GAP_S else 1
         self._stray[session_id] = (count, now)
@@ -706,6 +722,7 @@ class StackChanTurnBridge:
         if state == "detect":
             self._record_uplink(0, 0.0, detect=True)
         if state in {"start", "detect"}:
+            self._quiet_idle.discard(session_id)
             self._audio_stats[session_id] = [0, 0]
             self._followup[session_id] = (
                 state == "start"
@@ -1110,7 +1127,9 @@ class StackChanTurnBridge:
                 for index, sentence in enumerate(_sentences(reply)):
                     if asyncio.current_task().cancelling():
                         return
-                    self._emit_expression("speaking")
+                    if index == 0:
+                        # The face talks when the first frames reach the unit, not at synthesis time.
+                        playback.on_first_audio = lambda: self._emit_expression("speaking")
                     self._states[session_id] = "speaking"
                     self._speaking_since[session_id] = self._clock()
                     spoke_at = self._clock()
@@ -1264,6 +1283,7 @@ class StackChanTurnBridge:
             "" if self._quiet_streak == 1 else "s",
             " and waiting for the wake word" if self._quiet_streak >= 2 else "",
         )
+        self._quiet_idle.add(session_id)
         await self._go_idle(device_id)
 
     async def _go_idle(self, device_id: str) -> None:

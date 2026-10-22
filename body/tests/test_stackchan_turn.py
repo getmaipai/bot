@@ -103,6 +103,9 @@ class FakeTts:
 
     def speak(self, text, *, stop_event=None):
         self.sentences.append(text)
+        hook = getattr(self.playback, "on_first_audio", None)
+        if hook is not None:  # the real playback calls it as the first frames go out
+            hook()
 
 
 def test_happy_path_streams_reply_sentences_only_to_live_hub(monkeypatch):
@@ -818,6 +821,7 @@ def test_audio_with_no_listen_start_after_a_turn_starts_the_listen():
     started = []
     bridge = object.__new__(turn_module.StackChanTurnBridge)
     bridge._stray = {}
+    bridge._quiet_idle = set()
     bridge._last_turn_end = {"s1": 100.0}
     bridge._clock = lambda: 101.0
     bridge.server = SimpleNamespace(_session_ids={"dev-1": "s1"})
@@ -841,6 +845,7 @@ def test_stray_audio_long_after_the_last_turn_is_ignored():
 
     bridge = object.__new__(turn_module.StackChanTurnBridge)
     bridge._stray = {}
+    bridge._quiet_idle = set()
     bridge._last_turn_end = {"s1": 0.0}
     bridge.server = SimpleNamespace(_session_ids={"dev-1": "s1"})
     loop = asyncio.new_event_loop()
@@ -850,3 +855,47 @@ def test_stray_audio_long_after_the_last_turn_is_ignored():
     ]
     loop.close()
     assert results == [False] * 10
+
+
+def test_stray_audio_does_not_restart_a_turn_the_host_just_ended_quietly():
+    from maipai_body.bodies.stackchan import turn as turn_module
+
+    started = []
+    bridge = object.__new__(turn_module.StackChanTurnBridge)
+    bridge._stray = {}
+    bridge._quiet_idle = {"s1"}
+    bridge._last_turn_end = {"s1": 100.0}
+    bridge.server = SimpleNamespace(_session_ids={"dev-1": "s1"})
+
+    async def listen(session_id, device_id, state, *, mode="auto", aec=None):
+        started.append(state)
+
+    bridge.listen = listen
+    loop = asyncio.new_event_loop()
+    results = [
+        loop.run_until_complete(bridge._listen_from_stray_audio("s1", 101.0 + i * 0.01))
+        for i in range(20)
+    ]
+    loop.close()
+    assert results == [False] * 20 and started == []
+
+
+def test_the_face_talks_when_the_first_frames_reach_the_unit():
+    calls = []
+
+    class Server:
+        async def send_audio(self, device_id, frames, **kwargs):
+            calls.append(("audio", len(frames)))
+
+    from maipai_body.bodies.stackchan.turn import StackChanAudioPlayback
+
+    playback = StackChanAudioPlayback(Server(), "dev-1")
+    playback.on_first_audio = lambda: calls.append(("face", 0))
+    loop = asyncio.new_event_loop()
+    playback._frames = [b"x"] * 6
+    playback._finished = True
+    try:
+        loop.run_until_complete(asyncio.wait_for(playback._sender(), timeout=5))
+    finally:
+        loop.close()
+    assert calls[0] == ("face", 0) and calls[1][0] == "audio"

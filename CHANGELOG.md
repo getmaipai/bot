@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.47] - 2026-10-22
+
+### Fixed
+- The robot kept re-opening a turn out of nothing: after a silent turn the host tells the unit to go idle, but audio already in flight made the "audio with no listen start" rule (0.2.41) start another turn, so the unit cycled listen, no speech, idle for about 25 seconds and ignored questions asked in the gaps. Audio that follows a silent turn no longer starts a turn; a real listen start or a wake clears that. The follow-up listening window is 5 seconds instead of 8.
+- The face started talking about a second before the voice: it was told at synthesis time. It now starts when the first reply frames go to the unit.
+
 ## [0.2.46] - 2026-10-22
 
 ### Changed
