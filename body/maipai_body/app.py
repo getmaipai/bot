@@ -209,7 +209,7 @@ class StackChanBehavior:
         self.orientation: Any = None
         self.vision_poster: Any = None  # vision_post.VisionPoster: scene descriptions from Home
         self._vision_posting = False
-        self._vision_last: tuple[int, str | None] | None = None
+        self._vision_last: tuple[str | None, Any] | None = None  # bucket and thumbnail last posted
         self.orientation_tick: Callable[[], object] | None = None
         self.pose_held: Callable[[], bool] = lambda: False
         self._last_event_poll = float("-inf")
@@ -420,8 +420,9 @@ class StackChanBehavior:
         """Send Home one camera picture now and then so it can describe the room (never in a turn).
 
         Idle only, not at night, not when watching is off, not while a post is on its way. A picture
-        goes when the face count or the brightness changed (at most every 10 s) or once a minute;
-        the frame is dropped as soon as it is posted."""
+        goes at once when the brightness bucket changed (at most every 10 s), otherwise once a
+        minute if the scene differs from the last one posted and every five minutes even if not
+        (each picture costs Home a model call); the frame is dropped as soon as it is posted."""
         poster = self.vision_poster
         if (
             poster is None
@@ -432,19 +433,25 @@ class StackChanBehavior:
             or self.watch_level() == "off"
         ):
             return
-        from maipai_body.bodies.stackchan.vision_post import light_bucket
+        from maipai_body.bodies.stackchan.vision_post import differs, light_bucket
 
         look = self._vision.latest_look(max_age_s=3.0)
         if look is None:
             return
-        _jpeg, people, luma = look
+        _jpeg, people, luma, thumb = look
         bucket = light_bucket(luma)
-        state = (people, bucket)
-        if not poster.scene_due(now, changed=state != self._vision_last):
+        last_bucket, last_thumb = self._vision_last or (None, None)
+        due = poster.scene_due(
+            now,
+            bucket_changed=self._vision_last is not None and bucket != last_bucket,
+            differs=differs(thumb, last_thumb),
+        )
+        if not due:
             return
         taken = self._vision.latest_look(max_age_s=3.0, take=True)
         if taken is None:
             return
+        state = (bucket, thumb)
         self._vision_posting = True
         threading.Thread(
             target=self._post_scene_now,
@@ -454,7 +461,7 @@ class StackChanBehavior:
         ).start()
 
     def _post_scene_now(
-        self, jpeg: bytes, people: int, bucket: str | None, state: tuple[int, str | None]
+        self, jpeg: bytes, people: int, bucket: str | None, state: tuple[str | None, Any]
     ) -> None:
         try:
             result = self.vision_poster.post(jpeg, purpose="scene", people=people, light=bucket)
@@ -483,7 +490,7 @@ class StackChanBehavior:
         look = self._vision.latest_look(max_age_s=20.0, take=True)
         if look is None:
             return False
-        jpeg, people, luma = look
+        jpeg, people, luma, _thumb = look
         result = poster.post(
             jpeg, purpose="ask", people=people, light=light_bucket(luma), timeout=5.0
         )
@@ -1052,7 +1059,9 @@ async def _serve_stackchan_channels(
                 face_age=behavior.face_age,
                 camera_on=lambda: behavior.watch_level() != "off",
                 detector_ready=lambda: getattr(getattr(vision, "detector", None), "ready", True),
-                light=lambda: _light_from_last_look(vision),
+                light=lambda: _light_from_last_look(
+                    vision, getattr(voice.robot.client, "last_lux", None)
+                ),
             ),
         )
         bridge.vision_ask = behavior.vision_ask
@@ -1819,14 +1828,14 @@ def _alarm_backstop(alarm: AlarmController, stop_event: threading.Event) -> None
             logger.warning("alarm backstop failed", exc_info=True)
 
 
-def _light_from_last_look(vision: Any) -> str | None:
+def _light_from_last_look(vision: Any, lux: float | None = None) -> str | None:
     """Dark, dim or bright from the newest camera frame (kept in memory for the next post)."""
     if vision is None:
         return None
     from maipai_body.bodies.stackchan.vision_post import light_bucket
 
     look = vision.latest_look(max_age_s=60.0)
-    return light_bucket(look[2]) if look is not None else None
+    return light_bucket(look[2], lux) if look is not None else light_bucket(None, lux)
 
 
 def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power: Any) -> None:

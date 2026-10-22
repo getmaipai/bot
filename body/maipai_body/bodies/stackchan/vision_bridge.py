@@ -46,7 +46,7 @@ class StackChanVisionBridge:
         self.frame_check = FrameCheck()
         # The newest streamed frame, in memory only: (jpeg, when, face count, mean luma). It is
         # replaced by the next look, and cleared once it has been posted to Home (vision_post.py).
-        self._latest_look: tuple[bytes, float, int, float] | None = None
+        self._latest_look: tuple[bytes, float, int, float, Any] | None = None
 
     def track_stream_frame(
         self, *, deadline_s: float = 0.4, may_move: Callable[[], bool] | None = None
@@ -73,9 +73,15 @@ class StackChanVisionBridge:
             if self.clock() - started > deadline_s:
                 return FaceTrackTarget(detected=False)
             faces = self.detector.detect(frame)
-            from maipai_body.bodies.stackchan.vision_post import mean_luma
+            from maipai_body.bodies.stackchan.vision_post import mean_luma, thumbnail
 
-            self._latest_look = (bytes(frame_bytes), self.clock(), len(faces), mean_luma(frame))
+            self._latest_look = (
+                bytes(frame_bytes),
+                self.clock(),
+                len(faces),
+                mean_luma(frame),
+                thumbnail(frame),
+            )
             if not faces:
                 self.frame_check.note(self.detector, frame, len(frame_bytes))
             if not faces or self.clock() - started > deadline_s:
@@ -118,14 +124,14 @@ class StackChanVisionBridge:
 
     def latest_look(
         self, *, max_age_s: float, take: bool = False
-    ) -> tuple[bytes, int, float] | None:
-        """(jpeg, face count, mean luma) of the newest look if young enough; ``take`` clears it."""
+    ) -> tuple[bytes, int, float, Any] | None:
+        """(jpeg, faces, luma, thumbnail) of the newest look if young enough; ``take`` clears it."""
         look = self._latest_look
         if look is None or self.clock() - look[1] > max_age_s:
             return None
         if take:
             self._latest_look = None
-        return look[0], look[2], look[3]
+        return look[0], look[2], look[3], look[4]
 
     def track_once(self, *, deadline_s: float = 0.4) -> FaceTrackTarget:
         """Capture one frame and make a bounded anonymous head correction."""

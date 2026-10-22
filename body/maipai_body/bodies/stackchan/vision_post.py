@@ -16,8 +16,11 @@ logger = logging.getLogger("maipai_body.bodies.stackchan.vision_post")
 MAX_FRAME_BYTES = 512 * 1024
 SCENE_MIN_GAP_S = 10.0
 SCENE_REFRESH_S = 60.0
+SCENE_STALE_S = 300.0  # post even an unchanged scene this often, so Home's look does not go cold
+MAX_INTERVAL_S = 600.0
 NO_VISION_BACKOFF_S = 60.0
 TOO_FAST_BACKOFF_S = 10.0
+THUMB_CHANGE = 6.0  # mean gray change (0..255) that counts as a different scene
 MODES = ("continual", "on_demand", "none")
 VISION_PATH = "/api/devices/me/vision"
 
@@ -44,6 +47,19 @@ def light_bucket(mean_luma: float | None, lux: float | None = None) -> str | Non
     if lux < 5.0:
         return "dim"
     return "bright"
+
+
+def thumbnail(frame_bgr: npt.NDArray[np.uint8]) -> npt.NDArray[np.float32]:
+    """A tiny gray picture (about 12 by 16) to tell whether a scene changed; never sent anywhere."""
+    sample = frame_bgr[::20, ::20].astype(np.float32)
+    return 0.114 * sample[:, :, 0] + 0.587 * sample[:, :, 1] + 0.299 * sample[:, :, 2]
+
+
+def differs(a: npt.NDArray[np.float32] | None, b: npt.NDArray[np.float32] | None) -> bool:
+    """True when two thumbnails differ enough to be worth a new description (or one is missing)."""
+    if a is None or b is None or a.shape != b.shape:
+        return True
+    return float(np.mean(np.abs(a - b))) >= THUMB_CHANGE
 
 
 def mean_luma(frame_bgr: npt.NDArray[np.uint8]) -> float:
@@ -73,6 +89,7 @@ class VisionPoster:
         self._vision_off = False
         self._last_scene_at: float | None = None
         self._backoff_until = float("-inf")
+        self._scale = 1.0  # doubles (up to 10x) after a refusal, back to 1 after a success
 
     @property
     def mode(self) -> str:
@@ -82,14 +99,27 @@ class VisionPoster:
         self._mode = value if isinstance(value, str) and value in MODES else "continual"
         self._vision_off = False
 
-    def scene_due(self, now: float | None = None, *, changed: bool = False) -> bool:
+    def scene_due(
+        self, now: float | None = None, *, bucket_changed: bool = False, differs: bool = True
+    ) -> bool:
+        """Time for a background picture? Slow by default: Home spends a model call on each.
+
+        At most every SCENE_MIN_GAP_S (Home's floor); at once when the brightness bucket changed;
+        otherwise every SCENE_REFRESH_S if the picture differs from the last one posted, and every
+        SCENE_STALE_S even if it does not. After a refusal the intervals double, up to ten times."""
         current = self._clock() if now is None else now
         if self._mode != "continual" or self._vision_off or current < self._backoff_until:
             return False
         if self._last_scene_at is None:
             return True
         elapsed = current - self._last_scene_at
-        return elapsed >= SCENE_MIN_GAP_S and (changed or elapsed >= SCENE_REFRESH_S)
+        if elapsed < SCENE_MIN_GAP_S:
+            return False
+        if bucket_changed:
+            return True
+        if elapsed >= min(MAX_INTERVAL_S, SCENE_STALE_S * self._scale):
+            return True
+        return differs and elapsed >= min(MAX_INTERVAL_S, SCENE_REFRESH_S * self._scale)
 
     def ask_possible(self) -> bool:
         return self._mode != "none" and not self._vision_off
@@ -136,6 +166,7 @@ class VisionPoster:
                 if status == 200:
                     if purpose == "scene":
                         self._last_scene_at = self._clock()
+                    self._scale = 1.0
                     result = PostResult(True, "ok", status)
                 elif status == 403:
                     code = response.json().get("code")
@@ -148,9 +179,11 @@ class VisionPoster:
                     else:
                         result = PostResult(False, "error", status)
                 elif status == 429:
+                    self._scale = min(10.0, self._scale * 2)
                     self._backoff_until = self._clock() + TOO_FAST_BACKOFF_S
                     result = PostResult(False, "too_fast", status)
                 elif status == 503:
+                    self._scale = min(10.0, self._scale * 2)
                     self._backoff_until = self._clock() + NO_VISION_BACKOFF_S
                     result = PostResult(False, "no_vision", status)
                 elif status in {400, 413, 415}:

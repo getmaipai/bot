@@ -1067,9 +1067,10 @@ class StackChanTurnBridge:
             if self.sight_control is not None:
                 sight_kind = self.sight_control.kind(result.text or "")
                 described = False
-                if sight_kind in {"see_me", "light", "picture"} and self.vision_ask is not None:
+                if sight_kind in {"see_me", "picture"} and self.vision_ask is not None:
                     # Ask Home to describe one picture now; the hub then answers the question
                     # itself with that description in the turn's context (nothing here keeps it).
+                    # Light questions never cost a model call: the host reads the brightness.
                     described = bool(await asyncio.to_thread(self.vision_ask, sight_kind))
                     LOG.info(
                         "StackChan voice: sight question (%s): %s",

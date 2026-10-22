@@ -135,6 +135,7 @@ class XiaozhiDeviceClient:
         if isinstance(result, dict) and isinstance(result.get("lux"), (int, float)):
             # The raw sensor counts (firmware patch 065), kept for the minute light log.
             self.last_light_raw = (result.get("ch0"), result.get("ch1"))
+            self.last_lux = float(result["lux"])
             return float(result["lux"])
         return None
 

@@ -122,13 +122,16 @@ def test_scene_gap_changed_and_refresh_rules():
     assert poster.scene_due()
     assert poster.post(b"x", purpose="scene").ok
     assert not poster.scene_due()
-    assert not poster.scene_due(changed=True)
+    assert not poster.scene_due(bucket_changed=True)  # Home's floor: not within 10 s
     clock.now = 10
-    assert poster.scene_due(changed=True)
+    assert poster.scene_due(bucket_changed=True)  # a new brightness bucket goes at once
+    assert not poster.scene_due()  # unchanged scenes wait for the minute
     assert poster.post(b"x", purpose="scene").ok
-    assert not poster.scene_due()
     clock.now = 70
-    assert poster.scene_due()
+    assert poster.scene_due(differs=True)
+    assert not poster.scene_due(differs=False)  # a barely different picture is skipped
+    clock.now = 10 + 300
+    assert poster.scene_due(differs=False)  # but never longer than five minutes
 
 
 def test_too_big_and_network_error():
@@ -196,7 +199,7 @@ def test_the_looks_flow_from_the_bridge_to_a_scene_post_and_an_ask_post():
 
     class Bridge:
         def __init__(self):
-            self.look = (b"\xff\xd8jpeg\xff\xd9", 1, 120.0)
+            self.look = (b"\xff\xd8jpeg\xff\xd9", 1, 120.0, None)
 
         def latest_look(self, *, max_age_s, take=False):
             look = self.look
@@ -221,8 +224,36 @@ def test_the_looks_flow_from_the_bridge_to_a_scene_post_and_an_ask_post():
     assert posts[0][0] == {"purpose": "scene", "people": 1, "light": "bright"}
     assert behavior._vision.look is None  # the frame is dropped once posted
 
-    behavior._vision.look = (b"\xff\xd8jpeg\xff\xd9", 0, 20.0)
+    behavior._vision.look = (b"\xff\xd8jpeg\xff\xd9", 0, 20.0, None)
     assert behavior.vision_ask("light") is True
     assert posts[1][0] == {"purpose": "ask", "people": 0, "light": "dark"}
     assert posts[1][2] == 5.0
     assert behavior.vision_ask("light") is False  # nothing left to send
+
+
+def test_refusals_double_the_interval_and_a_success_resets_it():
+    poster, session, clock = make(Response(200))
+    assert poster.post(b"x", purpose="scene").ok  # at 0
+    session.response = Response(503, {"code": "no_vision"})
+    clock.now = 70
+    assert poster.post(b"x", purpose="scene").reason == "no_vision"  # back-off until 130, scale 2
+    clock.now = 125
+    assert not poster.scene_due()
+    clock.now = 131
+    assert poster.scene_due()
+    session.response = Response(200)
+    assert poster.post(b"x", purpose="scene").ok  # scale back to 1
+    clock.now = 131 + 30
+    assert not poster.scene_due()
+    clock.now = 131 + 61
+    assert poster.scene_due()
+
+
+def test_thumbnails_tell_a_changed_scene_from_noise():
+    from maipai_body.bodies.stackchan.vision_post import differs, thumbnail
+
+    a = thumbnail(np.full((240, 320, 3), 100, dtype=np.uint8))
+    assert a.shape == (12, 16)
+    assert not differs(a, thumbnail(np.full((240, 320, 3), 103, dtype=np.uint8)))
+    assert differs(a, thumbnail(np.full((240, 320, 3), 140, dtype=np.uint8)))
+    assert differs(None, a)
