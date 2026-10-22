@@ -498,3 +498,72 @@ def test_home_default_calm_counts_as_still_and_lively_is_a_choice():
     assert _effective_idle_level("calm") == "still"
     assert _effective_idle_level("still") == "still"
     assert _effective_idle_level("lively") == "lively"
+
+
+def test_a_lit_room_seen_by_the_camera_never_starts_night_even_if_the_sensor_reads_dark():
+    clock = Clock()
+    policy = NightPolicy(clock)
+    for t in (0, 60, 130, 600):
+        clock.value = t
+        assert not policy.update(
+            quiet_hours=False, lux=0.0, watch_level="presence", camera_luma=120.0
+        )
+
+
+def test_night_starts_only_when_the_sensor_and_the_camera_both_say_dark():
+    clock = Clock()
+    policy = NightPolicy(clock)
+    policy.update(quiet_hours=False, lux=0.0, watch_level="presence", camera_luma=5.0)
+    clock.value = 130
+    assert policy.update(quiet_hours=False, lux=0.0, watch_level="presence", camera_luma=5.0)
+
+
+def test_a_bright_frame_ends_night_after_two_minutes_though_the_sensor_still_reads_low():
+    clock = Clock()
+    policy = NightPolicy(clock)
+    policy.update(quiet_hours=False, lux=0.0, watch_level="presence", camera_luma=5.0)
+    clock.value = 130
+    assert policy.update(quiet_hours=False, lux=0.0, watch_level="presence", camera_luma=5.0)
+    clock.value = 140
+    assert policy.update(quiet_hours=False, lux=1.7, watch_level="presence", camera_luma=110.0)
+    clock.value = 270
+    assert not policy.update(quiet_hours=False, lux=1.7, watch_level="presence", camera_luma=110.0)
+
+
+def test_a_tilted_unit_does_not_read_its_sensors_for_night():
+    from maipai_body.presence.night import NightController
+
+    class Device:
+        def __init__(self):
+            self.reads = 0
+
+        def get_ambient_light(self):
+            self.reads += 1
+            return 0.0
+
+        def set_face_background(self, palette, night):
+            return None
+
+        def set_idle_motion(self, enabled):
+            return None
+
+        def set_volume(self, volume):
+            return None
+
+        def set_brightness(self, brightness):
+            return None
+
+    clock = Clock()
+    device = Device()
+    controller = NightController(
+        device,
+        clock=clock,
+        quiet_hours=lambda: False,
+        camera_luma=lambda: 3.0,
+        connected=lambda: True,
+        sensors_blocked=lambda: True,
+    )
+    for t in (0, 60, 130, 300):
+        clock.value = t
+        controller.tick()
+    assert device.reads == 0 and controller.night is False

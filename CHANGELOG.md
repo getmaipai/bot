@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.49] - 2026-10-22
+
+### Fixed
+- The robot stayed in night mode in a lit room, so its spoken lines were skipped: the light sensor behind the screen glass reads 0 to 4 lux whatever the room (a lit afternoon read 3 to 10, a unit tilted for a pose test 0 to 2). Night now starts only when the sensor and the camera frame both say dark, ends as soon as either says light, and the sensors are ignored while the unit is not upright.
+- Orientation sides are named by the robot's own left and right (its right ear down is `right_side`, measured 2026-10-22), and a skipped orientation line says why (night mode, asleep).
+
 ## [0.2.48] - 2026-10-22
 
 ### Added

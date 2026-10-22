@@ -85,16 +85,22 @@ class NightPolicy:
         self._unreadable_since = None
         # Reuse sleep-auto's camera brightness threshold when the ambient sensor
         # is absent. The luma reader itself enforces watch-level off.
-        dark = (
-            lux < NIGHT_DARK_LUX
-            if lux is not None
-            else camera_luma is not None and camera_luma < DARK_LUMA
-        )
-        light = (
-            lux > NIGHT_LIGHT_LUX
-            if lux is not None
-            else camera_luma is not None and camera_luma >= DARK_LUMA
-        )
+        # Two witnesses when both are there: the sensor behind the screen glass reads 0 to 4 lux
+        # whatever the room (host log 2026-10-22: a lit afternoon read 3 to 10, a tilted unit 0 to
+        # 2),
+        # while the camera frame's brightness is a real measure. Night starts only when every
+        # witness says dark, and ends as soon as either says light.
+        dark_lux = lux is not None and lux < NIGHT_DARK_LUX
+        dark_luma = camera_luma is not None and camera_luma < DARK_LUMA
+        light_lux = lux is not None and lux > NIGHT_LIGHT_LUX
+        light_luma = camera_luma is not None and camera_luma >= DARK_LUMA
+        if lux is not None and camera_luma is not None:
+            dark = dark_lux and dark_luma
+            light = light_lux or light_luma
+        elif lux is not None:
+            dark, light = dark_lux, light_lux
+        else:
+            dark, light = dark_luma, light_luma
         if not self.night:
             self._light_since = None
             if dark:
@@ -164,8 +170,12 @@ class NightController:
         alarm_active: Callable[[], bool] = lambda: False,
         levels: OwnerLevels | None = None,
         connected: Callable[[], bool] | None = None,
+        sensors_blocked: Callable[[], bool] = lambda: False,
     ) -> None:
         self._device = device
+        # True while the unit is tilted or upside down: its light sensor and camera then look at
+        # the wrong thing, so they cannot start night.
+        self.sensors_blocked = sensors_blocked
         self._quiet = quiet_hours
         self._watch_level = watch_level
         self._camera_luma = camera_luma
@@ -326,9 +336,10 @@ class NightController:
                 return self.night
             quiet = bool(self._quiet())
             level = self._watch_level()
-            lux = None if quiet else self._read_lux()
+            blocked = bool(self.sensors_blocked())
+            lux = None if quiet or blocked else self._read_lux()
             luma = None
-            if not quiet and lux is None and level != "off" and self._camera_luma is not None:
+            if not quiet and not blocked and level != "off" and self._camera_luma is not None:
                 luma = self._camera_luma()
             wanted = self._policy.update(
                 quiet_hours=quiet, lux=lux, watch_level=level, camera_luma=luma

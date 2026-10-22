@@ -230,3 +230,19 @@ def test_face_watching_imports_without_the_reachy_sdk_or_huggingface_hub():
     )
     result = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_sides_are_named_by_the_robots_own_left_and_right():
+    assert pose_for_axis("+x") == "right_side"  # its right ear down, measured 2026-10-22
+    assert pose_for_axis("-x") == "left_side"
+
+
+def test_a_quiet_reason_from_the_caller_is_logged(caplog):
+    import logging
+
+    h = Harness()
+    h.quiet = "night mode is on"
+    with caplog.at_level(logging.INFO, logger="maipai_body.bodies.stackchan.orientation"):
+        h.event("+x")
+    assert "skipped: night mode is on" in caplog.text
+    assert h.lines == []

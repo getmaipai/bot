@@ -1863,10 +1863,11 @@ def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power:
         say=bridge.speak_reaction,
         rotate=rotate,
         hold_motion=power.set_orientation_hold,
-        quiet=lambda: night.night or asleep(),
+        quiet=lambda: ("night mode is on" if night.night else "") or ("asleep" if asleep() else ""),
         busy=behavior.reaction_blocked,
     )
     behavior.orientation = orientation
+    night.sensors_blocked = lambda: orientation.pose != "upright"
     behavior.pose_held = lambda: orientation.pose != "upright"
 
     def tick() -> None:

@@ -20,8 +20,8 @@ POSES = ("upright", "left_side", "right_side", "upside_down", "face_down", "on_b
 AXIS_POSES: dict[str, str] = {
     "+y": "upright",
     "-y": "upside_down",
-    "+x": "left_side",
-    "-x": "right_side",
+    "+x": "right_side",  # measured 2026-10-22: the robot's own right ear down reads +x
+    "-x": "left_side",
     "-z": "face_down",
     "+z": "on_back",
 }
@@ -134,7 +134,7 @@ class OrientationReactions:
         say: Callable[[str], bool],
         rotate: Callable[[int], object],
         hold_motion: Callable[[bool], object],
-        quiet: Callable[[], bool] = lambda: False,
+        quiet: Callable[[], bool | str] = lambda: False,
         busy: Callable[[], bool] = lambda: False,
         clock: Callable[[], float] = time.monotonic,
         rng: random.Random | None = None,
@@ -178,8 +178,10 @@ class OrientationReactions:
     def _maybe_say(self) -> None:
         """One line for the new pose, unless quiet, a conversation is on, or one was just said."""
         pose = self._pose
-        if self._quiet():
-            logger.info("StackChan orientation line skipped: quiet (night, asleep or quiet hours)")
+        quiet = self._quiet()
+        if quiet:
+            why = quiet if isinstance(quiet, str) else "quiet"
+            logger.info("StackChan orientation line skipped: %s", why)
             return
         if self._busy():
             logger.info("StackChan orientation line skipped: a conversation is on")
