@@ -1,0 +1,25 @@
+# Intent: show whether the unit stutters and why (owner report 2026-10-22: speech stuttery and slow for a minute or two; the host's own playback numbers are clean, so the cause is on the unit). The unit already counts playback gaps (the speaker ran dry between two frames) and logs them, with the queue depths, only on its serial port. When a reply ends it now also pushes a "playback" event: frames that arrived, frames still waiting to be decoded and to be played, how many gaps there were and the longest one in ms. A reply with gaps=0 and short queues played cleanly; gaps above 0 with a long decode queue point at the decoder, gaps with an empty decode queue point at the network.
+# Upstream: 78/xiaozhi-esp32 main/application.cc (MIT). Applies after 069.
+# Check after a flash: each reply adds "unit playback: playback frames=N decode_q=N play_q=N gaps=N gap_max_ms=N" to the host log.
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index 3b6fe3f..f49b552 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -625,6 +625,17 @@ void Application::InitializeProtocol() {
+                         DeviceStateMachine::GetStateName(GetDeviceState()), (int)listening_mode_,
+                         (unsigned long)speech_frames_in_.load(), (unsigned)decode, (unsigned)playback,
+                         (unsigned long)gaps, gap_max_ms);
++                    {
++                        // The same numbers for the host log, once per reply: how many frames arrived,
++                        // how many were still waiting to be decoded or played, and how often the
++                        // speaker ran dry (a stutter you can hear).
++                        char extra[112];
++                        snprintf(extra, sizeof(extra),
++                                 "\"frames\":%lu,\"decode_q\":%u,\"play_q\":%u,\"gaps\":%lu,\"gap_max_ms\":%d",
++                                 (unsigned long)speech_frames_in_.load(), (unsigned)decode, (unsigned)playback,
++                                 (unsigned long)gaps, gap_max_ms);
++                        device_events_push_diag("playback", extra);
++                    }
+                     if (GetDeviceState() == kDeviceStateSpeaking) {
+                         if (listening_mode_ == kListeningModeManualStop) {
+                             SetDeviceState(kDeviceStateIdle);

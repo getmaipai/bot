@@ -648,6 +648,7 @@ class StackChanBehavior:
                     "camera": "unit camera",
                     "barge_stats": "unit barge",
                     "orientation": "unit orientation",
+                    "playback": "unit playback",
                     "heap_stats": "unit memory",
                     "stack_stats": "unit memory",
                     "boot": "unit boot",

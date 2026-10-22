@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.48] - 2026-10-22
+
+### Added
+- Firmware patch 070: when a reply ends the unit reports its playback numbers (`playback` event, host log "unit playback"): frames that arrived, frames still waiting to be decoded and played, playback gaps (the speaker ran dry) and the longest gap in ms. It separates a decoder that cannot keep up from a network that delivers late, for the stutter that the host's own clean pacing numbers cannot explain.
+
 ## [0.2.47] - 2026-10-22
 
 ### Fixed

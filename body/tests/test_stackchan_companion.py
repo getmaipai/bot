@@ -72,6 +72,7 @@ def test_dances_and_event_kinds_export_the_supported_sets():
             "camera",
             "barge_stats",
             "orientation",
+            "playback",
         }
     )
 
