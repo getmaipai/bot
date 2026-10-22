@@ -7,6 +7,14 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.42] - 2026-10-22
+
+### Added
+- Firmware patch 069, to find and avoid the freeze (every tool call times out while the socket stays open, no reboot): a stall watch in the IMU task writes the state of the known tasks to flash when the main loop stops for 8 seconds, and the next "boot" event carries it as `stall`; the camera sends no frames while the unit listens, speaks or connects (`paused` in the "unit camera" line); the screen-flip code is compiled out of the firmware.
+
+### Changed
+- "Can you see me" in the first minute after boot says the face finding is still starting up and to ask again, instead of that it is not ready.
+
 ## [0.2.41] - 2026-10-22
 
 ### Fixed

@@ -38,7 +38,9 @@ CAMERA_OFF = (
     "My camera is off right now.",
     "My camera is turned off at the moment.",
 )
-NOT_READY = ("My camera is on, but my face finding isn't ready yet.",)
+NOT_READY = (
+    "My camera is on, and my face finding is still starting up. Ask me again in a minute.",
+)
 PICTURES_LATER = (
     "I can look, but I can't describe pictures yet.",
     "I can look at you, but I can't tell you what's in a picture yet.",

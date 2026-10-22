@@ -1,0 +1,204 @@
+# Intent: find and avoid the freeze (owner report 2026-10-22, host log on 0.2.41: a turn starts, then every tool call times out for a minute with the socket still open, no reboot, no crash, memory fine). Three things in one build so the next test narrows it. (1) A stall watch in the IMU task (its own task): the application main loop bumps g_main_alive every second; if it stops for 8 s the state and free stack of the known tasks are written to flash and reported in the "boot" event as "stall" after the next restart (the host cannot be told while the loop is stuck). (2) No camera frames while the unit is not idle (listening, speaking, connecting): camera and voice together are untested hardware territory, and the freeze appeared only after the camera began to stream; the minute "camera" event counts the skipped captures as "paused". (3) The screen-flip code is compiled out (MAIPAI_SCREEN_ROTATION is not defined), so nothing can issue the panel mirror command.
+# Upstream: 78/xiaozhi-esp32 main/application.cc; m5stack/StackChan firmware/main/hal/hal_imu.cpp, hal_ws_avatar.cpp, hal_head_touch.cpp, board/stackchan.cc (MIT). Applies after 068.
+# Check after a flash: if the unit freezes again, power-cycle it and read "unit boot: ... stall=main:B/... avatar_ws:B/..." in the host log: which tasks are blocked and which run; "unit camera: ... paused=N" shows captures skipped during turns. If it no longer freezes, the camera stream during turns or the screen flip was the cause.
+diff --git a/firmware/main/hal/board/stackchan.cc b/firmware/main/hal/board/stackchan.cc
+index 3625f0a..950729a 100644
+--- a/firmware/main/hal/board/stackchan.cc
++++ b/firmware/main/hal/board/stackchan.cc
+@@ -681,6 +681,12 @@ i2c_master_bus_handle_t hal_bridge::board_get_i2c_bus()
+ 
+ void hal_bridge::display_set_rotation(int degrees)
+ {
++#ifndef MAIPAI_SCREEN_ROTATION
++    // Compiled out (2026-10-22): after a flip every tool that takes the screen lock timed out. Define
++    // MAIPAI_SCREEN_ROTATION to bring the flip back once it is made safe.
++    (void)degrees;
++    return;
++#endif
+     if (s_panel == nullptr) {
+         return;
+     }
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index 42bb405..adff1d6 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -22,7 +22,7 @@
+ #include <cstring>
+ #include <atomic>
+ extern std::atomic<uint32_t> g_cam_starts, g_cam_captured, g_cam_sent, g_cam_failed, g_cam_enc_failed;
+-extern std::atomic<uint32_t> g_avatar_binary, g_avatar_last_type;
++extern std::atomic<uint32_t> g_avatar_binary, g_avatar_last_type, g_cam_paused;
+ #include <mooncake_log.h>
+ #include <freertos/FreeRTOS.h>
+ #include <freertos/task.h>
+@@ -242,14 +242,14 @@ static void _head_touch_update_task(void* param)
+             snprintf(fw, sizeof(fw), "\"version\":\"%s\",\"rssi\":%d", MAIPAI_FIRMWARE_VERSION, rssi);
+             device_events_push_diag("fw", fw);
+             // Camera stream counts for the minute (defined in hal_ws_avatar.cpp).
+-            char cam[160];
++            char cam[192];
+             snprintf(cam, sizeof(cam),
+                      "\"starts\":%u,\"captured\":%u,\"sent\":%u,\"failed\":%u,\"enc_failed\":%u,"
+-                     "\"binary\":%u,\"last_type\":%u",
++                     "\"binary\":%u,\"last_type\":%u,\"paused\":%u",
+                      static_cast<unsigned>(g_cam_starts.exchange(0)), static_cast<unsigned>(g_cam_captured.exchange(0)),
+                      static_cast<unsigned>(g_cam_sent.exchange(0)), static_cast<unsigned>(g_cam_failed.exchange(0)),
+                      static_cast<unsigned>(g_cam_enc_failed.exchange(0)), static_cast<unsigned>(g_avatar_binary.exchange(0)),
+-                     static_cast<unsigned>(g_avatar_last_type.load()));
++                     static_cast<unsigned>(g_avatar_last_type.load()), static_cast<unsigned>(g_cam_paused.exchange(0)));
+             device_events_push_diag("camera", cam);
+             // Microphone level while the robot speaks (afe_wake_word.cc), to judge barge-in.
+             char barge[192];
+@@ -312,8 +312,18 @@ void Hal::head_touch_init()
+             counter.SetInt("crash_resets", crash_resets);
+         }
+     }
+-    char reason[48];
+-    snprintf(reason, sizeof(reason), "\"reason\":%d,\"crash_resets\":%d", why, crash_resets);
++    // The state of the tasks when the main loop last stalled (hal_imu.cpp), reported once.
++    std::string stall;
++    {
++        Settings stalled("maipai", true);
++        stall = stalled.GetString("stall", "");
++        if (!stall.empty()) {
++            stalled.EraseKey("stall");
++        }
++    }
++    char reason[320];
++    snprintf(reason, sizeof(reason), "\"reason\":%d,\"crash_resets\":%d,\"stall\":\"%s\"", why, crash_resets,
++             stall.c_str());
+     mclog::tagInfo(_tag, "boot: {}", reason);
+     device_events_push_diag("boot", reason);
+ 
+diff --git a/firmware/main/hal/hal_imu.cpp b/firmware/main/hal/hal_imu.cpp
+index c42cf29..98d8aac 100644
+--- a/firmware/main/hal/hal_imu.cpp
++++ b/firmware/main/hal/hal_imu.cpp
+@@ -12,11 +12,46 @@
+ #include <cstdio>
+ #include <cmath>
+ #include "device_events.h"
++#include <atomic>
++#include <string>
++#include <settings.h>
++#include <freertos/FreeRTOS.h>
++#include <freertos/task.h>
+ 
+ static const std::string_view _tag = "HAL-IMU";
+ 
+ static std::unique_ptr<BMI270> _bmi270;
+ 
++// The application main loop adds one every second (application.cc, clock tick). If it stops for 8 s
++// the unit is stalled while its socket may still be open (host log 2026-10-22: every tool call timed
++// out, no reboot, no crash). The host cannot be told then (events leave through that same loop), so
++// the state of the known tasks is written to flash and reported in the "boot" event after the next
++// restart ("stall").
++std::atomic<uint32_t> g_main_alive{0};
++
++static void _dump_stall()
++{
++    static const char* names[] = {"main",         "LVGL",       "taskLVGL",  "lvgl_port", "stackchan",
++                                  "avatar_ws",    "opus_codec", "audio_input", "audio_output", "audio_detection",
++                                  "ws_reconnect", "headtouch",  "imu",       "tiT",       "wifi",
++                                  "esp_timer",    "sys_evt",    "IDLE0",     "IDLE1"};
++    std::string out;
++    for (const char* name : names) {
++        TaskHandle_t task = xTaskGetHandle(name);
++        if (task == nullptr) {
++            continue;
++        }
++        const char state = "RrBSD?"[eTaskGetState(task) < 5 ? static_cast<int>(eTaskGetState(task)) : 5];
++        char one[40];
++        snprintf(one, sizeof(one), "%s%s:%c/%u", out.empty() ? "" : " ", name, state,
++                 static_cast<unsigned>(uxTaskGetStackHighWaterMark(task)));
++        out += one;
++    }
++    mclog::tagInfo(_tag, "main loop stalled; tasks: {}", out);
++    Settings settings("maipai", true);
++    settings.SetString("stall", out.substr(0, 230));
++}
++
+ // Which way is down: the axis the gravity vector mostly lies along ("+x", "-y", ...), kept steady by a
+ // low-pass filter, a minimum pull, a margin over the axis it replaces and a hold of about a second, so
+ // carrying or shaking the unit does not flap. The host maps the axis to a pose (orientation.py), so a
+@@ -111,6 +146,9 @@ static void _imu_task(void* param)
+     uint32_t stats_start_ms = 0;
+     uint32_t shakes         = 0;
+     OrientationTracker orientation;
++    uint32_t last_alive = 0;
++    int stuck_loops     = 0;
++    bool stall_dumped   = false;
+ 
+     while (1) {
+         if (_bmi270 && _bmi270->update()) {
+@@ -148,6 +186,17 @@ static void _imu_task(void* param)
+             // }
+         }
+         hal_bridge::display_rotation_tick();
++        {
++            const uint32_t alive = g_main_alive.load();
++            if (alive != last_alive) {
++                last_alive   = alive;
++                stuck_loops  = 0;
++                stall_dumped = false;
++            } else if (alive > 0 && ++stuck_loops >= 80 && !stall_dumped) {
++                stall_dumped = true;
++                _dump_stall();
++            }
++        }
+         vTaskDelay(pdMS_TO_TICKS(100));
+     }
+ }
+diff --git a/firmware/main/hal/hal_ws_avatar.cpp b/firmware/main/hal/hal_ws_avatar.cpp
+index 9cca438..2f22bd5 100644
+--- a/firmware/main/hal/hal_ws_avatar.cpp
++++ b/firmware/main/hal/hal_ws_avatar.cpp
+@@ -14,6 +14,7 @@
+ #include <esp_log.h>
+ #include <arpa/inet.h>
+ #include <atomic>
++#include <application.h>
+ #include <jpg/image_to_jpeg.h>
+ #include <wifi_station.h>
+ #include <ArduinoJson.hpp>
+@@ -39,6 +40,7 @@ std::atomic<uint32_t> g_cam_starts{0};
+ std::atomic<uint32_t> g_cam_captured{0};
+ std::atomic<uint32_t> g_cam_sent{0};
+ std::atomic<uint32_t> g_cam_failed{0};
++std::atomic<uint32_t> g_cam_paused{0};       // captures skipped because a turn was on
+ std::atomic<uint32_t> g_cam_enc_failed{0};   // JPEG encodes that failed (g_cam_failed counts the capture side)
+ std::atomic<uint32_t> g_avatar_binary{0};    // binary messages the avatar socket received
+ std::atomic<uint32_t> g_avatar_last_type{0}; // type byte of the last one
+@@ -214,6 +216,12 @@ public:
+         }
+ 
+         if (_is_streaming) {
++            // Camera and voice together are untested hardware territory (the unit froze during a
++            // turn while streaming): no frames while it listens, speaks or connects.
++            if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
++                g_cam_paused++;
++                return;
++            }
+             if (GetHAL().millis() - _last_capture_time >= (_is_video_mode ? 700 : 350)) {
+                 captureAndSendFrame();
+                 _last_capture_time = GetHAL().millis();
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index 8319c47..3b6fe3f 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -21,6 +21,7 @@
+ 
+ #include <atomic>
+ extern std::atomic<bool> g_barge_speaking;  // afe_wake_word.cc
++extern std::atomic<uint32_t> g_main_alive;  // hal_imu.cpp: the stall watch
+ 
+ #define TAG "Application"
+ 
+@@ -271,6 +272,7 @@ void Application::Run() {
+ 
+         if (bits & MAIN_EVENT_CLOCK_TICK) {
+             clock_ticks_++;
++            g_main_alive++;
+             auto display = Board::GetInstance().GetDisplay();
+             display->UpdateStatusBar();
+         

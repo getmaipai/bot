@@ -287,6 +287,7 @@ apply_repo_patch 065-barge-stats-and-light-channels.patch "$SRC"
 apply_repo_patch 066-camera-failure-stages.patch "$SRC"
 apply_repo_patch 067-orientation-event-and-screen-rotation.patch "$SRC"
 apply_repo_patch 068-state-guard-and-listen-restart.patch "$SRC"
+apply_repo_patch 069-stall-watch-and-camera-pause.patch "$SRC"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"
