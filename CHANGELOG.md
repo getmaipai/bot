@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.52] - 2026-10-23
+
+### Added
+- Idle sleep (host only, no firmware change). After 2 minutes with no touch, person or turn the StackChan shows the sleepy face; after 5 minutes it sleeps: eyes fully closed, screen dimmed to 5, ring dark, head level and still. A touch, shake, person or turn wakes it with one short blink, then the neutral face; the screen returns to the owner or night level and the ring to its normal look. Night mode halves both times.
+
 ## [0.2.51] - 2026-10-22
 
 ### Changed
