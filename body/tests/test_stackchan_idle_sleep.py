@@ -79,6 +79,85 @@ def test_sleep_dims_without_changing_owner_and_wake_blinks_then_restores():
     assert ring == [True, False]
 
 
+def test_sleep_face_is_firmware_gated_and_brightness_failure_does_not_block_face(caplog):
+    client = _Client()
+
+    def fail(_value):
+        raise TimeoutError("tool timed out")
+
+    renderer = RestRenderer(set_brightness=fail, firmware_version=lambda: "0.2.53")
+    renderer.render(_out("asleep"), client, STACKCHAN_PROFILE)
+    assert client.frames[-1].expression == "sleepy"
+    assert "brightness set to 5 failed" in caplog.text
+
+    new_firmware = _Client()
+    RestRenderer(firmware_version=lambda: "0.2.54").render(
+        _out("asleep"), new_firmware, STACKCHAN_PROFILE
+    )
+    assert new_firmware.frames[-1].expression == "sleeping"
+
+
+def test_failed_sleep_face_is_retried_and_later_face_stays_asleep():
+    class RecordingClient(_Client):
+        def __init__(self):
+            super().__init__()
+            self.fail_once = True
+            self.writes = []
+
+        def send_avatar_frame(self, frame):
+            if self.fail_once:
+                self.fail_once = False
+                raise TimeoutError("lost frame")
+            self.frames.append(frame)
+            self.writes.append(("face", frame.expression))
+
+        def command(self, name, **kwargs):
+            self.poses.append(kwargs["pose"])
+            self.writes.append(("pose", kwargs["pose"]))
+
+    client = RecordingClient()
+    renderer = RestRenderer(firmware_version=lambda: "0.2.54")
+    renderer.render(_out("asleep"), client, STACKCHAN_PROFILE)
+    renderer.render(_out("asleep"), client, STACKCHAN_PROFILE)
+    assert ("face", "sleeping") in client.writes
+    renderer.render(_out("asleep"), client, STACKCHAN_PROFILE)
+    assert client.writes[-2] == ("face", "sleeping")
+
+
 def test_turn_active_prevents_stackchan_rest_stage_change():
     policy = RestPolicy(0, drowsy_after_s=120, asleep_after_s=300)
     assert _update(policy, 600, turn_active=True).stage == "awake"
+
+
+def test_a_failed_wake_blink_is_retried_and_still_restores_the_screen():
+    sent, levels = [], []
+    fail = [True]
+
+    class Client:
+        def send_avatar_frame(self, frame):
+            if fail[0] and frame.expression == "neutral":
+                raise ConnectionError("unit not answering")
+            sent.append(frame.expression)
+
+        def command(self, *args, **kwargs):
+            return None
+
+    renderer = RestRenderer(
+        set_brightness=levels.append,
+        restore_brightness=lambda: 80,
+        sleep=lambda _s: None,
+        firmware_version=lambda: "0.2.54",
+    )
+    client = Client()
+    asleep = RestOutput(stage="asleep", pose_pitch_fraction=0.0, face="sleepy")
+    renderer.render(asleep, client, STACKCHAN_PROFILE)
+    awake = RestOutput(stage="awake", pose_pitch_fraction=0.0, face="neutral", wake_transition=True)
+    renderer.render(awake, client, STACKCHAN_PROFILE)  # the neutral face fails
+    fail[0] = False
+    renderer.render(
+        RestOutput(stage="awake", pose_pitch_fraction=0.0, face="neutral"),
+        client,
+        STACKCHAN_PROFILE,
+    )
+    assert sent[-1] == "neutral"
+    assert levels[-1] == 80

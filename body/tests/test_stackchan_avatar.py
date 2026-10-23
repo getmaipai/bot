@@ -186,5 +186,5 @@ class CameraRunningTests(unittest.TestCase):
 
         server = AvatarServer(PairingStore())
         self.assertIsNone(server.camera_running_s())
-        server._stream_since["unit"] = time.monotonic() - 12.0
+        server._camera_first_frame_at["unit"] = time.monotonic() - 12.0
         self.assertGreaterEqual(server.camera_running_s(), 12.0)

@@ -70,7 +70,15 @@ def test_it_never_answers_with_a_flat_i_cannot_see():
     ],
 )
 def test_picture_questions_get_the_interim_line_not_the_hub(text):
-    assert _answers(age=1.0).answer(text).startswith("My camera is on")
+    assert _answers(age=1.0).answer(text).startswith("my camera is on")
+
+
+def test_running_camera_with_no_analysis_gives_plain_luma_aware_line():
+    answer = _answers(light="bright").answer("what do you see")
+    assert answer == (
+        "my camera is on, it is bright here, but I cannot describe the room yet "
+        "(pictures are not being analysed)"
+    )
 
 
 @pytest.mark.parametrize(
@@ -119,14 +127,14 @@ def test_the_host_answer_for_the_light_comes_from_the_brightness():
 
 def test_a_camera_that_has_run_a_while_says_plainly_what_it_can_and_cannot_do():
     answer = _answers(age=None, running=300.0, light="dim").answer("can you see me")
-    assert "camera is on" in answer and "the room looks dim" in answer
+    assert "camera is on" in answer and "dim" in answer
     assert "can't describe" in answer and "ask me again" not in answer.lower()
     picture = _answers(running=300.0, light="bright").answer("what do you see")
-    assert (
-        picture
-        == "My camera is on and the room looks bright, but I can't describe what's in it yet."
+    assert picture == (
+        "my camera is on, it is bright here, but I cannot describe the room yet "
+        "(pictures are not being analysed)"
     )
-    assert "can't describe what's in the room" in _answers(running=300.0).answer("what do you see")
+    assert "cannot describe the room" in _answers(running=300.0).answer("what do you see")
 
 
 def test_a_camera_that_has_just_started_says_it_is_starting_and_a_face_still_wins():

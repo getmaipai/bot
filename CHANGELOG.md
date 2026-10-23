@@ -7,6 +7,16 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.54] - 2026-10-23
+
+### Fixed
+- Idle sleep now shows on the unit. The closed-eye face used to go out on the avatar socket, which the unit ignores in AI-agent mode; it goes over the voice socket now. Firmware patch 073 adds a "sleeping" face (eyes and mouth shut, no Zzz bubble, no head motion); the host sends it only when the unit reports firmware 0.2.54 or later and sends "sleepy" before that. Each rest step (face, screen dim, ring, head) runs on its own, a failed face is retried, a screen-dim timeout no longer aborts the stage, and nothing overwrites the rest face while asleep except a wake or a held tilt pose. A turn wakes the robot at once. Every rest-stage change and command is logged.
+- The camera no longer says it is "waking up" after its first minute: the running time counts from the first frame, not from the last socket reconnect. After that it says plainly that the camera is on, how bright it is, and that pictures are not being analysed.
+- Face detection never loaded: the asset request sent the bare cookie value, not `session=<value>`, so the hub answered 401 every time. The frame check line says "face detection is off" instead of printing 0.00 scores.
+
+### Firmware
+- Patch 073: the "sleeping" face. Parked for the next flash.
+
 ## [0.2.53] - 2026-10-23
 
 ### Fixed

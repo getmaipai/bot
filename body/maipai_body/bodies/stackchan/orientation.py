@@ -142,6 +142,7 @@ class OrientationReactions:
         hold_motion: Callable[[bool], object],
         quiet: Callable[[], bool | str] = lambda: False,
         busy: Callable[[], bool] = lambda: False,
+        resting: Callable[[], bool] = lambda: False,
         clock: Callable[[], float] = time.monotonic,
         rng: random.Random | None = None,
     ) -> None:
@@ -151,6 +152,7 @@ class OrientationReactions:
         self._hold_motion = hold_motion
         self._quiet = quiet
         self._busy = busy
+        self._resting = resting
         self._clock = clock
         self._rng = rng or random.Random()
         self._pose = "upright"
@@ -225,6 +227,8 @@ class OrientationReactions:
         self._last_rotate_at = self._clock()
 
     def _send_face(self) -> None:
+        if self._pose == "upright" and self._resting():
+            return
         self._face(FACE_FOR_POSE[self._pose])
         self._last_face_at = self._clock()
 
@@ -261,5 +265,6 @@ class OrientationReactions:
         self._rotate(0)
         if not was_upright:
             self._hold_motion(False)
-            self._face("neutral")
+            if not self._resting():
+                self._face("neutral")
             self._last_face_at = self._clock()

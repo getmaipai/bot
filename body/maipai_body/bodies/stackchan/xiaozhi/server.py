@@ -47,6 +47,7 @@ FIRMWARE_EMOTIONS = {
     "sad": "sad",
     "doubt": "doubtful",
     "sleepy": "sleepy",
+    "sleeping": "sleeping",
     "surprised": "surprised",
     "wink": "winking",
 }

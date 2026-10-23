@@ -28,6 +28,8 @@ HELLO_TIMEOUT_S = 10.0
 MAX_HELLO_SIZE = 4096
 # Seconds between asks for the camera stream while no frame has arrived yet.
 CAMERA_START_RETRY_S = 5.0
+# Seconds without a frame after which the camera counts as freshly started.
+CAMERA_GAP_RESET_S = 60.0
 
 # M5's app_avatar passes this object directly to updateAvatarFromJson.
 # Keep the expression table closed and local; model text never becomes a face token.
@@ -38,6 +40,7 @@ EXPRESSIONS = {
     "sad": "sad",
     "doubt": "doubt",
     "sleepy": "sleepy",
+    "sleeping": "sleeping",
     "surprised": "surprised",
     "wink": "wink",
 }
@@ -48,6 +51,7 @@ _EYE_WEIGHTS = {
     "sad": 70,
     "doubt": 75,
     "sleepy": 35,
+    "sleeping": 0,
     "surprised": 100,
     "wink": 100,
 }
@@ -58,6 +62,7 @@ _EYE_ROTATIONS = {
     "sad": -400,
     "doubt": 0,
     "sleepy": -50,
+    "sleeping": 0,
     "surprised": 0,
     "wink": 0,
 }
@@ -98,21 +103,7 @@ def control_avatar(expression: str, *, eyes: bool = True, mouth: bool = True) ->
 
 def sleeping_avatar() -> bytes:
     """A quiet, fully closed face used while StackChan is asleep."""
-    frame = ExpressionFrame(
-        encode_frame(
-            CONTROL_AVATAR,
-            json.dumps(
-                {
-                    "leftEye": {"weight": 0, "rotation": 0},
-                    "rightEye": {"weight": 0, "rotation": 0},
-                    "mouth": {"weight": 0},
-                },
-                separators=(",", ":"),
-            ).encode(),
-        )
-    )
-    frame.expression = "sleeping"
-    return frame
+    return control_avatar("sleeping", mouth=False)
 
 
 class AvatarServer:
@@ -132,6 +123,8 @@ class AvatarServer:
         self._stream_since: dict[
             str, float
         ] = {}  # when each unit's first frame of this stream came
+        self._camera_first_frame_at: dict[str, float] = {}
+        self._camera_last_frame_at: dict[str, float] = {}
         self._camera_frames: dict[str, tuple[bytes, float]] = {}
         self._camera_events: dict[str, asyncio.Event] = {}
         self._camera_disconnects: dict[str, asyncio.Event] = {}
@@ -231,7 +224,14 @@ class AvatarServer:
                         LOG.warning("discarded malformed StackChan camera frame")
                         continue
                     self._camera_seen.add(device_id)
-                    self._stream_since.setdefault(device_id, time.monotonic())
+                    now = time.monotonic()
+                    self._stream_since.setdefault(device_id, now)
+                    # Running time survives a socket reconnect; it restarts only after the
+                    # frames stopped for CAMERA_GAP_RESET_S.
+                    last = self._camera_last_frame_at.get(device_id)
+                    if last is None or now - last > CAMERA_GAP_RESET_S:
+                        self._camera_first_frame_at[device_id] = now
+                    self._camera_last_frame_at[device_id] = now
                     self._camera_frames[device_id] = (frame.payload, time.monotonic())
                     self.camera_frames_received += 1
                     self.camera_bytes_received += len(frame.payload)
@@ -265,9 +265,9 @@ class AvatarServer:
 
     def camera_running_s(self) -> float | None:
         """Seconds the (single) unit's camera has been streaming; None before its first frame."""
-        if len(self._stream_since) != 1:
+        if len(self._camera_first_frame_at) != 1:
             return None
-        return time.monotonic() - next(iter(self._stream_since.values()))
+        return time.monotonic() - next(iter(self._camera_first_frame_at.values()))
 
     async def _start_camera_until_streaming(
         self, websocket: ServerConnection, device_id: str

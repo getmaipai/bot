@@ -49,3 +49,13 @@ def test_a_detector_without_a_score_is_left_alone():
     check = FrameCheck()
     check.note(object(), np.zeros((4, 4, 3), dtype=np.uint8), 100)
     assert check.report(0.0) is None
+
+
+def test_missing_detector_reports_off_instead_of_zero_scores():
+    check = FrameCheck()
+    check.report(0.0)
+    check._frames = 1
+    check._bytes = 100
+    line = check.report(REPORT_S + 1)
+    assert line is not None and "face detection is off (model not loaded)" in line
+    assert "0.00" not in line

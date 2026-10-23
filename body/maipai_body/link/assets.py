@@ -96,7 +96,10 @@ class AssetSync:
         self.manifest: dict[str, dict] | None = None
 
     def _headers(self) -> dict[str, str]:
-        return {"Cookie": self.session_cookie}
+        cookie = self.session_cookie
+        if "=" not in cookie:
+            cookie = f"session={cookie}"
+        return {"Cookie": cookie}
 
     def _load_manifest(self) -> dict[str, dict]:
         try:

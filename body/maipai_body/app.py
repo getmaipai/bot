@@ -252,7 +252,16 @@ class StackChanBehavior:
         self.head_gate = HeadMotionGate(
             must_be_still=lambda: self.idle_still(), resting=lambda: self._rest.stage != "awake"
         )
-        self._rest_renderer = RestRenderer()
+        self._rest_renderer = RestRenderer(
+            firmware_version=lambda: (
+                self.unit_facts.snapshot().get("fw_version")
+                if self.unit_facts is not None
+                else None
+            ),
+            quiet_s=lambda: max(0, int(time.monotonic() - self._rest._quiet_since)),
+            thresholds=lambda: (120, 300),
+            night_active=self.night_active,
+        )
         self._rest_profile = _profile
         self._last_person_seen = float("-inf")
         self._face_quiet_since: float | None = None
@@ -282,7 +291,7 @@ class StackChanBehavior:
         self._hold_until = time.monotonic() + seconds
 
     def render_primitive(self, primitive: str) -> bool:
-        if self.night_active() or self.pose_held():
+        if self.night_active() or self.pose_held() or self._rest.stage != "awake":
             return False
         # Ambient moves (the idle settle, face following) go through the one head-motion gate.
         if not self.head_gate.allow(f"ambient:{primitive}", response=self._active.is_set()):
@@ -294,6 +303,12 @@ class StackChanBehavior:
 
     def render_turn_state(self, state: str, *, mood: str | None = None) -> None:
         self._active.set()
+        if self._rest.stage != "awake":
+            # A turn wakes the robot at once (blink, screen, ring) before its own face is shown.
+            try:
+                self.rest_step(time.monotonic())
+            except Exception:
+                self._warn_limited("rest", "StackChan rest routine failed")
         # "listening" leaves room for a pet's face; thinking and speaking own the face and voice.
         self._phase = {"listening": "listening", "settle": "idle"}.get(state, "busy")
         # Only states that really move the head ask the gate (and count toward its cap); the
@@ -571,7 +586,7 @@ class StackChanBehavior:
         """A gesture greeting: a happy face for a moment, and a nod when the head may move.
 
         Spoken greetings belong to Home's person and age rules; the robot only gestures."""
-        if self.greeting_mode == "off":
+        if self.greeting_mode == "off" or self._rest.stage != "awake":
             return
         logger.info("StackChan greeting: someone came into view after a long while")
         device = self.robot._driver("head").expression_device
@@ -591,6 +606,8 @@ class StackChanBehavior:
 
         Not during a turn, except a reaction face while the robot is only listening."""
         if self._active.is_set() and not (while_listening and self._phase == "listening"):
+            return
+        if self._rest.stage != "awake":
             return
         device = self.robot._driver("head").expression_device
         if device is None:
@@ -1876,6 +1893,7 @@ def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power:
         hold_motion=power.set_orientation_hold,
         quiet=lambda: ("night mode is on" if night.night else "") or ("asleep" if asleep() else ""),
         busy=behavior.reaction_blocked,
+        resting=lambda: behavior._rest.stage != "awake",
     )
     behavior.orientation = orientation
     night.sensors_blocked = orientation.sensors_untrusted

@@ -195,6 +195,17 @@ def test_asset_sync_installs_available_clip_bundle_with_verified_sidecar(tmp_pat
     )
 
 
+def test_asset_sync_cookie_header_formats_bare_and_preserves_named_cookie(tmp_path):
+    spec = tmp_path / "robot-assets.json"
+    spec.write_text("[]")
+    assert AssetSync("http://hub.test", "abc", spec_path=spec)._headers() == {
+        "Cookie": "session=abc"
+    }
+    assert AssetSync("http://hub.test", "other=abc", spec_path=spec)._headers() == {
+        "Cookie": "other=abc"
+    }
+
+
 def test_asset_pins_are_read_from_shared_spec():
     from maipai_body.link.assets import SPEC_ASSETS_PATH, load_spec_assets
 

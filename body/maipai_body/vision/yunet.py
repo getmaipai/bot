@@ -201,8 +201,10 @@ class LazyFaceDetector:
 
     @property
     def best_score(self) -> float:
-        """The best score of the last detect, before the threshold (0 until the model loads)."""
-        return self._detector.last_best_score if self._detector is not None else 0.0
+        """The best score of the last detect, before the threshold."""
+        if self._detector is None:
+            raise RuntimeError("face detector model is not loaded")
+        return self._detector.last_best_score
 
     def detect(self, frame_bgr: npt.NDArray[np.uint8]) -> list[Face]:
         detector = self._get()

@@ -1,0 +1,31 @@
+# Intent: a real sleeping face for the idle sleep (owner request 2026-10-23: "I see the face dimmed, but no sleepy or sleeping"). The host used the avatar socket for a closed-eye frame, but that socket is not connected in AI-agent mode, so the closed-eye face never reached the unit. SetEmotion now accepts "sleeping": the sleepy emotion with both eyes and the mouth at weight 0, no "Zzz" bubble, idle motion and idle expression removed, no head movement. The existing "sleepy" emotion is unchanged. The host sends "sleeping" over the voice socket only when the unit reports a firmware that has this patch; otherwise it keeps sending "sleepy".
+# Upstream: m5stack/StackChan firmware/main/hal/board/stackchan_display.cc (MIT). Applies after 072.
+# Check after a flash: leave the unit untouched for 5 minutes: the screen dims and the eyes are shut with no mouth and no Zzz; touch it: it blinks awake and the neutral face returns.
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -796,6 +796,24 @@
+         // Return to default pose
+         auto& motion = GetStackChan().motion();
+         motion.pitchServo().moveWithSpeed(0, 80);
++
++    } else if (strcmp(emotion, "sleeping") == 0) {
++        // Eyes shut, mouth shut, no "Zzz" bubble and no head motion: the idle sleep look (the host
++        // sends it after five quiet minutes). "sleepy" keeps its U-shaped eyes and bubble.
++        avatar.setEmotion(Emotion::Sleepy);
++        avatar.leftEye().setWeight(0);
++        avatar.rightEye().setWeight(0);
++        avatar.mouth().setWeight(0);
++        avatar.setSpeech("");
++        is_sleeping_ = true;
++        if (idle_motion_modifier_id_ >= 0) {
++            stackchan.removeModifier(idle_motion_modifier_id_);
++            idle_motion_modifier_id_ = -1;
++        }
++        if (idle_expression_modifier_id_ >= 0) {
++            stackchan.removeModifier(idle_expression_modifier_id_);
++            idle_expression_modifier_id_ = -1;
++        }
+ 
+     } else if (strcmp(emotion, "doubtful") == 0) {
+         avatar.setEmotion(Emotion::Doubt);

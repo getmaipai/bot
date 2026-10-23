@@ -49,9 +49,9 @@ NOT_READY = (
 )
 # The camera has been running a while, but nothing here can describe the room: say so plainly.
 ROOM_LOOKS = {
-    "dark": "the room looks dark",
-    "dim": "the room looks dim",
-    "bright": "the room looks bright",
+    "dark": "dark",
+    "dim": "dim",
+    "bright": "bright",
 }
 DARK = ("It looks dark in here, so the lights are probably off.",)
 DIM = ("It's fairly dim in here.",)
@@ -114,8 +114,14 @@ class SightAnswers:
         room = ROOM_LOOKS.get(bucket or "")
         if kind == "picture":
             if room:
-                return f"My camera is on and {room}, but I can't describe what's in it yet."
-            return "My camera is on, but I can't describe what's in the room yet."
+                return (
+                    f"my camera is on, it is {room} here, but I cannot describe the room yet "
+                    "(pictures are not being analysed)"
+                )
+            return (
+                "my camera is on, but I cannot describe the room yet "
+                "(pictures are not being analysed)"
+            )
         if room:
             return (
                 f"I can't spot anyone right now. My camera is on and {room}, "

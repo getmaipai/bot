@@ -40,13 +40,19 @@ class FrameCheck:
         self._last_try = float("-inf")
         self._since: float | None = None
         self._best: dict[str, float] = {}
+        self._detection_off = False
         self._size = ""
         self._bytes = 0
         self._frames = 0
 
     def note(self, detector: Any, frame: npt.NDArray[np.uint8], nbytes: int) -> None:
         """A frame in which no face was found; ``detector.best_score`` follows its last detect."""
-        if not hasattr(detector, "best_score"):
+        if detector is None or not hasattr(detector, "best_score"):
+            self._detection_off = True
+            height, width = frame.shape[:2]
+            self._size = f"{width}x{height}"
+            self._bytes += nbytes
+            self._frames += 1
             return
         height, width = frame.shape[:2]
         self._size = f"{width}x{height}"
@@ -73,11 +79,16 @@ class FrameCheck:
         self._since = now
         if not self._frames:
             return None
-        scores = ", ".join(f"{name} {score:.2f}" for name, score in self._best.items())
+        scores = (
+            ", ".join(f"{name} {score:.2f}" for name, score in self._best.items())
+            if self._best and not self._detection_off
+            else "face detection is off (model not loaded)"
+        )
         line = (
             f"StackChan frame check: {self._size}, {self._bytes / self._frames / 1024:.1f} KB a "
             f"frame; best face score with nobody found: {scores}"
         )
         self._best = {}
+        self._detection_off = False
         self._bytes = self._frames = 0
         return line
