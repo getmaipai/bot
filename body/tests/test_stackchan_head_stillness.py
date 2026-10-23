@@ -203,7 +203,7 @@ def test_an_awake_robot_reads_events_slowly_and_keeps_reading_them_during_a_turn
         behavior._rest = type("Rest", (), {"stage": "awake"})()
         behavior.reaction = seen.append
         assert behavior.wake_on_touch(0.0) is False  # first look: drains
-        assert behavior.wake_on_touch(0.5) is False  # inside the 1 s interval
+        assert behavior.wake_on_touch(0.3) is False  # inside the 0.5 s interval
         assert behavior.wake_on_touch(1.5) is False  # awake: reacts but never "wakes"
         assert seen == [["shake"]] and len(polls) == 2
         behavior._active.set()

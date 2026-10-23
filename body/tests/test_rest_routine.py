@@ -111,6 +111,16 @@ def test_rest_renderer_does_not_resend_the_same_stage():
     assert client.poses[1].pitch == client.poses[0].pitch
 
 
+def test_rest_renderer_does_not_overwrite_a_held_pose_face():
+    client = _FakeClient()
+    renderer = RestRenderer()
+    renderer.render(
+        _rest_output("asleep", 0.6, "sleepy"), client, STACKCHAN_PROFILE, pose_held=lambda: True
+    )
+    assert client.frames == []
+    assert client.poses == []
+
+
 def test_render_rest_routes_through_a_renderer_and_dedups():
     client = _FakeClient()
     renderer = RestRenderer()

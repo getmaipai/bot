@@ -587,6 +587,9 @@ class StackChanTurnBridge:
         # Kind words and loving replies earn the heart (reactions.py); both may be None.
         self.on_user_words = on_user_words
         self.on_reply_mood = on_reply_mood
+        self.on_turn_end = None
+        self._reaction_speaking = False
+        self._reaction_lock = threading.Lock()
         # The expression and light sinks make blocking device calls that wait on this very event
         # loop; run inline they froze it until each 5 s timeout (live log 2026-10-20: 5 s to start
         # a turn, 12 s to the first audio frame). One worker keeps their order.
@@ -1193,6 +1196,7 @@ class StackChanTurnBridge:
             if session_id not in self._settled_sessions:
                 self._emit_expression("settle")
             self._states[session_id] = "idle"
+            self._notify(self.on_turn_end, None)
             self._settled_sessions.discard(session_id)
             self._captures.pop(session_id, None)
             self._tasks.pop(session_id, None)
@@ -1246,8 +1250,24 @@ class StackChanTurnBridge:
         except Exception:
             LOG.warning("StackChan reaction line could not start", exc_info=True)
             return False
-        self._say(playback, base, cookie, text)
+        with self._reaction_lock:
+            if self._reaction_speaking:
+                return False
+            self._reaction_speaking = True
+        threading.Thread(
+            target=self._say_reaction,
+            args=(playback, base, cookie, text),
+            name="stackchan-reaction-speech",
+            daemon=True,
+        ).start()
         return True
+
+    def _say_reaction(self, playback, base: str, cookie: str, text: str) -> None:
+        try:
+            self._say(playback, base, cookie, text)
+        finally:
+            self._reaction_speaking = False
+            self._notify(self.on_turn_end, None)
 
     def _offline_line(self, playback) -> None:
         if not self._breaker.allow():  # a canned error line: same loop breaker as the apology

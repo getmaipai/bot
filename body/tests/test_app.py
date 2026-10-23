@@ -131,6 +131,48 @@ def test_hub_credentials_reader_retains_latest_successful_pairing_url():
     assert read_credentials() == ("rotated-cookie", "https://new-hub.example.test")
 
 
+def test_orientation_wiring_reasserts_pose_after_reconnect_without_resetting_it():
+    import maipai_body.app as app_module
+
+    class Voice:
+        _sessions = {"unit": object()}
+        session_listeners = []
+        robot = type("Robot", (), {"client": object()})()
+
+    class Behavior:
+        _rest = type("Rest", (), {"stage": "awake"})()
+        orientation_tick = None
+
+        def pose_held(self):
+            return False
+
+        def reaction_blocked(self):
+            return False
+
+        def show_face(self, expression, while_listening=True):
+            return None
+
+    class Bridge:
+        def speak_reaction(self, text):
+            return True
+
+    class Night:
+        night = False
+        sensors_blocked = None
+
+    class Power:
+        def set_orientation_hold(self, hold):
+            return None
+
+    behavior, bridge = Behavior(), Bridge()
+    app_module._wire_orientation(Voice, behavior, bridge, Night(), Power())
+    orientation = behavior.orientation
+    orientation.on_event({"axis": "-x"})
+    Voice.session_listeners[-1]("unit")
+    assert orientation.pose == "left_side"
+    assert behavior.pose_held()
+
+
 def test_run_paired_body_holds_neutral_then_honors_stop_event_while_never_paired(caplog):
     client = FakeReachyMiniClient()
     link = _FakeLink(paired=False)

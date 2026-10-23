@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -83,12 +84,14 @@ class AssetSync:
         *,
         session: requests.Session | None = None,
         spec_path: Path = SPEC_ASSETS_PATH,
+        refresh_credentials: Callable[[], tuple[str, str]] | None = None,
     ) -> None:
         if urlparse(base_url).scheme not in {"http", "https"}:
             raise ValueError("hub URL must use HTTP or HTTPS")
         self.base_url = base_url.rstrip("/")
         self.session = session or requests.Session()
         self.session_cookie = session_cookie
+        self.refresh_credentials = refresh_credentials
         self.spec = {asset.id: asset for asset in load_spec_assets(spec_path)}
         self.manifest: dict[str, dict] | None = None
 
@@ -100,6 +103,15 @@ class AssetSync:
             response = self.session.get(
                 f"{self.base_url}/api/devices/me/assets", headers=self._headers(), timeout=30
             )
+            refresh = self.refresh_credentials
+            if getattr(response, "status_code", None) == 401 and refresh is not None:
+                url, cookie = refresh()
+                if url and cookie:
+                    self.base_url = url.rstrip("/")
+                    self.session_cookie = cookie
+                response = self.session.get(
+                    f"{self.base_url}/api/devices/me/assets", headers=self._headers(), timeout=30
+                )
             response.raise_for_status()
             entries = response.json()["assets"]
             manifest = {entry["id"]: entry for entry in entries}

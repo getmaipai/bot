@@ -158,7 +158,7 @@ LOOK_INTERVAL_S = 0.5  # two looks a second at most
 TURN_FACE_FRESH_S = 5.0  # turn toward a face seen this recently when a turn starts
 LOST_AFTER_LOOKS = 4  # two seconds without the face it was following: it was lost
 TOUCH_POLL_S = 5.0
-EVENT_POLL_S = 1.0  # touch, swipe and shake events are read this often while the robot is awake
+EVENT_POLL_S = 0.5  # touch, swipe and shake events are read this often while the robot is awake
 TOUCH_WAKE_COOLDOWN_S = 30.0
 FACE_REFRESH_S = 30.0
 
@@ -282,7 +282,7 @@ class StackChanBehavior:
         self._hold_until = time.monotonic() + seconds
 
     def render_primitive(self, primitive: str) -> bool:
-        if self.night_active():
+        if self.night_active() or self.pose_held():
             return False
         # Ambient moves (the idle settle, face following) go through the one head-motion gate.
         if not self.head_gate.allow(f"ambient:{primitive}", response=self._active.is_set()):
@@ -739,7 +739,10 @@ class StackChanBehavior:
         output = self._rest.update(now, person_present=person, turn_active=self._active.is_set())
         self._with_lease(
             lambda: self._rest_renderer.render(
-                output, self.robot._driver("head"), self._rest_profile
+                output,
+                self.robot._driver("head"),
+                self._rest_profile,
+                pose_held=self.pose_held,
             )
         )
         return output.stage
@@ -1879,13 +1882,11 @@ def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power:
     behavior.pose_held = lambda: orientation.pose != "upright"
 
     def tick() -> None:
-        if not voice._sessions and orientation.pose != "upright":
-            orientation.reset()
-            return
         orientation.tick()
 
     behavior.orientation_tick = tick
-    voice.session_listeners.append(lambda _device_id: orientation.reset())
+    voice.session_listeners.append(lambda _device_id: orientation.reassert())
+    bridge.on_turn_end = orientation.on_turn_end
 
 
 def _start_robot_checkin(voice: Any, behavior: Any, link: LinkLifecycle, stop_event: Any) -> None:
@@ -1969,7 +1970,8 @@ def _load_yunet_model(link: LinkLifecycle | None) -> Path:
     url, cookie = _command_credentials(link)()
     if not url or not cookie:
         raise AssetUnavailable("YuNet is not synced and Home has not answered yet")
-    return AssetSync(url, cookie).ensure(YUNET, cache)
+    sync = AssetSync(url, cookie, refresh_credentials=_command_credentials(link))
+    return sync.ensure(YUNET, cache)
 
 
 def _effective_idle_level(level: str) -> str:

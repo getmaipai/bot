@@ -184,11 +184,13 @@ class LazyFaceDetector:
         load: Callable[[], Path],
         *,
         clock: Callable[[], float] = time.monotonic,
-        retry_s: float = 600.0,
+        retry_s: float | None = None,
     ) -> None:
         self._load = load
         self._clock = clock
         self._retry_s = retry_s
+        self._retry_delays = (10.0, 30.0, 60.0, 300.0)
+        self._failures = 0
         self._detector: YuNetDetector | None = None
         self._next_try = float("-inf")
         self._lock = threading.Lock()
@@ -213,11 +215,18 @@ class LazyFaceDetector:
             now = self._clock()
             if self._detector is not None or now < self._next_try:
                 return self._detector
-            self._next_try = now + self._retry_s
             try:
                 self._detector = YuNetDetector(self._load())
+                self._failures = 0
                 logger.info("StackChan face detection is ready")
             except Exception as exc:
+                delay = (
+                    self._retry_delays[min(self._failures, len(self._retry_delays) - 1)]
+                    if self._retry_s is None
+                    else self._retry_s
+                )
+                self._failures += 1
+                self._next_try = now + delay
                 logger.warning(
                     "StackChan face detection is off: the face model is not available (%s). "
                     "Pair the robot with Home and let it sync its models; it will try again.",

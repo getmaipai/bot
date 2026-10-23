@@ -47,6 +47,39 @@ class Session:
         return Response(content=self.data[asset_id])
 
 
+def test_manifest_401_refreshes_credentials_and_retries(tmp_path):
+    body = b"model"
+    entry = _entry("model-a", "model.onnx", body)
+
+    class ExpiringSession(Session):
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs.get("headers", {}).get("Cookie")))
+            if len([call for call in self.calls if call[0].endswith("/assets")]) == 1:
+                return Response(status=401)
+            return Response(payload={"assets": [entry]})
+
+    session = ExpiringSession([entry], {"model-a": body})
+    refreshed = []
+
+    def refresh():
+        refreshed.append(True)
+        return "http://hub.test", "fresh=session"
+
+    sync = AssetSync(
+        "http://hub.test",
+        "stale=session",
+        session=session,
+        spec_path=_pin_file(tmp_path, _spec_entry(entry)),
+        refresh_credentials=refresh,
+    )
+    assert sync._load_manifest() == {"model-a": entry}
+    assert refreshed == [True]
+    assert session.calls == [
+        ("http://hub.test/api/devices/me/assets", "stale=session"),
+        ("http://hub.test/api/devices/me/assets", "fresh=session"),
+    ]
+
+
 def _entry(asset_id: str, filename: str, body: bytes) -> dict:
     return {
         "id": asset_id,

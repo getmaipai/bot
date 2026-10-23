@@ -33,7 +33,16 @@ class RestRenderer:
         self._sleep = sleep
         self._sleeping = False
 
-    def render(self, output: RestOutput, client: HeadActuator, profile: BodyProfile) -> None:
+    def render(
+        self,
+        output: RestOutput,
+        client: HeadActuator,
+        profile: BodyProfile,
+        *,
+        pose_held=lambda: False,
+    ) -> None:
+        if pose_held():
+            return
         if output.stage == self._last_stage:
             return
         self._last_stage = output.stage
@@ -81,9 +90,12 @@ def render_rest(
     profile: BodyProfile,
     *,
     renderer: RestRenderer | None = None,
+    pose_held=lambda: False,
 ) -> None:
     """Render a rest output; repeated calls with the same stage are a no-op."""
-    (renderer if renderer is not None else _default_renderer).render(output, client, profile)
+    (renderer if renderer is not None else _default_renderer).render(
+        output, client, profile, pose_held=pose_held
+    )
 
 
 __all__ = ["RestRenderer", "render_rest"]

@@ -7,6 +7,7 @@ from maipai_body.bodies.stackchan.orientation import (
     FACE_FOR_POSE,
     FACE_REFRESH_S,
     LINE_GAP_S,
+    POSE_CHANGE_GAP_S,
     OrientationReactions,
     pose_for_axis,
 )
@@ -95,22 +96,61 @@ def test_quiet_suppresses_line_but_keeps_face_rotation_and_hold():
     assert h.lines == []
 
 
-def test_line_gap_and_skipped_line_does_not_start_gap():
+def test_different_pose_has_short_floor_and_same_pose_has_own_two_minute_gap():
     h = Harness()
     h.event("+x")
     assert len(h.lines) == 1
-    h.now += LINE_GAP_S - 1
+    h.now += POSE_CHANGE_GAP_S - 1
     h.event("-x")
     assert len(h.lines) == 1
     h.now += 1
-    h.event("-y")
+    h.event("+y")
     assert len(h.lines) == 2
+    h.now += POSE_CHANGE_GAP_S
+    h.event("+x")  # left_side was said first; it has its own two minute cooldown
+    assert len(h.lines) == 2
+    h.now += LINE_GAP_S - POSE_CHANGE_GAP_S
+    h.event("-y")
+    assert len(h.lines) == 3
 
     skipped = Harness(say_result=False)
     skipped.event("+x")
     skipped.now += 1
     skipped.event("-x")
     assert len(skipped.lines) == 2
+
+
+def test_a_different_pose_can_speak_after_fifteen_seconds():
+    h = Harness()
+    h.event("+x")
+    h.now += POSE_CHANGE_GAP_S
+    h.event("-x")
+    assert len(h.lines) == 2
+
+
+def test_boot_upright_is_silent_but_returning_upright_speaks():
+    h = Harness()
+    assert h.event("+y") is False
+    assert h.lines == []
+    h.event("+x")
+    h.now += POSE_CHANGE_GAP_S
+    h.event("+y")
+    assert len(h.lines) == 2
+    from maipai_body.bodies.stackchan.orientation import LINE_POOLS
+
+    assert h.lines[-1] in LINE_POOLS["upright"]
+
+
+def test_reassert_and_turn_end_restore_held_face_without_speech():
+    h = Harness()
+    h.event("+x")
+    lines = list(h.lines)
+    h.faces.clear()
+    h.reactions.reassert()
+    h.reactions.on_turn_end()
+    assert h.holds[-1] is True
+    assert h.faces == ["doubt", "doubt"]
+    assert h.lines == lines
 
 
 def test_line_is_never_repeated_in_a_row():

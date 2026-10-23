@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.53] - 2026-10-23
+
+### Fixed
+- Pose reactions (host only). A different pose now gets its joke after a 15 s floor; the same pose repeated is held to 2 minutes. Returning upright says a relief line. The line is spoken on its own thread, so a joke no longer blocks touch and orientation events for its whole length, and events are read every 0.5 s instead of every 1 s. The pose face is held while the pose holds: it is sent again after every speech or turn end, the rest renderer and ambient head moves leave it alone, and a reconnect re-applies the current pose instead of resetting it to upright.
+- Face detection after a hub restart: the asset manifest fetch retries once with fresh credentials on a 401, and a failed face model load is retried after 10 s, 30 s, 60 s, then every 5 minutes.
+
 ## [0.2.52] - 2026-10-23
 
 ### Added

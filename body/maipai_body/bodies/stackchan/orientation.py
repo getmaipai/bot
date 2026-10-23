@@ -34,6 +34,7 @@ FACE_FOR_POSE = {
     "on_back": "sleepy",
 }
 LINE_GAP_S = 120.0
+POSE_CHANGE_GAP_S = 15.0
 FACE_REFRESH_S = 5.0
 # Off since 2026-10-22: after the screen was flipped the unit's screen-locked tool calls (LEDs,
 # head, events) timed out and the face froze, which fits the panel mirror command racing the
@@ -109,14 +110,16 @@ LINE_POOLS = {
         "I am a very relaxed robot. Do not mind me.",
     ),
     "upright": (
-        "Ahh, that is better. Thank you!",
-        "Back on my feet. I am a tall one, am I not? Hehe.",
-        "Right side up again! The world makes sense.",
-        "Phew, standing tall. Where was I?",
-        "Level at last. My ears were popping. Ha!",
-        "Back to normal. I am very good at this.",
-        "Upright and proud. Ta-da!",
-        "Gravity is back on my side. Hehe.",
+        "Ah, that is better!",
+        "Whew, the room is the right way up again.",
+        "Back on my feet. I missed them.",
+        "Phew! Gravity and I are friends again.",
+        "All level. I can think straight now.",
+        "That was fun. Let us keep the floor down there.",
+        "Upright again. My ears say thank you.",
+        "There we go. Much less ceiling.",
+        "Standing tall, as a robot should.",
+        "Back to normal. Did anyone get a picture?",
     ),
 }
 RECENT_LINES = 10  # a line is not repeated within the last this many spoken, across all poses
@@ -154,6 +157,7 @@ class OrientationReactions:
         self._changed_at: float | None = None
         self._recent: deque[str] = deque(maxlen=RECENT_LINES)
         self._last_spoken_at = float("-inf")
+        self._last_spoken_by_pose: dict[str, float] = {}
         self._last_face_at = float("-inf")
         self._last_rotate_at = float("-inf")
 
@@ -198,8 +202,11 @@ class OrientationReactions:
             logger.info("StackChan orientation line skipped: a conversation is on")
             return
         now = self._clock()
-        if now - self._last_spoken_at < LINE_GAP_S:
-            logger.info("StackChan orientation line skipped: one was said less than 2 minutes ago")
+        if self._last_spoken_at > float("-inf") and now - self._last_spoken_at < POSE_CHANGE_GAP_S:
+            logger.info("StackChan orientation line skipped: one was said less than 15 seconds ago")
+            return
+        if now - self._last_spoken_by_pose.get(pose, float("-inf")) < LINE_GAP_S:
+            logger.info("StackChan orientation line skipped: this pose spoke under 2 minutes ago")
             return
         choices = [line for line in LINE_POOLS[pose] if line not in self._recent]
         if not choices:  # the pool is smaller than the memory: use the oldest
@@ -208,6 +215,7 @@ class OrientationReactions:
         if self._say(line):
             self._recent.append(line)
             self._last_spoken_at = now
+            self._last_spoken_by_pose[pose] = now
             logger.info("StackChan orientation line said: %r", line)
         else:
             logger.info("StackChan orientation line not said: the voice could not start it")
@@ -219,6 +227,18 @@ class OrientationReactions:
     def _send_face(self) -> None:
         self._face(FACE_FOR_POSE[self._pose])
         self._last_face_at = self._clock()
+
+    def reassert(self) -> None:
+        """Reapply the known pose controls after a reconnect, without inventing a pose or line."""
+        self._hold_motion(self._pose != "upright")
+        self._send_rotation()
+        if self._pose != "upright":
+            self._send_face()
+
+    def on_turn_end(self, _value: object = None) -> None:
+        """Restore the held pose face after speech or a turn owns the display."""
+        if self._pose != "upright":
+            self._send_face()
 
     def tick(self) -> None:
         """Refresh the pose face while the robot remains away from upright."""

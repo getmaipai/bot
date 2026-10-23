@@ -148,6 +148,30 @@ def test_the_lazy_detector_finds_nothing_and_retries_later_when_the_model_is_mis
     assert len(attempts) == 2
 
 
+def test_the_lazy_detector_uses_ten_thirty_sixty_then_five_minute_backoff():
+    now = [0.0]
+    attempts = []
+
+    def load():
+        attempts.append(now[0])
+        raise RuntimeError("not ready")
+
+    lazy = LazyFaceDetector(load, clock=lambda: now[0])
+    frame = np.zeros((8, 8, 3), np.uint8)
+    now[0] = 0.0
+    lazy.detect(frame)
+    expected = [0.0]
+    for delay in (10.0, 30.0, 60.0, 300.0):
+        now[0] += delay - 0.1
+        lazy.detect(frame)
+        assert attempts == expected
+        now[0] += 0.1
+        lazy.detect(frame)
+        expected.append(now[0])
+        assert attempts == expected
+    assert attempts == [0.0, 10.0, 40.0, 100.0, 400.0]
+
+
 @needs_model
 def test_the_lazy_detector_loads_the_model_once_it_is_available():
     lazy = LazyFaceDetector(lambda: MODEL)
