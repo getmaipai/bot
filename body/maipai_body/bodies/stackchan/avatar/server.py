@@ -96,6 +96,25 @@ def control_avatar(expression: str, *, eyes: bool = True, mouth: bool = True) ->
     return frame
 
 
+def sleeping_avatar() -> bytes:
+    """A quiet, fully closed face used while StackChan is asleep."""
+    frame = ExpressionFrame(
+        encode_frame(
+            CONTROL_AVATAR,
+            json.dumps(
+                {
+                    "leftEye": {"weight": 0, "rotation": 0},
+                    "rightEye": {"weight": 0, "rotation": 0},
+                    "mouth": {"weight": 0},
+                },
+                separators=(",", ":"),
+            ).encode(),
+        )
+    )
+    frame.expression = "sleeping"
+    return frame
+
+
 class AvatarServer:
     """Keeps the device-initiated avatar channel open and replaces stale sessions."""
 

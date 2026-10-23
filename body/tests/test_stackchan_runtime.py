@@ -53,12 +53,12 @@ def test_a_long_quiet_spell_drops_the_head_and_a_person_wakes_it():
     try:
         start = behavior._rest._quiet_since
         assert behavior.rest_step(start + 1.0) == "awake"
-        assert behavior.rest_step(start + 601.0) == "drowsy"
+        assert behavior.rest_step(start + 121.0) == "drowsy"
         frames = len(device.avatar_frames)
-        assert behavior.rest_step(start + 700.0) == "drowsy"
+        assert behavior.rest_step(start + 200.0) == "drowsy"
         assert len(device.avatar_frames) == frames  # nothing new is sent for the same stage
-        assert behavior.rest_step(start + 1900.0) == "asleep"
-        behavior._last_person_seen = start + 1950.0
-        assert behavior.rest_step(start + 1951.0) == "awake"
+        assert behavior.rest_step(start + 301.0) == "asleep"
+        behavior._last_person_seen = start + 350.0
+        assert behavior.rest_step(start + 351.0) == "awake"
     finally:
         behavior.close()

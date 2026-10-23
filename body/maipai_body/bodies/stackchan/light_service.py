@@ -83,6 +83,7 @@ class StackChanLightService:
     ) -> None:
         self._indicator = indicator
         self._suspended = False
+        self._sleeping = False
         self._last_key: looks.LookKey | None = None
         self._settings = settings
         self._presence = presence
@@ -123,6 +124,16 @@ class StackChanLightService:
             self._indicator.off()
         else:
             self._indicator.set_look(look)
+
+    def set_sleeping(self, sleeping: bool) -> None:
+        """Darken the ring while asleep, then restore its currently resolved look."""
+        if self._sleeping == sleeping:
+            return
+        self._sleeping = sleeping
+        if sleeping:
+            self._indicator.off()
+        else:
+            self._apply()
 
     def tick(self) -> None:
         """Advance the ring's style clock and let a finished cue hold end."""
@@ -179,6 +190,9 @@ class StackChanLightService:
             self.cue_camera(False)
 
     def _apply(self) -> None:
+        if self._sleeping:
+            self._indicator.off()
+            return
         if self._suspended:
             return
         facts = self._facts

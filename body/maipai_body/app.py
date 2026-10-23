@@ -236,7 +236,12 @@ class StackChanBehavior:
         from maipai_body.bodies.stackchan.routines import RestRenderer
         from maipai_body.expression.rest import RestPolicy
 
-        self._rest = RestPolicy(time.monotonic(), quiet_hours_active=lambda: self.night_active())
+        self._rest = RestPolicy(
+            time.monotonic(),
+            drowsy_after_s=120.0,
+            asleep_after_s=300.0,
+            quiet_hours_active=lambda: self.night_active(),
+        )
         # Why the head is where it is, for "what are you looking at?" (gaze.py).
         self.gaze = GazeState(
             asleep=lambda: self._rest.stage != "awake" or self.night_active(),
@@ -950,6 +955,8 @@ async def _serve_stackchan_channels(
     if link is not None:
         _start_robot_checkin(voice, behavior, link, stop_event)
     night = _start_stackchan_night(voice, behavior, link, stop_event)
+    behavior._rest_renderer._set_brightness = night._device.set_brightness
+    behavior._rest_renderer._restore_brightness = night.effective_brightness
     behavior.on_levels_changed = night.set_levels_from_unit
     from maipai_body.bodies.stackchan.power_idle import PowerIdle
 
@@ -983,6 +990,7 @@ async def _serve_stackchan_channels(
         device_connected=device_connected,
         on_battery=power.on_battery_status,
     )
+    behavior._rest_renderer._set_ring_sleeping = light.set_sleeping
     from maipai_body.bodies.stackchan.estop_recovery import EstopRecovery
 
     def device_answers() -> bool:
