@@ -7,6 +7,18 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.55] - 2026-10-23
+
+### Fixed
+- The unit no longer reboots itself whenever its main loop stalls. Patch 069 saved the stall record to flash from the IMU task, whose stack is in PSRAM; ESP-IDF forbids that, so a stall of 8 seconds (for example while a wake word waits on a hub it cannot reach) aborted the unit and counted as a crash reset. Patch 074 saves the record from a short task with an internal stack.
+- The unit boots into the AI agent by default (the setting is stored; a unit with nothing stored used to land in the launcher).
+
+### Changed
+- Idle shutdown is 60 minutes, not 10, and the host keeps the unit awake while the hub link is up: the bot calls the new `self.power.keep_awake` tool about once a minute, so an unplugged unit powers itself off only after it has lost Home for the whole time. A firmware without the tool is left as flashed.
+
+### Firmware
+- Patch 074: stall record saved from an internal-stack task, `boot_ai` default on, idle shutdown default 3600 s, `self.power.keep_awake` tool. Parked for the next flash with 071, 072 and 073.
+
 ## [0.2.54] - 2026-10-23
 
 ### Fixed

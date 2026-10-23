@@ -1,0 +1,122 @@
+# Intent: stop the unit rebooting itself on every stall, boot into the AI agent by default, and let the host keep the unit awake (owner decision 2026-10-23). (1) CRASH: the stall dump of patch 069 saved its record with Settings::SetString from the IMU task, whose stack is in PSRAM; ESP-IDF forbids a flash write from such a task, so any stall of 8 s aborted the unit (serial log 2026-10-23: assert cache_utils.c:127, nvs_set_str from _imu_task, crash_resets=5). A short task with an internal 4 KB stack now saves the record. (2) boot_ai defaults to on and the idle shutdown default is 3600 s instead of 600 s (a value already stored in NVS wins). (3) New MCP tool self.power.keep_awake restarts the idle timers; the host calls it about once a minute while the hub link is up, so an unplugged unit powers off only after it has lost the host for the whole shutdown time.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_imu.cpp, hal.h, hal_mcp.cpp, board/hal_bridge.h, board/stackchan.cc (MIT). Applies after 073.
+# Check after a flash: wake the unit with the hub unreachable: it no longer reboots after about 8 s (the host log shows "main loop stalled" and the next boot line carries stall=...); erase the unit settings (or use a new unit): it boots into the AI agent, not the launcher; the host log shows self.power.keep_awake calls and the unit no longer dims or powers off on its own while the hub is reachable.
+diff --git a/firmware/main/hal/board/hal_bridge.h b/firmware/main/hal/board/hal_bridge.h
+--- a/firmware/main/hal/board/hal_bridge.h
++++ b/firmware/main/hal/board/hal_bridge.h
+@@ -25,10 +25,10 @@
+ };
+ 
+ struct XiaozhiConfig_t {
+-    uint32_t idleShutdownTimeSeconds = 600;
++    uint32_t idleShutdownTimeSeconds = 3600;
+     bool allowShutdownWhenCharging   = false;
+     uint8_t idleRandomMovementLevel  = 2;
+-    bool startAiAgentOnBoot          = false;
++    bool startAiAgentOnBoot          = true;
+ };
+ 
+ void lock();
+@@ -44,6 +44,9 @@
+ // Blank the LED ring while the screen sleeps or before a power off. The colours set meanwhile are
+ // remembered and shown again when blanking ends.
+ void leds_blank(bool blank);
++// The host says it is reachable: restart the idle timers (screen sleep and, on battery, the shutdown) so
++// the unit only powers itself off after it has lost the host for the whole shutdown time.
++void power_keep_awake();
+ 
+ void disply_lvgl_lock();
+ void disply_lvgl_unlock();
+diff --git a/firmware/main/hal/board/stackchan.cc b/firmware/main/hal/board/stackchan.cc
+--- a/firmware/main/hal/board/stackchan.cc
++++ b/firmware/main/hal/board/stackchan.cc
+@@ -603,6 +603,13 @@
+     }
+ 
+ public:
++    // The host reached the unit: restart the idle timers (see hal_bridge::power_keep_awake).
++    void KeepAwake()
++    {
++        if (power_save_timer_ != nullptr) {
++            power_save_timer_->WakeUp();
++        }
++    }
+     M5StackCoreS3Board()
+     {
+         InitializeI2c();
+@@ -721,6 +728,11 @@
+     return camera;
+ }
+ 
++void hal_bridge::power_keep_awake()
++{
++    static_cast<M5StackCoreS3Board&>(Board::GetInstance()).KeepAwake();
++}
++
+ int hal_bridge::board_get_battery_level()
+ {
+     auto& board      = Board::GetInstance();
+diff --git a/firmware/main/hal/hal.h b/firmware/main/hal/hal.h
+--- a/firmware/main/hal/hal.h
++++ b/firmware/main/hal/hal.h
+@@ -115,10 +115,10 @@
+  *
+  */
+ struct XiaozhiConfig_t {
+-    uint32_t idleShutdownTimeSeconds = 600;
++    uint32_t idleShutdownTimeSeconds = 3600;
+     bool allowShutdownWhenCharging   = false;
+     uint8_t idleRandomMovementLevel  = 2;
+-    bool startAiAgentOnBoot          = false;
++    bool startAiAgentOnBoot          = true;
+ };
+ 
+ /**
+diff --git a/firmware/main/hal/hal_imu.cpp b/firmware/main/hal/hal_imu.cpp
+--- a/firmware/main/hal/hal_imu.cpp
++++ b/firmware/main/hal/hal_imu.cpp
+@@ -48,8 +48,22 @@
+         out += one;
+     }
+     mclog::tagInfo(_tag, "main loop stalled; tasks: {}", out);
+-    Settings settings("maipai", true);
+-    settings.SetString("stall", out.substr(0, 230));
++    // Saving the record writes flash, and a flash write is not allowed from a task whose stack is in
++    // PSRAM (this task's is): it aborted the unit on every stall (serial log 2026-10-23, nvs_set_str
++    // from _imu_task). A short task with an internal stack saves it.
++    auto* record = new std::string(out.substr(0, 230));
++    if (xTaskCreate(
++            [](void* arg) {
++                {
++                    std::unique_ptr<std::string> text(static_cast<std::string*>(arg));
++                    Settings settings("maipai", true);
++                    settings.SetString("stall", *text);
++                }
++                vTaskDelete(nullptr);
++            },
++            "stall_save", 4096, record, 1, nullptr) != pdPASS) {
++        delete record;
++    }
+ }
+ 
+ // Which way is down: the axis the gravity vector mostly lies along ("+x", "-y", ...), kept steady by a
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -359,6 +359,16 @@
+                        [this](const PropertyList& properties) -> ReturnValue {
+                            int degrees = properties["degrees"].value<int>();
+                            hal_bridge::display_set_rotation(degrees >= 90 ? 180 : 0);
++                           return true;
++                       });
++
++    mclog::tagInfo(_tag, "add power.keep_awake tool");
++    mcp_server.AddTool("self.power.keep_awake",
++                       "Restart the idle timers: the host is reachable, so the unit must not sleep or power itself off "
++                       "for being idle. Send it about once a minute.",
++                       PropertyList(),
++                       [this](const PropertyList&) -> ReturnValue {
++                           hal_bridge::power_keep_awake();
+                            return true;
+                        });
+ 

@@ -160,6 +160,7 @@ LOST_AFTER_LOOKS = 4  # two seconds without the face it was following: it was lo
 TOUCH_POLL_S = 5.0
 EVENT_POLL_S = 0.5  # touch, swipe and shake events are read this often while the robot is awake
 TOUCH_WAKE_COOLDOWN_S = 30.0
+KEEP_AWAKE_S = 60.0  # how often the unit is told the hub is reachable (firmware patch 074)
 FACE_REFRESH_S = 30.0
 
 
@@ -211,6 +212,8 @@ class StackChanBehavior:
         self._vision_posting = False
         self._vision_last: tuple[str | None, Any] | None = None  # bucket and thumbnail last posted
         self.orientation_tick: Callable[[], object] | None = None
+        # Tells the unit the hub is reachable, so it does not sleep or power off for being idle.
+        self.keep_awake_tick: Callable[[], object] | None = None
         self.pose_held: Callable[[], bool] = lambda: False
         self._last_event_poll = float("-inf")
         self._last_touch_wake = float("-inf")
@@ -427,6 +430,11 @@ class StackChanBehavior:
                     self.orientation_tick()
                 except Exception:
                     self._warn_limited("orientation", "StackChan orientation timer failed")
+            if self.keep_awake_tick is not None:
+                try:
+                    self.keep_awake_tick()
+                except Exception:
+                    self._warn_limited("keep_awake", "StackChan keep-awake call failed")
             try:
                 self.rest_step(now)
             except Exception:
@@ -1874,6 +1882,7 @@ def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power:
         SCREEN_ROTATION_ENABLED,
         OrientationReactions,
     )
+    from maipai_body.hal.errors import NotSupported
 
     def rotate(degrees: int) -> None:
         if not SCREEN_ROTATION_ENABLED:
@@ -1903,6 +1912,23 @@ def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power:
         orientation.tick()
 
     behavior.orientation_tick = tick
+
+    keep_awake_at = [float("-inf")]
+    unsupported = [False]
+
+    def keep_awake() -> None:
+        """While the hub link is up, restart the unit's idle timers once a minute (patch 074)."""
+        now = time.monotonic()
+        if unsupported[0] or not voice._sessions or now - keep_awake_at[0] < KEEP_AWAKE_S:
+            return
+        keep_awake_at[0] = now
+        try:
+            voice.robot.client._call("self.power.keep_awake", {})
+        except NotSupported:
+            unsupported[0] = True  # firmware before patch 074: nothing to keep awake
+            logger.info("StackChan firmware has no keep_awake tool; idle shutdown stays as flashed")
+
+    behavior.keep_awake_tick = keep_awake
     voice.session_listeners.append(lambda _device_id: orientation.reassert())
     bridge.on_turn_end = orientation.on_turn_end
 

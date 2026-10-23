@@ -173,6 +173,86 @@ def test_orientation_wiring_reasserts_pose_after_reconnect_without_resetting_it(
     assert behavior.pose_held()
 
 
+def _wired_behavior(call):
+    import maipai_body.app as app_module
+
+    class Client:
+        def _call(self, name, arguments):
+            return call(name, arguments)
+
+    class Voice:
+        _sessions = {"unit": object()}
+        session_listeners = []
+        robot = type("Robot", (), {"client": Client()})()
+
+    class Behavior:
+        _rest = type("Rest", (), {"stage": "awake"})()
+        orientation_tick = None
+        keep_awake_tick = None
+
+        def pose_held(self):
+            return False
+
+        def reaction_blocked(self):
+            return False
+
+        def show_face(self, expression, while_listening=True):
+            return None
+
+    class Bridge:
+        def speak_reaction(self, text):
+            return True
+
+    class Night:
+        night = False
+        sensors_blocked = None
+
+    class Power:
+        def set_orientation_hold(self, hold):
+            return None
+
+    behavior = Behavior()
+    app_module._wire_orientation(Voice, behavior, Bridge(), Night(), Power())
+    return behavior, Voice
+
+
+def test_keep_awake_is_sent_once_a_minute_while_the_hub_link_is_up(monkeypatch):
+    import maipai_body.app as app_module
+
+    calls = []
+    behavior, voice = _wired_behavior(lambda name, args: calls.append(name))
+    clock = [1000.0]
+    monkeypatch.setattr(app_module.time, "monotonic", lambda: clock[0])
+    behavior.keep_awake_tick()
+    behavior.keep_awake_tick()
+    clock[0] += 61
+    behavior.keep_awake_tick()
+    assert calls == ["self.power.keep_awake", "self.power.keep_awake"]
+    voice._sessions = {}
+    clock[0] += 61
+    behavior.keep_awake_tick()
+    assert len(calls) == 2  # no link, nothing to say
+
+
+def test_keep_awake_stops_asking_a_firmware_that_does_not_have_the_tool(monkeypatch):
+    import maipai_body.app as app_module
+    from maipai_body.hal.errors import NotSupported
+
+    calls = []
+
+    def call(name, args):
+        calls.append(name)
+        raise NotSupported("no such tool", part="power", capability="keep_awake", fix="flash")
+
+    behavior, _voice = _wired_behavior(call)
+    clock = [1000.0]
+    monkeypatch.setattr(app_module.time, "monotonic", lambda: clock[0])
+    behavior.keep_awake_tick()
+    clock[0] += 61
+    behavior.keep_awake_tick()
+    assert len(calls) == 1
+
+
 def test_run_paired_body_holds_neutral_then_honors_stop_event_while_never_paired(caplog):
     client = FakeReachyMiniClient()
     link = _FakeLink(paired=False)
