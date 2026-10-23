@@ -23,8 +23,25 @@ def _version_at_least(value, minimum):
         return False
 
 
+RETRY_S = 5.0  # a stage whose face could not be sent is tried again this often
+
+
+def _face_sender(client):
+    """The function that sends a face: the client's own, else its expression device's."""
+    sender = getattr(client, "send_avatar_frame", None)
+    if callable(sender):
+        return sender
+    device = getattr(client, "expression_device", None)
+    sender = getattr(device, "send_avatar_frame", None)
+    return sender if callable(sender) else None
+
+
 class RestRenderer:
-    """Send a rest face and head drop, but only when the stage changes."""
+    """Show a rest stage once: the face, the screen level, the ring and the resting head pose.
+
+    A stage counts as shown when its face went out. A step that fails is logged and the rest
+    still run; a stage whose face failed is tried again every RETRY_S, never on every pass.
+    Leaving sleep always restores the screen and the ring, whatever happened to the face."""
 
     def __init__(
         self,
@@ -39,20 +56,25 @@ class RestRenderer:
         quiet_s=lambda: 0,
         thresholds=lambda: (120, 300),
         night_active=lambda: False,
+        clock=time.monotonic,
     ) -> None:
-        self._last_stage: str | None = "awake"
         self._set_brightness = set_brightness
         self._restore_brightness = restore_brightness
         self._set_ring_sleeping = set_ring_sleeping
         self._sleep_brightness = sleep_brightness
         self._blink_delay_s = blink_delay_s
         self._sleep = sleep
-        self._sleeping = False
-        self._face_stage_ok = False
         self._firmware_version = firmware_version
         self._quiet_s = quiet_s
         self._thresholds = thresholds
         self._night_active = night_active
+        self._clock = clock
+        self._sleeping = False  # the screen is dimmed and the ring dark
+        self._shown_stage: str | None = None  # the stage whose face went out
+        self._announced_stage: str | None = "awake"  # the stage last written to the log
+        self._pose_stage: str | None = None  # the stage whose head pose was set
+        self._retry_at = float("-inf")
+        self._warned_no_sender = False
 
     def render(
         self,
@@ -64,25 +86,25 @@ class RestRenderer:
     ) -> None:
         if pose_held():
             return
-        stage_changed = output.stage != self._last_stage
-        if not stage_changed and self._last_stage == output.stage and self._face_stage_ok:
+        stage = output.stage
+        if stage == self._shown_stage:
             return
-        sender = getattr(client, "send_avatar_frame", None)
-        waking = output.stage == "awake" and self._sleeping
-        if stage_changed:
-            old = self._last_stage or "awake"
+        now = self._clock()
+        if stage != self._announced_stage:
             drowsy, asleep = self._thresholds()
-            quiet_s = self._quiet_s()
             LOG.info(
                 "StackChan rest: %s -> %s (quiet %d s, thresholds %d/%d, night=%s)",
-                old,
-                output.stage,
-                int(quiet_s),
+                self._announced_stage,
+                stage,
+                int(self._quiet_s()),
                 drowsy,
                 asleep,
                 self._night_active(),
             )
-        face_ok = False
+            self._announced_stage = stage
+            self._retry_at = float("-inf")
+        elif now < self._retry_at:
+            return
 
         def step(name, action):
             try:
@@ -93,13 +115,22 @@ class RestRenderer:
                 LOG.warning("StackChan rest: %s failed", name, exc_info=True)
                 return False
 
-        if output.stage == "asleep":
-            version = self._firmware_version()
-            face = (
-                "sleeping" if _version_at_least(version, SLEEPING_FACE_MIN_FIRMWARE) else "sleepy"
+        sender = _face_sender(client)
+        if sender is None and not self._warned_no_sender:
+            self._warned_no_sender = True
+            LOG.warning(
+                "StackChan rest: this head has no way to send a face; rest faces are skipped"
             )
-            face_ok = False
-            if callable(sender):
+
+        face_ok = True  # nothing to send is not a failure
+        if stage == "asleep":
+            self._sleeping = True  # whatever fails below, waking restores the screen and the ring
+            if sender is not None:
+                face = (
+                    "sleeping"
+                    if _version_at_least(self._firmware_version(), SLEEPING_FACE_MIN_FIRMWARE)
+                    else "sleepy"
+                )
                 frame = sleeping_avatar()
                 if face == "sleepy":
                     frame.expression = "sleepy"
@@ -111,11 +142,9 @@ class RestRenderer:
                 )
             if self._set_ring_sleeping is not None:
                 step("ring dark", lambda: self._set_ring_sleeping(True))
-            if face_ok:
-                self._sleeping = True
-        elif waking:
-            face_ok = False
-            if callable(sender):
+        elif stage == "awake" and self._sleeping:
+            self._sleeping = False
+            if sender is not None:
                 step("wake blink on", lambda: sender(sleeping_avatar()))
                 step("wake blink delay", lambda: (self._sleep or time.sleep)(self._blink_delay_s))
                 face_ok = step("wake blink off", lambda: sender(control_avatar("neutral")))
@@ -125,25 +154,27 @@ class RestRenderer:
                 )
             if self._set_ring_sleeping is not None:
                 step("ring restored", lambda: self._set_ring_sleeping(False))
-            if face_ok:
-                self._sleeping = False
-        elif callable(sender):
-            face_name = "sleepy" if output.stage == "drowsy" else "neutral"
+        elif sender is not None:
+            face_name = "sleepy" if stage == "drowsy" else "neutral"
             face_ok = step(f"face {face_name} sent", lambda: sender(control_avatar(face_name)))
-        # The head only travels up from level, so it cannot "drop" for drowsy or asleep: it rests at
-        # level and the sleepy face carries the stage. (The shared rest policy's fraction is a drop
-        # for other bodies; used as a pitch here it raised the head to 66 and 85 degrees.)
-        pose = HeadPose(yaw=0.0, pitch=pitch_for(profile))
-        # Same dispatch as the expression renderer: the robot facade when present,
-        # otherwise the lease adapter's set command. Errors raise, nothing is swallowed.
-        robot = getattr(client, "robot", None)
-        if robot is not None:
-            step("head pose set", lambda: robot.head.set(pose=pose))
-        else:
-            step("head pose set", lambda: client.command("set", pose=pose))
+
+        if self._pose_stage != stage:
+            # The head only travels up from level, so it cannot "drop" for drowsy or asleep: it
+            # rests at level and the sleepy face carries the stage. (The shared rest policy's
+            # fraction is a drop for other bodies; used as a pitch here it raised the head to 66
+            # and 85 degrees.)
+            pose = HeadPose(yaw=0.0, pitch=pitch_for(profile))
+            robot = getattr(client, "robot", None)
+            if robot is not None:
+                done = step("head pose set", lambda: robot.head.set(pose=pose))
+            else:
+                done = step("head pose set", lambda: client.command("set", pose=pose))
+            if done:
+                self._pose_stage = stage
         if face_ok:
-            self._last_stage = output.stage
-        self._face_stage_ok = face_ok
+            self._shown_stage = stage
+        else:
+            self._retry_at = now + RETRY_S
 
 
 _default_renderer = RestRenderer()

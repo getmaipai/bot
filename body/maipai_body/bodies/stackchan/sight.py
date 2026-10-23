@@ -66,12 +66,14 @@ class SightAnswers:
         camera_on: Callable[[], bool],
         light: Callable[[], str | None] = lambda: None,
         camera_running_s: Callable[[], float | None] = lambda: STARTING_S,
+        watching: Callable[[], bool] = lambda: False,
         rng: random.Random | None = None,
     ) -> None:
         self._face_age = face_age
         self._camera_on = camera_on
         self._light = light
         self._camera_running_s = camera_running_s
+        self._watching = watching
         self._rng = rng or random.Random()
         self._last: dict[str, str] = {}
 
@@ -113,6 +115,12 @@ class SightAnswers:
             return "My camera is on, but I can't tell how bright it is."
         room = ROOM_LOOKS.get(bucket or "")
         if kind == "picture":
+            if room and self._watching():
+                # The face detector is running, so "nobody" is an answer, not a gap.
+                age = self._face_age()
+                if age is not None and age <= FACE_FRESH_S:
+                    return f"It is {room} here and I can see someone."
+                return f"It is {room} here and I can't see anyone right now."
             if room:
                 return (
                     f"my camera is on, it is {room} here, but I cannot describe the room yet "

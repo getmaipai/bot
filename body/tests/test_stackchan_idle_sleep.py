@@ -116,12 +116,16 @@ def test_failed_sleep_face_is_retried_and_later_face_stays_asleep():
             self.writes.append(("pose", kwargs["pose"]))
 
     client = RecordingClient()
-    renderer = RestRenderer(firmware_version=lambda: "0.2.54")
+    now = [100.0]
+    renderer = RestRenderer(firmware_version=lambda: "0.2.54", clock=lambda: now[0])
     renderer.render(_out("asleep"), client, STACKCHAN_PROFILE)
+    renderer.render(_out("asleep"), client, STACKCHAN_PROFILE)
+    assert ("face", "sleeping") not in client.writes  # a failed face is not retried on every pass
+    now[0] += 6
     renderer.render(_out("asleep"), client, STACKCHAN_PROFILE)
     assert ("face", "sleeping") in client.writes
     renderer.render(_out("asleep"), client, STACKCHAN_PROFILE)
-    assert client.writes[-2] == ("face", "sleeping")
+    assert client.writes[-1] == ("face", "sleeping")  # nothing is written after the sleeping face
 
 
 def test_turn_active_prevents_stackchan_rest_stage_change():
@@ -142,11 +146,13 @@ def test_a_failed_wake_blink_is_retried_and_still_restores_the_screen():
         def command(self, *args, **kwargs):
             return None
 
+    now = [100.0]
     renderer = RestRenderer(
         set_brightness=levels.append,
         restore_brightness=lambda: 80,
         sleep=lambda _s: None,
         firmware_version=lambda: "0.2.54",
+        clock=lambda: now[0],
     )
     client = Client()
     asleep = RestOutput(stage="asleep", pose_pitch_fraction=0.0, face="sleepy")
@@ -154,6 +160,7 @@ def test_a_failed_wake_blink_is_retried_and_still_restores_the_screen():
     awake = RestOutput(stage="awake", pose_pitch_fraction=0.0, face="neutral", wake_transition=True)
     renderer.render(awake, client, STACKCHAN_PROFILE)  # the neutral face fails
     fail[0] = False
+    now[0] += 6
     renderer.render(
         RestOutput(stage="awake", pose_pitch_fraction=0.0, face="neutral"),
         client,
@@ -161,3 +168,38 @@ def test_a_failed_wake_blink_is_retried_and_still_restores_the_screen():
     )
     assert sent[-1] == "neutral"
     assert levels[-1] == 80
+
+
+def test_the_real_behavior_sends_the_rest_faces_and_wakes_cleanly():
+    """Through StackChanBehavior and the real head adapter, as the unit sees it.
+
+    The head driver has no send_avatar_frame: the face goes through its expression device."""
+    from maipai_body.app import StackChanBehavior
+    from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
+    from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
+
+    device = FakeStackChanDeviceClient()
+    behavior = StackChanBehavior(StackChanRobotAdapter(device).robot)
+    levels, ring = [], []
+    renderer = behavior._rest_renderer
+    renderer._set_brightness = levels.append
+    renderer._restore_brightness = lambda: 80
+    renderer._set_ring_sleeping = ring.append
+    renderer._sleep = lambda _s: None
+    try:
+        start = behavior._rest._quiet_since
+        assert behavior.rest_step(start + 121.0) == "drowsy"
+        assert behavior.rest_step(start + 301.0) == "asleep"
+        shown = [getattr(frame, "expression", "") for frame in device.avatar_frames]
+        assert "sleepy" in shown  # the drowsy face reached the unit
+        assert levels == [5] and ring == [True]
+        frames = len(device.avatar_frames)
+        for second in range(302, 330):  # nothing is resent or re-dimmed while it sleeps
+            behavior.rest_step(start + float(second))
+        assert len(device.avatar_frames) == frames and levels == [5]
+        behavior._last_person_seen = start + 340.0
+        assert behavior.rest_step(start + 341.0) == "awake"
+        assert levels == [5, 80] and ring == [True, False]
+        assert getattr(device.avatar_frames[-1], "expression", "") == "neutral"
+    finally:
+        behavior.close()

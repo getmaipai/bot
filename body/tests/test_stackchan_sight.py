@@ -148,3 +148,20 @@ def test_the_light_answer_waits_for_the_camera_then_uses_the_brightness():
     assert _answers(running=3.0, light="dark").answer("is the light on") in NOT_READY
     assert "dark" in _answers(running=100.0, light="dark").answer("is the light on")
     assert "can't tell how bright" in _answers(running=100.0).answer("is the light on")
+
+
+def test_a_picture_question_with_the_detector_running_says_who_is_in_view():
+    def make(face_age):
+        return SightAnswers(
+            face_age=lambda: face_age,
+            camera_on=lambda: True,
+            light=lambda: "bright",
+            camera_running_s=lambda: 600.0,
+            watching=lambda: True,
+        )
+
+    assert (
+        make(None).answer("what do you see")
+        == "It is bright here and I can't see anyone right now."
+    )
+    assert make(1.0).answer("what do you see") == "It is bright here and I can see someone."

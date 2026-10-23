@@ -7,6 +7,16 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.57] - 2026-10-23
+
+### Fixed
+- Idle sleep now really shows and ends cleanly. The rest renderer looked for a face sender on the head driver, which has none (the face goes through its expression device), so since 0.2.52 it never sent a drowsy or sleeping face, never recorded the stage, repeated "awake -> drowsy" and a head-pose write about three times a second, and, since 0.2.54, never restored the screen and the ring on wake (the wake step waited for a face that was never sent). The renderer now finds the sender, restores the screen and ring on every wake whatever happens to the face, sets the head pose once per stage and retries a failed face every five seconds. A test now runs the real behavior and head adapter, not a fake with a sender.
+- Pose jokes: a different pose gets its line after two seconds (was fifteen).
+- "What do you see" with the face detector running now says how bright it is and whether anyone is in view ("It is bright here and I can't see anyone right now") instead of a dead end.
+
+### Firmware
+- Patch 076: rubbing the head counts as a pet when the strip only reads 1 (a run of four touched samples). On the unit tested a rub never read above 1, so no pet was ever recognised. Parked for the next flash with 071 to 075.
+
 ## [0.2.56] - 2026-10-23
 
 ### Fixed

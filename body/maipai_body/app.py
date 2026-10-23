@@ -1102,6 +1102,7 @@ async def _serve_stackchan_channels(
                     vision, getattr(voice.robot.client, "last_lux", None)
                 ),
                 camera_running_s=avatar.camera_running_s,
+                watching=lambda: _detector_ready(vision),
             ),
         )
         bridge.vision_ask = behavior.vision_ask
@@ -1866,6 +1867,12 @@ def _alarm_backstop(alarm: AlarmController, stop_event: threading.Event) -> None
             alarm.tick()
         except Exception:
             logger.warning("alarm backstop failed", exc_info=True)
+
+
+def _detector_ready(vision: Any) -> bool:
+    """True once the face model is loaded, so "I see nobody" is a real answer."""
+    ready = getattr(getattr(vision, "detector", None), "ready", False)
+    return bool(ready() if callable(ready) else ready)
 
 
 def _light_from_last_look(vision: Any, lux: float | None = None) -> str | None:

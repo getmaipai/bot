@@ -34,7 +34,7 @@ FACE_FOR_POSE = {
     "on_back": "sleepy",
 }
 LINE_GAP_S = 120.0
-POSE_CHANGE_GAP_S = 15.0
+POSE_CHANGE_GAP_S = 2.0  # only a flurry of tilts is thinned out; every settled pose gets its line
 FACE_REFRESH_S = 5.0
 # Off since 2026-10-22: after the screen was flipped the unit's screen-locked tool calls (LEDs,
 # head, events) timed out and the face froze, which fits the panel mirror command racing the
@@ -205,7 +205,7 @@ class OrientationReactions:
             return
         now = self._clock()
         if self._last_spoken_at > float("-inf") and now - self._last_spoken_at < POSE_CHANGE_GAP_S:
-            logger.info("StackChan orientation line skipped: one was said less than 15 seconds ago")
+            logger.info("StackChan orientation line skipped: one was said less than 2 seconds ago")
             return
         if now - self._last_spoken_by_pose.get(pose, float("-inf")) < LINE_GAP_S:
             logger.info("StackChan orientation line skipped: this pose spoke under 2 minutes ago")

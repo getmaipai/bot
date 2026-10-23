@@ -1,0 +1,30 @@
+# Intent: rubbing the head reacts even when the strip only reads 1 (owner report 2026-10-23: "rubbing did not work at all"). The recogniser needed a sample at reading 2 or more; a rub on this unit read 1 throughout (44 weak samples in runs of up to 14, none at 2) so no pet was ever recognised. A run of touched samples now also counts as a pet once it lasts 4 samples, even if it never passed reading 1. The strip showed no idle noise that afternoon (0 weak samples a minute for 18 minutes), which is what made reading 1 unusable on 2026-10-21; if idle noise comes back the head_touch_stats line shows weak runs with nobody there and kWeakPetSamples should go up.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_head_touch.cpp (MIT). Applies after 075.
+# Check after a flash: rub the head slowly: the host log shows "unit touch: head_touch" and "StackChan was petted"; leave the unit alone for ten minutes: no head_touch events without a touch, and the head_touch_stats weak count stays near 0.
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -48,6 +48,12 @@
+ constexpr int kPetSamples = 2;
+ constexpr int kRunGap     = 2;
+ constexpr int kLongRun    = 8;
++// A rub that never reads above 1 still counts once it lasts this many samples (about a quarter of a
++// second at the strip's 16 Hz). Host log 2026-10-23: a person rubbing the head read only 1 (44 weak
++// samples in runs of up to 14, no sample at 2) and got no reaction, while the strip showed no idle
++// noise at all that afternoon (0 weak samples a minute for 18 minutes). If idle noise returns, the
++// head_touch_stats line shows weak runs without anyone there and this value should go up.
++constexpr int kWeakPetSamples = 4;
+ 
+ // 配置参数
+ struct TouchConfig {
+@@ -120,8 +126,8 @@
+             if (run_len > run_max) {
+                 run_max = run_len;
+             }
+-            if (current_state == TouchState::IDLE && run_peak >= kPetPeak &&
+-                run_len >= static_cast<uint32_t>(kPetSamples)) {
++            if (current_state == TouchState::IDLE && run_len >= static_cast<uint32_t>(kPetSamples) &&
++                (run_peak >= kPetPeak || run_len >= static_cast<uint32_t>(kWeakPetSamples))) {
+                 current_state    = TouchState::TOUCHED;
+                 initial_position = last_position;
+                 gesture          = HeadPetGesture::Press;
