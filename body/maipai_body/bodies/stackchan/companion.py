@@ -42,6 +42,8 @@ DIAGNOSTIC_KINDS = frozenset(
         "barge_stats",
         "orientation",
         "playback",
+        "wifi",
+        "offline_tap",
     }
 )
 EVENT_KINDS = (

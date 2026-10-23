@@ -7,6 +7,16 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.56] - 2026-10-23
+
+### Fixed
+- The unit stays usable when Home cannot be reached (firmware patch 075). A tap or the wake word no longer freezes the screen for ten seconds: it shows a calm "Can't reach Home" bubble with a doubtful face and a short tone for three seconds, then goes back to idle while the background connection keeps retrying (backoff capped at 30 seconds). After ten seconds without Home the ring shows a dim steady amber and the bubble says "Offline"; both clear when the link returns.
+- Wi-Fi power save is off while the hub is not reached (the unit joined the mesh but could not be pinged or connected in modem sleep), and an idle unit with the hub up uses the lighter MIN_MODEM sleep instead of MAX_MODEM. This uses more battery when idle.
+- The host log shows `unit wifi:` lines (link state, signal, attempt, error code, time taken, next retry) and `unit offline:` when a tap found no hub.
+
+### Firmware
+- Patch 075: offline mode. Parked for the next flash with 071 to 074.
+
 ## [0.2.55] - 2026-10-23
 
 ### Fixed

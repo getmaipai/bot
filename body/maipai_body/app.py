@@ -686,6 +686,8 @@ class StackChanBehavior:
                     "wake": "unit wake",
                     "wake_stats": "unit wake",
                     "state_guard": "unit wake",
+                    "wifi": "unit wifi",
+                    "offline_tap": "unit offline",
                 }.get(event.kind, "unit touch")
                 logger.info("%s: %s %s", label, event.kind, detail)
         events = [e for e in events if getattr(e, "kind", None) not in DIAGNOSTIC_KINDS]
