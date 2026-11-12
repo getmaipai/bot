@@ -207,6 +207,9 @@ def test_the_looks_flow_from_the_bridge_to_a_scene_post_and_an_ask_post():
                 self.look = None
             return look
 
+        def look_age(self):
+            return None if self.look is None else 3.0
+
     behavior = object.__new__(StackChanBehavior)
     behavior.vision_poster = VisionPoster(lambda: ("cookie", "http://hub"), session=Session())
     behavior._vision = Bridge()
@@ -259,7 +262,22 @@ def test_thumbnails_tell_a_changed_scene_from_noise():
     assert differs(None, a)
 
 
-def test_picture_posts_are_held_off_until_the_look_design_is_ruled_on():
-    from maipai_body.bodies.stackchan.vision_post import PICTURE_POSTS_ENABLED
+def test_a_question_about_what_it_sees_uses_a_picture_up_to_90_s_old():
+    """A turn stops the unit's camera, so back-to-back turns find only the picture from before the
+    first one; Home's own look lives 90 s, and the ask accepts the same age (not 20 s as before)."""
+    from maipai_body.bodies.stackchan.vision_bridge import StackChanVisionBridge
+    from maipai_body.bodies.stackchan.vision_post import ASK_MAX_AGE_S
 
-    assert PICTURE_POSTS_ENABLED is False
+    assert ASK_MAX_AGE_S == 90.0
+    now = [1000.0]
+    bridge = object.__new__(StackChanVisionBridge)
+    bridge.clock = lambda: now[0]
+    bridge._latest_look = None
+    assert bridge.look_age() is None
+    bridge._latest_look = (b"\xff\xd8jpeg\xff\xd9", 1000.0, 0, 50.0, None)
+    now[0] = 1075.0
+    assert bridge.look_age() == 75.0
+    assert bridge.latest_look(max_age_s=ASK_MAX_AGE_S) is not None
+    assert bridge.latest_look(max_age_s=20.0) is None
+    now[0] = 1095.0
+    assert bridge.latest_look(max_age_s=ASK_MAX_AGE_S) is None

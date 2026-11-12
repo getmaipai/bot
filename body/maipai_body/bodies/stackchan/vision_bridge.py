@@ -122,6 +122,11 @@ class StackChanVisionBridge:
         """Install the print-store authorization check for child/teen profiles."""
         self.consent_for_print = authorize
 
+    def look_age(self) -> float | None:
+        """Seconds since the newest look was taken, or None when there is none."""
+        look = self._latest_look
+        return None if look is None else self.clock() - look[1]
+
     def latest_look(
         self, *, max_age_s: float, take: bool = False
     ) -> tuple[bytes, int, float, Any] | None:

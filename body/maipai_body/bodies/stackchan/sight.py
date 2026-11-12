@@ -1,9 +1,10 @@
-"""Honest answers to "can you see me?" and the picture questions the robot cannot answer yet.
+"""Honest answers to "can you see me?" and the picture questions when Home gave no description.
 
 The robot has a camera and finds faces locally, so it never says a flat "I can't see". It answers
 from what the host really knows: a face seen a moment ago, the camera being off, or nobody in view.
-Questions that need a described picture ("what am I holding?") get one plain line until Home can
-describe a frame; nothing here sends a frame anywhere.
+Questions that need a described picture ("what am I holding?") normally go to Home with a picture
+(vision_post.py); when that did not happen just now, the line here says so and invites another try.
+Nothing here sends a frame anywhere.
 """
 
 from __future__ import annotations
@@ -56,6 +57,9 @@ ROOM_LOOKS = {
 DARK = ("It looks dark in here, so the lights are probably off.",)
 DIM = ("It's fairly dim in here.",)
 BRIGHT = ("It looks bright in here, so the lights are probably on.",)
+# Home describes a picture on request (vision_post.py); this is the line when that did not happen
+# just now (no fresh picture, Home busy, or the picture refused), so the person simply asks again.
+NO_LOOK = "I couldn't get a good look just now. Ask me again in a moment."
 
 
 class SightAnswers:
@@ -119,23 +123,14 @@ class SightAnswers:
                 # The face detector is running, so "nobody" is an answer, not a gap.
                 age = self._face_age()
                 if age is not None and age <= FACE_FRESH_S:
-                    return f"It is {room} here and I can see someone."
-                return f"It is {room} here and I can't see anyone right now."
+                    return f"It is {room} here and I can see someone, but {NO_LOOK}"
+                return f"It is {room} here and I can't see anyone right now, but {NO_LOOK}"
             if room:
-                return (
-                    f"my camera is on, it is {room} here, but I cannot describe the room yet "
-                    "(pictures are not being analysed)"
-                )
-            return (
-                "my camera is on, but I cannot describe the room yet "
-                "(pictures are not being analysed)"
-            )
+                return f"My camera is on and it is {room} here, but {NO_LOOK}"
+            return f"My camera is on, but {NO_LOOK}"
         if room:
-            return (
-                f"I can't spot anyone right now. My camera is on and {room}, "
-                "but I can't describe it yet."
-            )
-        return "I can't spot anyone right now. My camera is on, but I can't describe the room yet."
+            return f"I can't spot anyone right now. My camera is on and it is {room} here."
+        return "I can't spot anyone right now, but my camera is on."
 
     def _pick(self, key: str, lines: tuple[str, ...]) -> str:
         choices = [line for line in lines if line != self._last.get(key)] or list(lines)

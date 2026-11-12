@@ -513,14 +513,28 @@ class StackChanBehavior:
             or not poster.ask_possible()
         ):
             return False
-        from maipai_body.bodies.stackchan.vision_post import light_bucket
+        from maipai_body.bodies.stackchan.vision_post import ASK_MAX_AGE_S, light_bucket
 
-        look = self._vision.latest_look(max_age_s=20.0, take=True)
+        age = self._vision.look_age()
+        look = self._vision.latest_look(max_age_s=ASK_MAX_AGE_S, take=True)
         if look is None:
+            logger.info(
+                "StackChan vision ask (%s): no picture to send (newest is %s)",
+                kind,
+                "none" if age is None else f"{age:.0f} s old",
+            )
             return False
         jpeg, people, luma, _thumb = look
         result = poster.post(
             jpeg, purpose="ask", people=people, light=light_bucket(luma), timeout=5.0
+        )
+        logger.info(
+            "StackChan vision ask (%s): picture %.0f s old, %d face(s), %s; %s",
+            kind,
+            age or 0.0,
+            people,
+            light_bucket(luma),
+            result.reason,
         )
         return result.ok
 
@@ -983,11 +997,11 @@ async def _serve_stackchan_channels(
     )
     behavior.event_poll = voice.robot.client.companion().poll_events
     if link is not None:
-        from maipai_body.bodies.stackchan.vision_post import PICTURE_POSTS_ENABLED, VisionPoster
+        from maipai_body.bodies.stackchan.vision_post import VisionPoster
 
-        if PICTURE_POSTS_ENABLED:
-            behavior.vision_poster = VisionPoster(_hub_credentials_reader(link, ""))
-    if link is not None:
+        # Pictures reach Home only through this poster; `robot.vision` (settings_changed below) and
+        # Home's own refusals decide whether any is sent.
+        behavior.vision_poster = VisionPoster(_hub_credentials_reader(link, ""))
         _start_robot_checkin(voice, behavior, link, stop_event)
     night = _start_stackchan_night(voice, behavior, link, stop_event)
     behavior._rest_renderer._set_brightness = night._device.set_brightness

@@ -13,11 +13,14 @@ import requests
 
 logger = logging.getLogger("maipai_body.bodies.stackchan.vision_post")
 
-# Held off 2026-10-22 (owner): no picture goes to Home for a model caption until the Look design
-# (docs/design/look-component-2026-10-22.md in the home repo) is ruled on. The poster stays, tested,
-# for when it is wanted again; the app does not create one while this is False.
-PICTURE_POSTS_ENABLED = False
+# Pictures go to Home for a description whenever the robot is paired and `robot.vision` allows it
+# (the Look design the posts waited for was approved 2026-10-22; the owner asked for the unit to
+# see on 2026-11-12). The `robot.vision` setting is the one switch: "none" stops every post.
 MAX_FRAME_BYTES = 512 * 1024
+# A turn stops the unit's camera (firmware patch 069), so a question about what it sees uses the
+# newest picture from before the person spoke. Back-to-back turns leave that picture older than
+# one turn; Home's own look lives 90 s and says "it may be out of date", so the same age is used.
+ASK_MAX_AGE_S = 90.0
 SCENE_MIN_GAP_S = 10.0
 SCENE_REFRESH_S = 60.0
 SCENE_STALE_S = 300.0  # post even an unchanged scene this often, so Home's look does not go cold
