@@ -187,11 +187,11 @@ def test_a_touch_wakes_a_sleeping_robot_after_the_first_look_empties_the_queue()
     )
     try:
         assert behavior.wake_on_touch(100.0) is False  # old events: drained, not a reason to wake
-        assert behavior.wake_on_touch(101.0) is False  # polled too soon
+        assert behavior.wake_on_touch(100.2) is False  # polled too soon (0.5 s asleep)
         assert len(polls) == 1
-        assert behavior.wake_on_touch(106.0) is True
-        assert behavior._last_person_seen == 106.0
-        assert behavior.wake_on_touch(112.0) is False  # nothing new
+        assert behavior.wake_on_touch(100.6) is True
+        assert behavior._last_person_seen == 100.6
+        assert behavior.wake_on_touch(101.2) is False  # nothing new
     finally:
         behavior.close()
 

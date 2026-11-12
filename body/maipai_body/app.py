@@ -157,7 +157,7 @@ FACE_QUIET_S = 5.0
 LOOK_INTERVAL_S = 0.5  # two looks a second at most
 TURN_FACE_FRESH_S = 5.0  # turn toward a face seen this recently when a turn starts
 LOST_AFTER_LOOKS = 4  # two seconds without the face it was following: it was lost
-TOUCH_POLL_S = 5.0
+TOUCH_POLL_S = 0.5  # asleep too: at 5 s a tap or shake took up to 5 s to wake the unit
 EVENT_POLL_S = 0.5  # touch, swipe and shake events are read this often while the robot is awake
 TOUCH_WAKE_COOLDOWN_S = 30.0
 KEEP_AWAKE_S = 60.0  # how often the unit is told the hub is reachable (firmware patch 074)
@@ -760,6 +760,10 @@ class StackChanBehavior:
         self._face_refreshed_at = now
         return True
 
+    def unit_connected(self) -> None:
+        """The unit (re)connected: it boots awake, so the rest clock must not count its time off."""
+        self._rest.reset(time.monotonic())
+
     def rest_step(self, now: float) -> str:
         """One pass of the rest policy: drop the head and sleepy face after a long quiet spell."""
         person = now - self._last_person_seen < 30.0
@@ -838,6 +842,7 @@ def _start_stackchan_night(
         connected=lambda: bool(voice._sessions),
     )
     voice.session_listeners.append(lambda _device_id: night.on_connect())
+    voice.session_listeners.append(lambda _device_id: behavior.unit_connected())
     behavior.night_active = lambda: night.night
     behavior.watch_level = lambda: watch[0]
     voice.robot.robot._driver("camera").watch_allowed = lambda: watch[0] != "off"

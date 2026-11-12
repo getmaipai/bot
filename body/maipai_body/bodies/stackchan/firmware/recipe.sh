@@ -296,6 +296,7 @@ apply_repo_patch 074-unit-crash-fixes.patch "$SRC"
 apply_repo_patch 075-offline-mode.patch "$SRC"
 apply_repo_patch 076-weak-pet.patch "$SRC"
 apply_repo_patch 077-silent-link-closes.patch "$SRC"
+apply_repo_patch 078-quick-tap-counts.patch "$SRC"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"

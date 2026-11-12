@@ -64,6 +64,11 @@ class RestPolicy:
     def stage(self) -> RestStage:
         return self._stage
 
+    def reset(self, now: float) -> None:
+        """A unit that just connected booted awake: start the quiet clock over from now."""
+        self._stage = "awake"
+        self._quiet_since = now
+
     def update(
         self,
         now: float,

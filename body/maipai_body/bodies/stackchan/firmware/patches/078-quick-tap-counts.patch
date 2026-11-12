@@ -1,0 +1,28 @@
+# Intent: a quick tap on the head counts as a pet (owner report 2026-11-12: tap did nothing, rub only worked once awake). A tap lasts one to three samples at the strip's 16 Hz; a run needed 2 samples at reading 2 or more, or 4 at any reading, so quick taps never became a press. A strong run now counts from 1 sample and a weak run from 2.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_head_touch.cpp (MIT). Applies after 077.
+# Check after a flash: tap the head once, firmly, with the screen dim: the host log shows unit touch head_touch and StackChan woke up on touch. Leave it alone for ten minutes: no head_touch events, head_touch_stats weak stays near 0.
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -45,7 +45,7 @@
+ // of them). A run ends after kRunGap untouched samples in a row, so a single dropout inside a rub
+ // does not split it. There is no lockout: weak runs never count, so there is nothing to lock out.
+ constexpr int kPetPeak    = 2;
+-constexpr int kPetSamples = 2;
++constexpr int kPetSamples = 1;
+ constexpr int kRunGap     = 2;
+ constexpr int kLongRun    = 8;
+ // A rub that never reads above 1 still counts once it lasts this many samples (about a quarter of a
+@@ -53,7 +53,11 @@
+ // samples in runs of up to 14, no sample at 2) and got no reaction, while the strip showed no idle
+ // noise at all that afternoon (0 weak samples a minute for 18 minutes). If idle noise returns, the
+ // head_touch_stats line shows weak runs without anyone there and this value should go up.
+-constexpr int kWeakPetSamples = 4;
++constexpr int kWeakPetSamples = 2;
++// 2026-11-12 owner report: a quick tap on the head did nothing. A tap lasts one to three samples, so
++// a strong tap (reading 2 or more) now counts from a single sample and a weak one from two. The strip
++// read 0 weak samples a minute with nobody there for 20 minutes that day; if idle noise returns, the
++// head_touch_stats line shows weak runs with nobody there and these two values go back up.
+ 
+ // 配置参数
+ struct TouchConfig {
