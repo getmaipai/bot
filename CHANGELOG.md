@@ -7,6 +7,16 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.58] - 2026-11-12
+
+### Fixed
+- A new listen start no longer loses its capture when the previous turn finishes (the old turn's cleanup removed the new one's entries); a stop now cancels the turn on the hub instead of leaving it generating; `take_photo` no longer loops between the xiaozhi server and the robot adapter.
+- The rest clock restarts when the unit connects, so a unit that was off no longer goes back to sleep seconds after it reconnects. A sleeping unit is asked for touches every 0.5 s (was 5 s).
+- Firmware patch 077: a hub link that has been silent for 60 s is closed so a blocked send cannot freeze the unit. Patch 078: a firm quick tap on the head counts as a pet.
+
+### Changed
+- Pictures from the unit now reach Home (the posting switch that was held since 2026-10-22 is removed; the robot.vision setting stays the switch). A picture up to 90 s old answers a sight question, and the "cannot look" line is honest.
+
 ## [0.2.57] - 2026-10-23
 
 ### Fixed
