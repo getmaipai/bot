@@ -47,6 +47,12 @@ class StackChanVisionBridge:
         # The newest streamed frame, in memory only: (jpeg, when, face count, light level). It is
         # replaced by the next look, and cleared once it has been posted to Home (vision_post.py).
         self._latest_look: tuple[bytes, float, int, float, Any] | None = None
+        # Movement between this look and the one before (presence_watch.motion_fraction): the share
+        # of the picture that changed, and when something last moved. A second presence signal
+        # beside faces, for a person whose face is out of the picture (an arm at the desk).
+        self.last_motion: float = 0.0
+        self._last_motion_at: float | None = None
+        self._last_thumb: Any = None  # the thumbnail of the look before, for the next comparison
 
     def track_stream_frame(
         self, *, deadline_s: float = 0.4, may_move: Callable[[], bool] | None = None
@@ -73,14 +79,21 @@ class StackChanVisionBridge:
             if self.clock() - started > deadline_s:
                 return FaceTrackTarget(detected=False)
             faces = self.detector.detect(frame)
+            from maipai_body.bodies.stackchan.presence_watch import MOTION_FRACTION, motion_fraction
             from maipai_body.bodies.stackchan.vision_post import scene_luma, thumbnail
 
+            thumb = thumbnail(frame)
+            previous = self._latest_look[4] if self._latest_look is not None else self._last_thumb
+            self.last_motion = motion_fraction(previous, thumb)
+            if self.last_motion >= MOTION_FRACTION:
+                self._last_motion_at = self.clock()
+            self._last_thumb = thumb
             self._latest_look = (
                 bytes(frame_bytes),
                 self.clock(),
                 len(faces),
                 scene_luma(frame),
-                thumbnail(frame),
+                thumb,
             )
             if not faces:
                 self.frame_check.note(self.detector, frame, len(frame_bytes))
@@ -126,6 +139,11 @@ class StackChanVisionBridge:
         """Seconds since the newest look was taken, or None when there is none."""
         look = self._latest_look
         return None if look is None else self.clock() - look[1]
+
+    def motion_age(self) -> float | None:
+        """Seconds since something last moved in the picture, or None if nothing has."""
+        at = self._last_motion_at
+        return None if at is None else self.clock() - at
 
     def latest_look(
         self, *, max_age_s: float, take: bool = False

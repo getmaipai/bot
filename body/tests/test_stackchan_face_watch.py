@@ -30,7 +30,8 @@ def test_the_camera_line_reports_frames_bytes_and_looks_once_a_minute():
     assert line is not None
     assert "600 frames" in line and "600 KB" in line
     assert "looked at 2 (a face in 1)" in line and "mean 4.0 ms" in line
-    assert line.endswith("; light 120 of 255 (bright)")  # the newest frame's brightness, one number
+    assert "; light 120 of 255 (bright)" in line  # the newest frame's brightness, one number
+    assert line.endswith("; movement in 0 looks (at most 0% of the picture)")
     assert stats.report(61.0) is None  # the next minute starts empty
 
 
@@ -284,3 +285,39 @@ def test_the_bridge_answers_can_you_see_me_without_the_hub(monkeypatch):
     from maipai_body.bodies.stackchan.sight import YES
 
     assert FakeTts.sentences and FakeTts.sentences[0] in YES
+
+
+def test_movement_is_the_share_of_the_picture_that_changed_not_a_brightness_step():
+    import numpy as np
+
+    from maipai_body.bodies.stackchan.presence_watch import (
+        MOTION_FRACTION,
+        motion_fraction,
+        moved,
+    )
+
+    still = np.full((12, 16), 100.0, dtype=np.float32)
+    assert motion_fraction(still, still) == 0.0
+    assert motion_fraction(None, still) == 0.0 and motion_fraction(still, None) == 0.0
+    # Auto exposure brightening the whole picture is not movement.
+    assert motion_fraction(still, still + 40) == 0.0
+    # JPEG noise under the cell threshold is not movement either.
+    noisy = still + np.random.default_rng(1).uniform(-8, 8, still.shape).astype(np.float32)
+    assert not moved(still, noisy)
+    # An arm across a quarter of the picture is.
+    arm = still.copy()
+    arm[:, :4] = 30.0
+    assert motion_fraction(still, arm) == 0.25 >= MOTION_FRACTION
+    assert moved(still, arm)
+    assert motion_fraction(still, np.zeros((6, 8), dtype=np.float32)) == 0.0  # shapes differ
+
+
+def test_the_camera_line_counts_looks_with_movement():
+    stats = CameraStats(lambda: (0, 0))
+    stats.report(0.0)
+    stats.looked(0.01, False, motion=0.02)
+    stats.looked(0.01, False, motion=0.31)
+    stats.looked(0.01, False, motion=0.09)
+    line = stats.report(60.0)
+    assert line is not None
+    assert line.endswith("; movement in 2 looks (at most 31% of the picture)")

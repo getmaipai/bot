@@ -213,6 +213,7 @@ class StackChanBehavior:
         # Orientation: the pose logic, its timer, and whether a pose face is being held.
         self.orientation: Any = None
         self.vision_poster: Any = None  # vision_post.VisionPoster: scene descriptions from Home
+        self.lux: Callable[[], float | None] = lambda: None  # the unit's light sensor, if read
         self._vision_posting = False
         self._vision_last: tuple[str | None, Any] | None = None  # bucket and thumbnail last posted
         self.orientation_tick: Callable[[], object] | None = None
@@ -471,7 +472,7 @@ class StackChanBehavior:
         if look is None:
             return
         _jpeg, people, luma, thumb = look
-        bucket = light_bucket(luma)
+        bucket = light_bucket(luma, self.lux())
         last_bucket, last_thumb = self._vision_last or (None, None)
         due = poster.scene_due(
             now,
@@ -530,14 +531,14 @@ class StackChanBehavior:
             return False
         jpeg, people, luma, _thumb = look
         result = poster.post(
-            jpeg, purpose="ask", people=people, light=light_bucket(luma), timeout=5.0
+            jpeg, purpose="ask", people=people, light=light_bucket(luma, self.lux()), timeout=5.0
         )
         logger.info(
             "StackChan vision ask (%s): picture %.0f s old, %d face(s), %s; %s",
             kind,
             age or 0.0,
             people,
-            light_bucket(luma),
+            light_bucket(luma, self.lux()),
             result.reason,
         )
         return result.ok
@@ -567,6 +568,8 @@ class StackChanBehavior:
             time.monotonic() - started,
             target.detected,
             luma=None if newest is None else newest[2],
+            flat=newest is not None and newest[2] is None,
+            motion=getattr(self._vision, "last_motion", None),
         )
         from maipai_body.bodies.stackchan.gaze import GazeReason
 
@@ -1012,6 +1015,7 @@ async def _serve_stackchan_channels(
         # Pictures reach Home only through this poster; `robot.vision` (settings_changed below) and
         # Home's own refusals decide whether any is sent.
         behavior.vision_poster = VisionPoster(_hub_credentials_reader(link, ""))
+        behavior.lux = lambda: getattr(voice.robot.client, "last_lux", None)
         _start_robot_checkin(voice, behavior, link, stop_event)
     night = _start_stackchan_night(voice, behavior, link, stop_event)
     behavior._rest_renderer._set_brightness = night._device.set_brightness
@@ -1132,6 +1136,7 @@ async def _serve_stackchan_channels(
                 ),
                 camera_running_s=avatar.camera_running_s,
                 watching=lambda: _detector_ready(vision),
+                motion_age=lambda: None if vision is None else vision.motion_age(),
             ),
         )
         bridge.vision_ask = behavior.vision_ask

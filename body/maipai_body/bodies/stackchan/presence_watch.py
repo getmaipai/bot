@@ -12,6 +12,33 @@ from collections.abc import Callable
 REPORT_EVERY_S = 60.0
 GREET_AFTER_ABSENT_S = 600.0  # nobody in view this long, then seen again: a greeting
 GREET_COOLDOWN_S = 1800.0  # and never twice within this
+# Movement between two looks (owner finding 2026-11-12: at the desk the camera sees an arm or a
+# shoulder, no face, so faces alone said "nobody"). The tiny gray thumbnails of two consecutive
+# looks are compared cell by cell after the overall brightness change is taken out (auto exposure
+# is not movement); the share of cells that changed by more than MOTION_CELL_DELTA is the movement.
+MOTION_CELL_DELTA = 12.0  # of 255; JPEG noise between two still frames stays under this
+MOTION_FRACTION = 0.05  # at least a twentieth of the picture changed: something moved
+MOTION_FRESH_S = 30.0  # "someone seems to be there" for this long after the last movement
+
+
+def motion_fraction(previous: object, current: object) -> float:
+    """The share of the picture that changed between two looks, 0.0 to 1.0 (0.0 when either is
+    missing or their shapes differ). Pure arithmetic on two small gray arrays; nothing is kept."""
+    import numpy as np
+
+    if previous is None or current is None:
+        return 0.0
+    a = np.asarray(previous, dtype=np.float32)
+    b = np.asarray(current, dtype=np.float32)
+    if a.shape != b.shape or a.size == 0:
+        return 0.0
+    delta = b - a
+    delta -= float(np.median(delta))  # a brightness step over the whole picture is not movement
+    return float(np.mean(np.abs(delta) > MOTION_CELL_DELTA))
+
+
+def moved(previous: object, current: object) -> bool:
+    return motion_fraction(previous, current) >= MOTION_FRACTION
 
 
 class CameraStats:
@@ -31,17 +58,35 @@ class CameraStats:
         self._with_face = 0
         self._look_ms = 0.0
         self._look_ms_max = 0.0
-        self._luma: float | None = None  # mean gray of the newest frame: one number, no picture
+        self._luma: float | None = None  # light level of the newest frame: one number, no picture
+        self._flat = False  # the newest frame had no detail, so its light level is unknown
+        self._moved = 0
+        self._motion_max = 0.0
 
-    def looked(self, elapsed_s: float, face: bool, *, luma: float | None = None) -> None:
-        """One frame was decoded and searched for a face (``elapsed_s`` is the whole look)."""
+    def looked(
+        self,
+        elapsed_s: float,
+        face: bool,
+        *,
+        luma: float | None = None,
+        flat: bool = False,
+        motion: float | None = None,
+    ) -> None:
+        """One frame was decoded and searched for a face (``elapsed_s`` is the whole look).
+        ``luma`` is its light level, ``flat`` says the picture had no detail to read one from, and
+        ``motion`` is the share of the picture that changed since the look before."""
         self._looked += 1
         self._with_face += 1 if face else 0
         ms = elapsed_s * 1000.0
         self._look_ms += ms
         self._look_ms_max = max(self._look_ms_max, ms)
-        if luma is not None:
-            self._luma = luma
+        if flat:
+            self._luma, self._flat = None, True
+        elif luma is not None:
+            self._luma, self._flat = luma, False
+        if motion is not None:
+            self._moved += 1 if motion >= MOTION_FRACTION else 0
+            self._motion_max = max(self._motion_max, motion)
 
     def report(self, now: float) -> str | None:
         """The line for the minute that just ended, or None before it has ended."""
@@ -59,13 +104,20 @@ class CameraStats:
             f"mean {self._look_ms / self._looked if self._looked else 0.0:.1f} ms, "
             f"max {self._look_ms_max:.1f} ms"
         )
-        if self._luma is not None:
+        if self._flat:
+            line += "; light: the picture has no detail (lens covered or something against it)"
+        elif self._luma is not None:
             from maipai_body.bodies.stackchan.vision_post import light_bucket
 
             line += f"; light {self._luma:.0f} of 255 ({light_bucket(self._luma)})"
+        if self._looked:
+            line += (
+                f"; movement in {self._moved} looks "
+                f"(at most {self._motion_max * 100:.0f}% of the picture)"
+            )
         self._since, self._frames0, self._bytes0 = now, frames, nbytes
-        self._looked = self._with_face = 0
-        self._look_ms = self._look_ms_max = 0.0
+        self._looked = self._with_face = self._moved = 0
+        self._look_ms = self._look_ms_max = self._motion_max = 0.0
         return line
 
 

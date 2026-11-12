@@ -45,10 +45,21 @@ class PostResult:
 # down with everything else. So the light level is the 90th percentile of gray (`scene_luma`).
 DARK_BELOW = 50
 BRIGHT_FROM = 110
+# The camera's auto exposure turns a covered lens into a flat grey fog (measured 2026-11-12: mean
+# 120, no detail) and an arm against the lens into a flat dark one, so a picture without detail
+# says nothing about the room's light. Detail is the mean step between neighbouring sample pixels:
+# the lit office measured 6.7 to 10.8, the covered lens 1.9 to 2.0, the hoodie close up 2.1 to 3.0.
+FLAT_EDGES = 3.5
+# The unit's light sensor reads 1 to 2 percent of the true lux (5 to 16 in the lit office); near
+# zero it is the one reliable sign of a dark room, whatever the camera's gain makes of the picture.
+DARK_LUX = 1.5
 
 
 def light_bucket(luma: float | None, lux: float | None = None) -> str | None:
-    """Classify illumination, preferring the picture's light level (`scene_luma`) when available."""
+    """Dark, dim or bright from the picture's light level (`scene_luma`, None for a picture with
+    no detail) and the light sensor; None when neither can tell."""
+    if lux is not None and lux < DARK_LUX:
+        return "dark"
     if luma is not None:
         if luma < DARK_BELOW:
             return "dark"
@@ -57,8 +68,6 @@ def light_bucket(luma: float | None, lux: float | None = None) -> str | None:
         return "bright"
     if lux is None:
         return None
-    if lux < 1.5:
-        return "dark"
     if lux < 5.0:
         return "dim"
     return "bright"
@@ -77,12 +86,18 @@ def differs(a: npt.NDArray[np.float32] | None, b: npt.NDArray[np.float32] | None
     return float(np.mean(np.abs(a - b))) >= THUMB_CHANGE
 
 
-def scene_luma(frame_bgr: npt.NDArray[np.uint8]) -> float:
+def scene_luma(frame_bgr: npt.NDArray[np.uint8]) -> float | None:
     """The light level of a picture: the 90th percentile of gray over every fourth pixel in each
     dimension (how bright its lit parts are), so a dark object close to the lens does not make a
-    lit room read as dim. One number; nothing of the picture is kept."""
+    lit room read as dim. None for a picture with no detail (a covered lens, something against
+    the lens): auto exposure makes its brightness meaningless. One number; nothing is kept."""
     sample = frame_bgr[::4, ::4]
     gray = 0.114 * sample[:, :, 0] + 0.587 * sample[:, :, 1] + 0.299 * sample[:, :, 2]
+    if gray.shape[0] < 2 or gray.shape[1] < 2:
+        return None
+    edges = (np.abs(np.diff(gray, axis=0)).mean() + np.abs(np.diff(gray, axis=1)).mean()) / 2
+    if edges < FLAT_EDGES:
+        return None
     return float(np.percentile(gray, 90))
 
 
@@ -95,7 +110,7 @@ class VisionPoster:
         *,
         session: requests.Session | None = None,
         clock: Callable[[], float] = time.monotonic,
-        timeout: float = 6.0,
+        timeout: float = 12.0,  # Home's Look may take 8 s under load; an ask passes its own 5 s
     ) -> None:
         self._hub_credentials = hub_credentials
         self._session = session or requests.Session()
@@ -207,6 +222,9 @@ class VisionPoster:
                 else:
                     result = PostResult(False, "unreachable", status)
         except requests.RequestException:
+            # Home did not answer in time (its Look can take up to 8 s under load, 2026-11-12) or
+            # is away: wait a little, like a refusal, instead of posting the next frame at once.
+            self._backoff_until = self._clock() + TOO_FAST_BACKOFF_S
             result = PostResult(False, "unreachable", status)
         except Exception:
             result = PostResult(False, "error", status)

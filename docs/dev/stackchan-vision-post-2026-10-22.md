@@ -21,5 +21,16 @@ for 90 seconds; the description is never returned to the bot, so a question abou
 - Light bucket: the 90th percentile of gray over a strided sample of the frame (`scene_luma`, the brightness of the picture's lit part):
   below 50 dark, below 110 dim, else bright. Measured on the unit 2026-11-12: the owner in a dark hoodie filling the frame in a lit room
   gave a mean of 52 to 69 (which the old mean rule called dim) and a 90th percentile of 151 to 171 (bright); a covered lens or an unlit
-  room pulls the percentile down with everything else. The unit's light sensor (about 5 to 16 lux in that lit room, 1 to 2 percent of
-  the true value) is only the fallback. The per-minute camera line in the log ends with this number and its bucket.
+  room pulls the percentile down with everything else. A picture with no detail (mean step between neighbouring sample pixels under
+  3.5: a covered lens is a flat grey fog under auto exposure, mean 120, measured the same day; an arm against the lens a flat dark one)
+  has no light level at all: auto exposure makes its brightness meaningless. The unit's light sensor (about 5 to 16 lux in that lit
+  room, 1 to 2 percent of the true value) decides then, and a reading under 1.5 means dark whatever the camera's gain shows. The
+  per-minute camera line in the log ends with the light level and bucket, or "the picture has no detail".
+- Movement, the second presence signal (owner finding 2026-11-12: at the desk the camera sees an arm or a shoulder and no face, so faces
+  alone said "nobody"): `presence_watch.motion_fraction` compares the tiny gray thumbnails of two consecutive looks cell by cell after
+  taking out the picture-wide brightness step (the median change, so auto exposure is not movement); a twentieth of the picture changed
+  by more than 12 of 255 counts as movement (`StackChanVisionBridge.motion_age`). "Can you see me?" with no face but movement in the last
+  30 s answers "something is moving right in front of me, is that you?" (`sight.MOVING`); the minute line counts the looks with
+  movement and the largest share. Movement never moves the head and is never sent to Home.
+- Posting: a post that Home does not answer within 12 s (its Look can take 8 s under load) counts as unreachable and waits 10 s like a
+  refusal before the next frame, instead of posting again at once.

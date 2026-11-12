@@ -174,17 +174,34 @@ def test_light_bucket(luma, lux, expected):
     assert light_bucket(luma, lux) == expected
 
 
+def _textured(height, width, low, high):
+    """A frame with detail: alternating sample columns of two gray levels."""
+    frame = np.full((height, width, 3), low, dtype=np.uint8)
+    frame[:, 4::8] = high
+    return frame
+
+
 def test_scene_luma_is_the_lit_part_of_a_strided_bgr_sample():
-    frame = np.zeros((8, 8, 3), dtype=np.uint8)
-    frame[::4, ::4] = (100, 100, 100)
+    frame = _textured(40, 80, 100, 110)
     frame[1::4, 1::4] = (255, 255, 255)  # skipped by the stride
-    assert scene_luma(frame) == pytest.approx(100)
+    assert scene_luma(frame) == pytest.approx(110)
     # A dark object over most of the frame does not hide a lit room: the bright tenth decides.
-    frame = np.full((40, 40, 3), 30, dtype=np.uint8)
-    frame[:, 28:] = 200
+    frame = _textured(40, 80, 30, 40)
+    frame[:, 64:] = 200
     assert scene_luma(frame) == pytest.approx(200)
     assert light_bucket(scene_luma(frame)) == "bright"
-    assert light_bucket(scene_luma(np.full((40, 40, 3), 12, dtype=np.uint8))) == "dark"
+    assert light_bucket(scene_luma(_textured(40, 80, 12, 24))) == "dark"
+
+
+def test_a_picture_without_detail_has_no_light_level_and_the_sensor_decides():
+    """A covered lens is a flat grey fog under auto exposure (mean 120, measured 2026-11-12); an
+    arm against the lens is a flat dark one. Neither says anything about the room."""
+    assert scene_luma(np.full((40, 80, 3), 120, dtype=np.uint8)) is None
+    assert scene_luma(np.full((40, 80, 3), 40, dtype=np.uint8)) is None
+    assert light_bucket(None) is None
+    assert light_bucket(None, 9.3) == "bright"  # the lit office's sensor reading
+    assert light_bucket(None, 0.4) == "dark"
+    assert light_bucket(170, 0.4) == "dark"  # a near-zero sensor wins over a gained-up picture
 
 
 def test_the_looks_flow_from_the_bridge_to_a_scene_post_and_an_ask_post():
@@ -224,6 +241,7 @@ def test_the_looks_flow_from_the_bridge_to_a_scene_post_and_an_ask_post():
     behavior = object.__new__(StackChanBehavior)
     behavior.vision_poster = VisionPoster(lambda: ("cookie", "http://hub"), session=Session())
     behavior._vision = Bridge()
+    behavior.lux = lambda: None
     behavior._vision_posting = False
     behavior._vision_last = None
     behavior._active = threading.Event()

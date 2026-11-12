@@ -14,6 +14,7 @@ import re
 from collections.abc import Callable
 
 FACE_FRESH_S = 10.0  # "I can see you" only for a face seen this recently
+MOTION_FRESH_S = 30.0  # something moved in the picture this recently: someone is probably there
 
 _CAN_SEE_ME = re.compile(
     r"\b(can|could|do|did|are you able to)\b.*\b(see|spot|find|notice)\b"
@@ -38,6 +39,11 @@ YES = (
     "Yes! I can see you right there.",
     "Yes, there you are!",
     "I can see you, hi!",
+)
+# No face, but the picture is changing: a person is probably there, too close or too low for a face.
+MOVING = (
+    "I can't see a face, but something is moving right in front of me. Is that you?",
+    "Something is moving close to me, though I can't see a face. Lean back a bit so I can see you.",
 )
 CAMERA_OFF = (
     "My camera is off right now.",
@@ -71,6 +77,7 @@ class SightAnswers:
         light: Callable[[], str | None] = lambda: None,
         camera_running_s: Callable[[], float | None] = lambda: STARTING_S,
         watching: Callable[[], bool] = lambda: False,
+        motion_age: Callable[[], float | None] = lambda: None,
         rng: random.Random | None = None,
     ) -> None:
         self._face_age = face_age
@@ -78,6 +85,7 @@ class SightAnswers:
         self._light = light
         self._camera_running_s = camera_running_s
         self._watching = watching
+        self._motion_age = motion_age
         self._rng = rng or random.Random()
         self._last: dict[str, str] = {}
 
@@ -124,13 +132,25 @@ class SightAnswers:
                 age = self._face_age()
                 if age is not None and age <= FACE_FRESH_S:
                     return f"It is {room} here and I can see someone, but {NO_LOOK}"
+                if self._moving():
+                    return (
+                        f"It is {room} here and something is moving close to me, "
+                        f"though I can't see a face, and {NO_LOOK}"
+                    )
                 return f"It is {room} here and I can't see anyone right now, but {NO_LOOK}"
             if room:
                 return f"My camera is on and it is {room} here, but {NO_LOOK}"
             return f"My camera is on, but {NO_LOOK}"
+        if self._moving():
+            return self._pick("moving", MOVING)
         if room:
             return f"I can't spot anyone right now. My camera is on and it is {room} here."
         return "I can't spot anyone right now, but my camera is on."
+
+    def _moving(self) -> bool:
+        """Something moved in the picture a moment ago: a person whose face is out of view."""
+        age = self._motion_age()
+        return age is not None and age <= MOTION_FRESH_S
 
     def _pick(self, key: str, lines: tuple[str, ...]) -> str:
         choices = [line for line in lines if line != self._last.get(key)] or list(lines)

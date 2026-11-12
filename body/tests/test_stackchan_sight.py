@@ -8,6 +8,7 @@ import pytest
 
 from maipai_body.bodies.stackchan.sight import (
     CAMERA_OFF,
+    MOVING,
     NOT_READY,
     YES,
     SightAnswers,
@@ -171,3 +172,26 @@ def test_a_picture_question_with_the_detector_running_says_who_is_in_view():
         "It is bright here and I can see someone, but I couldn't get a good look just now. "
         "Ask me again in a moment."
     )
+
+
+def test_movement_without_a_face_says_someone_seems_to_be_there():
+    """The owner's arm next to the lens (2026-11-12): no face, but the picture keeps changing."""
+
+    def make(motion_age, face_age=None, watching=True):
+        return SightAnswers(
+            face_age=lambda: face_age,
+            camera_on=lambda: True,
+            light=lambda: "bright",
+            camera_running_s=lambda: 600.0,
+            watching=lambda: watching,
+            motion_age=lambda: motion_age,
+            rng=random.Random(3),
+        )
+
+    assert make(2.0).answer("can you see me") in MOVING
+    assert make(45.0).answer("can you see me").startswith("I can't spot anyone right now")
+    assert make(None).answer("can you see me").startswith("I can't spot anyone right now")
+    assert make(2.0, face_age=1.0).answer("can you see me") in YES  # a face still wins
+    picture = make(2.0).answer("what do you see")
+    assert picture.startswith("It is bright here and something is moving close to me")
+    assert "can't see a face" in picture and picture.endswith("Ask me again in a moment.")
