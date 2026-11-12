@@ -1105,6 +1105,7 @@ class StackChanTurnBridge:
                     return
             turn = self.turn_factory(base, cookie)
             chat_started = self._clock()
+
             def _drain() -> list:
                 collected: list = []
                 evidence = self._speaker_evidence(result)

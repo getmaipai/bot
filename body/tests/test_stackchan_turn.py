@@ -948,7 +948,11 @@ def test_stop_cancels_the_hub_turn(monkeypatch):
             return True
 
     bridge = StackChanTurnBridge(
-        server, Link(), Offline(), stt_factory=FakeStt, turn_factory=CancellableTurn,
+        server,
+        Link(),
+        Offline(),
+        stt_factory=FakeStt,
+        turn_factory=CancellableTurn,
         tts_factory=FakeTts,
     )
     holder["bridge"] = bridge
