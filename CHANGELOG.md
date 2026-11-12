@@ -7,6 +7,15 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.59] - 2026-11-12
+
+### Added
+- StackChan now looks for a face on its own: when the picture differs from the learned empty room, moves, or is flat in a lit room with no face, it glances up, then looks up and to each side with slow eased moves, stops at a face or a touch, and backs off 1, 3 and 10 minutes after a miss. On the wake word it glances up at once and looks again after the reply. It never searches mid-reply, asleep or at night. The 2026-10-20 "still" rule no longer holds this (owner decision 2026-11-12).
+- Light or dark from the light sensor plus the picture's detail (a covered lens or an arm is a flat picture, not dark), with a look around before it concludes dark. Presence counts faces, movement and a change from the empty room.
+
+### Fixed
+- Phantom "petted" smiles: firmware patch 080 makes a weak head-touch run need 2 s and report strong=0, so the host's lone-touch filter drops it.
+
 ## [0.2.58] - 2026-11-12
 
 ### Fixed
