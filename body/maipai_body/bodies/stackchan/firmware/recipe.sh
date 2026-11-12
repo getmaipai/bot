@@ -312,6 +312,7 @@ apply_repo_patch 077-silent-link-closes.patch "$SRC"
 apply_repo_patch 078-quick-tap-counts.patch "$SRC"
 apply_repo_patch 079-dev-server-override.patch "$SRC"
 apply_repo_patch 079-dev-voice-url.patch "$FW/xiaozhi-esp32"
+apply_repo_patch 080-weak-runs-are-maybes.patch "$SRC"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"

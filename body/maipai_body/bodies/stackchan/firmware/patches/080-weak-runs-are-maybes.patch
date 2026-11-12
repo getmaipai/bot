@@ -1,0 +1,64 @@
+# Intent: stop the phantom pets (owner report 2026-11-12, "it keeps smiling"). With nobody touching the unit the strip read 1 on 277 of 979 samples a minute in 85 runs of up to 17 samples (head_touch_stats), and since 076 every weak run of 4 samples became a press, 28 a minute, each a smile; 078 kept that rule. A weak run now needs 32 samples (two seconds of rubbing at the strip's 16 Hz, longer than any idle run seen, 23 at most), and every press and swipe event says whether its run reached reading 2 ("strong":1) or stayed at 1 ("strong":0); 056 had made every event say strong=1, so the host trusted the phantoms. The host filter (head_touch_filter.py) already drops a lone strong=0 event unless it repeats within 4.5 s.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_head_touch.cpp, firmware/main/hal/hal_mcp.cpp (MIT). Applies after 079.
+# Check after a flash: leave the unit alone for ten minutes: no "unit touch: head_touch" and no "StackChan was petted" in the host log while head_touch_stats weak stays high; a firm tap still gives head_touch strong=1 at once; a slow two-second rub gives head_touch strong=0 and a second one within a few seconds makes a pet.
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index 37cacf1..57bf1a3 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -53,7 +53,13 @@ constexpr int kLongRun    = 8;
+ // samples in runs of up to 14, no sample at 2) and got no reaction, while the strip showed no idle
+ // noise at all that afternoon (0 weak samples a minute for 18 minutes). If idle noise returns, the
+ // head_touch_stats line shows weak runs without anyone there and this value should go up.
+-constexpr int kWeakPetSamples = 4;
++// 2026-11-12, owner report "it keeps smiling": with nobody there the strip read 1 on 277 of 979
++// samples a minute in 85 runs of up to 17 samples, and every run of 4 became a press (28 a minute,
++// a smile each). A weak run now needs 32 samples (two seconds of rubbing at 16 Hz), longer than any
++// idle run seen (23 at most), and a press says whether its run reached reading 2 (g_head_touch_strong)
++// so the host can treat a weak one as a maybe.
++constexpr int kWeakPetSamples = 32;
++std::atomic<uint32_t> g_head_touch_strong{0};
+ // 2026-11-12 owner report: a quick firm tap on the head did nothing. A tap lasts one to three
+ // samples, so a strong tap (reading 2 or more) now counts from a single sample. Weak runs still need
+ // 4 samples: on 2026-11-12 the strip read reading 1 for 200 to 265 samples a minute with nobody
+@@ -135,6 +141,7 @@ public:
+                 current_state    = TouchState::TOUCHED;
+                 initial_position = last_position;
+                 gesture          = HeadPetGesture::Press;
++                g_head_touch_strong.store(run_peak >= kPetPeak ? 1 : 0);
+                 presses++;
+             } else if (current_state == TouchState::TOUCHED) {
+                 // Check for swipe
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index c58691b..603b91a 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -158,6 +158,9 @@ void device_events_push_diag(const char* kind, const char* extra)
+     push_diag_event(kind, extra);
+ }
+ 
++#include <atomic>
++extern std::atomic<uint32_t> g_head_touch_strong;
++
+ void Hal::xiaozhi_mcp_init()
+ {
+     mclog::tagInfo(_tag, "init");
+@@ -171,13 +174,15 @@ void Hal::xiaozhi_mcp_init()
+         (void)headpet_connection_id;
+         (void)imu_connection_id;
+         headpet_connection_id = GetHAL().onHeadPetGesture.connect([](HeadPetGesture gesture) {
++            // strong=1 means the run reached reading 2 or more; a weak run (reading 1 for two seconds,
++            // hal_head_touch.cpp) says strong=0 and the host asks for a repeat before it counts.
++            const char* strength = g_head_touch_strong.load() ? "\"strong\":1" : "\"strong\":0";
+             if (gesture == HeadPetGesture::Press) {
+-                // A press now means a run that reached reading 2 or more (hal_head_touch.cpp); the host trusts it.
+-                push_event("head_touch", "\"strong\":1");
++                push_event("head_touch", strength);
+             } else if (gesture == HeadPetGesture::SwipeForward) {
+-                push_event("head_swipe_forward", "\"strong\":1");
++                push_event("head_swipe_forward", strength);
+             } else if (gesture == HeadPetGesture::SwipeBackward) {
+-                push_event("head_swipe_back", "\"strong\":1");
++                push_event("head_swipe_back", strength);
+             }
+         });
+         imu_connection_id = GetHAL().onImuMotionEvent.connect([](ImuMotionEvent event) {
