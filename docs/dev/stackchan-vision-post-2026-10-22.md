@@ -38,13 +38,22 @@ for 90 seconds; the description is never returned to the bot, so a question abou
   movement and the largest share. Movement never moves the head and is never sent to Home.
 - Posting: a post that Home does not answer within 12 s (its Look can take 8 s under load) counts as unreachable and waits 10 s like a
   refusal before the next frame, instead of posting again at once.
-- Looking around (`head_search.py`, owner requests 2026-11-12), quiet and only while awake, idle and not in a turn, every move through
-  the head gate as `ambient:search`, the return to centre essential: (a) for a face: when the picture moved in the last 5 s and no face
-  was seen for 5 s, the head tilts 20 degrees up, then pans 25 degrees left and right, 0.9 s a pose, and stops the moment the face
-  watcher sees a face (following takes over); once a minute at most. (b) before concluding dark: when the picture has no detail and the
-  sensor is at its floor, the head looks 25 degrees left, right and 15 degrees up; detail seen in any of those means something is in
-  front of the camera and the light is "cannot tell" for 5 minutes, no detail anywhere confirms dark for 10 minutes. Until the look is
-  done a flat picture is not yet "dark" (`StackChanBehavior.light_now`); when the head may not move (charging, level still, night,
-  resting) the sensor alone decides. The log says "StackChan looking around (reason): yaw N, pitch M up from level" per pose.
+- Looking around (`head_search.py`, owner requests 2026-11-12, "natural, not annoying"; the 2026-10-20 "head still while charging or at
+  idle level still" rule no longer holds these back, owner-approved 2026-11-12: the head gate treats them as responses, idle wandering
+  and the settle stay ambient). Quiet, every move through the head gate, never mid-reply, asleep or at night, stopped the instant a face
+  is seen (following takes over, no return move) or a touch arrives, otherwise a slow return to the resting pose. (a) For a face, when no
+  face was seen for 5 s and the picture suggests a person: it differs from the learned empty room (`presence_watch.SceneBaseline`, blended
+  in slowly while nobody seems there; measured 2026-11-12: the owner at the desk differs in 61 to 77 percent of the picture, the empty
+  office in 1 to 10; the rule is 25 percent of cells by more than 30 of 255), or it moved in the last 5 s, or it is flat in a lit room.
+  Poses: a glance 12 degrees up, then 22 up, then 25 left and 25 right, one eased move at the servo's slowest setting (speed 100) and a
+  pause at each pose (1.6 s a pose, about six seconds in all). A look that found nobody waits 1, then 3, then 10 minutes before the next;
+  a face resets the wait. Proven on the unit 2026-11-12 16:53 with no wave: "differs from the empty room in 34%", glance 12, look 22,
+  "found a face at x 0.69, y 0.13" after 2.5 s. (b) Someone speaking (listen start): the head turns toward a face seen in the last 60 s,
+  else glances 15 degrees up briskly (speed 130) and looks again right after the reply; the camera is paused while the unit listens and
+  speaks (firmware 069), so the face is found after the reply, not during it. (c) Before concluding dark: left 25, right 25, up 15; detail
+  seen in any of those means something is in front of the camera and the light is "cannot tell" for 5 minutes, none confirms dark for
+  10 minutes; until the look is done a flat picture is not yet "dark" (`StackChanBehavior.light_now`); while resting or at night the sensor
+  alone decides. The log says "StackChan looking around (reason): yaw N, pitch M up from level" per pose and why each look started and
+  stopped. Every value is at the top of `head_search.py` and `presence_watch.py`.
 - Phantom pets ("it keeps smiling", 2026-11-12): firmware patch 080 makes a weak run (reading 1) need 32 samples and marks weak
   presses `strong=0`; `head_touch_filter.py` already drops a lone weak event unless it repeats within 4.5 s.
