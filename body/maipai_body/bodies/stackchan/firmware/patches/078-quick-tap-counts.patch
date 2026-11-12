@@ -1,6 +1,6 @@
-# Intent: a quick tap on the head counts as a pet (owner report 2026-11-12: tap did nothing, rub only worked once awake). A tap lasts one to three samples at the strip's 16 Hz; a run needed 2 samples at reading 2 or more, or 4 at any reading, so quick taps never became a press. A strong run now counts from 1 sample and a weak run from 2.
+# Intent: a quick firm tap on the head counts as a pet (owner report 2026-11-12: tap did nothing). A tap lasts one to three samples at the strip's 16 Hz; a run needed 2 samples even at reading 2 or more, so a quick firm tap never became a press. A run that reaches reading 2 now counts from 1 sample. Weak runs (reading 1) still need 4 samples: a first try at 2 gave 72 phantom pets a minute because the strip reads 1 on 200+ samples a minute with nobody there on some days.
 # Upstream: m5stack/StackChan firmware/main/hal/hal_head_touch.cpp (MIT). Applies after 077.
-# Check after a flash: tap the head once, firmly, with the screen dim: the host log shows unit touch head_touch and StackChan woke up on touch. Leave it alone for ten minutes: no head_touch events, head_touch_stats weak stays near 0.
+# Check after a flash: tap the head once, firmly: the host log shows unit touch head_touch. Leave it alone for ten minutes: head_touch_stats presses stays near 0 even if weak is high.
 diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
 --- a/firmware/main/hal/hal_head_touch.cpp
 +++ b/firmware/main/hal/hal_head_touch.cpp
@@ -13,16 +13,14 @@ diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_t
  constexpr int kRunGap     = 2;
  constexpr int kLongRun    = 8;
  // A rub that never reads above 1 still counts once it lasts this many samples (about a quarter of a
-@@ -53,7 +53,11 @@
- // samples in runs of up to 14, no sample at 2) and got no reaction, while the strip showed no idle
+@@ -54,6 +54,10 @@
  // noise at all that afternoon (0 weak samples a minute for 18 minutes). If idle noise returns, the
  // head_touch_stats line shows weak runs without anyone there and this value should go up.
--constexpr int kWeakPetSamples = 4;
-+constexpr int kWeakPetSamples = 2;
-+// 2026-11-12 owner report: a quick tap on the head did nothing. A tap lasts one to three samples, so
-+// a strong tap (reading 2 or more) now counts from a single sample and a weak one from two. The strip
-+// read 0 weak samples a minute with nobody there for 20 minutes that day; if idle noise returns, the
-+// head_touch_stats line shows weak runs with nobody there and these two values go back up.
+ constexpr int kWeakPetSamples = 4;
++// 2026-11-12 owner report: a quick firm tap on the head did nothing. A tap lasts one to three
++// samples, so a strong tap (reading 2 or more) now counts from a single sample. Weak runs still need
++// 4 samples: on 2026-11-12 the strip read reading 1 for 200 to 265 samples a minute with nobody
++// touching it, and counting weak runs of 2 gave 72 phantom pets a minute (a smile flicker).
  
  // 配置参数
  struct TouchConfig {
