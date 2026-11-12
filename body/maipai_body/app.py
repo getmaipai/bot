@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from maipai_body.bodies.stackchan.companion import DIAGNOSTIC_KINDS
+from maipai_body.bodies.stackchan.head_search import DARK_STEPS, PERSON_STEPS, STEP_S, HeadSearch
 from maipai_body.bodies.stackchan.head_touch_filter import HEAD_KINDS, HeadTouchFilter
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.suppression import SuppressionContext
@@ -224,6 +225,12 @@ class StackChanBehavior:
         self._last_touch_wake = float("-inf")
         self._event_queue_drained = False
         self._head_filter = HeadTouchFilter()
+        # A short look around (head_search.py): for a face when the picture moves without one,
+        # and before concluding the room is dark. Quiet, gated, never in a turn or while resting.
+        self._search = HeadSearch()
+        self._search_detail_seen = False
+        self._dark_confirmed_at: float | None = None
+        self._camera_blocked_until = float("-inf")
         # Idle face watching: the camera level from the settings frame, the greeting style, and
         # the counters of the unit's camera stream (all set by the service wiring).
         self.watch_level: Callable[[], str] = lambda: "identify"
@@ -412,6 +419,7 @@ class StackChanBehavior:
             try:
                 self.watch_for_faces(now)
                 self.post_scene(now)
+                self.search_tick(now)
             except Exception:
                 self._warn_limited("tracking", "StackChan face watching failed")
             line = self._camera_stats.report(now)
@@ -466,13 +474,13 @@ class StackChanBehavior:
             or self.watch_level() == "off"
         ):
             return
-        from maipai_body.bodies.stackchan.vision_post import differs, light_bucket
+        from maipai_body.bodies.stackchan.vision_post import differs
 
         look = self._vision.latest_look(max_age_s=3.0)
         if look is None:
             return
         _jpeg, people, luma, thumb = look
-        bucket = light_bucket(luma, self.lux(), flat=luma is None)
+        bucket = self.light_now(luma, flat=luma is None, now=now)
         last_bucket, last_thumb = self._vision_last or (None, None)
         due = poster.scene_due(
             now,
@@ -518,7 +526,7 @@ class StackChanBehavior:
             or not poster.ask_possible()
         ):
             return False
-        from maipai_body.bodies.stackchan.vision_post import ASK_MAX_AGE_S, light_bucket
+        from maipai_body.bodies.stackchan.vision_post import ASK_MAX_AGE_S
 
         age = self._vision.look_age()
         look = self._vision.latest_look(max_age_s=ASK_MAX_AGE_S, take=True)
@@ -534,7 +542,7 @@ class StackChanBehavior:
             jpeg,
             purpose="ask",
             people=people,
-            light=light_bucket(luma, self.lux(), flat=luma is None),
+            light=self.light_now(luma, flat=luma is None),
             timeout=5.0,
         )
         logger.info(
@@ -542,10 +550,163 @@ class StackChanBehavior:
             kind,
             age or 0.0,
             people,
-            light_bucket(luma, self.lux(), flat=luma is None),
+            self.light_now(luma, flat=luma is None),
             result.reason,
         )
         return result.ok
+
+    # -- looking around (owner requests 2026-11-12) -------------------------------------------
+
+    SEARCH_MOTION_FRESH_S = 5.0  # something moved this recently: someone seems to be there
+    SEARCH_FACE_GONE_S = 5.0  # and no face was seen for this long: it is out of the picture
+    DARK_CONFIRMED_S = 600.0  # a confirmed dark holds this long before the robot looks again
+    CAMERA_BLOCKED_S = 300.0  # detail while looking around a "dark" picture: something is in front
+
+    def search_tick(self, now: float) -> None:
+        """Drive a look around, or start one when the picture calls for it (presence loop)."""
+        search = self._search
+        if search.active:
+            if self._active.is_set() or self._rest.stage != "awake" or self.night_active():
+                self._end_search(now, "a turn or a rest started")
+                return
+            if search.reason == "person":
+                face = self._last_face
+                if face is not None and now - face[2] <= 1.0:
+                    self._end_search(
+                        now,
+                        "found a face"
+                        + (
+                            f" at x {face[0]:.2f}, y {face[1]:.2f} of the picture"
+                            if face is not None
+                            else ""
+                        ),
+                    )
+                    return
+            elif search.reason == "dark" and self._vision is not None:
+                newest = self._vision.latest_look(max_age_s=1.0)
+                if newest is not None and newest[2] is not None:
+                    self._search_detail_seen = True
+            step = search.due(now)
+            if step is not None:
+                if not self.head_gate.allow("ambient:search"):
+                    self._end_search(now, "the head may not move now")
+                    return
+                self._search_pose(step.yaw_deg, step.pitch_deg)
+                logger.info(
+                    "StackChan looking around (%s): yaw %.0f, pitch %.0f up from level",
+                    search.reason,
+                    step.yaw_deg,
+                    step.pitch_deg,
+                )
+            elif search.finished(now):
+                self._end_search(now, "done")
+            return
+        if (
+            self._vision is None
+            or self._active.is_set()
+            or self._rest.stage != "awake"
+            or self.night_active()
+            or self.idle_still()
+            or self.watch_level() == "off"
+        ):
+            return
+        motion_age = self._vision.motion_age()
+        face_age = None if self._last_face is None else now - self._last_face[2]
+        if (
+            motion_age is not None
+            and motion_age <= self.SEARCH_MOTION_FRESH_S
+            and (face_age is None or face_age > self.SEARCH_FACE_GONE_S)
+        ):
+            if search.start("person", PERSON_STEPS, now):
+                logger.info(
+                    "StackChan looking for a face: the picture moved %.0f s ago, no face in it",
+                    motion_age,
+                )
+            return
+        look = self._vision.latest_look(max_age_s=2.0)
+        if look is not None and look[2] is None and not self.dark_confirmed(now):
+            from maipai_body.bodies.stackchan.vision_post import light_bucket
+
+            if light_bucket(None, self.lux(), flat=True) == "dark":
+                if search.start("dark", DARK_STEPS, now):
+                    self._search_detail_seen = False
+                    logger.info(
+                        "StackChan checking the dark: no detail in the picture, sensor %s; "
+                        "looking around before it concludes",
+                        self.lux(),
+                    )
+
+    def _search_pose(self, yaw_deg: float, pitch_deg: float) -> None:
+        from maipai_body.bodies.stackchan.gaze import GazeReason
+        from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
+
+        pose = HeadPose(yaw=math.radians(yaw_deg), pitch=math.radians(CENTRE_PITCH_DEG + pitch_deg))
+        self._with_lease(lambda: self.robot.head.set(pose=pose, duration_s=STEP_S * 0.8))
+        self._head_off_centre = True
+        self.gaze.note(GazeReason.SEARCH)
+
+    def _end_search(self, now: float, why: str) -> None:
+        reason = self._search.stop(now)
+        if reason == "dark":
+            if self._search_detail_seen:
+                self._camera_blocked_until = now + self.CAMERA_BLOCKED_S
+                logger.info(
+                    "StackChan dark check: not dark, the camera saw detail while looking around "
+                    "(something is in front of it); light unknown for %.0f s",
+                    self.CAMERA_BLOCKED_S,
+                )
+            elif why == "done":
+                self._dark_confirmed_at = now
+                logger.info(
+                    "StackChan dark check: dark confirmed, no detail in any direction, sensor %s",
+                    self.lux(),
+                )
+            else:
+                logger.info("StackChan dark check stopped: %s", why)
+        elif reason == "person":
+            logger.info("StackChan stopped looking for a face: %s", why)
+        # Back to centre: essential, so it never counts against the gate's cap.
+        self.head_gate.allow("ambient:search", essential=True)
+        from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
+
+        centre = HeadPose(yaw=0.0, pitch=math.radians(CENTRE_PITCH_DEG))
+        self._with_lease(lambda: self.robot.head.set(pose=centre, duration_s=STEP_S * 0.8))
+
+    def dark_confirmed(self, now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        at = self._dark_confirmed_at
+        return at is not None and current - at <= self.DARK_CONFIRMED_S
+
+    def light_now(self, luma: float | None, *, flat: bool, now: float | None = None) -> str | None:
+        """The light bucket the robot stands behind: a "dark" from a picture with no detail waits
+        for the look around (`search_tick`) unless the head may not move; detail seen during that
+        look means something is in front of the camera and the light is unknown for a while."""
+        from maipai_body.bodies.stackchan.vision_post import light_bucket
+
+        current = time.monotonic() if now is None else now
+        bucket = light_bucket(luma, self.lux(), flat=flat)
+        if not flat or bucket != "dark":
+            return bucket
+        if current < self._camera_blocked_until:
+            return None
+        if self.dark_confirmed(current):
+            return "dark"
+        cannot_look = (
+            self._rest.stage != "awake"
+            or self.night_active()
+            or self.idle_still()
+            or self._active.is_set()
+        )
+        return "dark" if cannot_look else None
+
+    def light_for_sight(self, now: float | None = None) -> str | None:
+        """The bucket for a spoken light question, from the newest picture (up to a minute old)."""
+        if self._vision is None:
+            return self.light_now(None, flat=False, now=now)
+        look = self._vision.latest_look(max_age_s=60.0)
+        if look is None:
+            return self.light_now(None, flat=False, now=now)
+        return self.light_now(look[2], flat=look[2] is None, now=now)
 
     def watch_for_faces(self, now: float) -> bool:
         """Look for a face in the unit's latest camera frame about twice a second.
@@ -1136,9 +1297,7 @@ async def _serve_stackchan_channels(
             sight_control=SightAnswers(
                 face_age=behavior.face_age,
                 camera_on=lambda: behavior.watch_level() != "off",
-                light=lambda: _light_from_last_look(
-                    vision, getattr(voice.robot.client, "last_lux", None)
-                ),
+                light=behavior.light_for_sight,
                 camera_running_s=avatar.camera_running_s,
                 watching=lambda: _detector_ready(vision),
                 motion_age=lambda: None if vision is None else vision.motion_age(),
@@ -1912,18 +2071,6 @@ def _detector_ready(vision: Any) -> bool:
     """True once the face model is loaded, so "I see nobody" is a real answer."""
     ready = getattr(getattr(vision, "detector", None), "ready", False)
     return bool(ready() if callable(ready) else ready)
-
-
-def _light_from_last_look(vision: Any, lux: float | None = None) -> str | None:
-    """Dark, dim or bright from the newest camera frame (kept in memory for the next post)."""
-    if vision is None:
-        return None
-    from maipai_body.bodies.stackchan.vision_post import light_bucket
-
-    look = vision.latest_look(max_age_s=60.0)
-    if look is None:
-        return light_bucket(None, lux)
-    return light_bucket(look[2], lux, flat=look[2] is None)
 
 
 def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power: Any) -> None:

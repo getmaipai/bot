@@ -38,3 +38,13 @@ for 90 seconds; the description is never returned to the bot, so a question abou
   movement and the largest share. Movement never moves the head and is never sent to Home.
 - Posting: a post that Home does not answer within 12 s (its Look can take 8 s under load) counts as unreachable and waits 10 s like a
   refusal before the next frame, instead of posting again at once.
+- Looking around (`head_search.py`, owner requests 2026-11-12), quiet and only while awake, idle and not in a turn, every move through
+  the head gate as `ambient:search`, the return to centre essential: (a) for a face: when the picture moved in the last 5 s and no face
+  was seen for 5 s, the head tilts 20 degrees up, then pans 25 degrees left and right, 0.9 s a pose, and stops the moment the face
+  watcher sees a face (following takes over); once a minute at most. (b) before concluding dark: when the picture has no detail and the
+  sensor is at its floor, the head looks 25 degrees left, right and 15 degrees up; detail seen in any of those means something is in
+  front of the camera and the light is "cannot tell" for 5 minutes, no detail anywhere confirms dark for 10 minutes. Until the look is
+  done a flat picture is not yet "dark" (`StackChanBehavior.light_now`); when the head may not move (charging, level still, night,
+  resting) the sensor alone decides. The log says "StackChan looking around (reason): yaw N, pitch M up from level" per pose.
+- Phantom pets ("it keeps smiling", 2026-11-12): firmware patch 080 makes a weak run (reading 1) need 32 samples and marks weak
+  presses `strong=0`; `head_touch_filter.py` already drops a lone weak event unless it repeats within 4.5 s.

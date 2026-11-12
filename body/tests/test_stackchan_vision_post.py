@@ -154,7 +154,7 @@ def test_logs_only_counts_and_codes(caplog):
 @pytest.mark.parametrize(
     ("luma", "lux", "expected"),
     [
-        (49.9, 20, "dark"),
+        (49.9, 9, "dark"),
         (50, None, "dim"),
         (109.9, None, "dim"),
         (110, None, "bright"),
@@ -319,3 +319,7 @@ def test_a_flat_picture_with_the_sensor_at_its_floor_is_a_dark_room():
     assert light_bucket(None, None, flat=True) == "dark"
     assert light_bucket(None, 9.3, flat=True) is None  # covered in a lit room: cannot tell
     assert light_bucket(170, 9.3) == "bright"
+    assert (
+        light_bucket(84, 77.1) == "bright"
+    )  # the lamp on: the sensor says so even if the picture is dim
+    assert light_bucket(84, 9.3) == "dim"

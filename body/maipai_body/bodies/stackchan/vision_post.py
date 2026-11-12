@@ -56,6 +56,9 @@ FLAT_EDGES = 3.5
 # camera's gain shows; a picture with no detail plus a sensor at its floor is a dark room.
 DARK_LUX = 1.5
 FLAT_DARK_LUX = 8.0
+BRIGHT_LUX = (
+    20.0  # the lit office with its lamp on read 77 while the picture's lit part read 80 to 117
+)
 
 
 def light_bucket(luma: float | None, lux: float | None = None, *, flat: bool = False) -> str | None:
@@ -66,6 +69,8 @@ def light_bucket(luma: float | None, lux: float | None = None, *, flat: bool = F
         return "dark"
     if flat:
         return "dark" if lux is None or lux < FLAT_DARK_LUX else None
+    if lux is not None and lux >= BRIGHT_LUX:
+        return "bright"
     if luma is not None:
         if luma < DARK_BELOW:
             return "dark"
