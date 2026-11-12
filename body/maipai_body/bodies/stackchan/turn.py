@@ -1105,11 +1105,22 @@ class StackChanTurnBridge:
                     return
             turn = self.turn_factory(base, cookie)
             chat_started = self._clock()
-            events = await asyncio.to_thread(
-                lambda: list(
-                    turn.stream(result.text, speaker_evidence=self._speaker_evidence(result))
-                )
-            )
+            def _drain() -> list:
+                collected: list = []
+                for event in turn.stream(result.text, speaker_evidence=self._speaker_evidence(result)):
+                    collected.append(event)
+                    if cancel_event.is_set():
+                        # A stop must end the hub's generation too, not only our playback.
+                        tid = getattr(event, "turn_id", None)
+                        if tid:
+                            try:
+                                turn.cancel(tid)
+                            except Exception:
+                                LOG.debug("StackChan voice: hub turn cancel failed", exc_info=True)
+                        break
+                return collected
+
+            events = await asyncio.to_thread(_drain)
             reply = next((e.reply_text for e in reversed(events) if e.reply_text), None)
             LOG.info(
                 "StackChan voice: chat ended in %.1f s (%d events, reply %d characters)",
@@ -1198,10 +1209,16 @@ class StackChanTurnBridge:
             self._states[session_id] = "idle"
             self._notify(self.on_turn_end, None)
             self._settled_sessions.discard(session_id)
-            self._captures.pop(session_id, None)
-            self._tasks.pop(session_id, None)
-            self._playbacks.pop(session_id, None)
-            self._cancel_events.pop(session_id, None)
+            # A newer listen start replaces these entries before this task's cleanup runs; only
+            # remove what is still this run's own, or the new turn loses its capture.
+            if self._captures.get(session_id) is capture:
+                self._captures.pop(session_id, None)
+            if self._tasks.get(session_id) is asyncio.current_task():
+                self._tasks.pop(session_id, None)
+            if self._playbacks.get(session_id) is playback:
+                self._playbacks.pop(session_id, None)
+            if self._cancel_events.get(session_id) is cancel_event:
+                self._cancel_events.pop(session_id, None)
             frames, size = self._audio_stats.pop(session_id, [0, 0])
             LOG.info(
                 "StackChan voice: turn ended after %.1f s (%d audio frames, %d bytes)",

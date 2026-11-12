@@ -899,3 +899,59 @@ def test_the_face_talks_when_the_first_frames_reach_the_unit():
     finally:
         loop.close()
     assert calls[0] == ("face", 0) and calls[1][0] == "audio"
+
+
+def test_a_finished_run_does_not_remove_a_newer_turns_capture(monkeypatch):
+    import maipai_body.bodies.stackchan.turn as turn_module
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    bridge = StackChanTurnBridge(
+        server, Link(), Offline(), stt_factory=FakeStt, turn_factory=FakeTurn, tts_factory=FakeTts
+    )
+    newer = FakeCapture()
+
+    class ReplacingStt(FakeStt):
+        def run(self, capture):
+            # A second "listen start" lands while the first run is still ending.
+            bridge._captures["session"] = newer
+            return super().run(capture)
+
+    bridge.stt_factory = ReplacingStt
+    loop.run_until_complete(bridge._run("session", "02:00:00:00:00:15", FakeCapture()))
+    loop.close()
+    assert bridge._captures.get("session") is newer
+
+
+def test_stop_cancels_the_hub_turn(monkeypatch):
+    import maipai_body.bodies.stackchan.turn as turn_module
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
+    cancelled = []
+    holder = {}
+
+    class CancellableTurn(FakeTurn):
+        def stream(self, text, **kwargs):
+            holder["bridge"]._cancel_events["session"].set()
+            yield SimpleNamespace(reply_text=None, turn_id="turn-7")
+            yield SimpleNamespace(reply_text="never spoken")
+
+        def cancel(self, turn_id):
+            cancelled.append(turn_id)
+            return True
+
+    bridge = StackChanTurnBridge(
+        server, Link(), Offline(), stt_factory=FakeStt, turn_factory=CancellableTurn,
+        tts_factory=FakeTts,
+    )
+    holder["bridge"] = bridge
+    loop.run_until_complete(bridge._run("session", "02:00:00:00:00:15", FakeCapture()))
+    loop.close()
+    assert cancelled == ["turn-7"]

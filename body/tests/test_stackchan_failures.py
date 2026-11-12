@@ -242,3 +242,13 @@ class StackChanFailureShapeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.rcvd.code, 1009)
         self.assertIn("frame", caught.exception.rcvd.reason.lower())
         self.assertTrue(any("Send smaller frames and reconnect" in row for row in logs.output))
+
+
+def test_take_photo_goes_to_the_device_not_back_into_the_robot_adapter():
+    """The old shortcut sent take_photo to the Robot adapter, which called the server again."""
+    import inspect
+
+    from maipai_body.bodies.stackchan.xiaozhi.server import XiaozhiServer
+
+    source = inspect.getsource(XiaozhiServer.call_device_tool)
+    assert "self.robot.take_photo" not in source

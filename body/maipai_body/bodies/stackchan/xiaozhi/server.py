@@ -1124,15 +1124,6 @@ class XiaozhiServer:
         device_id, websocket = next(iter(self._sessions.items()))
         if not self._session_authorized(device_id):
             raise PermissionError("StackChan pairing is revoked. Approve and provision it again.")
-        if name == "self.camera.take_photo":
-            if self.robot is None:
-                raise NotSupported(
-                    "StackChan camera has no Robot indicator adapter; configure the body Robot "
-                    "first."
-                )
-            return asyncio.run_coroutine_threadsafe(self.robot.take_photo(), self._loop).result(
-                timeout=timeout + 1
-            )
         # StackChan firmware parses MCP request ids as numeric JSON-RPC ids.
         request_id = next(self._next_device_request_id)
         request_key = str(request_id)
