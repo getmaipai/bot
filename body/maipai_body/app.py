@@ -34,7 +34,13 @@ from pathlib import Path
 from typing import Any
 
 from maipai_body.bodies.stackchan.companion import DIAGNOSTIC_KINDS
-from maipai_body.bodies.stackchan.head_search import DARK_STEPS, PERSON_STEPS, STEP_S, HeadSearch
+from maipai_body.bodies.stackchan.head_search import (
+    MOVE_SPEED,
+    SPEAKER_PITCH_DEG,
+    STEP_S,
+    TURN_SPEED,
+    HeadSearch,
+)
 from maipai_body.bodies.stackchan.head_touch_filter import HEAD_KINDS, HeadTouchFilter
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.suppression import SuppressionContext
@@ -160,7 +166,7 @@ def _no_hub_discovery(timeout_s: float = 5.0):
 FACE_QUIET_S = 5.0
 # While drowsy or asleep the unit is asked for touch events this often; wakes repeat no sooner.
 LOOK_INTERVAL_S = 0.5  # two looks a second at most
-TURN_FACE_FRESH_S = 5.0  # turn toward a face seen this recently when a turn starts
+TURN_FACE_FRESH_S = 60.0  # turn toward a face seen this recently when a turn starts
 LOST_AFTER_LOOKS = 4  # two seconds without the face it was following: it was lost
 TOUCH_POLL_S = 0.5  # asleep too: at 5 s a tap or shake took up to 5 s to wake the unit
 EVENT_POLL_S = 0.5  # touch, swipe and shake events are read this often while the robot is awake
@@ -194,6 +200,7 @@ class StackChanBehavior:
         self.night_active: Callable[[], bool] = lambda: False
         # Charging or on USB power: no wandering. Set by the power rule (power_idle.py).
         self.idle_still: Callable[[], bool] = lambda: False
+        self.idle_still_reason: Callable[[], str] = lambda: ""
         # robot.idle.level from the settings frame (still, calm, lively). Still until the hub says
         # otherwise: a fresh or lost-settings unit never wanders (owner request 2026-10-20).
         self.idle_level = "still"
@@ -229,6 +236,13 @@ class StackChanBehavior:
         # and before concluding the room is dark. Quiet, gated, never in a turn or while resting.
         self._search = HeadSearch()
         self._search_detail_seen = False
+        self._search_after_turn = (
+            False  # someone spoke and no face was in view: look after the reply
+        )
+        from maipai_body.bodies.stackchan.presence_watch import SceneBaseline
+
+        self._baseline = SceneBaseline()  # the learned empty room; a different picture is a person
+        self._person_share = 0.0  # how much the newest picture differs from it
         self._dark_confirmed_at: float | None = None
         self._camera_blocked_until = float("-inf")
         # Idle face watching: the camera level from the settings frame, the greeting style, and
@@ -265,7 +279,9 @@ class StackChanBehavior:
         from maipai_body.bodies.stackchan.head_gate import HeadMotionGate
 
         self.head_gate = HeadMotionGate(
-            must_be_still=lambda: self.idle_still(), resting=lambda: self._rest.stage != "awake"
+            must_be_still=lambda: self.idle_still(),
+            resting=lambda: self._rest.stage != "awake",
+            still_reason=lambda: self.idle_still_reason(),
         )
         self._rest_renderer = RestRenderer(
             firmware_version=lambda: (
@@ -372,6 +388,8 @@ class StackChanBehavior:
             self._expression.render_turn_state(state, mood=mood)
             if state == "listening":
                 self._turn_face_held = may_move and self._turn_toward_face()
+                if not self._turn_face_held:
+                    self._glance_up_for_speaker()
             if primitive is not None and may_move and not self._turn_face_held:
                 self._head_off_centre = True
                 self._expression.render_ambient(primitive, SuppressionContext())
@@ -564,22 +582,26 @@ class StackChanBehavior:
 
     def search_tick(self, now: float) -> None:
         """Drive a look around, or start one when the picture calls for it (presence loop)."""
+        from maipai_body.bodies.stackchan.presence_watch import PERSON_SHARE
+
         search = self._search
+        in_turn = self._active.is_set()
         if search.active:
-            if self._active.is_set() or self._rest.stage != "awake" or self.night_active():
-                self._end_search(now, "a turn or a rest started")
+            # Never mid-reply, asleep or at night; a look for the speaker may run while listening.
+            if (
+                (in_turn and not (search.reason == "speaker" and self._phase == "listening"))
+                or self._rest.stage != "awake"
+                or self.night_active()
+            ):
+                self._end_search(now, "a reply, a rest or the night started")
                 return
-            if search.reason == "person":
+            if search.reason in ("person", "speaker"):
                 face = self._last_face
                 if face is not None and now - face[2] <= 1.0:
                     self._end_search(
                         now,
-                        "found a face"
-                        + (
-                            f" at x {face[0]:.2f}, y {face[1]:.2f} of the picture"
-                            if face is not None
-                            else ""
-                        ),
+                        f"found a face at x {face[0]:.2f}, y {face[1]:.2f} of the picture",
+                        found=True,
                     )
                     return
             elif search.reason == "dark" and self._vision is not None:
@@ -588,7 +610,7 @@ class StackChanBehavior:
                     self._search_detail_seen = True
             step = search.due(now)
             if step is not None:
-                if not self.head_gate.allow("ambient:search"):
+                if not self.head_gate.allow(f"search:{search.reason}", response=True):
                     self._end_search(now, "the head may not move now")
                     return
                 self._search_pose(step.yaw_deg, step.pitch_deg)
@@ -603,10 +625,9 @@ class StackChanBehavior:
             return
         if (
             self._vision is None
-            or self._active.is_set()
+            or in_turn
             or self._rest.stage != "awake"
             or self.night_active()
-            or self.idle_still()
             or self.watch_level() == "off"
         ):
             return
@@ -619,19 +640,28 @@ class StackChanBehavior:
         flat_verdict = light_bucket(None, self.lux(), flat=True) if flat else "n/a"
         no_face = face_age is None or face_age > self.SEARCH_FACE_GONE_S
         moved = motion_age is not None and motion_age <= self.SEARCH_MOTION_FRESH_S
-        # Person-like: the picture moves, or it is flat while the sensor says the room is lit (a
-        # body or an arm right against the lens, the usual desk case), and no face is in view.
-        if no_face and (moved or (flat and flat_verdict is None)):
-            if search.start("person", PERSON_STEPS, now):
+        different = look is not None and not flat and self._person_share >= PERSON_SHARE
+        if no_face and self._search_after_turn:
+            self._search_after_turn = False
+            if search.start("speaker", now):
+                logger.info("StackChan looking for the person who spoke: no face was in view")
+            return
+        # Person-like: the picture differs from the learned empty room, or moves, or is flat
+        # while the sensor says the room is lit (a body or an arm right against the lens).
+        if no_face and (different or moved or (flat and flat_verdict is None)):
+            if search.start("person", now):
                 logger.info(
                     "StackChan looking for a face: %s, no face in the picture",
-                    f"the picture moved {motion_age:.0f} s ago"
+                    f"the picture differs from the empty room in {self._person_share:.0%}"
+                    if different
+                    else f"the picture moved {motion_age:.0f} s ago"
                     if moved
                     else "something is right against the lens in a lit room",
                 )
             return
+        self._search_after_turn = False
         if flat and flat_verdict == "dark" and not self.dark_confirmed(now):
-            if search.start("dark", DARK_STEPS, now):
+            if search.start("dark", now):
                 self._search_detail_seen = False
                 logger.info(
                     "StackChan checking the dark: no detail in the picture, sensor %s; "
@@ -639,17 +669,70 @@ class StackChanBehavior:
                     self.lux(),
                 )
 
+    def _note_room(self, now: float, newest: Any, motion_age: float | None) -> None:
+        """Learn the empty room while nobody seems to be there; measure how the newest picture
+        differs from it (a person at the desk differs in most of it, measured 2026-11-12)."""
+        from maipai_body.bodies.stackchan.presence_watch import BASELINE_QUIET_S
+
+        if newest is None or newest[2] is None:  # no picture, or no detail: nothing to learn
+            return
+        thumb = newest[3]
+        self._person_share = self._baseline.differs(thumb)
+        quiet = (
+            now - self._last_person_seen >= BASELINE_QUIET_S
+            and (motion_age is None or motion_age >= BASELINE_QUIET_S / 2)
+            and not self._search.active
+            and not self._head_off_centre
+        )
+        if quiet or not self._baseline.known:
+            self._baseline.learn(thumb, now)
+
+    def _glance_up_for_speaker(self) -> None:
+        """Someone spoke and no face is in view: a brisk, smooth glance up now (the camera is
+        paused while the unit listens, so the face is looked for after the reply)."""
+        if not self.head_gate.allow("search:speaker", response=True):
+            return
+        from maipai_body.bodies.stackchan.gaze import GazeReason
+        from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
+
+        pose = HeadPose(yaw=0.0, pitch=math.radians(CENTRE_PITCH_DEG + SPEAKER_PITCH_DEG))
+        try:
+            self.robot.head.set(pose=pose, duration_s=0.5, speed=TURN_SPEED)
+        except Exception:
+            self._warn_limited("search", "StackChan glance toward the speaker failed")
+            return
+        self._head_off_centre = True
+        self._search_after_turn = True
+        self.gaze.note(GazeReason.SEARCH)
+        logger.info(
+            "StackChan glanced up toward the speaker: pitch %.0f up from level", SPEAKER_PITCH_DEG
+        )
+
     def _search_pose(self, yaw_deg: float, pitch_deg: float) -> None:
         from maipai_body.bodies.stackchan.gaze import GazeReason
         from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
 
         pose = HeadPose(yaw=math.radians(yaw_deg), pitch=math.radians(CENTRE_PITCH_DEG + pitch_deg))
-        self._with_lease(lambda: self.robot.head.set(pose=pose, duration_s=STEP_S * 0.8))
+        self._move_head_slowly(pose)
         self._head_off_centre = True
         self.gaze.note(GazeReason.SEARCH)
 
-    def _end_search(self, now: float, why: str) -> None:
-        reason = self._search.stop(now)
+    def _move_head_slowly(self, pose: HeadPose) -> None:
+        """One eased move at the servo's slowest setting; inside a turn the turn holds the lease."""
+
+        def move() -> None:
+            self.robot.head.set(pose=pose, duration_s=STEP_S * 0.6, speed=MOVE_SPEED)
+
+        if self._active.is_set():
+            try:
+                move()
+            except Exception:
+                self._warn_limited("search", "StackChan head move failed")
+        else:
+            self._with_lease(move)
+
+    def _end_search(self, now: float, why: str, *, found: bool = False) -> None:
+        reason = self._search.stop(now, found=found)
         if reason == "dark":
             if self._search_detail_seen:
                 self._camera_blocked_until = now + self.CAMERA_BLOCKED_S
@@ -666,14 +749,20 @@ class StackChanBehavior:
                 )
             else:
                 logger.info("StackChan dark check stopped: %s", why)
-        elif reason == "person":
-            logger.info("StackChan stopped looking for a face: %s", why)
-        # Back to centre: essential, so it never counts against the gate's cap.
-        self.head_gate.allow("ambient:search", essential=True)
+        elif reason in ("person", "speaker"):
+            wait = self._search.wait_s("person")
+            logger.info(
+                "StackChan stopped looking for a face: %s%s",
+                why,
+                "" if found else f"; the next look waits {wait:.0f} s at least",
+            )
+        if found:
+            return  # following takes over from where the face is
+        # Back to the resting pose: essential, so it never counts against the gate's cap.
+        self.head_gate.allow("search:return", essential=True)
         from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
 
-        centre = HeadPose(yaw=0.0, pitch=math.radians(CENTRE_PITCH_DEG))
-        self._with_lease(lambda: self.robot.head.set(pose=centre, duration_s=STEP_S * 0.8))
+        self._move_head_slowly(HeadPose(yaw=0.0, pitch=math.radians(CENTRE_PITCH_DEG)))
 
     def dark_confirmed(self, now: float | None = None) -> bool:
         current = time.monotonic() if now is None else now
@@ -694,12 +783,7 @@ class StackChanBehavior:
             return None
         if self.dark_confirmed(current):
             return "dark"
-        cannot_look = (
-            self._rest.stage != "awake"
-            or self.night_active()
-            or self.idle_still()
-            or self._active.is_set()
-        )
+        cannot_look = self._rest.stage != "awake" or self.night_active() or self._active.is_set()
         return "dark" if cannot_look else None
 
     def light_for_sight(self, now: float | None = None) -> str | None:
@@ -750,6 +834,12 @@ class StackChanBehavior:
                 and self.gaze.current() is GazeReason.TRACK
             ):
                 self.gaze.note(GazeReason.SEARCH)  # a face it was following is gone
+            # Movement without a face (an arm at the desk) is still a person: it keeps the rest
+            # policy awake, so the robot can look for the face instead of dozing off (2026-11-12).
+            motion_age = getattr(self._vision, "motion_age", lambda: None)()
+            if motion_age is not None and motion_age <= 1.0:
+                self._last_person_seen = now
+            self._note_room(now, newest, motion_age)
             return False
         self._missed_looks = 0
         self._last_person_seen = now
@@ -888,6 +978,8 @@ class StackChanBehavior:
                 logger.info("%s: %s %s", label, event.kind, detail)
         events = [e for e in events if getattr(e, "kind", None) not in DIAGNOSTIC_KINDS]
         events = self._head_filter.accept(now, events)
+        if self._search.active and any(getattr(e, "kind", None) in HEAD_KINDS for e in events):
+            self._end_search(now, "a touch")
         for event in events:
             if getattr(event, "kind", None) in _LOGGED_UNIT_EVENTS:
                 extra = getattr(event, "extra", None) or {}
@@ -1210,6 +1302,7 @@ async def _serve_stackchan_channels(
 
     threading.Thread(target=_power_ticks, name="stackchan-power-idle", daemon=True).start()
     behavior.idle_still = lambda: power.still
+    behavior.idle_still_reason = lambda: power.still_reason
     from maipai_body.bodies.stackchan.light_wiring import start_stackchan_light
 
     def device_connected() -> bool:

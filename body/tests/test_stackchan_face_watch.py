@@ -204,7 +204,11 @@ def test_no_recent_face_means_no_turn_and_no_hunting():
     vision = _FaceAt(0.9, 0.3)
     behavior, device = _behavior(vision)
     try:
-        behavior._last_face = (0.9, 0.3, __import__("time").monotonic() - 30.0)  # long ago
+        behavior._last_face = (
+            0.9,
+            0.3,
+            __import__("time").monotonic() - 90.0,
+        )  # long ago (over 60 s)
         behavior.render_turn_state("listening")
         assert behavior._turn_face_held is False
         assert all(m.arguments["yaw"] == 0 for m in _head_moves(device))  # only the usual perk

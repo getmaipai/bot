@@ -1,4 +1,6 @@
 """StackChan stays still while charging or not upright (owner requests 2026-10-20, 2026-10-21).
+Since 2026-11-12 (owner) this holds only idle wandering and the settle: the look for a face and
+the turn toward someone who spoke go through the head gate as responses and move anyway.
 
 ``PowerIdle`` drives the firmware ``set_idle_motion`` tool from the three
 answers that all mean "no idle movement": the unit is on USB power, night
@@ -74,6 +76,21 @@ class PowerIdle:
         if self._night_active():
             return True
         return self._configured_level() == "still"
+
+    @property
+    def still_reason(self) -> str:
+        """Why the robot must stay still right now, in the log's words ("" when it may move)."""
+        if self._charging:
+            return "charging"
+        if not self._power_known():
+            return "power unknown (no battery reading in 3 minutes)"
+        if self._orientation_hold:
+            return "not upright"
+        if self._night_active():
+            return "night"
+        if self._configured_level() == "still":
+            return "idle level still"
+        return ""
 
     def _power_known(self) -> bool:
         return self._last_ok is not None and self._clock() - self._last_ok < STATUS_TTL_S

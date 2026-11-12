@@ -5,6 +5,9 @@ dance, look-at-speaker, expression gestures) and each decided for itself. ``Head
 single answer to "may the head move now?": ambient sources are refused while the robot must be
 still (power unknown, charging, night, ``robot.idle.level`` still, resting). A move that answers a
 person during a turn is a response, not wandering, and passes unless the per-minute cap is hit.
+The look for a face and the turn toward someone who spoke (head_search.py) are responses too:
+the owner replaced the 2026-10-20 "still while charging or at idle level still" rule for them on
+2026-11-12 ("natural, not annoying"); idle wandering and the settle stay ambient.
 Every decision is logged at INFO, once per source and decision every ``log_every_s`` so the log
 names who moved the head.
 """
@@ -29,11 +32,13 @@ class HeadMotionGate:
         *,
         must_be_still: Callable[[], bool],
         resting: Callable[[], bool] = lambda: False,
+        still_reason: Callable[[], str] = lambda: "",
         clock: Callable[[], float] = time.monotonic,
         log_every_s: float = 30.0,
         max_moves_per_min: int = MAX_MOVES_PER_MIN,
     ) -> None:
         self._must_be_still = must_be_still
+        self._still_reason = still_reason
         self._resting = resting
         self._clock = clock
         self._log_every_s = log_every_s
@@ -55,7 +60,8 @@ class HeadMotionGate:
         if response:
             verdict, reason = True, "answering a person"
         elif self._must_be_still():
-            verdict, reason = False, "must be still (power unknown or charging, night, or level)"
+            why = self._still_reason() or "power unknown or charging, night, or level"
+            verdict, reason = False, f"must be still ({why})"
         elif self._resting():
             verdict, reason = False, "resting"
         else:

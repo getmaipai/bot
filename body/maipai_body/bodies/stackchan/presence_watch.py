@@ -155,3 +155,58 @@ class GreetingPolicy:
             return False
         self._last_greeted = now
         return True
+
+
+# The empty room, learned (owner request 2026-11-12: look for the face when the picture suggests a
+# person, without needing movement). The tiny thumbnail of the room is blended in slowly while
+# nobody seems to be there (no face for BASELINE_QUIET_S, no movement, a picture with detail), and
+# a picture that differs from it over PERSON_SHARE of its cells by more than BASELINE_CELL_DELTA
+# suggests a person. Measured 2026-11-12 against the empty lit office: every picture with the owner
+# at the desk differed in 61 to 77 percent of its cells, the empty office in 1 to 10 percent.
+BASELINE_CELL_DELTA = 30.0  # of 255
+PERSON_SHARE = 0.25  # this share of the picture differs from the empty room: someone is there
+BASELINE_LEARN_EVERY_S = 20.0
+BASELINE_BLEND = 0.1  # how much of a new quiet picture goes into the learned room each time
+BASELINE_QUIET_S = 120.0  # no face and no movement for this long before the room is learned
+
+
+class SceneBaseline:
+    """The learned picture of the empty room: a few numbers per cell, never a picture."""
+
+    def __init__(self) -> None:
+        self._room: object = None
+        self._learned_at = float("-inf")
+
+    @property
+    def known(self) -> bool:
+        return self._room is not None
+
+    def learn(self, thumb: object, now: float) -> None:
+        """Blend a quiet picture in (the caller decides it is quiet), at most every 20 s."""
+        import numpy as np
+
+        if thumb is None or now - self._learned_at < BASELINE_LEARN_EVERY_S:
+            return
+        current = np.asarray(thumb, dtype=np.float32)
+        if self._room is None or np.asarray(self._room).shape != current.shape:
+            self._room = current.copy()
+        else:
+            self._room = (1.0 - BASELINE_BLEND) * np.asarray(self._room) + BASELINE_BLEND * current
+        self._learned_at = now
+
+    def differs(self, thumb: object) -> float:
+        """The share of the picture that differs from the learned room (0.0 without one)."""
+        import numpy as np
+
+        if thumb is None or self._room is None:
+            return 0.0
+        current = np.asarray(thumb, dtype=np.float32)
+        room = np.asarray(self._room)
+        if current.shape != room.shape:
+            return 0.0
+        delta = current - room
+        delta -= float(np.median(delta))
+        return float(np.mean(np.abs(delta) > BASELINE_CELL_DELTA))
+
+    def person_like(self, thumb: object) -> bool:
+        return self.differs(thumb) >= PERSON_SHARE
