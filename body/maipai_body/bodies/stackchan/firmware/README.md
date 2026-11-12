@@ -43,6 +43,18 @@ firmware/recipe.sh --avatar-server-url ws://192.0.2.10:8766 \
 
 Treat the token and build directory as private. The recipe does not print the token, and `sdkconfig.defaults.local` is restored after the build. Keep it out of logs and shared build artifacts.
 
+### Development builds against another Bot app (patch 079)
+
+A paired unit keeps its voice address, avatar address and token in NVS, so a normal build always talks to the live Bot app. To test a worktree body (on other ports, paired with a dev Home) on the real unit without rewriting NVS, build with the development overrides; they win over the saved values only when set, and every release build leaves them empty:
+
+```sh
+firmware/recipe.sh --dev-voice-url ws://192.0.2.10:61155 \
+  --dev-avatar-url ws://192.0.2.10:61156 \
+  --dev-token <token the dev Bot app has approved for this unit>
+```
+
+The recipe prints `DEV-OVERRIDE: ...` for each value, so a build with them can never be mistaken for a release. Flash only the app image (and `ota_data_initial.bin`), never NVS, and approve the unit's Device-Id and Client-Id with that token in the dev Bot app's `stackchan-pairing.json`; the Bot app logs both ids when an unknown unit connects ("StackChan pairing request: Device-Id ... Client-Id ..."). Flash the normal build back when done (2026-11-12: used for the vision work).
+
 ## Household setup tool
 
 From the repository root, run `body/scripts/stackchan_flash.py` with `--port`, `--backup`, `--token-file`, `--device-id`, `--client-id`, `--xiaozhi-url`, and `--avatar-url`. The tool checks for the pinned ESP-IDF 5.5.4, saves the full 16 MiB flash before writing, builds the pinned firmware, creates the NVS image from the approval token file, then flashes firmware and NVS. It stops if the backup is missing or incomplete. Use `--dry-run` to print the steps without using a serial port; dry run needs an existing full-flash backup file. Example addresses should use the Bot host, such as `ws://192.0.2.10:8765` and `ws://192.0.2.10:8766`. The tool writes the built images and the NVS image in one esptool pass from `build/flash_args`, and the NVS image carries `board:uuid` so the unit keeps its paired Client-Id. The robot boots straight into the AI Agent; on first boot with no Wi-Fi it opens its setup hotspot to join Wi-Fi.

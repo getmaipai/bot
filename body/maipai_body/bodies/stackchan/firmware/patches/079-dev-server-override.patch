@@ -1,0 +1,65 @@
+# Intent: let a development build point the unit at a Bot app on another port without touching the pairing saved in NVS (2026-11-12: the vision work needed the unit on a worktree body against a dev Home while the live body kept its ports and the unit's NVS pairing stayed as it was). Three Kconfig strings, empty in every release build, win over the saved values only when set: STACKCHAN_DEV_VOICE_URL (voice websocket), STACKCHAN_DEV_AVATAR_URL (avatar and camera channel base URL) and STACKCHAN_DEV_TOKEN (the token both channels send). The recipe sets them from --dev-voice-url, --dev-avatar-url and --dev-token.
+# Upstream: m5stack/StackChan firmware/main/Kconfig.projbuild, firmware/main/hal/utils/secret_logic/secret_logic.cpp (MIT). Applies after 078 with --unidiff-zero. The voice channel half is 079-dev-voice-url.patch on xiaozhi-esp32.
+# Check after a flash: the host log of the Bot app named by the override shows "StackChan avatar: connection from <unit>" and voice turns; a release build (no --dev-* arguments) behaves exactly as before because every string is empty.
+diff --git a/firmware/main/Kconfig.projbuild b/firmware/main/Kconfig.projbuild
+index a65bd92..ba0b843 100644
+--- a/firmware/main/Kconfig.projbuild
++++ b/firmware/main/Kconfig.projbuild
+@@ -47,6 +47,28 @@ config STACKCHAN_XIAOZHI_OTA_CHECK
+     help
+         Enable third-party OTA checks. Keep disabled when websocket settings are provisioned in NVS.
+ 
++config STACKCHAN_DEV_VOICE_URL
++    string "Development override: voice websocket URL"
++    default ""
++    help
++        When not empty, the unit connects its voice websocket here instead of the
++        address saved in NVS. For a development build against a Bot app on another
++        port; the saved pairing is left untouched. Empty in every release build.
++
++config STACKCHAN_DEV_AVATAR_URL
++    string "Development override: avatar websocket base URL"
++    default ""
++    help
++        When not empty, the avatar (camera) channel uses this base URL instead of the
++        avatar_url saved in NVS. Empty in every release build.
++
++config STACKCHAN_DEV_TOKEN
++    string "Development override: pairing token"
++    default ""
++    help
++        When not empty, both websockets send this token instead of the one saved in
++        NVS. Empty in every release build.
++
+ endmenu
+ 
+ menu "Xiaozhi Assistant"
+diff --git a/firmware/main/hal/utils/secret_logic/secret_logic.cpp b/firmware/main/hal/utils/secret_logic/secret_logic.cpp
+index 693907f..39ed41d 100644
+--- a/firmware/main/hal/utils/secret_logic/secret_logic.cpp
++++ b/firmware/main/hal/utils/secret_logic/secret_logic.cpp
+@@ -11,6 +11,12 @@ namespace secret_logic {
+ 
+ __attribute__((weak)) std::string get_server_url()
+ {
++#ifdef CONFIG_STACKCHAN_DEV_AVATAR_URL
++    // A development build may point the avatar channel at another Bot app without touching NVS.
++    if (CONFIG_STACKCHAN_DEV_AVATAR_URL[0] != '\0') {
++        return CONFIG_STACKCHAN_DEV_AVATAR_URL;
++    }
++#endif
+     Settings settings("websocket", false);
+     std::string saved_url = settings.GetString("avatar_url");
+     if (!saved_url.empty()) {
+@@ -25,6 +31,11 @@ __attribute__((weak)) std::string get_server_url()
+ 
+ __attribute__((weak)) std::string generate_auth_token()
+ {
++#ifdef CONFIG_STACKCHAN_DEV_TOKEN
++    if (CONFIG_STACKCHAN_DEV_TOKEN[0] != '\0') {
++        return CONFIG_STACKCHAN_DEV_TOKEN;
++    }
++#endif
+     Settings settings("websocket", false);
+     std::string saved_token = settings.GetString("token");
+     if (!saved_token.empty()) {

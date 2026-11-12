@@ -9,6 +9,9 @@ DEVICE_ID=""
 CLIENT_ID=""
 PAIRING_TOKEN=""
 PERSISTENT_WEBSOCKET=""
+DEV_VOICE_URL=""
+DEV_AVATAR_URL=""
+DEV_TOKEN=""
 while (($#)); do
   case "$1" in
     --no-persistent-websocket)
@@ -40,8 +43,18 @@ while (($#)); do
     --pairing-token)
       if (($# < 2)) || [[ -z "$2" ]]; then echo "--pairing-token needs the per-device token." >&2; exit 2; fi
       PAIRING_TOKEN="$2"; shift 2 ;;
+    # Development builds only (patch 079): point a unit at a Bot app on other ports without touching its saved pairing.
+    --dev-voice-url)
+      if (($# < 2)) || [[ ! "$2" =~ ^wss?://[^/[:space:]]+(/[^[:space:]]*)?$ ]]; then echo "--dev-voice-url needs a ws:// or wss:// URL." >&2; exit 2; fi
+      DEV_VOICE_URL="$2"; shift 2 ;;
+    --dev-avatar-url)
+      if (($# < 2)) || [[ ! "$2" =~ ^wss?://[^/[:space:]]+(/[^[:space:]]*)?$ ]]; then echo "--dev-avatar-url needs a ws:// or wss:// base URL." >&2; exit 2; fi
+      DEV_AVATAR_URL="$2"; shift 2 ;;
+    --dev-token)
+      if (($# < 2)) || [[ -z "$2" ]]; then echo "--dev-token needs the token the development Bot app expects." >&2; exit 2; fi
+      DEV_TOKEN="$2"; shift 2 ;;
     *)
-      echo "Unknown option: $1. Use --avatar-server-url ws://192.0.2.10:8766, --device-id <MAC> --client-id <UUID> --pairing-token <token>, --ca-file /path/to/ca.pem, or --no-persistent-websocket." >&2
+      echo "Unknown option: $1. Use --avatar-server-url ws://192.0.2.10:8766, --device-id <MAC> --client-id <UUID> --pairing-token <token>, --ca-file /path/to/ca.pem, --no-persistent-websocket, or the development overrides --dev-voice-url, --dev-avatar-url and --dev-token." >&2
       exit 2
       ;;
   esac
@@ -297,6 +310,8 @@ apply_repo_patch 075-offline-mode.patch "$SRC"
 apply_repo_patch 076-weak-pet.patch "$SRC"
 apply_repo_patch 077-silent-link-closes.patch "$SRC"
 apply_repo_patch 078-quick-tap-counts.patch "$SRC"
+apply_repo_patch 079-dev-server-override.patch "$SRC"
+apply_repo_patch 079-dev-voice-url.patch "$FW/xiaozhi-esp32"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"
@@ -332,6 +347,17 @@ fi
 if [[ "$PERSISTENT_WEBSOCKET" == "n" ]]; then
   echo 'CONFIG_STACKCHAN_PERSISTENT_WEBSOCKET=n' >> "$FW/sdkconfig.defaults.local"
 fi
+# Development overrides (patch 079): a release build passes none of them and the unit follows its saved pairing.
+for pair in "STACKCHAN_DEV_VOICE_URL=$DEV_VOICE_URL" "STACKCHAN_DEV_AVATAR_URL=$DEV_AVATAR_URL" "STACKCHAN_DEV_TOKEN=$DEV_TOKEN"; do
+  value=${pair#*=}
+  if [[ -n "$value" ]]; then
+    if [[ "$value" == *'"'* || "$value" == *'\'* || "$value" == *$'\n'* ]]; then
+      echo "A --dev-* value contains a character sdkconfig cannot represent." >&2; exit 2
+    fi
+    printf 'CONFIG_%s="%s"\n' "${pair%%=*}" "$value" >> "$FW/sdkconfig.defaults.local"
+    echo "DEV-OVERRIDE: ${pair%%=*} is set; this build is for development only, never a release."
+  fi
+done
 if [[ -n "$CA_FILE" ]]; then
   python3 - "$FW/sdkconfig.defaults.local" "$CA_FILE" <<'PY'
 import json, sys

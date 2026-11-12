@@ -1,0 +1,25 @@
+# Intent: the voice websocket half of 079-dev-server-override.patch: when CONFIG_STACKCHAN_DEV_VOICE_URL or CONFIG_STACKCHAN_DEV_TOKEN is not empty (a development build only), the voice channel connects there with that token instead of the url and token saved in NVS. Empty strings (every release build) change nothing.
+# Upstream: 78/xiaozhi-esp32 main/protocols/websocket_protocol.cc (MIT). Applies after 018 and 068 on xiaozhi-esp32 with --unidiff-zero.
+# Check after a flash: the unit's serial log says "Connecting to websocket server: <override url>".
+diff --git a/main/protocols/websocket_protocol.cc b/main/protocols/websocket_protocol.cc
+index d3a8ff0..b17ae6a 100644
+--- a/main/protocols/websocket_protocol.cc
++++ b/main/protocols/websocket_protocol.cc
+@@ -163,6 +163,17 @@ bool WebsocketProtocol::ConnectAudioChannel() {
+     Settings settings("websocket", false);
+     std::string url = settings.GetString("url");
+     std::string token = settings.GetString("token");
++#ifdef CONFIG_STACKCHAN_DEV_VOICE_URL
++    // A development build may point the voice channel at another Bot app without touching NVS.
++    if (CONFIG_STACKCHAN_DEV_VOICE_URL[0] != '\0') {
++        url = CONFIG_STACKCHAN_DEV_VOICE_URL;
++    }
++#endif
++#ifdef CONFIG_STACKCHAN_DEV_TOKEN
++    if (CONFIG_STACKCHAN_DEV_TOKEN[0] != '\0') {
++        token = CONFIG_STACKCHAN_DEV_TOKEN;
++    }
++#endif
+     int version = settings.GetInt("version");
+     if (version != 0) {
+         version_ = version;
