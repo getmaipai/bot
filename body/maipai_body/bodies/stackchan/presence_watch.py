@@ -31,14 +31,17 @@ class CameraStats:
         self._with_face = 0
         self._look_ms = 0.0
         self._look_ms_max = 0.0
+        self._luma: float | None = None  # mean gray of the newest frame: one number, no picture
 
-    def looked(self, elapsed_s: float, face: bool) -> None:
+    def looked(self, elapsed_s: float, face: bool, *, luma: float | None = None) -> None:
         """One frame was decoded and searched for a face (``elapsed_s`` is the whole look)."""
         self._looked += 1
         self._with_face += 1 if face else 0
         ms = elapsed_s * 1000.0
         self._look_ms += ms
         self._look_ms_max = max(self._look_ms_max, ms)
+        if luma is not None:
+            self._luma = luma
 
     def report(self, now: float) -> str | None:
         """The line for the minute that just ended, or None before it has ended."""
@@ -56,6 +59,10 @@ class CameraStats:
             f"mean {self._look_ms / self._looked if self._looked else 0.0:.1f} ms, "
             f"max {self._look_ms_max:.1f} ms"
         )
+        if self._luma is not None:
+            from maipai_body.bodies.stackchan.vision_post import light_bucket
+
+            line += f"; light {self._luma:.0f} of 255 ({light_bucket(self._luma)})"
         self._since, self._frames0, self._bytes0 = now, frames, nbytes
         self._looked = self._with_face = 0
         self._look_ms = self._look_ms_max = 0.0

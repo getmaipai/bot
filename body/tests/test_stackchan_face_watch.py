@@ -24,12 +24,13 @@ def test_the_camera_line_reports_frames_bytes_and_looks_once_a_minute():
     assert stats.report(0.0) is None  # the first call only starts the minute
     totals[:] = [600, 614_400]
     stats.looked(0.003, False)
-    stats.looked(0.005, True)
+    stats.looked(0.005, True, luma=120.4)
     assert stats.report(30.0) is None
     line = stats.report(60.0)
     assert line is not None
     assert "600 frames" in line and "600 KB" in line
     assert "looked at 2 (a face in 1)" in line and "mean 4.0 ms" in line
+    assert line.endswith("; light 120 of 255 (bright)")  # the newest frame's brightness, one number
     assert stats.report(61.0) is None  # the next minute starts empty
 
 

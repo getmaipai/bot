@@ -10,8 +10,12 @@ for 90 seconds; the description is never returned to the bot, so a question abou
   `vision_off` stops everything until `robot.vision` changes; `vision_on_demand` stops scene posts only; after a 429 or 503 the
   intervals double (up to ten times) and reset on a success.
 - Asks: `StackChanBehavior.vision_ask`, called from the turn for "see me" and "looking at" questions (`SightAnswers.kind`); light questions are answered by the host from the frame brightness and never call the model. It posts the newest
-  picture (at most 20 s old, because the unit sends no frames during a turn) with `purpose=ask`, waits up to 5 s for Home, and on success
-  lets the normal turn answer. On failure the host answers from its own knowledge (a recent face, the brightness bucket).
+  picture (at most 90 s old, `ASK_MAX_AGE_S`: the unit sends no frames during a turn, so back-to-back turns only have the picture from
+  before the first one; 20 s found none, 2026-11-12) with `purpose=ask`, waits up to 5 s for Home, and on success lets the normal turn
+  answer. The log says the picture's age, face count and light bucket. On failure the host answers from its own knowledge (a recent
+  face, the brightness bucket) and says "I couldn't get a good look just now. Ask me again in a moment." (`sight.NO_LOOK`).
+- On since 2026-11-12 (owner): the poster is created whenever the robot is paired; the `robot.vision` device setting is the only switch
+  (the 2026-10-22 hold, `PICTURE_POSTS_ENABLED`, is gone).
 - Memory: the newest look (jpeg, time, face count, brightness) lives in `StackChanVisionBridge._latest_look` until the next look replaces
   it or a post takes it. It is never written anywhere.
 - Light bucket: mean gray of the frame, below 35 dark, below 85 dim, else bright (the unit's light sensor reads 1 to 2 percent of the true

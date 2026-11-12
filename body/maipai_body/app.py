@@ -85,6 +85,10 @@ from maipai_body.vision.gallery import FaceGallery
 from maipai_body.vision.models import SFACE
 
 try:
+    if os.environ.get("MAIPAI_HUB_HOST") == "1":
+        # A body hosted by Home (StackChan) never drives a Reachy daemon: the hub bundle ships no
+        # Reachy SDK, and a development checkout that has it must behave the same way.
+        raise ImportError("hosted body: the Reachy SDK is not used")
     import reachy_mini
     from reachy_mini import ReachyMini, ReachyMiniApp
 
@@ -557,7 +561,13 @@ class StackChanBehavior:
         started = time.monotonic()
         self._followed = False
         target = self._vision.track_stream_frame(deadline_s=0.4, may_move=self._may_follow)
-        self._camera_stats.looked(time.monotonic() - started, target.detected)
+        latest = getattr(self._vision, "latest_look", None)
+        newest = latest(max_age_s=2.0) if latest is not None else None
+        self._camera_stats.looked(
+            time.monotonic() - started,
+            target.detected,
+            luma=None if newest is None else newest[2],
+        )
         from maipai_body.bodies.stackchan.gaze import GazeReason
 
         if not target.detected:

@@ -443,6 +443,12 @@ class XiaozhiServer:
                     )
                     return
                 self.pairing.request(device_id, client_id)
+                # The ids an admin needs to approve this unit; the token is never logged.
+                LOG.info(
+                    "StackChan pairing request: Device-Id %s Client-Id %s is not approved yet",
+                    device_id,
+                    client_id,
+                )
             except ValueError:
                 await websocket.close(
                     code=1008,
