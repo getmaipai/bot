@@ -386,11 +386,12 @@ class StackChanBehavior:
                     self._expression.render_ambient("settle", SuppressionContext())
                 return
             self._expression.render_turn_state(state, mood=mood)
+            glanced = False
             if state == "listening":
                 self._turn_face_held = may_move and self._turn_toward_face()
-                if not self._turn_face_held:
-                    self._glance_up_for_speaker()
-            if primitive is not None and may_move and not self._turn_face_held:
+                # The glance up replaces the listening perk; both are the one listening move.
+                glanced = not self._turn_face_held and may_move and self._glance_up_for_speaker()
+            if primitive is not None and may_move and not self._turn_face_held and not glanced:
                 self._head_off_centre = True
                 self._expression.render_ambient(primitive, SuppressionContext())
             elif state == "reply_mood":
@@ -687,11 +688,10 @@ class StackChanBehavior:
         if quiet or not self._baseline.known:
             self._baseline.learn(thumb, now)
 
-    def _glance_up_for_speaker(self) -> None:
+    def _glance_up_for_speaker(self) -> bool:
         """Someone spoke and no face is in view: a brisk, smooth glance up now (the camera is
-        paused while the unit listens, so the face is looked for after the reply)."""
-        if not self.head_gate.allow("search:speaker", response=True):
-            return
+        paused while the unit listens, so the face is looked for after the reply). The caller
+        holds the listening state's own head-gate allowance; this is that one move."""
         from maipai_body.bodies.stackchan.gaze import GazeReason
         from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
 
@@ -700,13 +700,14 @@ class StackChanBehavior:
             self.robot.head.set(pose=pose, duration_s=0.5, speed=TURN_SPEED)
         except Exception:
             self._warn_limited("search", "StackChan glance toward the speaker failed")
-            return
+            return False
         self._head_off_centre = True
         self._search_after_turn = True
         self.gaze.note(GazeReason.SEARCH)
         logger.info(
             "StackChan glanced up toward the speaker: pitch %.0f up from level", SPEAKER_PITCH_DEG
         )
+        return True
 
     def _search_pose(self, yaw_deg: float, pitch_deg: float) -> None:
         from maipai_body.bodies.stackchan.gaze import GazeReason
