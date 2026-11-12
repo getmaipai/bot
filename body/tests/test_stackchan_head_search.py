@@ -220,3 +220,17 @@ def test_search_poses_are_within_the_follow_span():
     for step in PERSON_STEPS + DARK_STEPS:
         assert abs(step.yaw_deg) <= 30 and 0 <= step.pitch_deg <= 20
         assert math.radians(CENTRE_PITCH_DEG + step.pitch_deg) < math.radians(85)
+
+
+def test_a_flat_picture_in_a_lit_room_is_person_like_and_starts_the_face_search(caplog):
+    """The owner's hoodie against the lens (2026-11-12): no detail, sensor 10, nothing moving."""
+    vision = _Vision(detected=False, motion_age=None, luma=None)
+    behavior, _device = _behavior(vision)
+    behavior.lux = lambda: 10.0
+    try:
+        with caplog.at_level(logging.INFO, logger="maipai_body.app"):
+            behavior.search_tick(100.0)
+        assert behavior._search.reason == "person"
+        assert any("right against the lens" in r.getMessage() for r in caplog.records)
+    finally:
+        behavior.close()

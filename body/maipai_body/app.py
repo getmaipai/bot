@@ -610,31 +610,34 @@ class StackChanBehavior:
             or self.watch_level() == "off"
         ):
             return
+        from maipai_body.bodies.stackchan.vision_post import light_bucket
+
         motion_age = self._vision.motion_age()
         face_age = None if self._last_face is None else now - self._last_face[2]
-        if (
-            motion_age is not None
-            and motion_age <= self.SEARCH_MOTION_FRESH_S
-            and (face_age is None or face_age > self.SEARCH_FACE_GONE_S)
-        ):
+        look = self._vision.latest_look(max_age_s=2.0)
+        flat = look is not None and look[2] is None
+        flat_verdict = light_bucket(None, self.lux(), flat=True) if flat else "n/a"
+        no_face = face_age is None or face_age > self.SEARCH_FACE_GONE_S
+        moved = motion_age is not None and motion_age <= self.SEARCH_MOTION_FRESH_S
+        # Person-like: the picture moves, or it is flat while the sensor says the room is lit (a
+        # body or an arm right against the lens, the usual desk case), and no face is in view.
+        if no_face and (moved or (flat and flat_verdict is None)):
             if search.start("person", PERSON_STEPS, now):
                 logger.info(
-                    "StackChan looking for a face: the picture moved %.0f s ago, no face in it",
-                    motion_age,
+                    "StackChan looking for a face: %s, no face in the picture",
+                    f"the picture moved {motion_age:.0f} s ago"
+                    if moved
+                    else "something is right against the lens in a lit room",
                 )
             return
-        look = self._vision.latest_look(max_age_s=2.0)
-        if look is not None and look[2] is None and not self.dark_confirmed(now):
-            from maipai_body.bodies.stackchan.vision_post import light_bucket
-
-            if light_bucket(None, self.lux(), flat=True) == "dark":
-                if search.start("dark", DARK_STEPS, now):
-                    self._search_detail_seen = False
-                    logger.info(
-                        "StackChan checking the dark: no detail in the picture, sensor %s; "
-                        "looking around before it concludes",
-                        self.lux(),
-                    )
+        if flat and flat_verdict == "dark" and not self.dark_confirmed(now):
+            if search.start("dark", DARK_STEPS, now):
+                self._search_detail_seen = False
+                logger.info(
+                    "StackChan checking the dark: no detail in the picture, sensor %s; "
+                    "looking around before it concludes",
+                    self.lux(),
+                )
 
     def _search_pose(self, yaw_deg: float, pitch_deg: float) -> None:
         from maipai_body.bodies.stackchan.gaze import GazeReason
