@@ -310,3 +310,12 @@ def test_a_question_about_what_it_sees_uses_a_picture_up_to_90_s_old():
     assert bridge.latest_look(max_age_s=20.0) is None
     now[0] = 1095.0
     assert bridge.latest_look(max_age_s=ASK_MAX_AGE_S) is None
+
+
+def test_a_flat_picture_with_the_sensor_at_its_floor_is_a_dark_room():
+    """Lights off in the office (2026-11-12): grey fog from auto exposure, sensor 6.4 (its floor
+    under the screen's glow); the lit office read 9.3 to 16.4 with a detailed picture."""
+    assert light_bucket(None, 6.4, flat=True) == "dark"
+    assert light_bucket(None, None, flat=True) == "dark"
+    assert light_bucket(None, 9.3, flat=True) is None  # covered in a lit room: cannot tell
+    assert light_bucket(170, 9.3) == "bright"

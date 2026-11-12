@@ -60,6 +60,7 @@ class CameraStats:
         self._look_ms_max = 0.0
         self._luma: float | None = None  # light level of the newest frame: one number, no picture
         self._flat = False  # the newest frame had no detail, so its light level is unknown
+        self._lux: float | None = None  # the unit's light sensor at the newest look
         self._moved = 0
         self._motion_max = 0.0
 
@@ -70,6 +71,7 @@ class CameraStats:
         *,
         luma: float | None = None,
         flat: bool = False,
+        lux: float | None = None,
         motion: float | None = None,
     ) -> None:
         """One frame was decoded and searched for a face (``elapsed_s`` is the whole look).
@@ -80,6 +82,7 @@ class CameraStats:
         ms = elapsed_s * 1000.0
         self._look_ms += ms
         self._look_ms_max = max(self._look_ms_max, ms)
+        self._lux = lux
         if flat:
             self._luma, self._flat = None, True
         elif luma is not None:
@@ -105,7 +108,13 @@ class CameraStats:
             f"max {self._look_ms_max:.1f} ms"
         )
         if self._flat:
-            line += "; light: the picture has no detail (lens covered or something against it)"
+            from maipai_body.bodies.stackchan.vision_post import light_bucket
+
+            verdict = light_bucket(None, self._lux, flat=True) or "cannot tell"
+            line += (
+                f"; light: the picture has no detail, sensor {self._lux} ({verdict}: "
+                "dark room, or the lens is covered)"
+            )
         elif self._luma is not None:
             from maipai_body.bodies.stackchan.vision_post import light_bucket
 

@@ -472,7 +472,7 @@ class StackChanBehavior:
         if look is None:
             return
         _jpeg, people, luma, thumb = look
-        bucket = light_bucket(luma, self.lux())
+        bucket = light_bucket(luma, self.lux(), flat=luma is None)
         last_bucket, last_thumb = self._vision_last or (None, None)
         due = poster.scene_due(
             now,
@@ -531,14 +531,18 @@ class StackChanBehavior:
             return False
         jpeg, people, luma, _thumb = look
         result = poster.post(
-            jpeg, purpose="ask", people=people, light=light_bucket(luma, self.lux()), timeout=5.0
+            jpeg,
+            purpose="ask",
+            people=people,
+            light=light_bucket(luma, self.lux(), flat=luma is None),
+            timeout=5.0,
         )
         logger.info(
             "StackChan vision ask (%s): picture %.0f s old, %d face(s), %s; %s",
             kind,
             age or 0.0,
             people,
-            light_bucket(luma, self.lux()),
+            light_bucket(luma, self.lux(), flat=luma is None),
             result.reason,
         )
         return result.ok
@@ -569,6 +573,7 @@ class StackChanBehavior:
             target.detected,
             luma=None if newest is None else newest[2],
             flat=newest is not None and newest[2] is None,
+            lux=self.lux(),
             motion=getattr(self._vision, "last_motion", None),
         )
         from maipai_body.bodies.stackchan.gaze import GazeReason
@@ -1916,7 +1921,9 @@ def _light_from_last_look(vision: Any, lux: float | None = None) -> str | None:
     from maipai_body.bodies.stackchan.vision_post import light_bucket
 
     look = vision.latest_look(max_age_s=60.0)
-    return light_bucket(look[2], lux) if look is not None else light_bucket(None, lux)
+    if look is None:
+        return light_bucket(None, lux)
+    return light_bucket(look[2], lux, flat=look[2] is None)
 
 
 def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power: Any) -> None:

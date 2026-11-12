@@ -50,16 +50,22 @@ BRIGHT_FROM = 110
 # says nothing about the room's light. Detail is the mean step between neighbouring sample pixels:
 # the lit office measured 6.7 to 10.8, the covered lens 1.9 to 2.0, the hoodie close up 2.1 to 3.0.
 FLAT_EDGES = 3.5
-# The unit's light sensor reads 1 to 2 percent of the true lux (5 to 16 in the lit office); near
-# zero it is the one reliable sign of a dark room, whatever the camera's gain makes of the picture.
+# The unit's light sensor reads 1 to 2 percent of the true lux and sits behind the screen glass,
+# so the screen's own glow keeps it at a floor: 6.4 (ch0=3) with the room lights off and with the
+# lens covered, 9.3 to 16.4 in the lit office (2026-11-12). Under DARK_LUX it is dark whatever the
+# camera's gain shows; a picture with no detail plus a sensor at its floor is a dark room.
 DARK_LUX = 1.5
+FLAT_DARK_LUX = 8.0
 
 
-def light_bucket(luma: float | None, lux: float | None = None) -> str | None:
-    """Dark, dim or bright from the picture's light level (`scene_luma`, None for a picture with
-    no detail) and the light sensor; None when neither can tell."""
+def light_bucket(luma: float | None, lux: float | None = None, *, flat: bool = False) -> str | None:
+    """Dark, dim or bright from the picture's light level (`scene_luma`) and the light sensor;
+    ``flat`` says the picture had no detail (its brightness is auto exposure, not the room), and
+    then the sensor at its floor means dark. None when nothing can tell."""
     if lux is not None and lux < DARK_LUX:
         return "dark"
+    if flat:
+        return "dark" if lux is None or lux < FLAT_DARK_LUX else None
     if luma is not None:
         if luma < DARK_BELOW:
             return "dark"

@@ -23,9 +23,12 @@ for 90 seconds; the description is never returned to the bot, so a question abou
   gave a mean of 52 to 69 (which the old mean rule called dim) and a 90th percentile of 151 to 171 (bright); a covered lens or an unlit
   room pulls the percentile down with everything else. A picture with no detail (mean step between neighbouring sample pixels under
   3.5: a covered lens is a flat grey fog under auto exposure, mean 120, measured the same day; an arm against the lens a flat dark one)
-  has no light level at all: auto exposure makes its brightness meaningless. The unit's light sensor (about 5 to 16 lux in that lit
-  room, 1 to 2 percent of the true value) decides then, and a reading under 1.5 means dark whatever the camera's gain shows. The
-  per-minute camera line in the log ends with the light level and bucket, or "the picture has no detail".
+  has no light level at all: auto exposure makes its brightness meaningless. The unit's light sensor decides then. It reads 1 to 2
+  percent of the true lux and sits behind the screen glass, so the screen's own glow keeps it at a floor: 6.4 (ch0=3) with the room
+  lights off and with the lens covered, 9.3 to 16.4 in the lit office (measured 2026-11-12, lights-off frames were the same grey fog
+  as covered ones). So a picture with no detail plus a sensor under 8 is a dark room; with no detail and a higher sensor reading the
+  robot cannot tell (something is over the lens in a lit room) and says so; a sensor under 1.5 is dark whatever the camera shows. The
+  per-minute camera line in the log ends with the light level and bucket, or "the picture has no detail, sensor N (dark ...)".
 - Movement, the second presence signal (owner finding 2026-11-12: at the desk the camera sees an arm or a shoulder and no face, so faces
   alone said "nobody"): `presence_watch.motion_fraction` compares the tiny gray thumbnails of two consecutive looks cell by cell after
   taking out the picture-wide brightness step (the median change, so auto exposure is not movement); a twentieth of the picture changed
