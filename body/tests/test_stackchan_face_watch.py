@@ -302,7 +302,7 @@ def test_movement_is_the_share_of_the_picture_that_changed_not_a_brightness_step
     # Auto exposure brightening the whole picture is not movement.
     assert motion_fraction(still, still + 40) == 0.0
     # JPEG noise under the cell threshold is not movement either.
-    noisy = still + np.random.default_rng(1).uniform(-8, 8, still.shape).astype(np.float32)
+    noisy = still + np.random.default_rng(1).uniform(-15, 15, still.shape).astype(np.float32)
     assert not moved(still, noisy)
     # An arm across a quarter of the picture is.
     arm = still.copy()

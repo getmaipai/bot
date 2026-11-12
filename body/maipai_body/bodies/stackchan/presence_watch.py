@@ -16,8 +16,11 @@ GREET_COOLDOWN_S = 1800.0  # and never twice within this
 # shoulder, no face, so faces alone said "nobody"). The tiny gray thumbnails of two consecutive
 # looks are compared cell by cell after the overall brightness change is taken out (auto exposure
 # is not movement); the share of cells that changed by more than MOTION_CELL_DELTA is the movement.
-MOTION_CELL_DELTA = 12.0  # of 255; JPEG noise between two still frames stays under this
-MOTION_FRACTION = 0.05  # at least a twentieth of the picture changed: something moved
+# Measured 2026-11-12 on the unit: the empty lit office changed up to 6% of its cells by more than
+# 12 between looks (sensor and JPEG noise) and 1% by more than 20; the owner still at his desk
+# changed 7% to 31% by more than 20 in most pairs of looks, 57% when he moved.
+MOTION_CELL_DELTA = 20.0  # of 255; noise between two looks at a still room stays under this
+MOTION_FRACTION = 0.08  # at least 8 percent of the picture changed: something moved
 MOTION_FRESH_S = 30.0  # "someone seems to be there" for this long after the last movement
 
 

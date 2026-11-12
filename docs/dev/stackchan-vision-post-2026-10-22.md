@@ -25,14 +25,15 @@ for 90 seconds; the description is never returned to the bot, so a question abou
   3.5: a covered lens is a flat grey fog under auto exposure, mean 120, measured the same day; an arm against the lens a flat dark one)
   has no light level at all: auto exposure makes its brightness meaningless. The unit's light sensor decides then. It reads 1 to 2
   percent of the true lux and sits behind the screen glass, so the screen's own glow keeps it at a floor: 6.4 (ch0=3) with the room
-  lights off and with the lens covered, 9.3 to 16.4 in the lit office (measured 2026-11-12, lights-off frames were the same grey fog
-  as covered ones). So a picture with no detail plus a sensor under 8 is a dark room; with no detail and a higher sensor reading the
+  lights off and with the lens covered, 9.3 to 16.4 in the lit office (measured 2026-11-12; once the rest routine dimmed the screen
+  the lights-off reading fell to 0.0 and the frames went solid black, while the first lights-off frames at full screen brightness were
+  the same grey fog as covered ones). So a picture with no detail plus a sensor under 8 is a dark room; with no detail and a higher sensor reading the
   robot cannot tell (something is over the lens in a lit room) and says so; a sensor under 1.5 is dark whatever the camera shows. The
   per-minute camera line in the log ends with the light level and bucket, or "the picture has no detail, sensor N (dark ...)".
 - Movement, the second presence signal (owner finding 2026-11-12: at the desk the camera sees an arm or a shoulder and no face, so faces
   alone said "nobody"): `presence_watch.motion_fraction` compares the tiny gray thumbnails of two consecutive looks cell by cell after
-  taking out the picture-wide brightness step (the median change, so auto exposure is not movement); a twentieth of the picture changed
-  by more than 12 of 255 counts as movement (`StackChanVisionBridge.motion_age`). "Can you see me?" with no face but movement in the last
+  taking out the picture-wide brightness step (the median change, so auto exposure is not movement); 8 percent of the picture changed
+  by more than 20 of 255 counts as movement (the empty lit office measured at most 1 percent, the owner still at his desk 7 to 31) (`StackChanVisionBridge.motion_age`). "Can you see me?" with no face but movement in the last
   30 s answers "something is moving right in front of me, is that you?" (`sight.MOVING`); the minute line counts the looks with
   movement and the largest share. Movement never moves the head and is never sent to Home.
 - Posting: a post that Home does not answer within 12 s (its Look can take 8 s under load) counts as unreachable and waits 10 s like a
