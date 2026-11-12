@@ -7,7 +7,7 @@ from maipai_body.bodies.stackchan.vision_post import (
     MAX_FRAME_BYTES,
     VisionPoster,
     light_bucket,
-    mean_luma,
+    scene_luma,
 )
 
 
@@ -154,10 +154,15 @@ def test_logs_only_counts_and_codes(caplog):
 @pytest.mark.parametrize(
     ("luma", "lux", "expected"),
     [
-        (34.9, 20, "dark"),
-        (35, None, "dim"),
-        (84.9, None, "dim"),
-        (85, None, "bright"),
+        (49.9, 20, "dark"),
+        (50, None, "dim"),
+        (109.9, None, "dim"),
+        (110, None, "bright"),
+        (
+            163,
+            None,
+            "bright",
+        ),  # the owner's lit room with a dark hoodie filling the frame (2026-11-12)
         (None, 1.49, "dark"),
         (None, 1.5, "dim"),
         (None, 4.99, "dim"),
@@ -169,11 +174,17 @@ def test_light_bucket(luma, lux, expected):
     assert light_bucket(luma, lux) == expected
 
 
-def test_mean_luma_strided_bgr():
+def test_scene_luma_is_the_lit_part_of_a_strided_bgr_sample():
     frame = np.zeros((8, 8, 3), dtype=np.uint8)
     frame[::4, ::4] = (100, 100, 100)
-    frame[1::4, 1::4] = (255, 255, 255)
-    assert mean_luma(frame) == pytest.approx(100)
+    frame[1::4, 1::4] = (255, 255, 255)  # skipped by the stride
+    assert scene_luma(frame) == pytest.approx(100)
+    # A dark object over most of the frame does not hide a lit room: the bright tenth decides.
+    frame = np.full((40, 40, 3), 30, dtype=np.uint8)
+    frame[:, 28:] = 200
+    assert scene_luma(frame) == pytest.approx(200)
+    assert light_bucket(scene_luma(frame)) == "bright"
+    assert light_bucket(scene_luma(np.full((40, 40, 3), 12, dtype=np.uint8))) == "dark"
 
 
 def test_the_looks_flow_from_the_bridge_to_a_scene_post_and_an_ask_post():

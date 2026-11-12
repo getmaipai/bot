@@ -44,7 +44,7 @@ class StackChanVisionBridge:
         self._timer: threading.Timer | None = None
         self._lock = threading.Lock()
         self.frame_check = FrameCheck()
-        # The newest streamed frame, in memory only: (jpeg, when, face count, mean luma). It is
+        # The newest streamed frame, in memory only: (jpeg, when, face count, light level). It is
         # replaced by the next look, and cleared once it has been posted to Home (vision_post.py).
         self._latest_look: tuple[bytes, float, int, float, Any] | None = None
 
@@ -73,13 +73,13 @@ class StackChanVisionBridge:
             if self.clock() - started > deadline_s:
                 return FaceTrackTarget(detected=False)
             faces = self.detector.detect(frame)
-            from maipai_body.bodies.stackchan.vision_post import mean_luma, thumbnail
+            from maipai_body.bodies.stackchan.vision_post import scene_luma, thumbnail
 
             self._latest_look = (
                 bytes(frame_bytes),
                 self.clock(),
                 len(faces),
-                mean_luma(frame),
+                scene_luma(frame),
                 thumbnail(frame),
             )
             if not faces:

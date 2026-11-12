@@ -18,5 +18,8 @@ for 90 seconds; the description is never returned to the bot, so a question abou
   (the 2026-10-22 hold, `PICTURE_POSTS_ENABLED`, is gone).
 - Memory: the newest look (jpeg, time, face count, brightness) lives in `StackChanVisionBridge._latest_look` until the next look replaces
   it or a post takes it. It is never written anywhere.
-- Light bucket: mean gray of the frame, below 35 dark, below 85 dim, else bright (the unit's light sensor reads 1 to 2 percent of the true
-  lux, so it is only the fallback).
+- Light bucket: the 90th percentile of gray over a strided sample of the frame (`scene_luma`, the brightness of the picture's lit part):
+  below 50 dark, below 110 dim, else bright. Measured on the unit 2026-11-12: the owner in a dark hoodie filling the frame in a lit room
+  gave a mean of 52 to 69 (which the old mean rule called dim) and a 90th percentile of 151 to 171 (bright); a covered lens or an unlit
+  room pulls the percentile down with everything else. The unit's light sensor (about 5 to 16 lux in that lit room, 1 to 2 percent of
+  the true value) is only the fallback. The per-minute camera line in the log ends with this number and its bucket.

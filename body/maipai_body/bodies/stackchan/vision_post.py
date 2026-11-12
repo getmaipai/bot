@@ -39,12 +39,20 @@ class PostResult:
     status: int | None = None
 
 
-def light_bucket(mean_luma: float | None, lux: float | None = None) -> str | None:
-    """Classify illumination, preferring measured image luma when available."""
-    if mean_luma is not None:
-        if mean_luma < 35:
+# Light from the picture, measured on the unit 2026-11-12: with a person in a dark hoodie filling
+# the frame in a lit room the mean gray was 52 to 69 ("dim" by the old mean rule) while the lit
+# wall put the 90th percentile at 151 to 171; a covered lens or a dark room pulls that percentile
+# down with everything else. So the light level is the 90th percentile of gray (`scene_luma`).
+DARK_BELOW = 50
+BRIGHT_FROM = 110
+
+
+def light_bucket(luma: float | None, lux: float | None = None) -> str | None:
+    """Classify illumination, preferring the picture's light level (`scene_luma`) when available."""
+    if luma is not None:
+        if luma < DARK_BELOW:
             return "dark"
-        if mean_luma < 85:
+        if luma < BRIGHT_FROM:
             return "dim"
         return "bright"
     if lux is None:
@@ -69,12 +77,13 @@ def differs(a: npt.NDArray[np.float32] | None, b: npt.NDArray[np.float32] | None
     return float(np.mean(np.abs(a - b))) >= THUMB_CHANGE
 
 
-def mean_luma(frame_bgr: npt.NDArray[np.uint8]) -> float:
-    """Return mean gray level from every fourth pixel in each dimension."""
+def scene_luma(frame_bgr: npt.NDArray[np.uint8]) -> float:
+    """The light level of a picture: the 90th percentile of gray over every fourth pixel in each
+    dimension (how bright its lit parts are), so a dark object close to the lens does not make a
+    lit room read as dim. One number; nothing of the picture is kept."""
     sample = frame_bgr[::4, ::4]
-    return float(
-        np.mean(0.114 * sample[:, :, 0] + 0.587 * sample[:, :, 1] + 0.299 * sample[:, :, 2])
-    )
+    gray = 0.114 * sample[:, :, 0] + 0.587 * sample[:, :, 1] + 0.299 * sample[:, :, 2]
+    return float(np.percentile(gray, 90))
 
 
 class VisionPoster:
