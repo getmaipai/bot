@@ -1107,7 +1107,8 @@ class StackChanTurnBridge:
             chat_started = self._clock()
             def _drain() -> list:
                 collected: list = []
-                for event in turn.stream(result.text, speaker_evidence=self._speaker_evidence(result)):
+                evidence = self._speaker_evidence(result)
+                for event in turn.stream(result.text, speaker_evidence=evidence):
                     collected.append(event)
                     if cancel_event.is_set():
                         # A stop must end the hub's generation too, not only our playback.
