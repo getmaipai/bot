@@ -2975,7 +2975,7 @@ def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power:
         resting=lambda: behavior._rest.stage != "awake",
         head_pitch_deg=lambda: behavior._tracker.pose[1],
         head_moved_ago=behavior.head_moved_ago,
-        missed=behavior.missed_log.note if behavior.missed_log is not None else None,
+        missed=getattr(getattr(behavior, "missed_log", None), "note", None),
     )
     behavior.orientation = orientation
     night.sensors_blocked = orientation.sensors_untrusted
