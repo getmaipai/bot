@@ -8,6 +8,15 @@ checklist (`docs/dev.md`).
 ## [Unreleased]
 
 
+## [0.2.66] - 2026-11-13
+
+### Added
+- Music detection and the automatic dance, off until turned on (`robot.dance.auto`, sensitivity `robot.dance.auto_sensitivity`). Firmware patches 100 and 101 measure the room's sound on the unit (tempo, spectrum, speech cues; only a few numbers a second leave it, never audio) and the host decides: clear music for 4 seconds gives one small nod and a happy or wink face; if it goes on for 20 more seconds, a 10 second build-up and a dance of up to 20 seconds with the ring show. Never at night, asleep or in a turn; at most 3 an hour and 10 a day, 10 minutes apart; battery gates (full dance at 40 percent or more, nod only from 20). A hub `music_test` command tries the whole chain without music. Design and test script: `docs/dev/stackchan-music-dance-2026-11-13.md`.
+- "Say that again" and "what did I miss" (`bodies/stackchan/repeat.py`): "say that again", "what did you say", "repeat that", "come again", "pardon" (short asks only) replay the last reply's audio verbatim from memory, without asking the hub; "say that louder" bumps the volume one step for the replay. The last five replies are kept in memory only (never written to disk) and a reply given to a different known person is not replayed. "What did I miss" speaks one summary of the announcements, timers and alarms refused while muted, in quiet hours or full quiet, never said in time, or said with nobody in view (last 20, 24 hours, memory only) and clears it. Setting: `robot.repeat.enabled` (default on).
+
+### Removed
+- The three-tap dance trigger and its daily cap: taps on the head no longer start the dance. It starts by voice, from the hub's Dance button, or (when turned on) by music.
+
 ## [0.2.65] - 2026-11-13
 
 ### Added
