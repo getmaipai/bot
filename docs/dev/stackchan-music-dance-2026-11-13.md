@@ -133,3 +133,7 @@ Needs: the firmware with patches 100 and 101 flashed, the bot release with this 
 - Not built: a nod and settle at the end, beat-timed dances and ring in firmware, harmonicity as a speech cue, the unit's own mute.
 
 Steady-sound path (0.2.70): a second real song never gave a stable tempo, so the beat bar alone rejected it. A window with level 800 or more, modulation under 32, pauses under 20, flatness under 97 and some tempo found counts as music on medium and high.
+
+## On the unit with no hub
+
+The standalone unit can make the same per-second music decision and track its nod and dance session locally with the plain C99 header `body/maipai_body/bodies/stackchan/firmware/assets/maipai_music_judge.h`.
