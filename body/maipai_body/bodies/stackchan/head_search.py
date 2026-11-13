@@ -31,6 +31,12 @@ GLANCE_PITCH_DEG = 12.0  # the small first glance up, before any full sweep
 LOOK_PITCH_DEG = 22.0  # the full look up (a face above the frame at desk distance)
 PAN_DEG = 25.0  # how far to each side
 DARK_PITCH_DEG = 15.0  # the small look up in a dark check
+# Someone right in front of the lens (the picture is flat in a lit room: a torso filling it, seen
+# on the unit 2026-11-12 with the owner sitting back at his desk): the face is far above the
+# camera's field at that distance, so the head climbs steeply and stops the moment a face shows.
+CLOSE_PITCHES_DEG = (20, 35, 50, 65)
+CLOSE_STEP_S = 0.9  # one pose, move and pause: about one fresh frame each at 2 a second
+CLOSE_SPEED = 300  # a stiff spring: the 15 degree step settles well inside the pose
 SPEAKER_PITCH_DEG = 15.0  # the glance up when someone speaks and no face is in view
 
 # A failed look (no face found) is not repeated at once: the wait grows 1, 3, 10 minutes and
@@ -74,6 +80,9 @@ DARK_STEPS = (
     SearchStep(PAN_DEG, 0.0),
     SearchStep(0.0, DARK_PITCH_DEG),
 )
+CLOSE_STEPS = tuple(
+    SearchStep(0.0, pitch, CLOSE_STEP_S, CLOSE_SPEED) for pitch in CLOSE_PITCHES_DEG
+)
 
 
 # A spoken "turn to me" / "find me" ("ask") is the same look as for a person. "I'm down here"
@@ -111,12 +120,13 @@ STEPS = {
     "person": PERSON_STEPS,
     "speaker": PERSON_STEPS,
     "dark": DARK_STEPS,
+    "close": CLOSE_STEPS,
     "ask": ASK_STEPS,
     "ask_level": ASK_LEVEL_STEPS,
 }
 # Looks for a face: a miss of one of these lengthens the back-off of the ambient look only for the
 # ambient reasons; a spoken request ignores the back-off and does not add to it.
-FACE_REASONS = ("person", "speaker", "ask", "ask_level")
+FACE_REASONS = ("person", "speaker", "close", "ask", "ask_level")
 ASKED_REASONS = ("ask", "ask_level")
 
 
@@ -197,7 +207,7 @@ class HeadSearch:
         reason = self.reason
         if reason is not None:
             self._last_done[reason] = current
-            if reason in ("person", "speaker"):
+            if reason in ("person", "speaker", "close"):
                 self._failures = 0 if found else self._failures + 1
             elif reason in ASKED_REASONS and found:
                 self._failures = 0
@@ -217,6 +227,8 @@ __all__ = [
     "ASK_SLOW_STEP_S",
     "ASK_STEPS",
     "ASK_LEVEL_STEPS",
+    "CLOSE_PITCHES_DEG",
+    "CLOSE_STEPS",
     "DARK_STEPS",
     "FACE_REASONS",
     "MOVE_SPEED",

@@ -253,3 +253,5 @@ def test_the_vision_indicator_shows_three_steady_pinks_only_when_asked_for():
     state["minute"] = NIGHT
     service.update(sees="person")
     assert ring.current.colour is Palette.PINK and ring.current.style is LookStyle.STEADY
+    service.update(charging=True)  # on USB at the desk: the glow still shows
+    assert ring.current.colour is Palette.PINK

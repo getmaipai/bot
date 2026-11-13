@@ -15,7 +15,7 @@ from maipai_body.app import StackChanBehavior
 from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
 from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
 from maipai_body.bodies.stackchan.person_tracker import AIM_SPEED, AIM_TILT_STEP_DEG, PersonBox
-from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
+from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG, FOLLOW_YAW_SIGN
 from maipai_body.bodies.stackchan.sight import PERSON_NO_FACE, SightAnswers
 from maipai_body.bodies.stackchan.vision_bridge import StackChanVisionBridge
 from maipai_body.vision.look_fast import Detection
@@ -108,7 +108,7 @@ def test_an_arm_only_view_turns_the_head_toward_the_person_and_tilts_up_then_fin
             _tick(behavior, vision, 100.6)
             calls = _head_calls(device)
             assert len(calls) == 1
-            assert calls[0]["yaw"] < 0  # left of the picture: the head turns left
+            assert calls[0]["yaw"] * FOLLOW_YAW_SIGN < 0  # left of the picture: toward it
             assert calls[0]["pitch"] == round(
                 CENTRE_PITCH_DEG + AIM_TILT_STEP_DEG
             )  # cut off at the top: up
@@ -177,7 +177,7 @@ def test_a_flat_dark_picture_with_a_person_hint_is_not_called_a_dark_room():
     behavior.lux = lambda: 4.0
     try:
         _tick(behavior, vision, 100.0)
-        assert behavior._search.reason == "person"  # the hint wins over the dark check
+        assert behavior._search.reason in ("person", "close")  # a look for the face, no dark check
     finally:
         behavior.close()
 
@@ -195,13 +195,14 @@ def test_a_body_seen_a_moment_ago_turns_the_head_at_listen_start_instead_of_the_
             behavior.robot.lease.acquire(priority="expression", holder="turn")
             assert behavior._turn_toward_face()
         calls = _head_calls(device)
-        assert calls and calls[-1]["yaw"] > 0 and calls[-1]["pitch"] > round(CENTRE_PITCH_DEG)
+        assert calls and calls[-1]["yaw"] * FOLLOW_YAW_SIGN > 0  # right of the picture: toward it
+        assert calls[-1]["pitch"] > round(CENTRE_PITCH_DEG)
         assert behavior._search_after_turn
         assert any(
             "turned toward the person who spoke: a body at x 0.75" in r.getMessage()
             for r in caplog.records
         )
-        assert behavior._tracker.pose[0] == calls[-1]["yaw"]
+        assert math.isclose(behavior._tracker.pose[0], calls[-1]["yaw"], abs_tol=0.6)
     finally:
         behavior.robot.lease.release(holder="turn")
         behavior.close()
@@ -326,10 +327,10 @@ def test_a_face_in_the_middle_keeps_the_head_still_while_following():
             _tick(behavior, vision, 10.0 + i)
         assert behavior._tracker.stage == "follow"
         assert not _head_calls(device)  # centred: nothing to do, no twitching
-        vision.face = (0.9, 0.5)  # they step to the right
+        vision.face = (0.9, 0.5)  # they step to the right: a clear move, acted on at once
         _tick(behavior, vision, 15.0)
         calls = _head_calls(device)
-        assert len(calls) == 1 and calls[0]["yaw"] > 0
+        assert len(calls) == 1 and calls[0]["yaw"] * FOLLOW_YAW_SIGN > 0  # stepped right
         assert math.isclose(behavior._tracker.pose[0], calls[0]["yaw"], abs_tol=0.5)
     finally:
         behavior.close()

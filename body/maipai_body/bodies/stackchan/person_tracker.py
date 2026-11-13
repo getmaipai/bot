@@ -24,7 +24,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from maipai_body.bodies.stackchan.profile import FOLLOW_PITCH_SPAN_DEG, FOLLOW_YAW_SPAN_DEG
+from maipai_body.bodies.stackchan.profile import (
+    FOLLOW_PITCH_SPAN_DEG,
+    FOLLOW_YAW_SIGN,
+    FOLLOW_YAW_SPAN_DEG,
+)
 
 # A box below this score never moves the head: the Stack's own naming threshold. Measured on the
 # unit 2026-11-12 (dim evening room, dark hoodie, backlit): the owner sitting back scored 0.41 to
@@ -42,30 +46,42 @@ FACE_FRESH_S = 1.0  # a face seen this recently is the target
 AIM_DEAD_ZONE = 0.08  # of the frame width around the middle: centred, do not hunt
 AIM_GAIN = 0.7  # share of the yaw error moved in one step
 AIM_MAX_STEP_DEG = 30.0  # and the cap on one step
-AIM_SPEED = 110  # servo speed, eased (the profile allows 100 to 150)
-AIM_SETTLE_S = 0.4  # after a move ends, before a look counts
+AIM_SPEED = 300  # servo speed: the spring is stiff enough to settle in about a second
+AIM_SETTLE_S = 0.6  # after a move ends, before a look counts (a frame is up to 0.5 s old)
 AIM_MAX_MOVES = 4
 AIM_TIMEOUT_S = 6.0
 CENTRED_LOOKS = 2  # looks in the dead zone before the face search starts
 BOX_TOP_CUT = 0.05  # the box starts this close to the top edge: the person is cut off, tilt up
-AIM_TILT_STEP_DEG = 10.0  # that tilt, with the yaw move
+AIM_TILT_STEP_DEG = 25.0  # that tilt, with the yaw move (a seated person's face sits well above)
+FOLLOW_CONFIRM_LOOKS = 2  # a follow move needs the error over the dead zone this many looks running
 
-TILT_STEP_DEG = 8.0  # face search: tilt up this much per pose
-TILT_MAX_DEG = 30.0  # never above this over level (the Robot clamps to the profile again)
+# Measured 2026-11-12: a person sitting at the desk fills the low camera's picture with their
+# torso, and the face sits well above 30 degrees up; the search climbs to 60.
+TILT_STEP_DEG = 15.0  # face search: tilt up this much per pose
+TILT_MAX_DEG = 60.0  # never above this over level (the Robot clamps to the profile again)
 SEARCH_HOLD_S = 0.8  # a face-search pose lasts about this long (then the frame budget decides)
 SEARCH_PAN_DEG = 8.0  # the small pan each way at the top
-SEARCH_MAX_POSES = 5
-SEARCH_TIMEOUT_S = 6.0  # five poses at about a second each with the frame budget
+SEARCH_MAX_POSES = 6  # four tilts and the two pans
+SEARCH_TIMEOUT_S = 10.0  # six poses at about a second and a half each under the frame budget
 
 # Following (owner, 2026-11-12: "follow me as I pace in the room").
 FOLLOW_GAIN = 0.8  # share of the (predicted) error moved per step
 FOLLOW_MAX_STEP_DEG = 25.0  # one step is never bigger: natural, not twitchy
-FOLLOW_SPEED = 120  # servo speed while following
+FOLLOW_SPEED = 300  # servo speed while following: quick, the spring still eases it
 FOLLOW_PITCH_GAIN = 0.5  # the head tilts toward the face more gently than it turns
+# Measured 2026-11-12 22:24: with the sideways dead zone used for the tilt too, a still face made
+# ten small tilts in 30 s (the face box jitters up and down). The face may sit anywhere in the
+# middle 40 percent of the height; the head only tilts when it drifts out of that band.
+FOLLOW_PITCH_DEAD_ZONE = 0.2
 FOLLOW_SMOOTH = 0.6  # weight of the newest measurement in the smoothed target (1 = none)
-# No prediction (owner, 2026-11-12: "only code what's necessary"): the head aims where the person
-# is in the newest look. A constant-velocity lead is added only if the measured trailing on the
-# unit at walking pace loses them or visibly lags; `follow_report` gives those numbers.
+# A walking person (owner's pacing test 2026-11-12: "it never followed me"): a target that moved
+# more than the dead zone since the look before is acted on at once (no second look), and the
+# head aims a little ahead of it, a constant-velocity lead from the last two centres, because the
+# camera, the detector and the spring servo together lag about half a second.
+MOVING_STEP = 0.08  # of the frame width between two looks: the target is walking, act now
+LEAD_S = 0.5
+LEAD_MAX = 0.2  # of the frame width: the lead never guesses further than this
+WAIT_HINT_MAX_S = 20.0  # a lost follow waits at most this long on movement or a weak hint
 STILL_FOR_SEARCH_S = 1.5  # still this long with no face: look for the face above the body
 RELAX_AFTER_S = 90.0  # still this long: relax, head back to rest; the next move wakes it
 FOLLOW_LOST_S = 2.0  # no face and no body this long: back to aiming (they may reappear)
@@ -80,10 +96,12 @@ ATTEMPTS_WINDOW_S = 600.0
 ATTEMPT_CAP_S = 12.0  # aiming and the face search together (following is open-ended)
 SPEAKER_PERSON_FRESH_S = 15.0  # at listen start, turn toward a body seen this recently
 
-# How long a move takes at these speeds: a short move settles quickly, a long one needs about a
-# second (head_search.MOVE_S is 1.0 for a 25 degree move at speed 100).
-MOVE_BASE_S = 0.3
-MOVE_S_PER_DEG = 0.025
+# How long a move takes at these speeds (the servo is a spring: most of the way quickly, then
+# a slow tail). Measured 2026-11-12 at speed 120: 60 degrees took about 2 s for two thirds and
+# 6 s to settle; at 300 the spring is six times stiffer, so a 60 degree move settles in about
+# 1.2 s and a small one in well under a second.
+MOVE_BASE_S = 0.6
+MOVE_S_PER_DEG = 0.01
 
 
 @dataclass(frozen=True)
@@ -150,9 +168,9 @@ def choose_person(boxes: list[PersonBox], last: PersonBox | None = None) -> Pers
 
 
 def yaw_error_deg(box: PersonBox) -> float:
-    """How far off the picture's middle the person is, in head degrees (right positive), with
-    the same camera-to-head mapping face following uses."""
-    return (box.centre_x - 0.5) * FOLLOW_YAW_SPAN_DEG
+    """How far off the picture's middle the person is, in head degrees, with the same
+    camera-to-head mapping (span and sign) face following uses."""
+    return (box.centre_x - 0.5) * FOLLOW_YAW_SPAN_DEG * FOLLOW_YAW_SIGN
 
 
 def move_duration_s(degrees: float) -> float:
@@ -181,10 +199,17 @@ class PersonTracker:
         self._last_miss_at = float("-inf")
         self._missed_box: PersonBox | None = None
         self._search_wait_until = float("-inf")  # no face search from follow before this
+        self._pitch_before_search = 0.0
+        self._pitch_before_aim = 0.0
         self._attempts: list[float] = []
         self._face_last_seen = float("-inf")
         # Following: the smoothed target, its speed, when it was last seen and last moved.
         self._track: tuple[float, float] | None = None  # smoothed (x, y)
+        self._off_centre_looks = 0  # looks in a row with the target outside the dead zone
+        self._just_found = False  # the first move after a face or body is found is immediate
+        self._was_following = False  # aiming again after a follow lost sight: wait, not search
+        self._lost_at = float("-inf")
+        self._prev_target: tuple[float, float, float] | None = None  # x, y, when: for the lead
         self._track_at = float("-inf")
         self._still_since: float | None = None
         self._target_last_at = float("-inf")
@@ -241,9 +266,11 @@ class PersonTracker:
         look_at: float | None,
         face_xy: tuple[float, float] | None = None,
         face_gone: bool | None = None,
+        presence_hint: bool = False,
     ) -> Action:
         """Feed one look: the person boxes in it, how long ago a face was last seen and where,
-        and when its frame arrived. Returns what the head should do now."""
+        when its frame arrived, and whether something weaker (movement, a detector hint) says
+        a person is still there. Returns what the head should do now."""
         face_fresh = face_age is not None and face_age <= FACE_FRESH_S
         if face_fresh:
             self._face_last_seen = now
@@ -266,13 +293,25 @@ class PersonTracker:
         if face_fresh:
             self._found(now)
             return self._follow(now, chosen, True, face_xy)
-        if self.stage == AIMING and now - self._started_at > ATTEMPT_CAP_S:
+        if (
+            self.stage == AIMING
+            and not self._was_following
+            and now - self._started_at > ATTEMPT_CAP_S
+        ):
             return self._miss(now, "the attempt ran out of time")
         if chosen is None and now - self._last_box_at > PERSON_GONE_S:
+            if presence_hint and now - self._lost_at < WAIT_HINT_MAX_S:
+                self._target_last_at = now  # someone still seems to be there: keep waiting here
             if self.stage == AIMING and now - self._target_last_at > GIVE_UP_S:
                 return self._lost(now, "nobody came back")
-            if self.stage == AIMING and self._track is not None:
-                return NONE  # lost while following: wait a little for them to come back
+            if self.stage == AIMING and self._was_following:
+                return NONE  # lost while following: wait where they were for them to come back
+            if self.stage == AIMING and self.pose[1] > self._pitch_before_aim + 1.0:
+                # The aim tilted up and the body dropped out of the picture below: the face is
+                # above it, so look there; the head comes back down to the body if none shows.
+                return self._begin_search(
+                    now, "the body dropped below the picture after the tilt", self._pitch_before_aim
+                )
             return self._lost(now, "the person left the picture")
         if self.stage == AIMING:
             return self._aim(now, chosen)
@@ -309,6 +348,7 @@ class PersonTracker:
             self._moves = self._follow_moves = 0
             self._judge_after = float("-inf")
             self.stage = FOLLOW
+            self._just_found = True
             self.events.append(f"face seen at x {face_xy[0]:.2f}, y {face_xy[1]:.2f} -> follow")
             return self._follow(now, chosen, True, face_xy)
         if chosen is None or not face_gone:
@@ -337,6 +377,8 @@ class PersonTracker:
         self._judge_after = float("-inf")
         self._track = None
         self._relaxed_at = None
+        self._pitch_before_aim = self.pose[1]
+        self._was_following = False
         self.stage = AIMING
         self.events.append(
             f"person {how} at x {box.centre_x:.2f}, box top {box.top:.2f}, score {box.score:.2f}"
@@ -378,11 +420,13 @@ class PersonTracker:
         self._track = None
         return NONE
 
-    def _begin_search(self, now: float, why: str) -> Action:
-        self.events.append(f"follow -> face-search: {why} after {now - self._stage_at:.1f} s")
+    def _begin_search(self, now: float, why: str, back_to: float | None = None) -> Action:
+        self.events.append(f"{self.stage} -> face-search: {why} after {now - self._stage_at:.1f} s")
         self.stage = FACE_SEARCH
         self._stage_at = now
         yaw, pitch = self.pose
+        # Where the body was: the head comes back to it when no face shows.
+        self._pitch_before_search = pitch if back_to is None else back_to
         poses: list[tuple[float, float]] = []
         step = pitch
         while len(poses) < SEARCH_MAX_POSES - 2 and step < TILT_MAX_DEG:
@@ -426,21 +470,12 @@ class PersonTracker:
         self._stage_at = now
         self._still_since = now
         # Back to the body's height: the search tilted the head above it.
-        yaw = self.pose[0]
-        pitch = self._body_pitch(self._last_box) if self._last_box is not None else 0.0
+        yaw, pitch = self.pose[0], self._pitch_before_search
         if abs(pitch - self.pose[1]) < 1.0:
             return NONE
         return self._move(now, yaw, pitch, FOLLOW_SPEED, "back to the body")
 
     # -- following -------------------------------------------------------------------------------
-
-    def _body_pitch(self, box: PersonBox) -> float:
-        """The pitch that puts a body's upper part near the middle of the picture."""
-        y = box.top + BODY_HEAD_SHARE * box.h
-        return max(
-            0.0,
-            min(TILT_MAX_DEG, self.pose[1] + (0.5 - y) * FOLLOW_PITCH_SPAN_DEG * FOLLOW_PITCH_GAIN),
-        )
 
     def _follow(
         self,
@@ -464,9 +499,26 @@ class PersonTracker:
                 self._stage_at = now
                 self._moves = self._centred = 0
                 self._started_at = now  # the attempt cap counts from here
+                self._was_following = True
+                self._lost_at = now
+                self._pitch_before_aim = 0.0
+                if self.pose[1] > 1.0:
+                    # Back to level: a body that walked off is at the camera's own height, and a
+                    # head left looking up sees only the ceiling (pacing test 2026-11-12).
+                    return self._move(now, self.pose[0], 0.0, FOLLOW_SPEED, "lost: back to level")
             return NONE
-        # Smooth the measurement a little (one look is noisy at the box edges).
-        if self._track is not None:
+        # Is the target walking? Compare with the look before (in the same head pose).
+        moving = False
+        lead = 0.0
+        prev = self._prev_target
+        if prev is not None and now > prev[2]:
+            step = target[0] - prev[0]
+            moving = abs(step) >= MOVING_STEP
+            if moving:
+                lead = max(-LEAD_MAX, min(LEAD_MAX, step / (now - prev[2]) * LEAD_S))
+        self._prev_target = (target[0], target[1], now)
+        # Smooth the measurement a little (one look is noisy at the box edges); not a walker.
+        if self._track is not None and not moving:
             smoothed = (
                 FOLLOW_SMOOTH * target[0] + (1 - FOLLOW_SMOOTH) * self._track[0],
                 FOLLOW_SMOOTH * target[1] + (1 - FOLLOW_SMOOTH) * self._track[1],
@@ -477,24 +529,37 @@ class PersonTracker:
         self._target_last_at = now
         self.lag_samples.append(abs(target[0] - 0.5))
         self.lag_samples = self.lag_samples[-200:]
-        error_x = smoothed[0] - 0.5
+        error_x = smoothed[0] + lead - 0.5
         error_y = 0.5 - smoothed[1]
         yaw, pitch = self.pose
         move = False
         if abs(error_x) > AIM_DEAD_ZONE:
             step = max(
                 -FOLLOW_MAX_STEP_DEG,
-                min(FOLLOW_MAX_STEP_DEG, error_x * FOLLOW_YAW_SPAN_DEG * FOLLOW_GAIN),
+                min(
+                    FOLLOW_MAX_STEP_DEG,
+                    error_x * FOLLOW_YAW_SPAN_DEG * FOLLOW_YAW_SIGN * FOLLOW_GAIN,
+                ),
             )
             yaw += step
             move = True
-        if face_fresh and abs(error_y) > AIM_DEAD_ZONE:
+        if face_fresh and abs(error_y) > FOLLOW_PITCH_DEAD_ZONE:
             pitch = max(
                 0.0,
                 min(TILT_MAX_DEG, pitch + error_y * FOLLOW_PITCH_SPAN_DEG * FOLLOW_PITCH_GAIN),
             )
             move = abs(pitch - self.pose[1]) >= 1.0 or move
+        if (
+            move
+            and not self._just_found
+            and not moving
+            and self._off_centre_looks + 1 < FOLLOW_CONFIRM_LOOKS
+        ):
+            self._off_centre_looks += 1
+            return NONE  # one look off centre may be jitter: wait for the next before moving
         if not move:
+            self._off_centre_looks = 0
+            self._just_found = False  # centred at the find: a later step needs two looks
             # In the dead zone: hold. Standing still this long with no face: look for it above
             # the body; still for a long while: relax, and a step across the room wakes it.
             if self._still_since is None:
@@ -517,6 +582,9 @@ class PersonTracker:
             return NONE
         self._still_since = None
         self._track = None  # the head moves: the next look's picture starts afresh
+        self._prev_target = None
+        self._off_centre_looks = 0
+        self._just_found = False
         self._follow_moves += 1
         return self._move(
             now,
@@ -543,6 +611,7 @@ class PersonTracker:
         )
         self.stage = FOLLOW
         self._stage_at = now
+        self._just_found = True
         self._misses = 0
         self._missed_box = None
         self._search_wait_until = float("-inf")

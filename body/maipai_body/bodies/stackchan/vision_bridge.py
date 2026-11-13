@@ -371,13 +371,14 @@ def follow_pose(target: FaceTrackTarget) -> HeadPose:
     from maipai_body.bodies.stackchan.profile import (
         CENTRE_PITCH_DEG,
         FOLLOW_PITCH_SPAN_DEG,
+        FOLLOW_YAW_SIGN,
         FOLLOW_YAW_SPAN_DEG,
     )
 
     assert target.x is not None and target.y is not None
     up_degrees = max(0.0, 0.5 - target.y) * FOLLOW_PITCH_SPAN_DEG
     return HeadPose(
-        yaw=math.radians((target.x - 0.5) * FOLLOW_YAW_SPAN_DEG),
+        yaw=math.radians((target.x - 0.5) * FOLLOW_YAW_SPAN_DEG * FOLLOW_YAW_SIGN),
         pitch=math.radians(CENTRE_PITCH_DEG + up_degrees),
     )
 
@@ -385,11 +386,15 @@ def follow_pose(target: FaceTrackTarget) -> HeadPose:
 def follow_pose_degrees(target: FaceTrackTarget) -> tuple[float, float]:
     """The same pose as `follow_pose`, as (yaw, pitch up from level) in degrees: what the person
     tracker remembers as the head's position after a follow."""
-    from maipai_body.bodies.stackchan.profile import FOLLOW_PITCH_SPAN_DEG, FOLLOW_YAW_SPAN_DEG
+    from maipai_body.bodies.stackchan.profile import (
+        FOLLOW_PITCH_SPAN_DEG,
+        FOLLOW_YAW_SIGN,
+        FOLLOW_YAW_SPAN_DEG,
+    )
 
     assert target.x is not None and target.y is not None
     return (
-        (target.x - 0.5) * FOLLOW_YAW_SPAN_DEG,
+        (target.x - 0.5) * FOLLOW_YAW_SPAN_DEG * FOLLOW_YAW_SIGN,
         max(0.0, 0.5 - target.y) * FOLLOW_PITCH_SPAN_DEG,
     )
 

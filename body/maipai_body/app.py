@@ -750,20 +750,23 @@ class StackChanBehavior:
         # glance up and the small sweep look for the face; a person box or a face hands over to
         # the tracker at once.
         hint = self._person_hint() >= PERSON_HINT_SCORE
-        if no_face and (different or moved or hint or (flat and flat_verdict is None)):
-            if search.start("person", now):
+        close = flat and flat_verdict is None  # a body right in front of the lens, lit room
+        if no_face and (different or moved or hint or close):
+            # Right in front of the lens the face is far above the picture: the steep climb.
+            reason = "close" if close else "person"
+            if search.start(reason, now):
                 self._search_cause = (
-                    "moved" if moved else "different" if different else "hint" if hint else "flat"
+                    "flat" if close else "moved" if moved else "different" if different else "hint"
                 )
                 logger.info(
                     "StackChan looking for a face: %s, no face in the picture",
-                    f"the picture differs from the empty room in {self._person_share:.0%}"
+                    "something is right against the lens in a lit room (climbing)"
+                    if close
+                    else f"the picture differs from the empty room in {self._person_share:.0%}"
                     if different
                     else f"the picture moved {motion_age:.0f} s ago"
                     if moved
-                    else f"the detector hints at a person ({self._person_hint():.2f})"
-                    if hint
-                    else "something is right against the lens in a lit room",
+                    else f"the detector hints at a person ({self._person_hint():.2f})",
                 )
             return
         self._search_after_turn = False
@@ -811,12 +814,15 @@ class StackChanBehavior:
         self._tracker_last_look_at = look_at
         face = self._last_face
         face_age = None if face is None else now - face[2]
+        motion_age = self._real_motion_age(now)
         action = tracker.observe(
             now,
             self._vision.people(max_age_s=2.0),
             face_age=face_age,
             look_at=look_at,
             face_xy=None if face is None else (face[0], face[1]),
+            presence_hint=self._person_hint() >= PERSON_HINT_SCORE
+            or (motion_age is not None and motion_age <= 1.0),
         )
         return self._tracker_apply(now, action)
 
@@ -1138,7 +1144,7 @@ class StackChanBehavior:
                 return
             if why == "done":
                 self._tell_not_found(reason)
-        elif reason in ("person", "speaker"):
+        elif reason in ("person", "speaker", "close"):
             wait = self._search.wait_s("person")
             if found:
                 self._still_failures = 0

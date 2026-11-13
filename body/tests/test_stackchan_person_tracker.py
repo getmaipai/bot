@@ -28,12 +28,15 @@ from maipai_body.bodies.stackchan.person_tracker import (
     STILL_FOR_SEARCH_S,
     TILT_MAX_DEG,
     TILT_STEP_DEG,
+    WAIT_HINT_MAX_S,
     PersonBox,
     PersonTracker,
     choose_person,
     yaw_error_deg,
 )
-from maipai_body.bodies.stackchan.profile import FOLLOW_YAW_SPAN_DEG
+from maipai_body.bodies.stackchan.profile import FOLLOW_YAW_SIGN, FOLLOW_YAW_SPAN_DEG
+
+HALF = FOLLOW_YAW_SPAN_DEG / 2 * FOLLOW_YAW_SIGN  # the yaw of a person at the picture's right edge
 
 
 def box(
@@ -62,10 +65,11 @@ def settle(tracker, now, action):
 # -- box to head -----------------------------------------------------------------------------
 
 
-def test_the_box_centre_maps_to_yaw_like_face_following_left_negative():
+def test_the_box_centre_maps_to_yaw_like_face_following_with_the_units_sign():
     assert yaw_error_deg(box(0.5)) == 0.0
-    assert yaw_error_deg(box(0.0)) == pytest.approx(-FOLLOW_YAW_SPAN_DEG / 2)
-    assert yaw_error_deg(box(0.75)) == pytest.approx(FOLLOW_YAW_SPAN_DEG / 4)
+    assert yaw_error_deg(box(0.0)) == pytest.approx(-HALF)
+    assert yaw_error_deg(box(0.75)) == pytest.approx(HALF / 2)
+    assert abs(yaw_error_deg(box(1.0))) == FOLLOW_YAW_SPAN_DEG / 2
 
 
 def test_the_largest_box_wins_and_near_ties_pick_the_middle():
@@ -94,12 +98,16 @@ def test_an_attempt_needs_two_looks_with_a_box_and_no_face():
 def test_aiming_turns_toward_the_box_with_gain_and_cap_and_tilts_when_the_top_is_cut():
     tracker = PersonTracker()
     move = start(tracker, cx=0.2, top=0.3).move
-    assert move.yaw_deg == pytest.approx(yaw_error_deg(box(0.2)) * AIM_GAIN)  # left: negative
+    wanted = max(-AIM_MAX_STEP_DEG, min(AIM_MAX_STEP_DEG, yaw_error_deg(box(0.2)) * AIM_GAIN))
+    assert move.yaw_deg == pytest.approx(wanted)
     assert move.pitch_deg == 0.0 and move.speed == AIM_SPEED and move.duration_s > 0
     assert tracker.pose == (move.yaw_deg, 0.0)
     far = PersonTracker()
     move = start(far, cx=1.0, top=0.0).move  # at the right edge, cut off at the top
-    assert move.yaw_deg == pytest.approx(min(AIM_MAX_STEP_DEG, FOLLOW_YAW_SPAN_DEG / 2 * AIM_GAIN))
+    assert abs(move.yaw_deg) == pytest.approx(
+        min(AIM_MAX_STEP_DEG, FOLLOW_YAW_SPAN_DEG / 2 * AIM_GAIN)
+    )
+    assert move.yaw_deg * HALF > 0  # toward the right edge, in the unit's own sign (profile.py)
     assert move.pitch_deg == AIM_TILT_STEP_DEG
 
 
@@ -112,7 +120,7 @@ def test_a_look_taken_before_the_head_settled_is_not_evidence():
     assert observe(tracker, settled + 0.1, [box(0.2)], look_at=settled - 0.05).kind == "none"
     # A frame after the settle counts: the person is still left of centre, so one more step.
     action = observe(tracker, settled + 0.6, [box(0.3)], look_at=settled + 0.5)
-    assert action.kind == "move" and action.move.yaw_deg < 0
+    assert action.kind == "move" and action.move.yaw_deg * HALF < 0  # still toward the left
 
 
 def test_aiming_gives_up_on_centring_after_four_moves_and_follows_anyway():
@@ -165,7 +173,8 @@ def test_centred_and_still_starts_the_face_search_which_tilts_up_then_pans():
             poses.append(action.move)
     assert len(poses) == SEARCH_MAX_POSES
     pitches = [m.pitch_deg for m in poses]
-    assert pitches[:3] == sorted(pitches[:3]) and max(pitches) <= TILT_MAX_DEG
+    tilts = pitches[: SEARCH_MAX_POSES - 2]
+    assert tilts == sorted(tilts) and tilts[-1] == TILT_MAX_DEG and max(pitches) <= TILT_MAX_DEG
     assert {round(m.yaw_deg - yaw) for m in poses[-2:]} == {-SEARCH_PAN_DEG, SEARCH_PAN_DEG}
     # A miss: back to following the body (the head comes down to it), no face search for a minute.
     assert (
@@ -205,15 +214,23 @@ def test_following_turns_toward_a_walking_person_in_capped_natural_steps_and_hol
     start(tracker, now=10.0, cx=0.5)
     observe(tracker, 11.0, [box(0.5)])
     assert tracker.stage == "follow"
-    # They walk right: each fresh look well outside the dead zone turns the head a capped step.
+    # They walk right: two fresh looks well outside the dead zone (one may be jitter) turn the
+    # head a capped step.
     now = 12.0
+    assert observe(tracker, now, [box(0.9)]).kind == "none"
+    now += 0.5
     action = observe(tracker, now, [box(0.9)])
-    assert action.kind == "move" and 0 < action.move.yaw_deg <= FOLLOW_MAX_STEP_DEG
+    assert action.kind == "move" and 0 < action.move.yaw_deg * HALF
+    assert abs(action.move.yaw_deg) <= FOLLOW_MAX_STEP_DEG
     assert action.move.speed == FOLLOW_SPEED and "follow the body" in action.move.why
     first = action.move.yaw_deg
     now = settle(tracker, now, action)
-    action = observe(tracker, now, [box(0.8)])  # the head turned, they kept walking
-    assert action.kind == "move" and action.move.yaw_deg > first  # relative to where it points
+    observe(tracker, now, [box(0.8)])  # the head turned, they kept walking
+    now += 0.5
+    action = observe(tracker, now, [box(0.8)])
+    assert action.kind == "move" and abs(action.move.yaw_deg) > abs(
+        first
+    )  # relative to where it points
     assert "follow the body" in action.move.why
     now = settle(tracker, now, action)
     assert observe(tracker, now, [box(0.52)]).kind == "none"  # centred: hold
@@ -222,12 +239,15 @@ def test_following_turns_toward_a_walking_person_in_capped_natural_steps_and_hol
 
 def test_following_prefers_the_face_and_tilts_toward_it():
     tracker = PersonTracker()
-    observe(tracker, 1.0, [], face_age=0.1, face_xy=(0.5, 0.1))  # a face high in the picture
+    action = observe(tracker, 1.0, [], face_age=0.1, face_xy=(0.5, 0.1))  # a face high up
     assert tracker.stage == "follow"
     assert any("face seen at x 0.50, y 0.10 -> follow" in e for e in tracker.drain_events())
-    action = observe(tracker, 2.0, [box(0.1)], face_age=0.1, face_xy=(0.5, 0.1))
+    # The first move after a find is immediate: up toward the face, no turn (it is centred).
     assert action.kind == "move" and action.move.pitch_deg > 0 and abs(action.move.yaw_deg) < 1e-6
     assert "follow the face" in action.move.why
+    now = settle(tracker, 1.0, action)
+    # A body box off to the side never pulls the head while the face is in view.
+    assert observe(tracker, now, [box(0.1)], face_age=0.1, face_xy=(0.5, 0.5)).kind == "none"
 
 
 def test_losing_sight_goes_back_to_aiming_after_two_seconds_and_rests_after_ten():
@@ -241,7 +261,7 @@ def test_losing_sight_goes_back_to_aiming_after_two_seconds_and_rests_after_ten(
     assert any("follow -> aiming: lost sight" in e for e in tracker.drain_events())
     # They come back on the left: aiming turns there at once.
     action = observe(tracker, 14.0, [box(0.2)])
-    assert action.kind == "move" and action.move.yaw_deg < tracker.pose[0] + 1e-9
+    assert action.kind == "move" and (action.move.yaw_deg - 0.0) * HALF < 0  # toward the left
     gone = PersonTracker()
     start(gone, now=10.0, cx=0.5)
     observe(gone, 11.0, [box(0.5)])
@@ -279,6 +299,21 @@ def test_the_follow_report_measures_how_far_off_centre_the_person_sat():
 
 
 # -- caps and back-offs ----------------------------------------------------------------------
+
+
+def test_the_body_dropping_out_below_after_a_tilt_means_look_for_the_face_above():
+    """Unit 2026-11-12 21:50: a person box cut off at the top, one aim move tilted up 15 degrees,
+    the torso left the picture below and the attempt was wrongly called lost."""
+    tracker = PersonTracker()
+    tracker.note_pose(0.0, 22.0)
+    action = start(tracker, now=10.0, cx=0.32, top=0.0)
+    assert action.move.pitch_deg == 22.0 + AIM_TILT_STEP_DEG
+    gone_at = settle(tracker, 10.0, action) + 2.0 + 0.5
+    action = observe(tracker, gone_at, [])
+    assert tracker.stage == "face-search" and action.kind == "move"
+    assert action.move.pitch_deg > 22.0 + AIM_TILT_STEP_DEG
+    assert any("dropped below the picture after the tilt" in e for e in tracker.drain_events())
+    assert tracker._pitch_before_search == 22.0  # the head comes back to the body's height
 
 
 def test_the_person_leaving_while_aiming_ends_the_attempt_and_the_head_returns():
@@ -332,3 +367,76 @@ def test_a_rest_cancels_without_counting_a_miss():
     tracker.cancel(11.0, "a rest started")
     assert tracker.stage == "idle" and tracker.may_start(11.0)
     assert any("aiming -> idle: a rest started" in e for e in tracker.drain_events())
+
+
+def test_the_first_move_after_a_face_is_found_is_immediate_and_a_hint_keeps_the_head_there():
+    """Unit 2026-11-12 22:18: the face was seen once at y 0.22 (well above the middle), the
+    detector then flickered, and the head gave up and returned to rest after 8 s."""
+    tracker = PersonTracker()
+    action = observe(tracker, 1.0, [], face_age=0.1, face_xy=(0.48, 0.22))
+    assert tracker.stage == "follow" and action.kind == "move" and action.move.pitch_deg > 0
+    # The face flickers off, no box, but movement or a weak hint says they are still there:
+    # the head comes back to level (a body is at the camera's height) and waits there.
+    now = settle(tracker, 1.0, action)
+    now += 3.0
+    action = tracker.observe(now, [], face_age=now - 1.0, look_at=now, presence_hint=True)
+    assert tracker.stage == "aiming" and action.kind == "move" and action.move.pitch_deg == 0.0
+    now = settle(tracker, now, action)
+    for i in range(12):
+        now += 1.0
+        action = tracker.observe(now, [], face_age=now - 1.0, look_at=now, presence_hint=True)
+        assert action.kind == "none", i
+    assert tracker.stage == "aiming"  # waiting
+    # Nothing at all for ten seconds: back to rest.
+    for _ in range(11):
+        now += 1.0
+        action = tracker.observe(now, [], face_age=now - 1.0, look_at=now, presence_hint=False)
+    assert action.kind == "return" and tracker.stage == "idle"
+
+
+def test_a_face_in_the_middle_band_never_tilts_the_head():
+    """Unit 2026-11-12 22:24: a still face made ten small tilts in 30 s with the narrow band."""
+    tracker = PersonTracker()
+    observe(tracker, 1.0, [], face_age=0.1, face_xy=(0.5, 0.5))
+    assert tracker.stage == "follow"
+    now = 1.0
+    for y in (0.35, 0.62, 0.4, 0.68, 0.33):  # the face box jitters inside the middle band
+        now += 1.0
+        assert observe(tracker, now, [], face_age=0.1, face_xy=(0.5, y)).kind == "none"
+    now += 1.0
+    observe(tracker, now, [], face_age=0.1, face_xy=(0.5, 0.15))  # high: one look
+    now += 1.0
+    action = observe(tracker, now, [], face_age=0.1, face_xy=(0.5, 0.15))  # two: tilt up
+    assert action.kind == "move" and action.move.pitch_deg > 0
+
+
+def test_a_walking_person_is_followed_on_the_first_look_with_a_small_lead():
+    """Pacing test 2026-11-12: a target that moved more than the dead zone since the look before
+    is acted on at once, aiming a little ahead of it."""
+    tracker = PersonTracker()
+    start(tracker, now=10.0, cx=0.5)
+    observe(tracker, 11.0, [box(0.5)])
+    assert tracker.stage == "follow"
+    observe(tracker, 12.0, [box(0.5)])  # the look before
+    action = observe(tracker, 12.5, [box(0.62)])  # walked 0.12 of the frame in half a second
+    assert action.kind == "move" and action.move.speed == FOLLOW_SPEED
+    plain = yaw_error_deg(box(0.62)) * 0.8
+    assert abs(action.move.yaw_deg) > abs(plain)  # a lead ahead of them, in the same direction
+    assert action.move.yaw_deg * plain > 0
+
+
+def test_losing_a_follow_brings_the_head_back_to_level_and_the_hint_wait_is_capped():
+    tracker = PersonTracker()
+    observe(tracker, 1.0, [], face_age=0.1, face_xy=(0.5, 0.1))  # a high face: tilt up
+    assert tracker.pose[1] > 0
+    now = 10.0
+    action = observe(tracker, now, [], face_age=5.0)
+    assert tracker.stage == "aiming" and action.kind == "move" and action.move.pitch_deg == 0.0
+    assert "back to level" in action.move.why
+    now = settle(tracker, now, action)
+    for _ in range(40):
+        now += 1.0
+        action = tracker.observe(now, [], face_age=now, look_at=now, presence_hint=True)
+        if action.kind == "return":
+            break
+    assert action.kind == "return" and now - 10.0 <= WAIT_HINT_MAX_S + GIVE_UP_S + 2

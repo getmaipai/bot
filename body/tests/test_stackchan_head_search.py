@@ -73,6 +73,20 @@ def test_a_failed_look_backs_off_one_three_ten_minutes_and_a_face_resets_it():
     assert search.wait_s("dark") == DARK_COOLDOWN_S
 
 
+def test_someone_right_in_front_of_the_lens_gets_the_steep_climb():
+    from maipai_body.bodies.stackchan.head_search import CLOSE_PITCHES_DEG, CLOSE_STEPS, STEPS
+
+    assert STEPS["close"] == CLOSE_STEPS
+    assert (
+        [s.pitch_deg for s in CLOSE_STEPS] == list(CLOSE_PITCHES_DEG) == sorted(CLOSE_PITCHES_DEG)
+    )
+    assert all(s.yaw_deg == 0.0 for s in CLOSE_STEPS) and CLOSE_PITCHES_DEG[-1] <= 80
+    search = HeadSearch(clock=lambda: 0.0)
+    assert search.start("close", 0.0)
+    search.stop(5.0)  # nobody: the same back-off as the person look
+    assert search.wait_s("person") == PERSON_BACKOFF_S[0]
+
+
 def test_the_look_glances_up_a_little_first_then_looks_up_and_over():
     assert PERSON_STEPS[0].pitch_deg == GLANCE_PITCH_DEG < LOOK_PITCH_DEG
     assert PERSON_STEPS[0].yaw_deg == 0.0
@@ -377,7 +391,7 @@ def test_a_flat_picture_in_a_lit_room_is_person_like(caplog):
     try:
         with caplog.at_level(logging.INFO, logger="maipai_body.app"):
             behavior.search_tick(100.0)
-        assert behavior._search.reason == "person"
+        assert behavior._search.reason == "close"  # the steep climb: the face is far above
         assert any("right against the lens" in r.getMessage() for r in caplog.records)
     finally:
         behavior.close()

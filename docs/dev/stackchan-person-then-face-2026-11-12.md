@@ -87,21 +87,27 @@ the frame (they changed position, worth another try). At most 3 attempts in 10 m
 
 | Name | Value | Meaning |
 |---|---|---|
-| PERSON_SCORE | 0.5 | a box below this never moves the head (naming uses the Stack's 0.35) |
+| PERSON_SCORE | 0.35 | a box below this never moves the head (the Stack's own naming threshold; the owner sitting back in a dim room scored 0.41 to 0.55, an empty or black picture 0.00 to 0.03) |
+| PERSON_HINT_SCORE | 0.1 | a weaker hint: the faint pink and the glance-up look (a dark hoodie filling the frame scored 0.05 to 0.17) |
 | PERSON_LOOKS | 2 of 3 | looks with a box before an attempt starts |
 | FACE_GONE_S | 5.0 | no face this long before a body is acted on (as `SEARCH_FACE_GONE_S`) |
 | AIM_DEAD_ZONE | 0.08 | of frame width: centred |
 | AIM_GAIN, AIM_MAX_STEP_DEG | 0.7, 30 | share of the yaw error moved per step, and its cap |
-| AIM_SPEED | 110 | servo speed (profile range 100 to 150) |
-| AIM_SETTLE_S | 0.4 | after a move ends before the next look counts |
+| AIM_SPEED, FOLLOW_SPEED | 300, 300 | servo speed: the firmware's number is a spring stiffness, 300 settles in about a second (the ceiling is 400, measured) |
+| AIM_SETTLE_S | 0.6 | after a move ends before the next look counts (a frame is up to half a second old) |
 | AIM_MAX_MOVES, AIM_TIMEOUT_S, CENTRED_LOOKS | 4, 6.0, 2 | aiming bounds |
-| BOX_TOP_CUT, AIM_TILT_STEP_DEG | 0.05, 10 | box cut off at the top: tilt up a step while aiming |
-| TILT_STEP_DEG, TILT_MAX_DEG | 8, 30 | face-search tilt steps and ceiling over level |
-| SEARCH_HOLD_S, SEARCH_PAN_DEG, SEARCH_MAX_POSES, SEARCH_TIMEOUT_S | 0.8, 8, 5, 6.0 | face-search bounds (6 s: five poses at about a second each under the frame budget) |
+| BOX_TOP_CUT, AIM_TILT_STEP_DEG | 0.05, 25 | box cut off at the top: tilt up a big step while aiming (a seated person's face sits well above) |
+| TILT_STEP_DEG, TILT_MAX_DEG | 15, 60 | face-search tilt steps and ceiling over level (measured: the face of a person at the desk sits well above 30) |
+| SEARCH_HOLD_S, SEARCH_PAN_DEG, SEARCH_MAX_POSES, SEARCH_TIMEOUT_S | 0.8, 8, 6, 10.0 | face-search bounds: four tilts and two pans at about a second and a half each under the frame budget |
 | PERSON_GONE_S, RELOCK_S | 2.0, 2.0 | box gone: lost; face lost but body there: re-aim |
 | BACKOFF_S, RETRY_MOVE, MAX_ATTEMPTS_PER_10MIN, ATTEMPT_CAP_S | (60, 180, 600), 0.15, 3, 12.0 | misses and caps |
 | SPEAKER_PERSON_FRESH_S | 15.0 | turn toward a body at listen start if seen this recently |
-| YAW_SPAN_DEG, PITCH_SPAN_DEG, CENTRE_PITCH_DEG | from `profile.py` | 60, 40, 5: the camera to head mapping face following uses |
+| FOLLOW_YAW_SPAN_DEG, FOLLOW_PITCH_SPAN_DEG, FOLLOW_YAW_SIGN, CENTRE_PITCH_DEG | from `profile.py` | 80, 60, +1, 5: the camera to head mapping, measured on the unit (below) |
+| FOLLOW_CONFIRM_LOOKS, FOLLOW_PITCH_DEAD_ZONE | 2, 0.2 | a still person: a sideways move needs the error over the dead zone two looks running; the face may sit anywhere in the middle 40 percent of the height |
+| MOVING_STEP, LEAD_S, LEAD_MAX | 0.08, 0.5, 0.2 | a walker (moved this much since the look before) is acted on at the first look, aiming half a second ahead |
+| WAIT_HINT_MAX_S | 20 | a lost follow waits at most this long on movement or a weak hint, at level |
+| CLOSE_PITCHES_DEG, CLOSE_STEP_S, CLOSE_SPEED | (20, 35, 50, 65), 0.9, 300 | the steep climb for a picture that is flat in a lit room (`head_search.py`) |
+| SCORE_THRESHOLD (YuNet) | 0.42 | the face bar: the owner's dark backlit face scored 0.41 to 0.66, the empty room at most 0.34 |
 
 ## Frame budget (owner's live trial of 0.2.63, 20:40)
 
@@ -115,6 +121,34 @@ of the blind sweep. When a face is found the head is centred on it (`_point_at_f
 Faster frames while searching: the 350 ms is a firmware constant (`_is_video_mode ? 700 : 350`). A patch could add a "fast" flag to
 `StartCameraStream` (for example a 150 ms interval while an aim or a search runs, back to 350 after), about 4 to 5 frames a second;
 the encode alone is 83 ms, so 5 is the ceiling at 320x240. Not built here (a firmware build and a flash); an option for the owner.
+
+## Measured on the unit (2026-11-12, 21:16 to 22:30, the dev firmware against a worktree body)
+
+- The picture: a swing of yaw 0, +60, 0, -60 with the head tilted up 50, every frame kept: +60 moved the ceiling lamp three quarters of
+  the frame to the left, so +yaw turns the camera toward the picture's right (the original sign) and the picture is about 80 degrees wide.
+  An earlier reading from a three second swing (a quarter frame per 40 degrees) was an unsettled servo, not a wide lens.
+- The servo: the firmware's speed number is a spring stiffness (k = 10 + (speed/1000)^2 * 640); at 120 a 60 degree turn made two thirds of
+  its way in 2 s and settled by about 6 s, so every follow at the old speed corrected a half-finished move ("it kept moving"). At 300 it
+  settles in about a second. The soft ceiling in `profile.py` moves from 150 to 400 for moves that answer a person.
+- The detectors on him at the desk in the evening (dark hoodie, backlit, the unit on USB): YOLOX-nano scores his torso filling the frame
+  0.05 to 0.17 (no detector calls that a person; hence the hint fallback and the steep climb), his body sitting back 0.41 to 0.55; YuNet
+  scores his face 0.41 to 0.66 (bar now 0.42). An empty or black picture: person 0.00 to 0.03, face at most 0.34. False-person rate with
+  nobody in view: a person box in 1 of 503 looks over 5 minutes (0.2 percent), at the 0.35 bar.
+- Results: sitting back, the glance up to 22 found his face (x 0.48, y 0.22) and the follow needed zero sideways moves (median 0.04 of the
+  frame off centre over 34 looks); the tilt bounced ten times in 30 s with the narrow band (fixed: the 0.2 band, zero tilts expected).
+  Arm only: the torso against the lens is a flat picture; the steep climb runs for it. Pacing: the first pass found nothing because the
+  head was left looking at the ceiling after a lost follow (fixed: back to level, the hint wait capped); the repeat is reported in the
+  session's final report.
+- The camera: about 1.8 frames a second (the firmware captures every 350 ms, 30 ms capture plus 83 ms JPEG encode); every judged look is a
+  frame that arrived after the move settled.
+
+## The vision indicator (owner request, 2026-11-12, mid-test)
+
+Three steady pink looks on the ring through the light service, behind `robot.indicator.sees` (off by default, so the idle ring stays dark
+per the 2026-10-21 ruling): faint for a possible person (movement, a picture unlike the empty room, or a detector hint of 0.1 or more),
+medium for a person box, full for a face; the glow holds two seconds between looks. Steady, so it never reads as the flashing camera cue;
+the cues, the alarm, a fault, listening, thinking, speaking, held, muted, updating, pairing, connecting, offline and battery low win over
+it; it shows over the charging breathe and the night sleep row, because it was asked for.
 
 ## What the log carries (INFO, counts and times only, never a label)
 

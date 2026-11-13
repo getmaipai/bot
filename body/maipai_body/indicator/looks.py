@@ -242,11 +242,12 @@ def resolve_key(request: LookRequest) -> LookKey | None:
         return LookKey.BATTERY_LOW
     if request.offer and request.funnel is FunnelState.IDLE:
         return LookKey.OFFER
-    if request.charging and request.funnel is FunnelState.IDLE:
-        return LookKey.CHARGING
-    # The vision indicator is asked for on purpose, so it shows at night too (over the sleep row).
+    # The vision indicator is asked for on purpose, so it shows over the charging breathe and
+    # the night sleep row too; the cues, the alarm, a fault and the turn states still win.
     if request.sees in SEES_ROWS and settings.sees and request.funnel is FunnelState.IDLE:
         return SEES_ROWS[request.sees]
+    if request.charging and request.funnel is FunnelState.IDLE:
+        return LookKey.CHARGING
     if request.funnel is FunnelState.IDLE and is_night(
         request.minute, settings.night_from, settings.night_to
     ):
