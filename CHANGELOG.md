@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.76] - 2026-11-13
+
+### Added
+- The music dance runs in cycles for hours (owner: "it shouldn't just stop and never start again"): the slow start (nod, build-up, dance), a dance block of rounds (5 minutes charging, 2 on battery), a 90 s break, then the slow start again, for as long as the music goes on; a gap under 60 s between songs keeps the session. The hourly and daily caps are gone; the wait after a session is 2 minutes.
+- StackChan firmware patch 123: small musical notes hop around the face while it nods and dances, and `self.face.song_title` shows a song name at the bottom center (the host sets it once song identification exists). Patch 124: the unit's own offline music session follows the same cycles.
+
 ## [0.2.75] - 2026-11-13
 
 ### Changed

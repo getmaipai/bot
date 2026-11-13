@@ -355,6 +355,8 @@ apply_repo_patch 119-quiet-reconnect-errors.patch "$SRC"
 apply_repo_patch 120-offline-earcon-after-3-minutes.patch "$SRC"
 apply_repo_patch 121-offline-music-dance.patch "$SRC"
 apply_repo_patch 122-vision-off-closes-the-eyes.patch "$SRC"
+apply_repo_patch 123-music-notes-and-song-title.patch "$SRC"
+apply_repo_patch 124-offline-music-cycles.patch "$SRC"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"
