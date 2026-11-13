@@ -7,6 +7,14 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.64] - 2026-11-12
+
+### Added
+- StackChan finds a person first, then the face, then follows: a fast person detector (YOLOX-nano, the Look design's tier 1, 10 ms a frame) runs on the same frames as the face detector; with a body in view and no face it turns toward the person and climbs to find the face, holds still when the face is centred, follows a walking person with a small lead, and goes back to level when it loses sight. "What do you see" answers at once from the detector while the detailed sentence follows. An optional pink ring shows what it sees (faint = possible person, medium = person, full = face; setting robot.indicator.sees, off by default).
+
+### Fixed
+- Head turns settle: the firmware's servo speed is a spring, so the old speeds (100 to 150) took about 6 s to settle and each look saw a half-finished move; aims and follows now use a fast speed, the camera's field is 80 by 60 degrees (not 60 by 40), the face bar is 0.42 for dark, backlit faces, and the head tilts only when the face leaves the middle 40 percent of the picture so it no longer bobs.
+
 ### Added
 - The StackChan finds the person, then the face, then follows (owner design 2026-11-12, `docs/dev/stackchan-person-then-face-2026-11-12.md`): the Look detector (YOLOX-nano, the shared robot asset `yolox-nano-0_1_1rc0`, synced from Home like the face model) runs on the same camera frames as the face detector, so an arm or a torso in view is a person. The head turns toward the person box and tilts up when it is cut off at the top, looks for the face above a still body in small steps, and follows the person (face when in view, body when not) with a dead zone and natural steps; it relaxes after a long still spell and rests when nobody is left. Every stage change is one INFO line; the camera minute line counts people and the detector's time, and a false-person rate is logged over windows with no face.
 - "What do you see" answers at once from the robot's own fast pass ("I see a person and a laptop"), then Home's detailed sentence follows as before. "Can you see me" with a body but no face says so.
