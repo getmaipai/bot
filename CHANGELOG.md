@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.74] - 2026-11-13
+
+### Added
+- StackChan firmware patch 121: with no link to Home the unit nods (the happy face) and dances to music by itself, using the same judge as the host (`maipai_music_judge.h`, tested equal to the Python one), while the Dance to music switch is on. Not while muted, in full quiet, listening or speaking, or on battery below 20 percent (a dance needs 40). Not done yet: a head nod (face only), a tilt check, a night check.
+
 ## [0.2.73] - 2026-11-13
 
 ### Fixed
