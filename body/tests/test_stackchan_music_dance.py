@@ -148,6 +148,12 @@ def test_sensitivity_moves_the_beat_bar():
     assert judge(replace(MUSIC, fl=80), "medium").music  # the same song measured flatness 47 to 85
 
 
+def test_a_bright_song_keeps_a_running_dance_alive():
+    bright = replace(MUSIC, tc=10, fl=95)
+    assert not judge(bright, "medium").music
+    assert judge(bright, "medium", relaxed=True).music
+
+
 def test_a_running_stage_judges_a_little_more_gently():
     dip = replace(MUSIC, tc=17)
     assert not judge(dip, "medium").music
@@ -243,18 +249,18 @@ def test_twenty_four_seconds_of_music_start_the_build_up_and_dance():
 def test_the_music_stopping_before_the_build_up_ends_the_session():
     world = World()
     world.play(MUSIC, 10)
-    world.play(None, 8)
+    world.play(None, 9)
     assert world.names("request_dance") == []
     assert world.ctl.state == "spent"
 
 
-def test_the_dance_ends_on_five_seconds_of_silence():
+def test_the_dance_ends_on_nine_seconds_of_silence():
     world = World()
     world.play(MUSIC, 26)
     assert world.dancing
-    world.play(None, 4)
+    world.play(None, 8)
     assert world.names("stop_dance") == []
-    world.play(None, 1)  # five seconds since the last clear second
+    world.play(None, 1)  # nine seconds since the last clear second
     assert [a for _, n, a in world.calls if n == "stop_dance"] == ["music ended"]
     world.second(None)
     assert world.ctl.state == "spent"

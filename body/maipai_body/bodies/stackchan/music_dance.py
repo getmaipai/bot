@@ -161,9 +161,10 @@ def judge(feat: MusicFeat, sensitivity: str = "medium", *, relaxed: bool = False
     """Is this second clear rhythmic music? ``relaxed`` is for a stage that is already running (the
     unit's own servo noise and a long song's quiet bars must not end it): the bars are lowered."""
     sens = SENSITIVITIES.get(sensitivity, SENSITIVITIES["medium"])
-    tc_min, mo_max, ps_max = sens.tc_min, sens.mo_max, sens.ps_max
+    tc_min, mo_max, ps_max, fl_max = sens.tc_min, sens.mo_max, sens.ps_max, sens.fl_max
     if relaxed:
-        tc_min = max(10, tc_min * 3 // 4)
+        tc_min = max(8, tc_min // 2)
+        fl_max += 10  # a bright song measured flatness 88 to 99 while it danced
         mo_max += 10
         ps_max += 10
     if feat.muted:
@@ -176,7 +177,7 @@ def judge(feat: MusicFeat, sensitivity: str = "medium", *, relaxed: bool = False
         return Verdict(False, "no_tempo")
     if not MIN_BPM <= feat.bpm <= MAX_BPM:
         return Verdict(False, "tempo_out_of_range")
-    if feat.fl >= sens.fl_max:
+    if feat.fl >= fl_max:
         return Verdict(False, "too_flat")
     if feat.mo >= mo_max:
         return Verdict(False, "speech_like_modulation")
@@ -193,7 +194,7 @@ class Timing:
     detect_s: float = 4.0  # clear music this long starts the nod
     gap_s: float = 2.5  # one missed or doubtful second between music seconds is forgiven
     nod_to_build_s: float = 20.0  # from the nod's start to the build-up
-    end_silence_s: float = 5.0  # no clear music this long ends a running dance
+    end_silence_s: float = 9.0  # no clear music this long ends a running dance
     rearm_quiet_s: float = 10.0  # quiet this long before another session can begin
     nod_s: float = 3.0  # the nod's face stays this long
 

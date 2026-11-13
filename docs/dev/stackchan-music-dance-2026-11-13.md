@@ -28,7 +28,7 @@ layer runs on a fake clock with scripted number streams, and the firmware featur
    a held beat (9.7 s). In the last 3 s the ring starts a slow gold and lime glow at 0.2 brightness (the first lit pixels).
 4. **Dance.** Straight on, 20 s of the firmware keyframe dances (`robot`, `happy`) with the little dance's ring show at 0.5.
    The head moves only inside the unit; the host makes no per-beat head calls. The dance is cut at the 20 s cap.
-5. **End.** 5 s without clear music, the cap, or any touch, turn, wake word, shake, tilt, picture, low battery, offline or the
+5. **End.** 9 s without clear music, the cap, or any touch, turn, wake word, shake, tilt, picture, low battery, offline or the
    emergency stop (the `DanceRunner` checks). Ring dark, head level, face neutral. Not built: "finish the current sway, one slow
    nod" (the end is immediate); the dance does not follow the tempo (build 3 of the design: beat-timed keyframes need a firmware
    change; the four built-in dances are used).
@@ -104,7 +104,7 @@ Needs: the firmware with patches 100 and 101 flashed, the bot release with this 
    or more).
 4. What you should see, counted from the start of the song: after about 5 s, two small nods and a happy or wink face, ring
    dark. If the song goes on, at about 25 s a build-up (about 10 s of swaying; the ring starts a dim glow in the last 3 s),
-   then a dance with the ring show of up to 20 s. Stop the music and it ends about 5 s later. A touch, a word to it, a shake
+   then a dance with the ring show of up to 20 s. Stop the music and it ends about 9 s later. A touch, a word to it, a shake
    or a picture ends it at once.
 5. It then rests: no new nod for 10 minutes.
 6. If it never triggers: look at the minute line and `unit music: music_stats`. `loud=0` means the room was too quiet (turn it

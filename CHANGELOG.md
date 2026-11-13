@@ -7,6 +7,13 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.69] - 2026-11-13
+
+### Changed
+
+- A running dance survives a bright, loud song: while a stage runs the beat bar halves and the flatness limit gains 10,
+  and the dance ends after 9 s without clear music (was 5 s). The first live dance ended 16 s in on a song measuring flatness 88 to 99.
+
 ## [0.2.68] - 2026-11-13
 
 ### Changed
