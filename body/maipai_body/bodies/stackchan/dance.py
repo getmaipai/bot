@@ -12,15 +12,14 @@ The host makes one call per dance, one face frame per gap and about four ring fr
 
 Who may start it, and when:
 - Triggers: the spoken ask ("dance", "do a dance", "can you dance", "dance for me", "show me a
-  dance"), the hub's "dance" device command (the Settings button) and three quick taps on the head.
-- Refused: not awake (a tap or a spoken ask means awake; the hub command wakes the unit first),
+  dance"), and the hub's "dance" device command (the Settings button);
+  music comes later. Taps on the head do not start a dance.
+- Refused: not awake (a spoken ask means awake; the hub command wakes the unit first),
   during a turn (a spoken ask starts it once its own turn ends), while the emergency stop is
   latched, when the unit is tipped or carried, offline or unpaired, in full quiet or muted
   (``full_quiet_reason``, a hook until the settings registry has such a flag), with the battery at
-  20 percent or less while not charging (or unknown), within ``MIN_GAP_S`` of the last dance, and
-  for the taps more than ``MAX_TAP_DANCES_PER_DAY`` times a day.
-- At night an asked dance (voice or hub) is head and face only: no ring, no spoken line. The three
-  taps do not dance at night.
+  20 percent or less while not charging (or unknown) and within ``MIN_GAP_S`` of the last dance.
+- At night an asked dance (voice or hub) is head and face only: no ring, no spoken line.
 - The ring show is the one decorative use of the ring (lights standard): colours outside the status
   meanings (gold, lime, mint, a warm sparkle), always two or more at once, always moving, half
   brightness. A privacy cue (the live green, the camera pink) or any status cue ends the dance and
@@ -40,7 +39,6 @@ import logging
 import re
 import threading
 import time
-from collections import deque
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
@@ -58,14 +56,7 @@ START_GRACE_S = 1.0  # a touch or shake this soon after the start is the dance's
 START_WAIT_S = 10.0  # a spoken ask starts once its own turn is over, but waits no longer than this
 
 MIN_GAP_S = 60.0  # between the end of one dance and the start of the next
-MAX_TAP_DANCES_PER_DAY = 10
-DAY_S = 24 * 3600.0
 MIN_BATTERY_PERCENT = 20  # a dance on battery needs more than this
-
-TAP_COUNT = 3
-TAP_WINDOW_S = 1.5  # three distinct taps this close together
-MIN_TAP_GAP_S = 0.12  # closer than this is one tap reported twice
-CARRY_QUIET_S = 2.0  # taps right after a shake are the unit being carried
 
 LINE_START = "Let's dance."
 LINE_NOT_NOW = "Not right now."
@@ -162,7 +153,7 @@ def is_dance_request(spoken: str) -> bool:
     return bool(_DANCE.match(spoken.strip()))
 
 
-# ---------------------------------------------------------------- settings and taps
+# ---------------------------------------------------------------- settings
 
 
 class DanceSettings:
@@ -179,62 +170,6 @@ class DanceSettings:
         show_ring = values.get(SHOW_RING_KEY)
         if isinstance(show_ring, bool):
             self.show_ring = show_ring
-
-
-class TapCounter:
-    """Three quick, distinct taps on the head within ``TAP_WINDOW_S``.
-
-    A tap is a ``head_touch`` the unit confirmed with its motion sensor (``tap`` = 1, patch 081).
-    The firmware does not count taps (patch 078 only counts one quick tap as a pet), so the host
-    does. Petting is not counted and spoils a count in progress: a stroke is a head touch without
-    ``tap``, a swipe or a held contact. A shake, or a tap soon after one, is the unit being
-    carried, so the count starts over. Event times are the unit's own (``at_ms``) when it sent
-    them, since the host reads the unit's queue only about every half second."""
-
-    def __init__(self, *, count: int = TAP_COUNT, window_s: float = TAP_WINDOW_S) -> None:
-        self._count = count
-        self._window_s = window_s
-        self._taps: deque[float] = deque()
-        self._last_shake = float("-inf")
-
-    def reset(self) -> None:
-        self._taps.clear()
-
-    def feed(self, events: Iterable, now: float, *, upright: bool = True) -> bool:
-        """True when this batch of events completed three taps."""
-        done = False
-        for event in events:
-            kind = getattr(event, "kind", None)
-            at_ms = getattr(event, "at_ms", None)
-            at = at_ms / 1000.0 if isinstance(at_ms, int) and not isinstance(at_ms, bool) else now
-            if kind == "shake":
-                self._last_shake = at
-                self._taps.clear()
-                continue
-            if kind in ("head_swipe_forward", "head_swipe_back"):
-                self._taps.clear()  # a stroke
-                continue
-            if kind != "head_touch":
-                continue
-            extra = getattr(event, "extra", None) or {}
-            held = extra.get("held_ms")
-            if extra.get("tap") not in (1, True) or (
-                isinstance(held, int) and not isinstance(held, bool) and held >= 400
-            ):
-                self._taps.clear()  # a pet, not a tap
-                continue
-            if not upright or at - self._last_shake < CARRY_QUIET_S:
-                self._taps.clear()
-                continue
-            if self._taps and at - self._taps[-1] < MIN_TAP_GAP_S:
-                continue  # the same tap reported twice
-            self._taps.append(at)
-            while self._taps and at - self._taps[0] > self._window_s:
-                self._taps.popleft()
-            if len(self._taps) >= self._count:
-                self._taps.clear()
-                done = True
-        return done
 
 
 # ---------------------------------------------------------------- the routine
@@ -309,7 +244,6 @@ class DanceRunner:
         self._lock = threading.Lock()
         self._running = False
         self._last_end = float("-inf")
-        self._tap_starts: deque[float] = deque()
         self._started_at = float("-inf")
         self.last_end_reason = ""
 
@@ -322,11 +256,11 @@ class DanceRunner:
     # -- triggers
 
     def request(self, trigger: str) -> DanceReply:
-        """Ask for a dance. ``trigger`` is "voice", "hub" or "taps".
+        """Ask for a dance. ``trigger`` is "voice" or "hub".
 
         The gates run now. A started dance runs on its own thread (a spoken ask first waits for its
         own turn to end); the reply's line is what the caller says."""
-        if trigger not in ("voice", "hub", "taps"):
+        if trigger not in ("voice", "hub"):
             raise ValueError(f"unknown dance trigger {trigger!r}")
         now = self._clock()
         with self._lock:
@@ -339,8 +273,6 @@ class DanceRunner:
             self._started_at = now
             self._stop.clear()
             self._last_end = float("inf")  # no second dance can slip in before this one ends
-            if trigger == "taps":
-                self._tap_starts.append(now)
         situation = self._hooks.situation()
         quiet_start = situation.night
         self._spawn(lambda: self._run(trigger))
@@ -391,8 +323,6 @@ class DanceRunner:
             return ("a turn is on", LINE_NOT_NOW)
         if not situation.awake and not (trigger == "hub" and self._hooks.wake is not None):
             return ("the unit is asleep", "")
-        if situation.night and trigger == "taps":
-            return ("it is night", "")
         if situation.charging is not True:
             if situation.battery_percent is None:
                 return ("the battery level is unknown", LINE_NOT_NOW)
@@ -400,11 +330,6 @@ class DanceRunner:
                 return (f"battery {situation.battery_percent}% and not charging", LINE_NOT_NOW)
         if now - self._last_end < MIN_GAP_S:
             return ("the last dance was under a minute ago", LINE_NOT_NOW)
-        if trigger == "taps":
-            while self._tap_starts and now - self._tap_starts[0] >= DAY_S:
-                self._tap_starts.popleft()
-            if len(self._tap_starts) >= MAX_TAP_DANCES_PER_DAY:
-                return ("ten tap dances in the last day", "")
         return None
 
     def _interrupt(self, situation: DanceSituation) -> str | None:
@@ -555,7 +480,6 @@ __all__ = [
     "DanceRunner",
     "DanceSettings",
     "DanceSituation",
-    "TapCounter",
     "is_dance_request",
     "ring_frame",
 ]

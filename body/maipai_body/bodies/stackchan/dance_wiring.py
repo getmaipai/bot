@@ -1,9 +1,9 @@
 """Wire the little dance (dance.py) to a running StackChan service.
 
 One function, ``wire_dance``, so the service's own wiring in app.py stays a few lines: it builds the
-runner from the live robot, light service, night rule and behaviour, then hooks the three triggers
-(the spoken ask through ``HeadCommander``, the hub's "dance" device command through
-``behavior.dance_command`` and the three taps through ``behavior.dance_events``) and tells the
+runner from the live robot, light service, night rule and behaviour, then hooks the two triggers
+(the spoken ask through ``HeadCommander`` and the hub's "dance" device command through
+``behavior.dance_command``; ``behavior.dance_events`` only ends a running dance) and tells the
 behaviour when a dance is running so the ambient head moves, the face watchdog and the look-around
 stay out of its way.
 """
@@ -20,7 +20,6 @@ from maipai_body.bodies.stackchan.dance import (
     DanceHooks,
     DanceRunner,
     DanceSituation,
-    TapCounter,
 )
 
 logger = logging.getLogger("maipai_body.bodies.stackchan.dance_wiring")
@@ -106,14 +105,9 @@ def wire_dance(
         hold=hold,
     )
     runner = DanceRunner(hooks, behavior.dance_settings)
-    taps = TapCounter()
 
     def on_events(events: list, now: float) -> None:
         runner.on_events(events, now)
-        if runner.running:
-            taps.reset()
-        elif taps.feed(events, now, upright=not behavior.pose_held()):
-            runner.request("taps")
 
     def command(_payload: dict) -> dict:
         reply = runner.request("hub")

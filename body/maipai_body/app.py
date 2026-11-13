@@ -258,7 +258,7 @@ class StackChanBehavior:
         self.pose_held: Callable[[], bool] = lambda: False
         # The little dance (dance.py, dance_wiring.py): settings, whether one is running (the
         # ambient moves, the face watchdog and the look-around stay out of it), the unit's head
-        # events (three taps start one, a touch ends one) and the hub's "dance" device command.
+        # events (a touch ends one) and the hub's "dance" device command.
         from maipai_body.bodies.stackchan.dance import DanceSettings
 
         self.dance_settings = DanceSettings()
@@ -1585,7 +1585,7 @@ class StackChanBehavior:
             return False
         if self.dance_events is not None:
             try:
-                self.dance_events(events, now)  # three taps start a dance, a touch ends one
+                self.dance_events(events, now)  # a touch ends a dance
             except Exception:
                 self._warn_limited("dance", "StackChan dance touch handling failed")
         kinds = [_reaction_kind(event) for event in events]

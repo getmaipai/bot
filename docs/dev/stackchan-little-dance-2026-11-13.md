@@ -4,7 +4,7 @@ Owner approval 2026-11-13. Build 1 of the dance design (stage "the little dance"
 change. Music hearing and the automatic dance come later, after measurements. Nothing here has run on a unit: the tests
 drive a fake clock and a recording fake robot.
 
-Code: `bodies/stackchan/dance.py` (the routine, gates, tap counter, ring show), `dance_wiring.py` (hooks it to the live
+Code: `bodies/stackchan/dance.py` (the routine, gates, ring show), `dance_wiring.py` (hooks it to the live
 service), tests in `body/tests/test_stackchan_dance.py`.
 
 ## What it plays
@@ -21,15 +21,14 @@ per gap and about four ring frames a second (`self.robot.leds.many`, per pixel, 
 |---|---|---|
 | Spoken ask | `head_commands.parse_head_command` returns `HeadCommand("dance")` for "dance", "do a dance", "can you dance", "dance for me", "show me a dance", "let's dance", "a little dance". `dance` left `_UNSUPPORTED`. | Handled before the hub is asked, and before the question and "show" checks. The line is "Let's dance." by day, nothing at night, "Not right now." when refused. `turn.py` ends the turn after it (like "turn to me") so the dance starts once the turn is over; a spoken ask waits up to 10 s for its own turn to end. |
 | Hub command | device command `dance` on the StackChan command channel (`behavior.dance_command`) | The Settings page's Dance button sends `{"type": "device-command", "kind": "dance"}`; the ack state is `{"dance": "started" or "refused", "why": ...}`. A sleeping unit is woken first. The Home button itself is not built yet. |
-| Three taps | `TapCounter` fed from `head_touch` events (`behavior.dance_events`, called from `wake_on_touch`) | Firmware patch 078 does not count taps, so the host does: three events with `tap` = 1 (the IMU-assisted rule, patch 081) within 1.5 s, at least 0.12 s apart (by the unit's `at_ms`). A stroke (head touch without `tap`, a held touch, a swipe) clears the count; a shake, or a tap within 2 s of one, or a tilted unit clears it. The first look after a pause is not counted. |
 
 ## Gates (`DanceRunner._refusal`)
 
 Setting `robot.dance.enabled` off; full quiet or muted (hook `full_quiet_reason` in `wire_dance`, returns None until the
 settings registry has such a flag); emergency stop; offline or not connected; not upright; camera or live cue showing; during a
-turn (not for the spoken ask, which waits); asleep (only the hub command wakes the unit); night for the taps; battery 20
+turn (not for the spoken ask, which waits); asleep (only the hub command wakes the unit); battery 20
 percent or lower when not charging, or unknown (a plugged-in unit may dance at any level); under 60 s since the last dance
-ended; more than 10 tap dances in 24 h. One dance at a time.
+ended. One dance at a time.
 
 At night an asked dance (voice, hub) runs head and face only: no ring, no spoken line. Charging does not block it (owner choice).
 
@@ -62,3 +61,5 @@ The unit's dance durations (added up from `dance.h`), the pitch sign in the buil
 fires `shake` or `head_touch` events (the one-second grace only covers the start), whether a host face frame between dances
 fights the firmware's own eyes, whether `charging` is false on a full USB unit (it would then count as on battery above 20
 percent, which is fine), and how long the unit's `get_battery_status` takes during a dance (read at most every 5 s).
+
+Removed 2026-11-13 (owner): the three-tap trigger and its 10-a-day cap. A dance starts by voice, the hub or Settings command and, later, music only. The head tap reaction (the smile) is unchanged.

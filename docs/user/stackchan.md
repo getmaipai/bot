@@ -48,7 +48,6 @@ The ring is never red. A calm face is the normal look. A smile or a wink shows w
 - **Tap the face** to start listening. Tap it again while it listens or talks to make it stop.
 - **Pet its head** and it reacts. The heart goes away after a few seconds.
 - **Shake it or lift it** and it makes a surprised face and says something short.
-- **Tap the top of its head three times, quickly,** and it does a little dance (see below). Petting or stroking does not count.
 - **Swipe up from the face** for quick settings: volume and brightness sliders.
 
 <!-- picture: the quick settings sliders on the screen -->
@@ -72,12 +71,12 @@ Left and right are the robot's own left and right.
 
 ## The little dance
 
-It lasts about 12 seconds: the head sways and turns, the face changes between happy, a wink and surprised, and the light ring shows gold, lime and mint colours. Ask by voice, tap its head three times quickly, or use the Dance button in Settings (the robot's page).
+It lasts about 12 seconds: the head sways and turns, the face changes between happy, a wink and surprised, and the light ring shows gold, lime and mint colours. Ask by voice, or use the Dance button in Settings (the robot's page).
 
 - It ends at once if you touch it, speak to it, shake or tilt it, or take a picture with it. Then the face and the ring go back to normal.
 - It does not dance while its battery is at 20 percent or lower (it can while charging), while it is offline, or if you turned dancing off.
-- It rests for a minute between dances. The head-tap dance happens at most 10 times a day.
-- At night, if you ask, it dances with its head and face only: no lights, no sound. Three taps do nothing at night.
+- It rests for a minute between dances.
+- At night, if you ask, it dances with its head and face only: no lights, no sound.
 - Settings: **Dance** (on by default) and **Dance light show** (on by default) are in the robot's settings.
 
 ## Day and night

@@ -16,7 +16,6 @@ from maipai_body.bodies.stackchan.dance import (
     DanceRunner,
     DanceSettings,
     DanceSituation,
-    TapCounter,
     is_dance_request,
     ring_frame,
 )
@@ -164,53 +163,6 @@ def test_head_commander_hands_a_dance_to_the_runner_before_any_head_gate():
     assert moves == []  # the commander never moves the head for a dance
 
 
-# ------------------------------------------------------------------ the three taps
-
-
-def test_three_quick_taps_start_a_dance():
-    taps = TapCounter()
-    assert not taps.feed([tap(10_000), tap(10_400)], 0.0)
-    assert taps.feed([tap(10_900)], 0.0)
-    assert not taps.feed([tap(11_000)], 0.0)  # the count starts over
-
-
-def test_three_taps_in_one_batch_count():
-    assert TapCounter().feed([tap(0), tap(500), tap(1000)], 0.0)
-
-
-def test_slow_taps_are_not_a_dance():
-    taps = TapCounter()
-    assert not taps.feed([tap(0), tap(800), tap(1600)], 0.0)  # 1.6 s for three
-    assert not taps.feed([tap(2400)], 0.0)  # 800, 1600, 2400: 1.6 s again
-
-
-def test_a_tap_reported_twice_is_one_tap():
-    assert not TapCounter().feed([tap(0), tap(50), tap(100)], 0.0)
-
-
-@pytest.mark.parametrize(
-    "stroke",
-    [
-        Ev("head_touch", 400, {"strong": 1}),  # a stroke, not a tap
-        Ev("head_touch", 400, {"tap": 1, "held_ms": 900}),  # a held pet
-        Ev("head_swipe_forward", 400),
-        Ev("head_swipe_back", 400),
-    ],
-)
-def test_petting_in_the_middle_spoils_the_count(stroke):
-    taps = TapCounter()
-    assert not taps.feed([tap(0), stroke, tap(700), tap(1000)], 0.0)
-
-
-def test_taps_while_carried_or_shaken_do_not_count():
-    taps = TapCounter()
-    assert not taps.feed([Ev("shake", 0), tap(300), tap(600), tap(900)], 0.0)
-    assert not TapCounter().feed([tap(0), tap(300), tap(600)], 0.0, upright=False)
-    # two seconds after the shake, taps count again
-    taps2 = TapCounter()
-    assert taps2.feed([Ev("shake", 0), tap(2500), tap(2800), tap(3100)], 0.0)
-
-
 # ------------------------------------------------------------------ the ring palette
 
 
@@ -314,12 +266,16 @@ def test_voice_ask_gives_up_when_the_turn_never_ends():
     assert world.names("give_ring_back") == [] and world.names("level") == []
 
 
-def test_hub_and_taps_never_start_during_a_turn():
-    for trigger in ("hub", "taps"):
-        world = World(in_turn=True)
-        reply = world.build().request(trigger)
-        assert not reply.started and reply.line == D.LINE_NOT_NOW
-        assert world.log == []
+def test_hub_never_starts_during_a_turn():
+    world = World(in_turn=True)
+    reply = world.build().request("hub")
+    assert not reply.started and reply.line == D.LINE_NOT_NOW
+    assert world.log == []
+
+
+def test_taps_are_not_a_dance_trigger():
+    with pytest.raises(ValueError):
+        World().build().request("taps")
 
 
 def test_hub_command_wakes_a_sleeping_unit_then_dances():
@@ -336,8 +292,8 @@ def test_hub_command_wakes_a_sleeping_unit_then_dances():
     assert [a[0] for _, a in world.names("dance")][0] == "happy"
 
 
-@pytest.mark.parametrize("trigger", ["voice", "taps"])
-def test_voice_and_taps_do_not_wake_a_sleeper(trigger):
+@pytest.mark.parametrize("trigger", ["voice"])
+def test_voice_does_not_wake_a_sleeper(trigger):
     world = World(awake=False)
     reply = world.build(wake=lambda: None).request(trigger)
     assert not reply.started and "asleep" in reply.why
@@ -400,9 +356,7 @@ def test_a_charging_unit_may_dance_at_any_battery():
     assert world.build().request("hub").started
 
 
-def test_night_taps_are_refused_but_an_asked_dance_is_head_and_face_only():
-    world = World(night=True)
-    assert "night" in _refused(world, "taps").why
+def test_an_asked_dance_at_night_is_head_and_face_only():
     world = World(night=True)
     reply = world.build().request("voice")
     assert reply.started and reply.line == ""  # no spoken line at night
@@ -422,19 +376,6 @@ def test_one_minute_between_dances():
     assert not runner.request("hub").started
     world.t += 6
     assert runner.request("hub").started
-
-
-def test_at_most_ten_tap_dances_a_day_but_other_triggers_are_not_capped():
-    world = World()
-    runner = world.build()
-    for _ in range(D.MAX_TAP_DANCES_PER_DAY):
-        assert runner.request("taps").started
-        world.t += D.MIN_GAP_S + 1
-    reply = runner.request("taps")
-    assert not reply.started and "ten tap dances" in reply.why
-    assert runner.request("hub").started  # the cap is for the tap trigger only
-    world.t += D.DAY_S
-    assert runner.request("taps").started  # a day later it is open again
 
 
 def test_a_dance_that_never_started_does_not_cost_the_minute():
@@ -730,12 +671,10 @@ def test_wiring_the_hub_command_wakes_a_sleeping_unit():
     assert w.behavior._rest.stage == "awake"
 
 
-def test_wiring_three_taps_on_the_head_start_a_dance():
+def test_wiring_taps_on_the_head_never_start_a_dance():
     w = _wired()
-    w.behavior.dance_events([tap(100_000), tap(100_400)], w.clock["t"])
+    w.behavior.dance_events([tap(100_000), tap(100_400), tap(100_900)], w.clock["t"])
     assert not w.client.calls
-    w.behavior.dance_events([tap(100_900)], w.clock["t"])
-    assert [c[1] for c in w.client.calls if c[0] == "dance"] == ["happy", "robot", "happy"]
 
 
 def test_wiring_ordinary_petting_never_starts_a_dance():
@@ -746,10 +685,8 @@ def test_wiring_ordinary_petting_never_starts_a_dance():
     assert not w.client.calls
 
 
-def test_wiring_taps_at_night_do_not_dance_and_an_asked_dance_has_no_ring():
+def test_wiring_an_asked_dance_at_night_has_no_ring():
     w = _wired(night=True)
-    w.behavior.dance_events([tap(1), tap(300), tap(600)], w.clock["t"])
-    assert not w.client.calls
     assert w.commander.run(parse_head_command("dance")) == ""
     assert [c[1] for c in w.client.calls if c[0] == "dance"] == ["happy", "robot", "happy"]
     assert w.leds == []
