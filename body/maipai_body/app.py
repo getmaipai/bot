@@ -1581,8 +1581,8 @@ async def _serve_stackchan_channels(
         def _head_blocked() -> str | None:
             if voice.robot.robot.estop_engaged:
                 return "the emergency stop is latched"
-            if power.charging:
-                return "the unit is charging"
+            # A spoken head command is the owner asking for the move, so charging no longer
+            # blocks it (owner decision 2026-11-12: the 2026-10-20 charging rule is lifted).
             return None
 
         from maipai_body.bodies.stackchan.gaze import GazeReason

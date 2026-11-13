@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.62] - 2026-11-12
+
+### Fixed
+- Spoken head commands ("turn away", "turn to me", "look left") work while the unit is charging on USB. They used to answer "I can't move right now" because of the 2026-10-20 charging rule, which the owner has lifted for what he asks for (the idle wandering still follows the power rule).
+
 ## [0.2.61] - 2026-11-12
 
 ### Fixed
