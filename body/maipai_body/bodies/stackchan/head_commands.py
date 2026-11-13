@@ -20,6 +20,12 @@ said"):
   "face forward", on a new command, or when a face is found. "Look left/right/up/down" still
   return after ``RETURN_AFTER_S``. The head only tilts up from level, so "look down" is level.
 
+- A sequence in one sentence ("look up and then look down", "look left then right", "look left,
+  then right, then straight", "turn left and then look up"; up to ``MAX_STEPS`` steps, split on
+  "and then", "then", "after that", "and" and commas) runs its steps in order with about
+  ``STEP_PAUSE_S`` between them (no 5 second return in between), says one short line for all of
+  it, and then returns to centre after the last step (or holds when the last is a "turn").
+
 A request that clearly asks for movement but is not one of these ("spin", "walk", "dance") gets
 one fixed reply instead of reaching the hub, whose model answers "I can't".
 """
@@ -47,6 +53,9 @@ SPEED = 120  # moderate: the profile range is 100 to 150
 SLOW = 100
 MAX_TURN_DEG = 90  # the most any spoken turn asks for (the Robot clamps to the profile again)
 AWAY_DEG = 45
+MAX_STEPS = 4  # most steps in one spoken sequence
+STEP_PAUSE_S = 1.0  # the pause between the steps of a sequence
+MAX_SEQUENCE_WORDS = 14  # a sequence has a direction in every step, so it may be longer
 
 CAN_DO = "I can look left, right, up or down."
 CANT_NOW = "I can't move right now."
@@ -122,13 +131,15 @@ _UNSUPPORTED = re.compile(
 @dataclass(frozen=True)
 class HeadCommand:
     # "look", "centre", "around", "nod", "shake", "stay", "cannot", "face" (point at the person),
-    # "away" (look away from the person) or "turnaround" (as far to the side as it goes)
+    # "away" (look away from the person), "turnaround" (as far to the side as it goes) or
+    # "sequence" (several of the others, in order)
     kind: str
     direction: str | None = None  # left, right, up or down (for "look")
     amount: str = "normal"  # little, normal or far
     degrees: int | None = None  # a spoken size ("turn left 30 degrees"), overrides amount
     hold: bool = False  # keep the heading (a "turn"), do not return after RETURN_AFTER_S
     level_only: bool = False  # "I'm down here": look level and to the sides only
+    steps: tuple[HeadCommand, ...] = ()  # the commands of a "sequence", in order
 
 
 def _normalise(text: str) -> str:
@@ -146,17 +157,57 @@ def _spoken_degrees(spoken: str) -> int | None:
     return max(1, min(value, MAX_TURN_DEG))
 
 
+_SPLIT = re.compile(r"\s*(?:,|\band then\b|\bthen\b|\bafter that\b|\band\b)\s*")
+_BARE = re.compile(r"^(left|right|up|down|upward|downward)\b")
+_BARE_CENTRE = re.compile(r"^(straight|forward|ahead|front|level|center|centre)\b")
+_STEP_KINDS = {"look", "centre", "nod", "shake", "around", "away"}
+
+
+def _parse_sequence(text: str) -> HeadCommand | None:
+    """Two to ``MAX_STEPS`` ordinary commands in one sentence, or None."""
+    parts = [p for p in _SPLIT.split(text.lower()) if p.strip()]
+    if not 2 <= len(parts) <= MAX_STEPS:
+        return None
+    steps: list[HeadCommand] = []
+    verb = "look"
+    for part in parts:
+        spoken = _normalise(part)
+        if not spoken:
+            return None
+        if _BARE.match(spoken):
+            spoken = f"{verb} {spoken}"  # "look left then right": the verb carries over
+        elif _BARE_CENTRE.match(spoken):
+            spoken = f"look {spoken}" if spoken.split()[0] != "level" else "look level"
+        step = _parse_one(spoken, spoken.split(), 8)
+        if step is None or step.kind not in _STEP_KINDS:
+            return None
+        found = re.match(r"(look|turn|face)\b", spoken)
+        verb = found.group(1) if found else verb
+        steps.append(step)
+    return HeadCommand("sequence", steps=tuple(steps))
+
+
 def parse_head_command(text: str) -> HeadCommand | None:
     """The head command in what the person said, or None (then it goes on to the hub).
 
     A garbled opening word is harmless (the match searches the sentence). A question, or a long
-    sentence, is not a command: "how do I turn right on red" belongs to the hub."""
+    sentence, is not a command: "how do I turn right on red" belongs to the hub. Several steps in
+    one sentence are a "sequence" (up to ``MAX_SEQUENCE_WORDS`` words)."""
     spoken = _normalise(text)
     words = spoken.split()
-    if not words or len(words) > 8 or _QUESTION.match(spoken):
+    if not words or len(words) > MAX_SEQUENCE_WORDS or _QUESTION.match(spoken):
         return None
     # "look down and tell me what you see" asks about the picture, not for a move.
     if _ASKS_TO_SEE.search(spoken):
+        return None
+    sequence = _parse_sequence(text)
+    if sequence is not None:
+        return sequence
+    return _parse_one(spoken, words, 8)
+
+
+def _parse_one(spoken: str, words: list[str], word_limit: int) -> HeadCommand | None:
+    if not words or len(words) > word_limit:
         return None
     short = len(words) <= 4
     if _FACE.search(spoken) and len(words) <= 6:
@@ -210,7 +261,24 @@ def away_yaw(face_yaw: float | None, delta: int = AWAY_DEG) -> int:
     return round(face_yaw + delta)
 
 
+def _sequence_line(command: HeadCommand) -> str:
+    names = []
+    for step in command.steps:
+        if step.kind == "look":
+            names.append(str(step.direction))
+        elif step.kind == "centre":
+            names.append("straight")
+        else:
+            return "Okay."  # not a plain look: one short word for all of it
+    line = f"Looking {', then '.join(names)}."
+    if any(s.kind == "look" and s.direction == "down" for s in command.steps):
+        line += f" {LEVEL_ONLY}"  # said once for the whole sequence
+    return line
+
+
 def spoken_line(command: HeadCommand) -> str:
+    if command.kind == "sequence":
+        return _sequence_line(command)
     if command.kind == "look":
         if command.direction == "down":
             return LEVEL_ONLY
@@ -228,6 +296,8 @@ def spoken_line(command: HeadCommand) -> str:
 
 def gaze_detail(command: HeadCommand) -> str:
     """The reason noted for the gaze ("why are you looking there"), named in gaze.py."""
+    if command.kind == "sequence":
+        return gaze_detail(command.steps[-1])
     if command.kind == "look" and command.hold:
         return f"turn_{command.direction}"
     return command.direction or command.kind
@@ -313,8 +383,10 @@ class HeadCommander:
             self._schedule_return(seconds)
         return line or spoken_line(command)
 
-    @staticmethod
-    def _holds(command: HeadCommand) -> bool:
+    @classmethod
+    def _holds(cls, command: HeadCommand) -> bool:
+        if command.kind == "sequence":
+            return cls._holds(command.steps[-1])
         return command.kind == "look" and command.hold
 
     def face_found(self) -> None:
@@ -332,6 +404,12 @@ class HeadCommander:
         """Move for the command; returns the line to say, or "" to use ``spoken_line``."""
         if command.kind == "face":
             return self._find(command)
+        if command.kind == "sequence":
+            for index, step in enumerate(command.steps):
+                if index:
+                    self._sleep(STEP_PAUSE_S)  # a natural pause, not the 5 second return
+                self._perform(step)
+            return ""
         if command.kind in ("away", "turnaround"):
             delta = AWAY_DEG if command.kind == "away" else MAX_TURN_DEG
             self._move(away_yaw(self._face_yaw(), delta), CENTRE_PITCH, SPEED)

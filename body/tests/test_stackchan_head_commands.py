@@ -15,6 +15,7 @@ from maipai_body.bodies.stackchan.head_commands import (
     LOOKING_AT_YOU,
     LOOKING_FOR_YOU,
     MAX_COMMANDS_PER_MIN,
+    STEP_PAUSE_S,
     TURN_AROUND,
     HeadCommand,
     HeadCommander,
@@ -480,3 +481,97 @@ def test_a_face_request_ends_the_follow_up_listening_so_the_look_can_start(monke
     _bridge_says(monkeypatch, "look left", rec.commander())
     assert _bridge_says.server.idles == []  # other head commands keep the follow-up listening
     assert LOOKING_FOR_YOU.count(".") == 1 and len(LOOKING_FOR_YOU.split()) <= 4
+
+
+def _kinds(text):
+    command = parse_head_command(text)
+    assert command is not None and command.kind == "sequence", text
+    return [(s.kind, s.direction) for s in command.steps]
+
+
+def test_a_sentence_with_several_steps_is_a_sequence():
+    assert _kinds("look up and then look down") == [("look", "up"), ("look", "down")]
+    assert _kinds("look left then right") == [("look", "left"), ("look", "right")]
+    assert _kinds("look left, then right, then straight") == [
+        ("look", "left"),
+        ("look", "right"),
+        ("centre", None),
+    ]
+    assert _kinds("turn left and then look up") == [("look", "left"), ("look", "up")]
+    assert _kinds("look left after that look right") == [("look", "left"), ("look", "right")]
+    assert _kinds("look up and look down and look left") == [
+        ("look", "up"),
+        ("look", "down"),
+        ("look", "left"),
+    ]
+    steps = parse_head_command("turn left 30 degrees then look up a little").steps  # type: ignore[union-attr]
+    assert (steps[0].degrees, steps[0].hold, steps[1].amount) == (30, True, "little")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "how do I turn right on red",
+        "look up and tell me what you see",
+        "look left and right and up and down and left",  # five steps: too many
+        "what is the weather and then the news",
+        "turn left and then tell me a joke",
+        "look up and then look down and then left and then right and then up and then down",
+        "when you turn right then look up how far is it",
+    ],
+)
+def test_other_long_sentences_still_go_to_the_hub(text):
+    assert parse_head_command(text) is None
+
+
+def test_a_single_command_stays_a_single_command():
+    assert parse_head_command("look left").kind == "look"  # type: ignore[union-attr]
+    assert parse_head_command("go ahead and look left").kind == "look"  # type: ignore[union-attr]
+
+
+def test_a_sequence_runs_in_order_with_a_pause_and_one_line_then_returns_to_centre():
+    rec = _Recorder()
+    pauses = []
+    commander = HeadCommander(
+        rec.move,
+        hold_pose=rec.held.append,
+        sleep=pauses.append,
+        start_timer=rec.timer,
+    )
+    line = commander.run(parse_head_command("look left then right then straight"))
+    assert line == "Looking left, then right, then straight."
+    assert rec.moves == [(-45, C, 120), (45, C, 120), (0, C, 120)]
+    assert pauses == [STEP_PAUSE_S, STEP_PAUSE_S]  # between the steps only
+    assert len(rec.timers) == 1 and rec.timers[0]["seconds"] == 5.0  # one return, after the last
+    assert rec.held == [6.0]
+
+
+def test_a_sequence_ending_in_a_turn_holds_its_heading():
+    rec = _Recorder()
+    commander = HeadCommander(rec.move, hold_pose=rec.held.append, start_timer=rec.timer)
+    commander.run(parse_head_command("look up then turn left"))
+    assert rec.moves == [(0, C + 25, 120), (-45, C, 120)]
+    assert rec.timers[0]["seconds"] == HOLD_TURN_S
+
+
+def test_look_down_in_a_sequence_says_level_once_and_goes_to_level():
+    rec = _Recorder()
+    commander = HeadCommander(rec.move, sleep=lambda s: None, start_timer=rec.timer)
+    line = commander.run(parse_head_command("look up and then look down"))
+    assert line == f"Looking up, then down. {LEVEL_ONLY}" and line.count(LEVEL_ONLY) == 1
+    assert rec.moves == [(0, C + 25, 120), (0, C, 120)]
+    two = commander.run(parse_head_command("look down then look down"))
+    assert two.count(LEVEL_ONLY) == 1
+
+
+def test_a_sequence_of_gestures_says_okay_and_the_bridge_answers_it_without_the_hub(monkeypatch):
+    assert (
+        HeadCommander(lambda *a: None, sleep=lambda s: None, start_timer=lambda s, c: None).run(
+            parse_head_command("nod and then shake your head")
+        )
+        == "Okay."
+    )
+    rec = _Recorder()
+    streams, said = _bridge_says(monkeypatch, "look up and then look down", rec.commander())
+    assert streams == [] and said == [f"Looking up, then down. {LEVEL_ONLY}"]
+    assert [m[:2] for m in rec.moves] == [(0, C + 25), (0, C)]

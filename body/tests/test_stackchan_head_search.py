@@ -14,7 +14,11 @@ from maipai_body.app import StackChanBehavior
 from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
 from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
 from maipai_body.bodies.stackchan.head_search import (
+    ASK_FAST_STEP_S,
     ASK_LEVEL_STEPS,
+    ASK_PAN_DEG,
+    ASK_SLOW_STEP_S,
+    ASK_STEPS,
     DARK_COOLDOWN_S,
     DARK_STEPS,
     GLANCE_PITCH_DEG,
@@ -26,6 +30,9 @@ from maipai_body.bodies.stackchan.head_search import (
     SPEAKER_COOLDOWN_S,
     STEP_S,
     HeadSearch,
+)
+from maipai_body.bodies.stackchan.head_search import (
+    STEPS as STEP_TABLE,
 )
 from maipai_body.bodies.stackchan.presence_watch import PERSON_SHARE, SceneBaseline
 from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
@@ -496,17 +503,23 @@ def test_a_spoken_find_me_ignores_the_back_off_and_does_not_add_to_it():
     search.stop(14.0)
     assert search.wait_s("person") == PERSON_BACKOFF_S[0]  # the miss was not counted
     assert search.start("ask_level", 14.0)
-    assert [(s.yaw_deg, s.pitch_deg) for s in ASK_LEVEL_STEPS] == [
-        (0.0, 0.0),
-        (-PAN_DEG, 0.0),
-        (PAN_DEG, 0.0),
-    ]
 
 
 def _said(behavior):
     lines = []
     behavior.announce = lines.append
     return lines
+
+
+def _tick_until_done(behavior, start, limit_s=40.0):
+    """Presence ticks every 0.2 s on a fake clock; returns the seconds the look took."""
+    now = start
+    while now - start < limit_s:
+        behavior.search_tick(now)
+        if not behavior._search.active:
+            return now - start
+        now += 0.2
+    raise AssertionError("the look never ended")
 
 
 def test_turn_to_me_looks_after_the_reply_at_idle_level_still_and_says_so_when_nobody_is_found():
@@ -524,10 +537,8 @@ def test_turn_to_me_looks_after_the_reply_at_idle_level_still_and_says_so_when_n
         behavior._active.clear()
         behavior.search_tick(100.5)
         assert behavior._search.reason == "ask"
-        behavior.search_tick(100.5)
-        for i in range(1, 5):
-            behavior.search_tick(100.5 + i * STEP_S)
-        assert not behavior._search.active
+        took = _tick_until_done(behavior, 100.7)
+        assert took < ASK_FIRST_PASS_S + ASK_SECOND_PASS_S + 1.0
         assert lines == ["I can't see you yet, say something or move closer."]
         assert _head_calls(device)[-1]["pitch"] == round(CENTRE_PITCH_DEG)  # back to neutral
     finally:
@@ -542,12 +553,13 @@ def test_im_down_here_looks_level_and_to_the_sides_and_names_the_limit_when_nobo
         assert behavior.find_person(True) == "searching"
         behavior.search_tick(100.0)
         assert behavior._search.reason == "ask_level"
-        behavior.search_tick(100.0)
-        for i in range(1, 4):
-            behavior.search_tick(100.0 + i * STEP_S)
-        looked = _head_calls(device)[-4:]
-        assert [c["yaw"] for c in looked] == [0, -PAN_DEG, PAN_DEG, 0]
-        assert all(c["pitch"] == round(CENTRE_PITCH_DEG) for c in looked)
+        _tick_until_done(behavior, 100.2)
+        calls = _head_calls(device)[-(len(ASK_LEVEL_STEPS) + 1) :]
+        assert {c["pitch"] for c in calls} == {round(CENTRE_PITCH_DEG)}  # level, never up
+        assert (
+            min(c["yaw"] for c in calls) <= -ASK_PAN_DEG
+            and max(c["yaw"] for c in calls) >= ASK_PAN_DEG
+        )
         assert len(lines) == 1 and "I can only look level" in lines[0]
     finally:
         behavior.close()
@@ -601,5 +613,77 @@ def test_turn_to_me_moves_at_once_and_the_look_starts_on_the_first_tick_after_th
         assert behavior._search.reason == "ask"
         behavior.search_tick(100.2)
         assert len(_head_calls(device)) == before + 2  # the first look pose is already moving
+    finally:
+        behavior.close()
+
+
+# The first pass is the first ten poses; the second pass the next ten.
+ASK_FIRST_PASS_S = 10 * ASK_FAST_STEP_S
+ASK_SECOND_PASS_S = 10 * ASK_SLOW_STEP_S
+
+
+def _passes(steps):
+    half = len(steps) // 2
+    return steps[:half], steps[half:]
+
+
+def test_the_spoken_sweep_is_wide_covers_two_heights_and_a_first_pass_takes_under_four_seconds():
+    first, second = _passes(ASK_STEPS)
+    assert len(first) == len(second) == 10
+    for one_pass in (first, second):
+        yaws = {step.yaw_deg for step in one_pass}
+        assert min(yaws) <= -75 and max(yaws) >= 75 and 0.0 in yaws
+        assert {step.pitch_deg for step in one_pass} == {0.0, 22.0}
+        assert all(abs(step.yaw_deg) <= ASK_PAN_DEG for step in one_pass)
+    assert sum(step.hold_s for step in first) <= 4.0
+    assert all(step.speed == 150 for step in first)  # the top of the profile
+    assert all(100 <= step.speed < 150 for step in second)  # slower, still eased
+    assert sum(step.hold_s for step in second) > 2 * sum(step.hold_s for step in first)
+    assert ASK_PAN_DEG > 2 * PAN_DEG  # far beyond the ambient plus or minus 25
+
+
+def test_the_sweep_runs_on_the_fake_clock_fast_then_slow_and_stops_the_instant_a_face_is_seen():
+    search = HeadSearch(clock=lambda: 0.0)
+    assert search.start("ask", 10.0)
+    times = []
+    now = 10.0
+    while len(times) < len(ASK_STEPS):
+        step = search.due(now)
+        if step is not None:
+            times.append(round(now - 10.0, 2))
+        now += 0.05
+    first_pass_end = times[10]  # the second pass begins after the first pass's ten poses
+    assert first_pass_end == round(ASK_FIRST_PASS_S, 2) and first_pass_end < 4.0
+    assert not search.finished(now - 0.05)  # the last slow pose is still held
+    assert search.finished(10.0 + ASK_FIRST_PASS_S + ASK_SECOND_PASS_S + 0.1)
+    assert search.stop(now, found=True) == "ask" and not search.active  # a face: over at once
+
+
+def test_only_a_spoken_request_gets_the_wide_sweep_and_the_second_pass():
+    for reason in ("person", "speaker", "dark"):
+        steps = STEP_TABLE[reason]
+        assert all(abs(step.yaw_deg) <= PAN_DEG for step in steps)  # small, as before
+        assert all(step.hold_s == STEP_S and step.speed == MOVE_SPEED for step in steps)
+    assert len(STEP_TABLE["person"]) == 4  # no second pass for the ambient look
+    assert max(abs(s.yaw_deg) for s in STEP_TABLE["ask"]) == ASK_PAN_DEG
+    assert max(abs(s.yaw_deg) for s in STEP_TABLE["ask_level"]) == ASK_PAN_DEG
+
+
+def test_the_spoken_sweep_moves_fast_through_the_robot_and_a_face_stops_it_at_once():
+    vision = _Vision(detected=False, motion_age=None)
+    behavior, device = _behavior(vision)
+    try:
+        behavior.find_person(False)
+        behavior.search_tick(100.0)
+        before = len(_head_calls(device))
+        for i in range(1, 8):
+            behavior.search_tick(100.0 + i * 0.2)
+        fast = _head_calls(device)[before:]
+        assert fast and all(c["speed"] == 150 for c in fast)
+        assert any(abs(c["yaw"]) >= 40 for c in fast)
+        vision.detected = True
+        behavior.watch_for_faces(101.5)
+        behavior.search_tick(101.6)
+        assert not behavior._search.active
     finally:
         behavior.close()

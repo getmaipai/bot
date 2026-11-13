@@ -647,10 +647,15 @@ class StackChanBehavior:
                     self._search_detail_seen = True
             step = search.due(now)
             if step is not None:
-                if not self.head_gate.allow(f"search:{search.reason}", response=True):
+                # A spoken request is bounded (two passes) and never counts toward the cap.
+                if not self.head_gate.allow(
+                    f"search:{search.reason}",
+                    response=True,
+                    essential=search.reason in ASKED_REASONS,
+                ):
                     self._end_search(now, "the head may not move now")
                     return
-                self._search_pose(step.yaw_deg, step.pitch_deg)
+                self._search_pose(step.yaw_deg, step.pitch_deg, step.hold_s, step.speed)
                 logger.info(
                     "StackChan looking around (%s): yaw %.0f, pitch %.0f up from level",
                     search.reason,
@@ -895,21 +900,25 @@ class StackChanBehavior:
         )
         return True
 
-    def _search_pose(self, yaw_deg: float, pitch_deg: float) -> None:
+    def _search_pose(
+        self, yaw_deg: float, pitch_deg: float, hold_s: float = STEP_S, speed: int = MOVE_SPEED
+    ) -> None:
         from maipai_body.bodies.stackchan.gaze import GazeReason
         from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
 
         pose = HeadPose(yaw=math.radians(yaw_deg), pitch=math.radians(CENTRE_PITCH_DEG + pitch_deg))
-        self._move_head_slowly(pose)
+        self._move_head_slowly(pose, hold_s, speed)
         self._note_own_move()
         self._head_off_centre = True
         self.gaze.note(GazeReason.SEARCH)
 
-    def _move_head_slowly(self, pose: HeadPose) -> None:
+    def _move_head_slowly(
+        self, pose: HeadPose, hold_s: float = STEP_S, speed: int = MOVE_SPEED
+    ) -> None:
         """One eased move at the servo's slowest setting; inside a turn the turn holds the lease."""
 
         def move() -> None:
-            self.robot.head.set(pose=pose, duration_s=STEP_S * 0.6, speed=MOVE_SPEED)
+            self.robot.head.set(pose=pose, duration_s=hold_s * 0.6, speed=speed)
 
         if self._active.is_set():
             try:

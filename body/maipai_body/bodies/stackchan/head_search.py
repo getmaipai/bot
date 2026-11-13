@@ -40,10 +40,27 @@ SPEAKER_COOLDOWN_S = 15.0
 DARK_COOLDOWN_S = 600.0
 
 
+# --- The big, fast sweep for a spoken "turn to me" / "find me" / "over here" (reasons "ask" and
+# "ask_level") -------------------------------------------------------------------------------
+# Owner request 2026-11-12: "when it's trying to find me it should scan more and faster". Only a
+# spoken request gets this; the ambient looks above stay small, slow and rare.
+ASK_PAN_DEG = 80.0  # how far to each side (the profile allows 128; the Robot clamps again)
+ASK_NEAR_PAN_DEG = 40.0  # the halfway pose on each side, so no move is longer than 40 degrees
+ASK_LOW_PITCH_DEG = 0.0  # the low height: level (the head cannot tilt below it)
+ASK_HIGH_PITCH_DEG = 22.0  # the high height: a face above the frame at desk distance
+ASK_FAST_STEP_S = 0.36  # first pass: each pose takes this long in all (ten poses, about 3.6 s)
+ASK_FAST_SPEED = 150  # first pass servo speed, the top of the profile's 100 to 150 range
+ASK_SLOW_STEP_S = 0.9  # second pass: slower, so a face has time to be seen (ten poses, 9 s)
+ASK_SLOW_SPEED = 110  # second pass servo speed, still eased
+ASK_MOVE_FRACTION = 0.8  # the move itself takes this share of a pose's time, the rest is a pause
+
+
 @dataclass(frozen=True)
 class SearchStep:
     yaw_deg: float  # left is negative, as follow_pose has it
     pitch_deg: float  # degrees up from the resting (level) pitch
+    hold_s: float = STEP_S  # this pose takes this long in all (the move plus a pause)
+    speed: int = MOVE_SPEED  # servo speed for the move to this pose
 
 
 PERSON_STEPS = (
@@ -57,18 +74,44 @@ DARK_STEPS = (
     SearchStep(PAN_DEG, 0.0),
     SearchStep(0.0, DARK_PITCH_DEG),
 )
+
+
 # A spoken "turn to me" / "find me" ("ask") is the same look as for a person. "I'm down here"
 # ("ask_level"): the head cannot tilt below level, so it looks level and to each side.
-ASK_LEVEL_STEPS = (
-    SearchStep(0.0, 0.0),
-    SearchStep(-PAN_DEG, 0.0),
-    SearchStep(PAN_DEG, 0.0),
+def _sweep(hold_s: float, speed: int, *, heights: tuple[float, ...]) -> tuple[SearchStep, ...]:
+    """Left at the high height and back along the low one, then the same to the right: the low
+    height is crossed through the middle (a person at a desk is usually there)."""
+    high, low = heights[-1], heights[0]
+    poses = [
+        (-ASK_NEAR_PAN_DEG, high),
+        (-ASK_PAN_DEG, high),
+        (-ASK_PAN_DEG, low),
+        (-ASK_NEAR_PAN_DEG, low),
+        (0.0, low),
+        (ASK_NEAR_PAN_DEG, low),
+        (ASK_PAN_DEG, low),
+        (ASK_PAN_DEG, high),
+        (ASK_NEAR_PAN_DEG, high),
+        (0.0, high),
+    ]
+    if high == low:  # one height: skip the poses that only change height
+        poses = [p for i, p in enumerate(poses) if i not in (2, 7)]
+    return tuple(SearchStep(yaw, pitch, hold_s, speed) for yaw, pitch in poses)
+
+
+# A fast pass, then (spoken requests only) a slower second pass over the same ground.
+ASK_STEPS = _sweep(ASK_FAST_STEP_S, ASK_FAST_SPEED, heights=(ASK_LOW_PITCH_DEG, ASK_HIGH_PITCH_DEG))
+ASK_STEPS += _sweep(
+    ASK_SLOW_STEP_S, ASK_SLOW_SPEED, heights=(ASK_LOW_PITCH_DEG, ASK_HIGH_PITCH_DEG)
 )
+# "I'm down here": the head cannot tilt below level, so one height only, level.
+ASK_LEVEL_STEPS = _sweep(ASK_FAST_STEP_S, ASK_FAST_SPEED, heights=(ASK_LOW_PITCH_DEG,))
+ASK_LEVEL_STEPS += _sweep(ASK_SLOW_STEP_S, ASK_SLOW_SPEED, heights=(ASK_LOW_PITCH_DEG,))
 STEPS = {
     "person": PERSON_STEPS,
     "speaker": PERSON_STEPS,
     "dark": DARK_STEPS,
-    "ask": PERSON_STEPS,
+    "ask": ASK_STEPS,
     "ask_level": ASK_LEVEL_STEPS,
 }
 # Looks for a face: a miss of one of these lengthens the back-off of the ambient look only for the
@@ -84,6 +127,7 @@ class HeadSearch:
         self._steps: tuple[SearchStep, ...] = ()
         self._index = -1
         self._next_at = 0.0
+        self._pose_started = 0.0
         self.started_at: float | None = None
         self._last_done: dict[str, float] = {}
         self._failures = 0  # person looks that found nobody in a row
@@ -121,6 +165,7 @@ class HeadSearch:
         self._steps = steps
         self._index = -1
         self._next_at = current  # the first pose is due at once
+        self._pose_started = current
         self.started_at = current
         return True
 
@@ -132,8 +177,12 @@ class HeadSearch:
             return None
         self._index += 1
         assert self.started_at is not None
-        self._next_at = self.started_at + (self._index + 1) * STEP_S  # from the start, not summed
-        return self._steps[self._index]
+        step = self._steps[self._index]
+        # Each pose is due when the one before it ended (from the planned time, so a late tick
+        # does not push the rest of the look back).
+        self._pose_started = self._next_at
+        self._next_at = self._pose_started + step.hold_s
+        return step
 
     def finished(self, now: float | None = None) -> bool:
         current = self._clock() if now is None else now
@@ -161,6 +210,12 @@ class HeadSearch:
 
 __all__ = [
     "ASKED_REASONS",
+    "ASK_FAST_SPEED",
+    "ASK_FAST_STEP_S",
+    "ASK_MOVE_FRACTION",
+    "ASK_PAN_DEG",
+    "ASK_SLOW_STEP_S",
+    "ASK_STEPS",
     "ASK_LEVEL_STEPS",
     "DARK_STEPS",
     "FACE_REASONS",
