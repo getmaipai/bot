@@ -67,7 +67,9 @@ def test_pairing_alphabet_is_the_32_characters_the_hub_issues():
 def test_shipped_manifest_has_checksum_placeholders_not_invented_hashes():
     manifest = oc.load_manifest()
     assert all(c.sha256 == "" for c in manifest.clips)
-    assert not manifest.voice.licence_checked
+    # The licence was checked on 2026-11-13 (CC-BY-4.0, credit in NOTICE and the user guide).
+    assert manifest.voice.licence_checked
+    assert manifest.voice.licence == "CC-BY-4.0" and "CC-BY-4.0" in manifest.voice.credit
 
 
 def test_manifest_rejects_a_duplicate_clip_id(tmp_path):

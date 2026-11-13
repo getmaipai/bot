@@ -1,0 +1,417 @@
+# Intent: the pure logic of the unit's own sounds (owner approved the sound plan on 2026-11-13, docs/dev/stackchan-lights-audit-and-plan-2026-11-13.md sections 14 and 17). One header of plain C99 with no hardware in it: the fixed list of twelve sound names (the seven new earcons needs_you, plug_in, charged, unplug, offline, goodbye, shutter and the five shipped tones success, popup, vibration, exclamation, low_battery); the one gate that says whether a sound may play (sounds off, the hard mute, quiet hours that may wrap midnight, the host's "it is night" verdict that is trusted only while Home is up, robot.sounds.night, and which cues are allowed in the night: shutter, goodbye, low_battery, exclamation, the wake and tap tones, and needs_you only at first setup); the charger events from the AXP2101 facts (plug in, unplug, full, each after three polls agree, none on the first poll, "full" only after charging was seen); the link state the offline phrases follow (no Wi-Fi, connecting, no host, refused), with the outage clock that decides the offline earcon and the "I'm back" clip (over a minute); and the phrase picker for sixteen clips in five groups: a round robin so no clip repeats in a row, at most one per 10 s and three in any minute, the tone only at night or past the limit, nothing when muted. Times are passed in, so it is wrap safe and testable.
+# Upstream: new file hal/maipai_sounds_core.h (MIT). Applies after 094 with the strip patches 095 to 099 before it; the host test is body/tests/test_stackchan_sounds_core.py.
+# Check after a flash: nothing visible by itself; the host test compiles and runs the C test.
+diff --git a/firmware/main/hal/maipai_sounds_core.h b/firmware/main/hal/maipai_sounds_core.h
+new file mode 100644
+index 0000000..1bd154d
+--- /dev/null
++++ b/firmware/main/hal/maipai_sounds_core.h
+@@ -0,0 +1,408 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * The pure logic of the unit's own sounds (patch 115): which earcon names exist, when one may play
++ * (enabled, muted, quiet hours, night), the charger events, the link state and the local offline
++ * phrases (which clip, never the same twice in a row, at most one per 10 s and three a minute).
++ * No hardware, no ESP-IDF: plain C99, compiled by a host test (body/tests/test_stackchan_sounds_core.py).
++ * Times are milliseconds on any steady clock, passed in; the arithmetic is wrap safe.
++ */
++#pragma once
++#include <stdint.h>
++#include <stdio.h>
++#include <string.h>
++
++/* ---- the sounds ---- */
++
++typedef enum {
++    MS_SND_NEEDS_YOU = 0, /* two notes rising: needs a person (first setup, waiting for approval) */
++    MS_SND_PLUG_IN,       /* two notes rising: the charger went in */
++    MS_SND_CHARGED,       /* three notes rising: full */
++    MS_SND_UNPLUG,        /* one note falling: the charger came out */
++    MS_SND_OFFLINE,       /* two notes falling: the link to Home has been down 10 s */
++    MS_SND_GOODBYE,       /* three notes falling: shutting down by hand */
++    MS_SND_SHUTTER,       /* a short click: a picture is being taken */
++    MS_SND_SUCCESS,       /* shipped: back online, ready */
++    MS_SND_POPUP,         /* shipped: the wake word */
++    MS_SND_VIBRATION,     /* shipped: the offline tap tone */
++    MS_SND_EXCLAMATION,   /* shipped: an error */
++    MS_SND_LOW_BATTERY,   /* shipped: the battery is low */
++    MS_SND_COUNT
++} ms_sound_t;
++
++#define MS_ASSET_SOUNDS 7 /* the first seven are files in the assets image (snd_<name>.ogg) */
++
++static const char* const MS_SOUND_NAMES[MS_SND_COUNT] = {
++    "needs_you", "plug_in", "charged", "unplug", "offline", "goodbye",
++    "shutter", "success", "popup", "vibration", "exclamation", "low_battery",
++};
++
++/* The sound for a name, or -1. The fixed list: the host can ask for nothing else. */
++static inline int ms_sound_from_name(const char* name)
++{
++    if (name == NULL) {
++        return -1;
++    }
++    for (int i = 0; i < MS_SND_COUNT; i++) {
++        if (strcmp(name, MS_SOUND_NAMES[i]) == 0) {
++            return i;
++        }
++    }
++    return -1;
++}
++
++static inline int ms_sound_is_asset(int snd) { return snd >= 0 && snd < MS_ASSET_SOUNDS; }
++
++/* ---- may it play? ---- */
++
++typedef enum {
++    MS_OK = 0,
++    MS_NO_SUCH_SOUND,
++    MS_DISABLED, /* robot.sounds.enabled is off */
++    MS_MUTED,    /* the hard mute is on */
++    MS_NIGHT     /* quiet hours or the sensor night, and robot.sounds.night is off */
++} ms_reason_t;
++
++typedef struct {
++    uint8_t enabled;     /* robot.sounds.enabled (default 1) */
++    uint8_t night_ok;    /* robot.sounds.night: sounds also at night (default 0) */
++    uint8_t muted;       /* the hard mute */
++    uint8_t dark;        /* the host's verdict "it is night now" (the sensor); trusted only while the host is up */
++    int16_t quiet_from;  /* quiet hours, minutes of the local day; -1 for none */
++    int16_t quiet_to;
++} ms_policy_t;
++
++static inline void ms_policy_default(ms_policy_t* p)
++{
++    p->enabled = 1;
++    p->night_ok = 0;
++    p->muted = 0;
++    p->dark = 0;
++    p->quiet_from = -1;
++    p->quiet_to = -1;
++}
++
++/* Is minute-of-day `m` inside [from, to)? A window that wraps midnight (22:00 to 07:00) works; from == to is empty. */
++static inline int ms_in_window(int from, int to, int m)
++{
++    if (from < 0 || to < 0 || from == to || m < 0) {
++        return 0;
++    }
++    if (from < to) {
++        return m >= from && m < to;
++    }
++    return m >= from || m < to;
++}
++
++/* Is it night for sound purposes? `minute` is the unit's local minute of the day, -1 while its clock is not set. */
++static inline int ms_is_night(const ms_policy_t* p, int minute, int host_up)
++{
++    return ms_in_window(p->quiet_from, p->quiet_to, minute) || (p->dark && host_up);
++}
++
++/* Cues that may play in the night: a picture (privacy), the power key (a person is holding it), a low
++ * battery and an error (the earcon only; the spoken lines are the host's and skipped by day rules), the
++ * tones that answer a person who is there (wake word, tap), and the setup cue when the unit cannot work
++ * without a person (`urgent`). */
++static inline int ms_night_ok(int snd, int urgent)
++{
++    switch (snd) {
++    case MS_SND_SHUTTER:
++    case MS_SND_GOODBYE:
++    case MS_SND_LOW_BATTERY:
++    case MS_SND_EXCLAMATION:
++    case MS_SND_POPUP:
++    case MS_SND_VIBRATION:
++        return 1;
++    case MS_SND_NEEDS_YOU:
++        return urgent != 0;
++    default:
++        return 0;
++    }
++}
++
++/* Cues that survive "sounds off": a picture, and the setup cue when the unit cannot work without a person. */
++static inline int ms_safety(int snd, int urgent)
++{
++    return snd == MS_SND_SHUTTER || (snd == MS_SND_NEEDS_YOU && urgent);
++}
++
++/* The one gate. `bypass` is the self-test: it skips "off" and the night rule, never the mute. */
++static inline ms_reason_t ms_decide(const ms_policy_t* p, int snd, int urgent, int night_now, int bypass)
++{
++    if (snd < 0 || snd >= MS_SND_COUNT) {
++        return MS_NO_SUCH_SOUND;
++    }
++    if (p->muted) {
++        return MS_MUTED;
++    }
++    if (bypass) {
++        return MS_OK;
++    }
++    if (!p->enabled && !ms_safety(snd, urgent)) {
++        return MS_DISABLED;
++    }
++    if (night_now && !p->night_ok && !ms_night_ok(snd, urgent)) {
++        return MS_NIGHT;
++    }
++    return MS_OK;
++}
++
++static inline const char* ms_reason_word(ms_reason_t r)
++{
++    switch (r) {
++    case MS_OK: return "ok";
++    case MS_NO_SUCH_SOUND: return "unknown_sound";
++    case MS_DISABLED: return "disabled";
++    case MS_MUTED: return "muted";
++    case MS_NIGHT: return "night";
++    }
++    return "unknown";
++}
++
++/* ---- the charger ---- */
++
++typedef enum { MS_PWR_NONE = 0, MS_PWR_PLUG, MS_PWR_UNPLUG, MS_PWR_FULL } ms_power_event_t;
++
++#define MS_PWR_CONFIRM 3 /* polls (1 s apart) that must agree before a change counts: a flapping read never chimes */
++
++typedef struct {
++    uint8_t init;
++    uint8_t ext;          /* confirmed: a cable is in */
++    uint8_t charging;     /* confirmed */
++    uint8_t seen_charging; /* charging was seen since the cable went in, so "stopped" means "full" */
++    uint8_t cand_ext, cand_charging, cand_n;
++} ms_power_t;
++
++static inline void ms_power_init(ms_power_t* p) { memset(p, 0, sizeof(*p)); }
++
++/* One poll of the AXP2101: `ext` = external power connected, `charging` = actively charging. The first
++ * poll only learns the state (a unit that boots on a cable does not chime). */
++static inline ms_power_event_t ms_power_update(ms_power_t* p, int ext, int charging)
++{
++    ext = ext != 0;
++    charging = ext && charging != 0;
++    if (!p->init) {
++        p->init = 1;
++        p->ext = (uint8_t)ext;
++        p->charging = (uint8_t)charging;
++        p->seen_charging = (uint8_t)charging;
++        p->cand_n = 0;
++        return MS_PWR_NONE;
++    }
++    if (ext == p->ext && charging == p->charging) {
++        p->cand_n = 0;
++        return MS_PWR_NONE;
++    }
++    if (p->cand_n > 0 && p->cand_ext == ext && p->cand_charging == charging) {
++        p->cand_n++;
++    } else {
++        p->cand_ext = (uint8_t)ext;
++        p->cand_charging = (uint8_t)charging;
++        p->cand_n = 1;
++    }
++    if (p->cand_n < MS_PWR_CONFIRM) {
++        return MS_PWR_NONE;
++    }
++    p->cand_n = 0;
++    ms_power_event_t event = MS_PWR_NONE;
++    if (ext && !p->ext) {
++        event = MS_PWR_PLUG;
++        p->seen_charging = (uint8_t)charging;
++    } else if (!ext && p->ext) {
++        event = MS_PWR_UNPLUG;
++        p->seen_charging = 0;
++    } else if (ext && p->charging && !charging && p->seen_charging) {
++        event = MS_PWR_FULL;
++        p->seen_charging = 0;
++    } else if (charging) {
++        p->seen_charging = 1;
++    }
++    p->ext = (uint8_t)ext;
++    p->charging = (uint8_t)charging;
++    return event;
++}
++
++/* ---- the link ---- */
++
++typedef enum {
++    MS_LINK_UP = 0,
++    MS_LINK_NO_WIFI,
++    MS_LINK_CONNECTING, /* Wi-Fi is up, Home has not answered yet (under 10 s) */
++    MS_LINK_NO_HOST,    /* Wi-Fi is up, Home has not answered for 10 s or more */
++    MS_LINK_REFUSED     /* Home answered and closed the door twice in a row: waiting for approval */
++} ms_link_state_t;
++
++#define MS_OFFLINE_AFTER_MS 10000u /* the link must be down this long before it counts as offline */
++#define MS_BACK_CLIP_AFTER_MS 60000u /* "I'm back" only after an outage this long */
++#define MS_REFUSED_STREAK 2
++
++typedef struct {
++    uint8_t down;            /* the link is down now */
++    uint32_t down_since_ms;
++    uint8_t hello_fails;     /* connects in a row that reached Home but got no hello */
++    uint8_t offline_sounded; /* the offline earcon has played for this outage */
++} ms_link_t;
++
++typedef struct {
++    uint8_t back_online; /* play the success chime */
++    uint8_t back_clip;   /* play the "I'm back" clip too (the outage was over a minute) */
++    uint32_t outage_ms;
++} ms_link_return_t;
++
++static inline void ms_link_init(ms_link_t* l) { memset(l, 0, sizeof(*l)); }
++
++static inline void ms_link_down(ms_link_t* l, uint32_t now_ms)
++{
++    if (!l->down) {
++        l->down = 1;
++        l->down_since_ms = now_ms;
++        l->offline_sounded = 0;
++    }
++}
++
++static inline void ms_link_hello_failed(ms_link_t* l)
++{
++    if (l->hello_fails < 250) {
++        l->hello_fails++;
++    }
++}
++
++/* The offline earcon has been sounded (or refused) for this outage: only then does coming back chime. */
++static inline void ms_link_mark_offline(ms_link_t* l)
++{
++    if (l->down) {
++        l->offline_sounded = 1;
++    }
++}
++
++/* The socket is back. A blip that never reached "offline" returns nothing: it chimes for nothing. */
++static inline ms_link_return_t ms_link_up(ms_link_t* l, uint32_t now_ms)
++{
++    ms_link_return_t r;
++    memset(&r, 0, sizeof(r));
++    if (l->down) {
++        r.outage_ms = (uint32_t)(now_ms - l->down_since_ms);
++        r.back_online = l->offline_sounded;
++        r.back_clip = (uint8_t)(l->offline_sounded && r.outage_ms >= MS_BACK_CLIP_AFTER_MS);
++    }
++    l->down = 0;
++    l->hello_fails = 0;
++    l->offline_sounded = 0;
++    return r;
++}
++
++static inline ms_link_state_t ms_link_state(const ms_link_t* l, uint32_t now_ms, int wifi_up, int host_up)
++{
++    if (host_up) {
++        return MS_LINK_UP;
++    }
++    if (!wifi_up) {
++        return MS_LINK_NO_WIFI;
++    }
++    if (l->hello_fails >= MS_REFUSED_STREAK) {
++        return MS_LINK_REFUSED;
++    }
++    if (l->down && (uint32_t)(now_ms - l->down_since_ms) >= MS_OFFLINE_AFTER_MS) {
++        return MS_LINK_NO_HOST;
++    }
++    return MS_LINK_CONNECTING;
++}
++
++/* ---- the local offline phrases: sixteen clips in five groups ---- */
++
++typedef enum {
++    MS_GRP_NO_WIFI = 0,
++    MS_GRP_NO_HOST,
++    MS_GRP_REFUSED,
++    MS_GRP_CONNECTING,
++    MS_GRP_BACK,
++    MS_GRP_COUNT
++} ms_group_t;
++
++static const char* const MS_GROUP_NAMES[MS_GRP_COUNT] = {"no_wifi", "no_host", "refused", "connecting", "back"};
++static const uint8_t MS_GROUP_SIZE[MS_GRP_COUNT] = {4, 4, 3, 3, 2}; /* 16 clips */
++
++#define MS_PHRASE_GAP_MS 10000u    /* at most one clip per 10 s */
++#define MS_PHRASE_WINDOW_MS 60000u /* and three in any minute */
++#define MS_PHRASE_PER_WINDOW 3
++
++static inline int ms_group_for_link(ms_link_state_t s)
++{
++    switch (s) {
++    case MS_LINK_NO_WIFI: return MS_GRP_NO_WIFI;
++    case MS_LINK_CONNECTING: return MS_GRP_CONNECTING;
++    case MS_LINK_NO_HOST: return MS_GRP_NO_HOST;
++    case MS_LINK_REFUSED: return MS_GRP_REFUSED;
++    default: return -1;
++    }
++}
++
++/* The asset file of a phrase: ph_<group>_<n>.ogg, n from 1. Returns 0 on a bad group or variant. */
++static inline int ms_phrase_file(char* out, size_t size, int group, int variant)
++{
++    if (group < 0 || group >= MS_GRP_COUNT || variant < 0 || variant >= MS_GROUP_SIZE[group]) {
++        return 0;
++    }
++    return snprintf(out, size, "ph_%s_%d.ogg", MS_GROUP_NAMES[group], variant + 1) > 0;
++}
++
++typedef struct {
++    uint8_t next[MS_GRP_COUNT]; /* the variant each group plays next: a round robin, so no repeat in a row */
++    uint32_t at_ms[MS_PHRASE_PER_WINDOW]; /* when the last clips played, oldest first */
++    uint8_t played;             /* how many entries of at_ms are real (0 to 3) */
++} ms_phrases_t;
++
++static inline void ms_phrases_init(ms_phrases_t* ph) { memset(ph, 0, sizeof(*ph)); }
++
++typedef enum {
++    MS_PH_NONE = 0, /* say nothing (muted) */
++    MS_PH_TONE,     /* the tone only: night, or the limit was reached */
++    MS_PH_CLIP      /* play clip `group` variant `variant` */
++} ms_phrase_kind_t;
++
++typedef struct {
++    ms_phrase_kind_t kind;
++    int group;
++    int variant;
++} ms_phrase_t;
++
++static inline int ms_phrases_limited(const ms_phrases_t* ph, uint32_t now_ms)
++{
++    if (ph->played == 0) {
++        return 0;
++    }
++    if ((uint32_t)(now_ms - ph->at_ms[ph->played - 1]) < MS_PHRASE_GAP_MS) {
++        return 1;
++    }
++    return ph->played >= MS_PHRASE_PER_WINDOW && (uint32_t)(now_ms - ph->at_ms[0]) < MS_PHRASE_WINDOW_MS;
++}
++
++/* The wake word fired and the link is `state`. `night`: the tone only, no clip. `muted`: nothing. The
++ * choice is recorded only when it is a clip (the tone does not use up the limit). `group_override`
++ * is -1, or a group the caller wants (the "I'm back" clip). */
++static inline ms_phrase_t ms_phrase_pick(ms_phrases_t* ph, ms_link_state_t state, uint32_t now_ms, int night,
++                                         int muted, int group_override)
++{
++    ms_phrase_t out = {MS_PH_NONE, -1, 0};
++    int group = group_override >= 0 ? group_override : ms_group_for_link(state);
++    if (muted || group < 0 || group >= MS_GRP_COUNT) {
++        return out;
++    }
++    if (night || ms_phrases_limited(ph, now_ms)) {
++        out.kind = MS_PH_TONE;
++        return out;
++    }
++    out.kind = MS_PH_CLIP;
++    out.group = group;
++    out.variant = ph->next[group] % MS_GROUP_SIZE[group];
++    ph->next[group] = (uint8_t)((out.variant + 1) % MS_GROUP_SIZE[group]);
++    if (ph->played >= MS_PHRASE_PER_WINDOW) {
++        for (int i = 1; i < MS_PHRASE_PER_WINDOW; i++) {
++            ph->at_ms[i - 1] = ph->at_ms[i];
++        }
++        ph->played = MS_PHRASE_PER_WINDOW - 1;
++    }
++    ph->at_ms[ph->played++] = now_ms;
++    return out;
++}

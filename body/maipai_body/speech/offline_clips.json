@@ -4,7 +4,7 @@
     "name": "",
     "licence": "CC-BY-4.0",
     "credit": "Voice generated with pocket-tts-english, licensed under CC-BY-4.0.",
-    "licence_checked": false
+    "licence_checked": true
   },
   "sample_rate": 24000,
   "clips": [

@@ -1,0 +1,99 @@
+# Intent: the xiaozhi side of the hard mute (maipai_privacy.h, patch 106): while muted or in full quiet AudioService::ReadAudioData reads nothing (so nothing is fed to the wake word), EnableWakeWordDetection(true), EnableVoiceProcessing(true) and SetStopWordArmed(true) refuse, Application::SetListeningMode (the one way into the listening state: tap, wake word, host start, reconnect) refuses and puts the unit back to idle with a 'tap ... why muted' diagnostic, and a wake word that arrives after the mute is dropped. Unmuting needs nothing here: the audio task opens the microphone on its next read and the main task arms the wake word for an idle unit.
+# Upstream: xiaozhi-esp32 main/audio/audio_service.cc, main/application.cc (MIT). Applies after 106 and 101 (xiaozhi-esp32 repo).
+# Check after a flash: muted: tap the cheek (the rest of the face) and the unit does not listen, the host log shows 'unit tap: decision=ignored why=muted'; say the wake word and nothing happens; unmute by holding the mouth and the wake word works again within a second.
+diff --git a/main/application.cc b/main/application.cc
+index 06e9c73..e7ac1b1 100644
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -14,6 +14,7 @@
+ #include <cstdio>
+ #include <hal/device_events.h>
+ #include <hal/maipai_timers.h>
++#include <hal/maipai_privacy.h>
+ #include <hal/board/hal_bridge.h>
+ #include <esp_timer.h>
+ #include <esp_log.h>
+@@ -940,8 +941,8 @@ void Application::HandleStopListeningEvent() {
+ }
+ 
+ void Application::HandleWakeWordDetectedEvent() {
+-    if (!protocol_) {
+-        return;
++    if (!protocol_ || maipai_mic_blocked()) {
++        return;  // a wake word that arrives after the mute is dropped (patch 107)
+     }
+ 
+     auto state = GetDeviceState();
+@@ -1162,6 +1163,16 @@ void Application::AbortSpeaking(AbortReason reason) {
+ }
+ 
+ void Application::SetListeningMode(ListeningMode mode) {
++    if (maipai_mic_blocked()) {
++        // Muted or in full quiet (patch 107): every way into listening ends here. The unit goes back to idle
++        // (it may have been set to connecting on the way) and the host is told why nothing happened.
++        ESP_LOGW(TAG, "listening refused: muted or in full quiet");
++        device_events_push_diag("tap", "\"decision\":\"ignored\",\"why\":\"muted\"");
++        if (GetDeviceState() != kDeviceStateIdle) {
++            SetDeviceState(kDeviceStateIdle);
++        }
++        return;
++    }
+     listening_mode_ = mode;
+     SetDeviceState(kDeviceStateListening);
+ }
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+index 760e6c8..41a8108 100644
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -2,6 +2,7 @@
+ #include <esp_log.h>
+ #include <freertos/idf_additions.h>
+ #include <cstring>
++#include <hal/maipai_privacy.h>
+ 
+ #define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)        \
+     (esp_ae_rate_cvt_cfg_t)                                  \
+@@ -189,6 +190,11 @@ void AudioService::Stop() {
+ void maipai_music_tap(const int16_t* interleaved, size_t frames, int channels, int sample_rate, bool suppress);
+ 
+ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples) {
++    if (maipai_mic_blocked()) {
++        // Muted or in full quiet (patch 107): nothing reads the microphone, and nothing is fed to the wake word
++        // or the music tap.
++        return false;
++    }
+     // The unit must not hear itself: no music features while it listens (the audio processor runs),
+     // while anything waits to play or played in the last 1.5 s (speech, tones).
+     auto music_tap = [this](const std::vector<int16_t>& chunk) {
+@@ -588,6 +594,10 @@ void AudioService::EnableWakeWordDetection(bool enable) {
+     }
+ 
+     ESP_LOGD(TAG, "%s wake word detection", enable ? "Enabling" : "Disabling");
++    if (enable && maipai_mic_blocked()) {
++        ESP_LOGW(TAG, "wake word stays off: muted or in full quiet");
++        return;
++    }
+     if (enable) {
+         if (!wake_word_initialized_) {
+             if (!wake_word_->Initialize(codec_, models_list_)) {
+@@ -614,6 +624,10 @@ void AudioService::EnableWakeWordDetection(bool enable) {
+ 
+ void AudioService::EnableVoiceProcessing(bool enable) {
+     ESP_LOGD(TAG, "%s voice processing", enable ? "Enabling" : "Disabling");
++    if (enable && maipai_mic_blocked()) {
++        ESP_LOGW(TAG, "voice processing stays off: muted or in full quiet");
++        return;
++    }
+     if (enable) {
+         if (!audio_processor_initialized_) {
+             audio_processor_->Initialize(codec_, OPUS_FRAME_DURATION_MS, models_list_);
+@@ -801,6 +815,9 @@ void AudioService::ApplyStopWordCallback() {
+ }
+ 
+ void AudioService::SetStopWordArmed(bool armed) {
++    if (armed && maipai_mic_blocked()) {
++        armed = false;  // the stop word listens through the microphone: not while muted
++    }
+ #if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32P4
+     if (auto* afe = dynamic_cast<AfeWakeWord*>(wake_word_.get())) {
+         afe->SetStopWordArmed(armed);

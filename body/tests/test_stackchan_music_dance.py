@@ -405,6 +405,19 @@ def test_dancing_switched_off_entirely_silences_the_music_dance_too():
     assert world.calls == []
 
 
+def test_muted_music_dance_refuses_new_start_and_stops_running_dance_as_muted():
+    blocked = World(muted=True)
+    blocked.play(MUSIC, 30)
+    assert blocked.names("request_dance") == []
+
+    running = World()
+    running.play(MUSIC, 25)
+    assert running.names("request_dance")
+    running.sit = replace(running.sit, muted=True)
+    running.ctl.tick(running.t + 1)
+    assert [arg for _, name, arg in running.calls if name == "stop_dance"] == ["muted"]
+
+
 # ------------------------------------------------------------------ caps and gaps
 
 
@@ -422,14 +435,14 @@ def test_ten_minutes_minimum_gap_after_a_dance():
     assert len(world.names("nod")) == 2
 
 
-def test_three_dances_an_hour_and_ten_a_day():
+def test_six_dances_an_hour_and_ten_a_day():
     world = World()
-    for i in range(3):
+    for i in range(6):
         world.session()
-        world.t += 601.0  # past the gap
-    world.session()  # the fourth within the hour: no nod, no dance
-    assert len(world.names("request_dance")) == 3
-    assert len(world.names("nod")) == 3
+        world.t += 121.0  # past the gap
+    world.session()  # the seventh within the hour: no nod, no dance
+    assert len(world.names("request_dance")) == 6
+    assert len(world.names("nod")) == 6
     # a day: one dance every 70 minutes is under the hourly cap and runs into the daily one
     day = World()
     for _ in range(12):
@@ -440,12 +453,12 @@ def test_three_dances_an_hour_and_ten_a_day():
 
 def test_the_caps_age_out():
     world = World()
-    for _ in range(3):
+    for _ in range(6):
         world.session()
-        world.t += 601.0
+        world.t += 121.0
     world.t += 3600.0
     world.session()
-    assert len(world.names("request_dance")) == 4
+    assert len(world.names("request_dance")) == 7
 
 
 def test_nods_alone_are_spaced_two_minutes_apart():

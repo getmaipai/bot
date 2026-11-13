@@ -1,0 +1,31 @@
+# Intent: tier 2 of the local offline voice (owner approved 2026-11-13; plan section 17): when the wake word or a tap fires and there is no link to Home, the unit says the right short clip itself instead of only the tone. The state comes from what the firmware knows: no Wi-Fi, connecting (Home has not answered for under 10 s), no host (10 s or more), refused (Home accepted the connection and closed it before the hello, twice in a row; counted here in ConnectAudioChannel, and only when the socket was closed by Home, never for a host that is merely slow). Sixteen clips in five groups, from the assets image (ph_<group>_<n>.ogg): never the same clip twice in a row, at most one per 10 s and three in any minute, then the old tone; at night, or with sounds switched off, the tone only; muted, nothing; a clip missing from the assets falls back to the tone and is counted in sound_info. The hook is the 400 ms path of patch 075 (ShowCantReachHome), which still shows the doubt face and "Can't reach Home" for 3 s. The host's own tier 1 line (turn.py _offline_line) is for a body that is up with Home down; the two never both speak because tier 2 only runs when the unit has no socket to the body at all.
+# Upstream: 78/xiaozhi-esp32 main/application.cc and main/protocols/websocket_protocol.cc (MIT). Applies after 117.
+# Check after a flash: with the hub stopped for 20 s say the wake word: a spoken clip from the no_host group (and a different one the next time, at most one per 10 s); switch the Wi-Fi router off: no_wifi clips; with the host running but the unit not approved: refused clips; at night: the tone only; sound_info clips_present is 16.
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -1006,7 +1006,8 @@
+     auto display = Board::GetInstance().GetDisplay();
+     display->SetEmotion("doubtful");
+     hal_bridge::link_note("Can't reach Home");  // the link strip; the face has no speech bubble
+-    audio_service_.PlaySound(Lang::Sounds::OGG_VIBRATION);
++    // The local clip for the link state (patch 118), or the short tone, or nothing when muted.
++    maipai_sounds_wake_offline();
+     // After three seconds the face goes back to neutral and the "Offline" words return if the outage goes on.
+     static esp_timer_handle_t restore_timer = nullptr;
+     if (restore_timer == nullptr) {
+diff --git a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+--- a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
++++ b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+@@ -297,6 +297,11 @@
+         refused_streak_ = (bits & WEBSOCKET_PROTOCOL_DISCONNECTED_EVENT) != 0 ? refused_streak_ + 1 : 0;
+         ESP_LOGE(TAG, "Failed to receive server hello (closed by the hub: %d, in a row: %d)",
+                  (bits & WEBSOCKET_PROTOCOL_DISCONNECTED_EVENT) != 0 ? 1 : 0, refused_streak_);
++        // Home closed the connection instead of answering: it turned this unit away (two in a row count as
++        // "refused" for the offline phrases). A host that is only slow leaves the socket open: not counted.
++        if (bits & WEBSOCKET_PROTOCOL_DISCONNECTED_EVENT) {
++            maipai_sounds_link_event(MAIPAI_LINK_HELLO_FAILED);
++        }
+         SetError(Lang::Strings::SERVER_TIMEOUT);
+         return false;
+     }

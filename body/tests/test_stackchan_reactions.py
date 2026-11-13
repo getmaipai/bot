@@ -151,7 +151,7 @@ def test_no_host_face_or_mapping_can_produce_a_heart():
     assert REPLY_MOOD_FACE_MAP["happiness"] == "happy"
     assert not any("love" in key or "heart" in key for key in FIRMWARE_EMOTIONS)
     faces = {f.expression for f in CUE_FACE_MAP.values()} | set(REPLY_MOOD_FACE_MAP.values())
-    faces |= {a.face for a in PRIMITIVE_BODY_MAP.values()}
+    faces |= {a.face for a in PRIMITIVE_BODY_MAP.values() if a.face}
     assert not any("love" in face or "heart" in face for face in faces)
     assert REPLY_MOOD_FACE_MAP.get("love", "neutral") == "neutral"
 
@@ -333,3 +333,25 @@ def test_a_tap_on_the_head_gets_the_heart_like_a_pet_and_is_logged_as_a_tap(capl
     assert any("StackChan was tapped" in r.getMessage() for r in caplog.records)
     rig.reactions.on_events(["head_tap"])  # still playing: no second reaction
     assert rig.symbols == ["heart"]
+
+
+def test_the_bridge_says_nothing_and_starts_no_turn_while_muted_or_in_full_quiet(monkeypatch):
+    import asyncio
+
+    bridge, tts, loop = _bridge(monkeypatch)
+    try:
+        reason = ["muted"]
+        bridge.muted_reason = lambda: reason[0]
+        assert bridge.speak_reaction("Whoa!") is False
+        assert tts.sentences == []
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(bridge.listen("session-1", "device", "start"))
+        loop.run_until_complete(bridge.listen("session-1", "device", "detect"))
+        assert bridge._tasks == {} and bridge._captures == {}
+        reason[0] = "full quiet"
+        assert bridge.speak_reaction("Whoa!") is False
+        reason[0] = None
+        assert bridge.speak_reaction("Whoa!") is True
+        assert tts.sentences == ["Whoa!"]
+    finally:
+        loop.close()

@@ -1,0 +1,437 @@
+# Intent: one link screen for every state where the unit is not yet linked (owner, 2026-11-13). A black cover with a glyph slot (the shipped Wi-Fi icons, drawn 1.5 times, the bars cycling while it connects) and a text slot: "Connecting to Wi-Fi...", "Wi-Fi setup needed" with the hotspot name and the address from the existing setup flow (one line each; the mint face has no speech bubble, so the setup text was never visible), "Connecting to Home...", and "Waiting for Home to approve me" (the slash glyph and a key drawn from shapes). It replaces patch 033's boot cover, its blue blink and its dim white ring at the first Standby: the ring is dark at boot and blinks cyan only while Wi-Fi setup or approval waits for a person. ShowBootCover, HideBootCover and BootRingTick are gone; ApplyLink() is the one place that picks the look. Wi-Fi setup always shows the screen, also when asked after boot.
+# Upstream: m5stack/StackChan firmware/main/hal/board/stackchan_display.cc and stackchan_display.h (MIT). Applies after 110.
+# Check after a flash: power on: black screen, Wi-Fi bars cycling, "Connecting to Wi-Fi...", then "Connecting to Home...", the ring stays dark and no white ring appears when the face comes up. With no saved Wi-Fi: "Wi-Fi setup needed", the hotspot name and the address, a cyan ring blink, and the captive setup page still opens from the hotspot.
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index 5c51d6f..920fff2 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -27,6 +27,7 @@
+ #include <hal/maipai_timers.h>
+ #include <hal/maipai_privacy.h>
+ #include <hal/maipai_touch_core.h>
++#include <assets/assets.h>
+ 
+ using namespace stackchan;
+ using namespace stackchan::avatar;
+@@ -213,9 +214,9 @@ StackChanAvatarDisplay::~StackChanAvatarDisplay()
+         esp_timer_delete(preview_timer_);
+     }
+ 
+-    if (boot_ring_timer_ != nullptr) {
+-        lv_timer_delete(boot_ring_timer_);
+-        boot_ring_timer_ = nullptr;
++    if (link_timer_ != nullptr) {
++        lv_timer_delete(link_timer_);
++        link_timer_ = nullptr;
+     }
+ 
+     if (preview_image_ != nullptr) {
+@@ -257,6 +258,8 @@ static mtc_region_t s_last_region     = MTC_REGION_REST;
+ constexpr int kTapEdgeDeadZonePx      = 24;
+ constexpr uint32_t kTapDebounceMs     = 800;
+ 
++static lv_obj_t* make_link_key(lv_obj_t* parent, lv_color_t color);
++
+ void StackChanAvatarDisplay::SetupUI()
+ {
+     // Prevent duplicate calls - if already called, return early
+@@ -338,87 +341,214 @@ void StackChanAvatarDisplay::SetupUI()
+         idle_motion_enabled_ = motion_settings.GetInt("idle_motion", 0) != 0;
+     }
+ 
+-    // Boot cover: hides the screen until the device is ready
+-    boot_cover_ = lv_obj_create(lv_screen_active());
+-    lv_obj_set_size(boot_cover_, lv_pct(100), lv_pct(100));
+-    lv_obj_set_style_bg_color(boot_cover_, lv_color_black(), 0);
+-    lv_obj_set_style_bg_opa(boot_cover_, LV_OPA_COVER, 0);
+-    lv_obj_set_style_border_width(boot_cover_, 0, 0);
+-    lv_obj_set_style_radius(boot_cover_, 0, 0);
+-    lv_obj_set_style_pad_all(boot_cover_, 0, 0);
+-    lv_obj_remove_flag(boot_cover_, LV_OBJ_FLAG_SCROLLABLE);
+-
+-    boot_label_ = lv_label_create(boot_cover_);
+-    lv_obj_set_style_text_font(boot_label_, &BUILTIN_TEXT_FONT, 0);
+-    lv_obj_set_style_text_color(boot_label_, lv_color_white(), 0);
+-    lv_label_set_long_mode(boot_label_, LV_LABEL_LONG_WRAP);
+-    lv_obj_set_width(boot_label_, lv_pct(90));
+-    lv_obj_set_style_text_align(boot_label_, LV_TEXT_ALIGN_CENTER, 0);
+-    lv_obj_center(boot_label_);
+-    lv_label_set_text(boot_label_, "Connecting to Wi-Fi...");
+-    ShowBootCover("Connecting to Wi-Fi...", 1);
++    // Link screen: hides the face until the unit is linked. One black cover, a glyph slot on top and a text
++    // slot below it; ApplyLink() picks the look from the boot statuses and the hub link.
++    link_cover_ = lv_obj_create(lv_screen_active());
++    lv_obj_set_size(link_cover_, lv_pct(100), lv_pct(100));
++    lv_obj_set_style_bg_color(link_cover_, lv_color_black(), 0);
++    lv_obj_set_style_bg_opa(link_cover_, LV_OPA_COVER, 0);
++    lv_obj_set_style_border_width(link_cover_, 0, 0);
++    lv_obj_set_style_radius(link_cover_, 0, 0);
++    lv_obj_set_style_pad_all(link_cover_, 0, 0);
++    lv_obj_remove_flag(link_cover_, LV_OBJ_FLAG_SCROLLABLE);
++
++    link_glyph_ = lv_image_create(link_cover_);
++    lv_obj_set_size(link_glyph_, 20, 20);
++    lv_image_set_scale(link_glyph_, 384);  // 1.5 times the 20 px icon, drawn around its centre
++    lv_obj_set_style_image_recolor(link_glyph_, lv_color_white(), 0);
++    lv_obj_set_style_image_recolor_opa(link_glyph_, LV_OPA_COVER, 0);
++    lv_obj_align(link_glyph_, LV_ALIGN_TOP_MID, 0, 58);
++    link_key_ = make_link_key(link_cover_, lv_color_white());
++    lv_obj_align(link_key_, LV_ALIGN_TOP_MID, 24, 60);
++    lv_obj_add_flag(link_key_, LV_OBJ_FLAG_HIDDEN);
++
++    link_label_ = lv_label_create(link_cover_);
++    lv_obj_set_style_text_font(link_label_, &BUILTIN_TEXT_FONT, 0);
++    lv_obj_set_style_text_color(link_label_, lv_color_white(), 0);
++    lv_label_set_long_mode(link_label_, LV_LABEL_LONG_WRAP);
++    lv_obj_set_width(link_label_, lv_pct(90));
++    lv_obj_set_style_text_align(link_label_, LV_TEXT_ALIGN_CENTER, 0);
++    lv_obj_align(link_label_, LV_ALIGN_TOP_MID, 0, 96);
++    ApplyLink();
+ 
+     ESP_LOGI(TAG, "Avatar created and started");
+ }
+ 
+-void StackChanAvatarDisplay::ShowBootCover(const char* text, int ring_kind)
++// ---- The shared link screen ----
++// A small key drawn from plain shapes (a ring, a shaft and two teeth): no image asset, any colour.
++static lv_obj_t* make_link_key(lv_obj_t* parent, lv_color_t color)
+ {
+-    if (boot_label_ != nullptr) {
+-        lv_label_set_text(boot_label_, text);
+-    }
+-    if (boot_cover_ != nullptr) {
+-        lv_obj_remove_flag(boot_cover_, LV_OBJ_FLAG_HIDDEN);
+-        lv_obj_move_foreground(boot_cover_);
++    lv_obj_t* key = lv_obj_create(parent);
++    lv_obj_remove_style_all(key);
++    lv_obj_set_size(key, 26, 20);
++    lv_obj_remove_flag(key, LV_OBJ_FLAG_SCROLLABLE);
++    lv_obj_remove_flag(key, LV_OBJ_FLAG_CLICKABLE);
++    auto part = [&](int x, int y, int w, int h, bool ring) {
++        lv_obj_t* o = lv_obj_create(key);
++        lv_obj_remove_style_all(o);
++        lv_obj_set_pos(o, x, y);
++        lv_obj_set_size(o, w, h);
++        lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
++        if (ring) {
++            lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
++            lv_obj_set_style_border_width(o, 3, 0);
++            lv_obj_set_style_border_color(o, color, 0);
++            lv_obj_set_style_border_opa(o, LV_OPA_COVER, 0);
++        } else {
++            lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
++            lv_obj_set_style_bg_color(o, color, 0);
++        }
++    };
++    part(0, 4, 12, 12, true);
++    part(11, 8, 15, 3, false);
++    part(18, 11, 3, 5, false);
++    part(23, 11, 3, 4, false);
++    return key;
++}
++
++constexpr uint32_t kLinkGlyphStepMs   = 300;   // one Wi-Fi bar level every 300 ms while connecting
++constexpr uint32_t kLinkBlinkPeriodMs = 2000;  // the ring's cyan blink, for the looks that need a person
++constexpr uint32_t kLinkBlinkOnMs     = 250;
++
++void StackChanAvatarDisplay::LoadLinkIcons()
++{
++    // The icons live in the assets partition, which may not be mapped yet when the first look is drawn:
++    // try again on each new look, a few times at most.
++    if (link_icons_ready_ || link_icon_tries_ >= 5) {
++        return;
+     }
+-    boot_ring_kind_     = ring_kind;
+-    boot_ring_start_ms_ = GetHAL().millis();
+-    if (boot_ring_timer_ == nullptr) {
+-        boot_ring_timer_ = lv_timer_create(BootRingTick, 100, this);
++    link_icon_tries_++;
++    static const char* const kNames[4] = {"icon_wifi_low.bin", "icon_wifi_medium.bin", "icon_wifi_high.bin", "icon_wifi_slash.bin"};
++    bool all = true;
++    for (int i = 0; i < 4; i++) {
++        link_icons_[i] = assets::get_image(kNames[i]);
++        all            = all && link_icons_[i].data != nullptr;
+     }
++    link_icons_ready_ = all;
+ }
+ 
+-void StackChanAvatarDisplay::HideBootCover()
++// Cycling shows the Wi-Fi bars one level at a time; otherwise the slash (no link).
++void StackChanAvatarDisplay::SetLinkGlyph(lv_obj_t* image, bool cycling, bool slash)
+ {
+-    if (boot_cover_ != nullptr) {
+-        lv_obj_add_flag(boot_cover_, LV_OBJ_FLAG_HIDDEN);
++    if (image == nullptr || !link_icons_ready_) {
++        return;
++    }
++    const lv_image_dsc_t* icon = &link_icons_[cycling ? link_frame_ % 3 : (slash ? 3 : 2)];
++    if (lv_image_get_src(image) != icon) {
++        lv_image_set_src(image, icon);
+     }
+-    if (boot_ring_timer_ != nullptr) {
+-        lv_timer_delete(boot_ring_timer_);
+-        boot_ring_timer_ = nullptr;
++}
++
++void StackChanAvatarDisplay::SetLinkRing(bool on)
++{
++    if (on == link_ring_on_) {
++        return;
+     }
+-    boot_done_         = true;
+-    boot_ring_last_on_ = false;
++    link_ring_on_ = on;
++    // Cyan (needs a person) or dark: the ring is dark otherwise, the host owns it once it is linked.
+     for (int i = 0; i < 12; i++) {
+-        GetHAL().setRgbColor(i, 35, 35, 31);
++        GetHAL().setRgbColor(i, 0, on ? 91 : 0, on ? 101 : 0);
+     }
+     GetHAL().refreshRgb();
+ }
+ 
+-void StackChanAvatarDisplay::BootRingTick(lv_timer_t* timer)
++void StackChanAvatarDisplay::ShowLinkScreen(LinkLook look)
+ {
+-    auto* display = static_cast<StackChanAvatarDisplay*>(lv_timer_get_user_data(timer));
+-    uint32_t t    = (GetHAL().millis() - display->boot_ring_start_ms_) % 2000;
+-    bool on       = t < 250;
+-    if (on == display->boot_ring_last_on_) {
++    if (link_cover_ == nullptr) {
+         return;
+     }
+-    display->boot_ring_last_on_ = on;
+-    int r = 0, g = 0, b = 0;
+-    if (on) {
+-        if (display->boot_ring_kind_ == 2) {
+-            r = 0;
+-            g = 91;
+-            b = 101;
+-        } else {
+-            r = 0;
+-            g = 17;
+-            b = 84;
+-        }
++    LoadLinkIcons();
++    std::string text;
++    switch (look) {
++        case LinkLook::WifiSetup:
++            text = "Wi-Fi setup needed";
++            if (!link_hint_.empty()) {
++                text += "\n";
++                text += link_hint_;
++            }
++            break;
++        case LinkLook::HomeJoin:
++            text = "Connecting to Home...";
++            break;
++        case LinkLook::Approval:
++            text = "Waiting for Home to approve me";
++            break;
++        case LinkLook::WifiJoin:
++        default:
++            text = "Connecting to Wi-Fi...";
++            break;
+     }
+-    for (int i = 0; i < 12; i++) {
+-        GetHAL().setRgbColor(i, r, g, b);
++    if (strcmp(lv_label_get_text(link_label_), text.c_str()) != 0) {
++        lv_label_set_text(link_label_, text.c_str());
++    }
++    const bool key = look == LinkLook::Approval;
++    lv_obj_align(link_glyph_, LV_ALIGN_TOP_MID, key ? -24 : 0, 58);
++    if (key) {
++        lv_obj_remove_flag(link_key_, LV_OBJ_FLAG_HIDDEN);
++    } else {
++        lv_obj_add_flag(link_key_, LV_OBJ_FLAG_HIDDEN);
++    }
++    if (link_look_ != look) {
++        link_look_ = look;
++        link_t0_   = GetHAL().millis();
++    }
++    SetLinkGlyph(link_glyph_, look == LinkLook::WifiJoin || look == LinkLook::HomeJoin, true);
++    lv_obj_remove_flag(link_cover_, LV_OBJ_FLAG_HIDDEN);
++    lv_obj_move_foreground(link_cover_);
++}
++
++void StackChanAvatarDisplay::HideLinkScreen()
++{
++    link_look_ = LinkLook::None;
++    if (link_cover_ != nullptr) {
++        lv_obj_add_flag(link_cover_, LV_OBJ_FLAG_HIDDEN);
++    }
++}
++
++// One place decides what the link looks like from what the unit knows; called under the display lock.
++void StackChanAvatarDisplay::ApplyLink()
++{
++    const LinkLook look = boot_done_ ? LinkLook::None : boot_look_;
++    if (look == LinkLook::None) {
++        HideLinkScreen();
++    } else {
++        ShowLinkScreen(look);
++    }
++    // The ring is dark unless the unit needs a person (Wi-Fi setup, waiting for approval).
++    const bool ring = look == LinkLook::WifiSetup || look == LinkLook::Approval;
++    if (!ring) {
++        SetLinkRing(false);
++    }
++    UpdateLinkTimer();
++}
++
++// The timer runs only while something animates: the Wi-Fi bars, or the ring's blink.
++void StackChanAvatarDisplay::UpdateLinkTimer()
++{
++    const bool need = link_look_ == LinkLook::WifiJoin || link_look_ == LinkLook::HomeJoin ||
++                      link_look_ == LinkLook::WifiSetup || link_look_ == LinkLook::Approval;
++    if (need && link_timer_ == nullptr) {
++        link_timer_ = lv_timer_create(LinkTick, 100, this);
++    } else if (!need && link_timer_ != nullptr) {
++        lv_timer_delete(link_timer_);
++        link_timer_ = nullptr;
++    }
++}
++
++void StackChanAvatarDisplay::LinkTick(lv_timer_t* timer)
++{
++    auto* display     = static_cast<StackChanAvatarDisplay*>(lv_timer_get_user_data(timer));
++    const uint32_t t  = GetHAL().millis() - display->link_t0_;
++    const int frame   = static_cast<int>(t / kLinkGlyphStepMs) % 3;
++    if (frame != display->link_frame_) {
++        display->link_frame_ = frame;
++        const LinkLook look  = display->link_look_;
++        display->SetLinkGlyph(display->link_glyph_, look == LinkLook::WifiJoin || look == LinkLook::HomeJoin, true);
++    }
++    const LinkLook look = display->link_look_;
++    if (look == LinkLook::WifiSetup || look == LinkLook::Approval) {
++        display->SetLinkRing((t % kLinkBlinkPeriodMs) < kLinkBlinkOnMs);
+     }
+-    GetHAL().refreshRgb();
+ }
+ 
+ void StackChanAvatarDisplay::OnTouchDiag(lv_event_t* event)
+@@ -1066,6 +1196,17 @@ void StackChanAvatarDisplay::SetChatMessage(const char* role, const char* conten
+     DisplayLockGuard lock(this);
+ 
+     if (strcmp(role, "system") == 0) {
++        if (!boot_done_ && boot_look_ == LinkLook::WifiSetup) {
++            // The Wi-Fi setup instructions ("Hotspot: <name> Config URL: <address>") go on the link screen,
++            // the address on its own line. The mint face has no speech bubble to show them in.
++            link_hint_ = ascii_punctuation(content);
++            const std::string split = Lang::Strings::ACCESS_VIA_BROWSER;
++            const size_t at         = link_hint_.find(split);
++            if (!split.empty() && at != std::string::npos) {
++                link_hint_.replace(at, split.size(), "\n");
++            }
++            ApplyLink();
++        }
+         stackchan.avatar().setSpeech(ascii_punctuation(content));
+     } else if (strcmp(role, "assistant") == 0) {
+         stackchan.avatar().setSpeech(ascii_punctuation(content));
+@@ -1164,24 +1305,28 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
+ 
+     DisplayLockGuard lock(this);
+ 
+-    // Before the host takes over, the firmware owns the ring and the boot cover
+-    if (!boot_done_) {
+-        if (strcmp(status, Lang::Strings::STANDBY) == 0) {
+-            HideBootCover();
+-        } else if (strcmp(status, Lang::Strings::WIFI_CONFIG_MODE) == 0 || strcmp(status, Lang::Strings::CONNECT_TO_HOTSPOT) == 0 ||
+-                   strcmp(status, Lang::Strings::ENTERING_WIFI_CONFIG_MODE) == 0) {
+-            if (boot_cover_ != nullptr) {
+-                lv_obj_add_flag(boot_cover_, LV_OBJ_FLAG_HIDDEN);
+-            }
+-            boot_ring_kind_ = 2;
+-            if (boot_ring_timer_ == nullptr) {
+-                boot_ring_timer_ = lv_timer_create(BootRingTick, 100, this);
++    // Before the host takes over, the firmware owns the link screen. Wi-Fi setup always shows it (a later
++    // setup request has no face under it either); the other looks only until the first Standby.
++    {
++        const bool wifi_setup =
++            strcmp(status, Lang::Strings::WIFI_CONFIG_MODE) == 0 || strcmp(status, Lang::Strings::CONNECT_TO_HOTSPOT) == 0 ||
++            strcmp(status, Lang::Strings::ENTERING_WIFI_CONFIG_MODE) == 0;
++        if (wifi_setup) {
++            boot_done_ = false;
++            boot_look_ = LinkLook::WifiSetup;
++            ApplyLink();
++        } else if (!boot_done_) {
++            if (strcmp(status, Lang::Strings::STANDBY) == 0) {
++                boot_done_ = true;
++            } else if (boot_look_ == LinkLook::WifiSetup) {
++                // Statuses that arrive during setup (scanning and the like) keep the instructions up.
++            } else if (strcmp(status, Lang::Strings::LOADING_PROTOCOL) == 0 || strcmp(status, Lang::Strings::CONNECTING) == 0 ||
++                       strcmp(status, Lang::Strings::ACTIVATION) == 0) {
++                boot_look_ = LinkLook::HomeJoin;
++            } else {
++                boot_look_ = LinkLook::WifiJoin;
+             }
+-        } else if (strcmp(status, Lang::Strings::LOADING_PROTOCOL) == 0 || strcmp(status, Lang::Strings::CONNECTING) == 0 ||
+-                   strcmp(status, Lang::Strings::ACTIVATION) == 0) {
+-            ShowBootCover("Connecting to Home...", 1);
+-        } else {
+-            ShowBootCover("Connecting to Wi-Fi...", 1);
++            ApplyLink();
+         }
+     }
+ 
+diff --git a/firmware/main/hal/board/stackchan_display.h b/firmware/main/hal/board/stackchan_display.h
+index df87e55..489f470 100644
+--- a/firmware/main/hal/board/stackchan_display.h
++++ b/firmware/main/hal/board/stackchan_display.h
+@@ -9,6 +9,7 @@
+ #include <esp_lcd_panel_ops.h>
+ #include <esp_timer.h>
+ #include <memory>
++#include <string>
+ #include <algorithm>
+ 
+ class StackChanAvatarDisplay : public LvglDisplay {
+@@ -27,13 +28,24 @@ private:
+     esp_timer_handle_t preview_timer_                = nullptr;
+     std::unique_ptr<LvglImage> preview_image_cached_ = nullptr;
+ 
+-    lv_obj_t*   boot_cover_         = nullptr;
+-    lv_obj_t*   boot_label_         = nullptr;
+-    lv_timer_t* boot_ring_timer_    = nullptr;
+-    bool        boot_done_          = false;
+-    uint32_t    boot_ring_start_ms_ = 0;
+-    int         boot_ring_kind_     = 0;
+-    bool        boot_ring_last_on_  = false;
++    // The shared link screen (patch 111): one black cover with a glyph slot and a text slot, used for every
++    // state where the unit is not yet linked (joining Wi-Fi, Wi-Fi setup, joining Home, waiting to be approved).
++    enum class LinkLook : uint8_t { None, WifiJoin, WifiSetup, HomeJoin, Approval };
++    lv_obj_t*      link_cover_       = nullptr;
++    lv_obj_t*      link_glyph_       = nullptr;
++    lv_obj_t*      link_key_         = nullptr;
++    lv_obj_t*      link_label_       = nullptr;
++    lv_timer_t*    link_timer_       = nullptr;
++    bool           boot_done_        = false;
++    LinkLook       boot_look_        = LinkLook::WifiJoin;  // what the boot statuses say
++    LinkLook       link_look_        = LinkLook::None;      // what the screen shows now
++    std::string    link_hint_;                              // the Wi-Fi setup instructions from the status text
++    uint32_t       link_t0_          = 0;
++    int            link_frame_       = 0;
++    bool           link_ring_on_     = false;
++    lv_image_dsc_t link_icons_[4]    = {};                  // Wi-Fi low, medium, high, slash
++    bool           link_icons_ready_ = false;
++    int            link_icon_tries_  = 0;
+ 
+     lv_obj_t*   quick_panel_   = nullptr;
+     lv_obj_t*   toast_label_   = nullptr;
+@@ -48,9 +60,14 @@ private:
+     void EnsureQuietMarker();
+ 
+     void CreateIdleMotionModifier();
+-    void ShowBootCover(const char* text, int ring_kind);
+-    void HideBootCover();
+-    static void BootRingTick(lv_timer_t* timer);
++    void LoadLinkIcons();
++    void SetLinkGlyph(lv_obj_t* image, bool cycling, bool slash);
++    void ShowLinkScreen(LinkLook look);
++    void HideLinkScreen();
++    void ApplyLink();
++    void UpdateLinkTimer();
++    void SetLinkRing(bool on);
++    static void LinkTick(lv_timer_t* timer);
+     static void OnGesture(lv_event_t* event);
+     static void OnTouchDiag(lv_event_t* event);
+     void ChangeVolume(int delta);

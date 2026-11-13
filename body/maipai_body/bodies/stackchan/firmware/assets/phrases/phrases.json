@@ -1,0 +1,160 @@
+{
+  "about": "Local offline phrases for the StackChan (tier 2); rendered by body/scripts/render_unit_phrases.py, played by firmware patch 118.",
+  "format": "Ogg Opus, mono, 16000 Hz, 24 kbps, 60 ms frames",
+  "voice": {
+    "engine": "chatterbox-turbo",
+    "model": "mlx-community/chatterbox-turbo-fp16",
+    "revision": "b2d0a13aa7cfff0a06d9acb247ae91c8f19a6d75",
+    "voice": "chatterbox-turbo-voice-default",
+    "licence": "Apache-2.0",
+    "licence_source": "the Stack's pinned catalog record (stack/docs/components.md, data/models/manifests/chatterbox-turbo-fp16.json)",
+    "licence_checked": true,
+    "credit": "Chatterbox Turbo (Resemble AI), Apache-2.0, run by the MaiPai Stack; the clips are machine-synthesized speech, not a recording of a person."
+  },
+  "clips": [
+    {
+      "group": "no_wifi",
+      "variant": 1,
+      "text": "I can't find the Wi-Fi.",
+      "file": "ph_no_wifi_1.ogg",
+      "seconds": 1.32,
+      "bytes": 4030,
+      "sha256": "3318b93d06ecce3abb68abfc1dcc48e37166d4ed01b6aa63a399de246741f76e"
+    },
+    {
+      "group": "no_wifi",
+      "variant": 2,
+      "text": "I'm not on the Wi-Fi right now.",
+      "file": "ph_no_wifi_2.ogg",
+      "seconds": 1.83,
+      "bytes": 5174,
+      "sha256": "d2e5491336a68a66448b6a8205cd08f220c5a50c5f415862acedcb0718a56701"
+    },
+    {
+      "group": "no_wifi",
+      "variant": 3,
+      "text": "I can't see the Wi-Fi yet.",
+      "file": "ph_no_wifi_3.ogg",
+      "seconds": 1.44,
+      "bytes": 4524,
+      "sha256": "dce46d0faecb1034b134a506c998ef8919a29e24c8013f10ea1773f38e74c696"
+    },
+    {
+      "group": "no_wifi",
+      "variant": 4,
+      "text": "The Wi-Fi isn't answering me.",
+      "file": "ph_no_wifi_4.ogg",
+      "seconds": 1.59,
+      "bytes": 4800,
+      "sha256": "919650ac636b0332e77604ff103269d1cb8b824e59850961db845edb722bc585"
+    },
+    {
+      "group": "no_host",
+      "variant": 1,
+      "text": "I can't reach my home base right now.",
+      "file": "ph_no_host_1.ogg",
+      "seconds": 1.73,
+      "bytes": 5248,
+      "sha256": "8073556dc037aa2e9ff86b74c7f410cd6cc4e45903f70086462e0d54f9aacc28"
+    },
+    {
+      "group": "no_host",
+      "variant": 2,
+      "text": "I'm having trouble reaching home.",
+      "file": "ph_no_host_2.ogg",
+      "seconds": 1.91,
+      "bytes": 5740,
+      "sha256": "e62e23d2cc1c46edd9543b0e60796d7bd3555922b6a499381b91da789f94905d"
+    },
+    {
+      "group": "no_host",
+      "variant": 3,
+      "text": "Home isn't answering me yet.",
+      "file": "ph_no_host_3.ogg",
+      "seconds": 1.52,
+      "bytes": 4625,
+      "sha256": "b861e4b669127a42b360d669a0022009c2fe75c4087151cd7d3eaf3acc336ec8"
+    },
+    {
+      "group": "no_host",
+      "variant": 4,
+      "text": "I can't get through to home just now.",
+      "file": "ph_no_host_4.ogg",
+      "seconds": 1.69,
+      "bytes": 5156,
+      "sha256": "e50381a895cb4cf3689f4650f764acfb8b2814c6dcee7012e4d29b1d0c024012"
+    },
+    {
+      "group": "refused",
+      "variant": 1,
+      "text": "I need to be approved again.",
+      "file": "ph_refused_1.ogg",
+      "seconds": 1.39,
+      "bytes": 4236,
+      "sha256": "ebec63dadcc15b535f01b22e8852de9ba4e21387c9018e2979ae5d65b7df5cb4"
+    },
+    {
+      "group": "refused",
+      "variant": 2,
+      "text": "Home needs to let me back in.",
+      "file": "ph_refused_2.ogg",
+      "seconds": 1.51,
+      "bytes": 4466,
+      "sha256": "c6b897875aa41d1ad9635cbae1728fe96597ec7b9e41516e8bcc5295eae36c55"
+    },
+    {
+      "group": "refused",
+      "variant": 3,
+      "text": "I'm waiting for Home to approve me.",
+      "file": "ph_refused_3.ogg",
+      "seconds": 1.78,
+      "bytes": 5486,
+      "sha256": "a6d0b7437ab5f479bc8e9cb3403e353c42a42d2b25f296be99fa1116ecdc2f7f"
+    },
+    {
+      "group": "connecting",
+      "variant": 1,
+      "text": "Still connecting, one moment.",
+      "file": "ph_connecting_1.ogg",
+      "seconds": 1.78,
+      "bytes": 5264,
+      "sha256": "e91a84b815d74c494e3b25123c7a3df724da226baed30cad8ad1b4215ce9d89c"
+    },
+    {
+      "group": "connecting",
+      "variant": 2,
+      "text": "Almost connected, give me a moment.",
+      "file": "ph_connecting_2.ogg",
+      "seconds": 1.99,
+      "bytes": 5954,
+      "sha256": "d18f98630a99a27f60054d52128f389215ce56b48cead0da97c239c2427fc64f"
+    },
+    {
+      "group": "connecting",
+      "variant": 3,
+      "text": "Hang on, I'm still connecting.",
+      "file": "ph_connecting_3.ogg",
+      "seconds": 1.5,
+      "bytes": 4505,
+      "sha256": "dea2deb8993b55bdc16ddbfd5bbf6d3eab39744f8d6a0f060b39f759ceeb9192"
+    },
+    {
+      "group": "back",
+      "variant": 1,
+      "text": "I'm back.",
+      "file": "ph_back_1.ogg",
+      "seconds": 0.74,
+      "bytes": 2264,
+      "sha256": "5746ed1df8d389380f911011302c9055b8074921d15b583f971ce4afe44f5365"
+    },
+    {
+      "group": "back",
+      "variant": 2,
+      "text": "I'm connected to home again.",
+      "file": "ph_back_2.ogg",
+      "seconds": 1.51,
+      "bytes": 4531,
+      "sha256": "4da6005139f60dac54c2973b4732dde6d062a07f7660d8bba0c5d983817e00d9"
+    }
+  ]
+}

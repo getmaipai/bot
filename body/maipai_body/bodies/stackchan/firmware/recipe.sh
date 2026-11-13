@@ -201,6 +201,7 @@ PY
   # Put back the launcher assets the build pruned (patch 049's assets step) so the pinned tree is clean.
   git -C "$SRC" checkout -- firmware/main/assets/assets_bin
   rm -f "$SRC/firmware/main/assets/assets_bin/wake_selftest.pcm"
+  rm -f "$SRC"/firmware/main/assets/sfx/snd_*.ogg "$SRC"/firmware/main/assets/assets_bin/ph_*.ogg
   rm -f "$SRC/firmware/main/hal/maipai_version.h"
   if [[ -n "$(git -C "$SRC" status --porcelain)" ]]; then
     echo "Firmware recipe left changes in $SRC. Inspect this source tree before retrying." >&2
@@ -333,6 +334,23 @@ apply_repo_patch 099-wifi-only-and-fewer-sounds.patch "$SRC"
 apply_repo_patch 099-no-jpeg-decoder.patch "$SRC"
 apply_repo_patch 100-music-features.patch "$SRC"
 apply_repo_patch 101-music-tap.patch "$FW/xiaozhi-esp32"
+# Mute, vision off and full quiet (2026-11-13): touches on the face, the unit's saved privacy state and the
+# hard microphone-off, the xiaozhi guards, and the mint face's two looks. 105 and 108 need 106 to build.
+apply_repo_patch 105-face-touch-toggles.patch "$SRC"
+apply_repo_patch 106-privacy-core.patch "$SRC"
+apply_repo_patch 107-mic-guards.patch "$FW/xiaozhi-esp32"
+apply_repo_patch 108-mint-muted-and-lidded.patch "$SRC"
+# Faces, link screen, offline look, approval look and the power key (2026-11-13). Each builds on the one before.
+apply_repo_patch 110-listening-thinking-faces.patch "$SRC"
+apply_repo_patch 111-shared-link-screen.patch "$SRC"
+apply_repo_patch 112-offline-look.patch "$SRC"
+apply_repo_patch 113-waiting-for-approval.patch "$SRC"
+apply_repo_patch 114-power-key-ring-dark.patch "$SRC"
+# Sounds (2026-11-13): the earcon family, the play_sound tools, the firmware's own cues and the local offline phrases.
+apply_repo_patch 115-sounds-core.patch "$SRC"
+apply_repo_patch 116-sounds-device.patch "$SRC"
+apply_repo_patch 117-sound-events.patch "$SRC"
+apply_repo_patch 118-offline-phrases.patch "$SRC"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"
@@ -347,6 +365,22 @@ for asset in icon_ai_agent.bin icon_app_center.bin icon_controller.bin icon_danc
 done
 # The wake word clip the unit feeds into its own wake engine to test it (patch 086), packed into the assets.
 cp "$HERE/assets/wake_selftest.pcm" "$FW/main/assets/assets_bin/wake_selftest.pcm"
+# The seven earcons are embedded in the app image (patch 116 lists them in EMBED_FILES): they must play before the
+# assets are applied (first setup). The sixteen offline phrases (patch 118) are packed into the assets image, which is
+# memory mapped; a unit without them says the old tone instead. Both come from body/scripts/render_unit_sounds.py and
+# render_unit_phrases.py.
+for earcon in needs_you plug_in charged unplug offline goodbye shutter; do
+  if [[ ! -f "$HERE/assets/sounds/snd_$earcon.ogg" ]]; then
+    echo "Earcon snd_$earcon.ogg is missing from firmware/assets/sounds. Run body/scripts/render_unit_sounds.py and retry." >&2
+    exit 1
+  fi
+  cp "$HERE/assets/sounds/snd_$earcon.ogg" "$FW/main/assets/sfx/snd_$earcon.ogg"
+done
+if compgen -G "$HERE/assets/phrases/ph_*.ogg" >/dev/null; then
+  cp "$HERE"/assets/phrases/ph_*.ogg "$FW/main/assets/assets_bin/"
+else
+  echo "NO-PHRASES: firmware/assets/phrases has no ph_*.ogg; this build says only the tone while offline." >&2
+fi
 
 cat > "$FW/sdkconfig.defaults.local" <<CFG
 CONFIG_STACKCHAN_SERVER_URL="$AVATAR_SERVER_URL"

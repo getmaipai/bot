@@ -252,14 +252,18 @@ class ExpressionEngine:
                 )
                 self._worker.tick(self._worker._clock() + 0.02)
 
-    def render_turn_state(self, state: str, *, mood: str | None = None) -> None:
-        """Render StackChan's closed face cue for a turn state, when supported."""
+    def render_turn_state(
+        self, state: str, *, mood: str | None = None, firmware_version: object = None
+    ) -> None:
+        """Render StackChan's closed face cue for a turn state, when supported.
+
+        ``firmware_version`` keeps a unit without the listening and thinking faces on neutral."""
         if self._profile.id != "stackchan":
             return
         from maipai_body.bodies.stackchan.renderer import render_cue
 
         device = self._expression_device or self._client
-        render_cue(state, device, mood=mood)
+        render_cue(state, device, mood=mood, firmware_version=firmware_version)
 
     def render_ambient(self, primitive: str, context: SuppressionContext) -> ExpressionOutcome:
         """Render a body-state primitive through the worker."""

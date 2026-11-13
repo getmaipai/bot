@@ -376,11 +376,7 @@ class StackChanBehavior:
             still_reason=lambda: self.idle_still_reason(),
         )
         self._rest_renderer = RestRenderer(
-            firmware_version=lambda: (
-                self.unit_facts.snapshot().get("fw_version")
-                if self.unit_facts is not None
-                else None
-            ),
+            firmware_version=self._unit_firmware_version,
             quiet_s=lambda: max(0, int(time.monotonic() - self._rest._quiet_since)),
             thresholds=lambda: (120, 300),
             night_active=self.night_active,
@@ -426,6 +422,12 @@ class StackChanBehavior:
         return self._with_lease(
             lambda: self._expression.render_ambient(primitive, SuppressionContext())
         )
+
+    def _unit_firmware_version(self) -> str | None:
+        """The firmware version the unit reported, or None before its first report."""
+        if self.unit_facts is None:
+            return None
+        return self.unit_facts.snapshot().get("fw_version")
 
     def render_turn_state(self, state: str, *, mood: str | None = None) -> None:
         self._active.set()
@@ -480,7 +482,9 @@ class StackChanBehavior:
                     self._head_off_centre = False
                     self._expression.render_ambient("settle", SuppressionContext())
                 return
-            self._expression.render_turn_state(state, mood=mood)
+            self._expression.render_turn_state(
+                state, mood=mood, firmware_version=self._unit_firmware_version()
+            )
             glanced = False
             if state == "listening":
                 self._turn_face_held = may_move and self._turn_toward_face()
@@ -1575,6 +1579,8 @@ class StackChanBehavior:
                     "timer_ended": "unit timer",
                     "timer_missed": "unit timer",
                     "music_stats": "unit music",
+                    "privacy": "unit privacy",
+                    "privacy_refused": "unit privacy",
                 }.get(event.kind, "unit touch")
                 logger.info("%s: %s %s", label, event.kind, detail)
         events = [e for e in events if getattr(e, "kind", None) not in DIAGNOSTIC_KINDS]
@@ -1758,7 +1764,10 @@ def _start_stackchan_night(
     voice.session_listeners.append(lambda _device_id: behavior.unit_connected())
     behavior.night_active = lambda: night.night
     behavior.watch_level = lambda: watch[0]
-    voice.robot.robot._driver("camera").watch_allowed = lambda: watch[0] != "off"
+    voice.robot.robot._driver("camera").watch_allowed = lambda: (
+        watch[0] != "off"
+        and not bool(getattr(getattr(behavior, "privacy", None), "vision_off", False))
+    )
 
     def apply_settings(payload: dict) -> None:
         values = payload.get("values")
@@ -1818,8 +1827,78 @@ def _start_stackchan_night(
     return night
 
 
+def _unit_muted(behavior: Any) -> bool:
+    """The unit's hard mute; False before the privacy state is wired (and in tests)."""
+    return bool(getattr(getattr(behavior, "privacy", None), "muted", False))
+
+
+def _wire_privacy(voice, behavior: StackChanBehavior, avatar, camera_driver, stop_event) -> Any:
+    """Mute, vision off and full quiet (firmware 105 to 108, docs/dev/stackchan-mute-2026-11-13.md).
+
+    The unit is the authority; this reads its state back, keeps the host honest about it (no turn,
+    no spoken line, no head move, no picture, no analysis while it is off) and checks that nothing
+    leaks. Returns the controller; the state is `controller.state`."""
+    from maipai_body.bodies.stackchan.privacy import PrivacyController, PrivacyState
+
+    def leak(_what: str, _detail: str) -> None:
+        light = getattr(behavior, "privacy_light", None)
+        update = getattr(light, "update", None)
+        if update is None:
+            return
+        update(fault=True)  # the existing error look, for half a minute
+        threading.Timer(30.0, lambda: update(fault=bool(voice.heal.hold))).start()
+
+    state = PrivacyState(on_leak=leak)
+    controller = PrivacyController(voice.robot.client._call, state)
+    behavior.privacy = state
+    behavior.privacy_controller = controller
+    behavior.muted_reason = state.muted_reason
+    behavior.settings_listeners.append(controller.apply_settings)
+    voice.session_listeners.append(
+        lambda _device_id: threading.Thread(
+            target=controller.on_connect, name="stackchan-privacy-connect", daemon=True
+        ).start()
+    )
+    # Head moves from any part of the host stop in full quiet.
+    voice.robot.robot._driver("head").move_blocked = state.head_blocked
+    # No picture is asked for, kept or taken while vision is off; the local watch gate and the
+    # stream ask both read this.
+    camera_driver.vision_off = lambda: (
+        state.vision_off
+    )  # `_start_stackchan_night` adds it to watch_allowed
+    avatar.vision_blocked = lambda: state.vision_off
+    avatar.on_frame_while_vision_off = state.frame_arrived
+
+    def ticks() -> None:
+        while not stop_event.wait(1.0):
+            for tick in (state.tick, controller.tick):
+                try:
+                    tick()
+                except Exception:
+                    logger.warning("privacy tick failed", exc_info=True)
+
+    def stream_follows_vision(current: Any) -> None:
+        """Vision went off: tell the unit's camera stream to stop. It came back on: start it again,
+        quietly, if local watching is allowed (the household's watch level decides)."""
+        try:
+            if current.vision_off:
+                behavior.robot.camera.stream(enabled=False)
+            elif camera_driver.watch_allowed():
+                behavior.robot.camera.stream(enabled=True, silent=True)
+        except Exception:
+            logger.debug("StackChan camera stream could not follow the vision state", exc_info=True)
+
+    state.listeners.append(stream_follows_vision)
+
+    threading.Thread(target=ticks, name="stackchan-privacy-ticks", daemon=True).start()
+    return controller
+
+
 def _wire_timers_and_announcements(
-    voice, behavior: StackChanBehavior, stop_event: threading.Event
+    voice,
+    behavior: StackChanBehavior,
+    stop_event: threading.Event,
+    privacy: Any = None,
 ) -> dict[str, Callable[[dict], Any]]:
     """On-unit timers and hub announcements: the hub commands that drive them.
 
@@ -1896,12 +1975,63 @@ def _wire_timers_and_announcements(
 
         return handle
 
+    mute_handlers = {"mute": set_muted(True), "unmute": set_muted(False)}
+    if privacy is not None:
+        # The StackChan mute is the unit's own (firmware patch 106): the hub's mute and unmute
+        # drive it and answer from its read-back. Announcements and timers follow the unit's state,
+        # whoever changed it (the face or Home).
+        def follow_unit(state: Any) -> None:
+            announcer.muted = bool(state.muted)
+            announcer.quiet = bool(state.quiet)
+
+        privacy.state.listeners.append(follow_unit)
+        mute_handlers = privacy.handlers()
     return {
         **timers.handlers(),
         "announce": announcer.handle,
-        "mute": set_muted(True),
-        "unmute": set_muted(False),
+        **mute_handlers,
     }
+
+
+def _wire_sounds(voice, behavior: StackChanBehavior, stop_event: threading.Event):
+    """The unit's own sounds from the host side (firmware patches 115 to 118, sounds.py).
+
+    Keeps the unit's sound policy current, plays the host-owned cues (low battery, shutter, error,
+    dance start) and answers the hub's ``sound_test`` command. The light service does not exist
+    yet: its low battery fact is attached later (``sounds.battery_low``)."""
+    from maipai_body.bodies.stackchan.sounds import SoundService
+    from maipai_body.presence.sleep_auto import QuietHours
+
+    hours = QuietHours()
+
+    def say(text: str) -> bool:
+        return bool(behavior.announce is not None and behavior.announce(text))
+
+    sounds = SoundService(
+        voice.robot.client._call,
+        say=say,
+        night=lambda: bool(behavior.night_active()),
+        quiet_minutes=hours.minutes,
+    )
+
+    def on_settings(values: dict) -> None:
+        hours.apply(values)
+        sounds.apply_settings(values)
+
+    behavior.settings_listeners.append(on_settings)
+    voice.session_listeners.append(
+        lambda _device_id: threading.Timer(3.0, sounds.on_connect).start()
+    )
+
+    def ticks() -> None:
+        while not stop_event.wait(1.0):
+            try:
+                sounds.tick()
+            except Exception:
+                logger.warning("sound tick failed", exc_info=True)
+
+    threading.Thread(target=ticks, name="stackchan-sound-ticks", daemon=True).start()
+    return sounds
 
 
 def _turn_sink(behavior, light):
@@ -2000,6 +2130,7 @@ async def _serve_stackchan_channels(
         avatar.camera_bytes_received,
     )
     behavior.event_poll = voice.robot.client.companion().poll_events
+    privacy = _wire_privacy(voice, behavior, avatar, camera_driver, stop_event)
     if link is not None:
         from maipai_body.bodies.stackchan.vision_post import VisionPoster
 
@@ -2008,8 +2139,11 @@ async def _serve_stackchan_channels(
         behavior.vision_poster = VisionPoster(_hub_credentials_reader(link, ""))
         behavior.lux = lambda: getattr(voice.robot.client, "last_lux", None)
         _start_robot_checkin(voice, behavior, link, stop_event)
-    timers = _wire_timers_and_announcements(voice, behavior, stop_event)
-    night = _start_stackchan_night(voice, behavior, link, stop_event, timers)
+    timers = _wire_timers_and_announcements(voice, behavior, stop_event, privacy)
+    sounds = _wire_sounds(voice, behavior, stop_event)
+    night = _start_stackchan_night(
+        voice, behavior, link, stop_event, {**timers, **sounds.handlers()}
+    )
     behavior._rest_renderer._set_brightness = night._device.set_brightness
     behavior._rest_renderer._restore_brightness = night.effective_brightness
     behavior.on_levels_changed = night.set_levels_from_unit
@@ -2065,7 +2199,14 @@ async def _serve_stackchan_channels(
         name="stackchan-estop-recovery",
         daemon=True,
     ).start()
-    voice.robot.robot._driver("camera").cue_sink = light.cue_camera
+    behavior.privacy_light = light
+    sounds.battery_low = lambda: light.facts.battery_low
+
+    def camera_cue(active: bool) -> None:
+        light.cue_camera(active)
+        sounds.on_camera_cue(active)  # the shutter click, queued: a cue never waits on the unit
+
+    voice.robot.robot._driver("camera").cue_sink = camera_cue
     # Self-healing (design note stackchan-self-healing-2026-11-13): what the unit says about its
     # restart guard, the wake engine test answers, and the ring's fault look while it holds.
     voice.heal.on_hold = lambda hold: light.update(fault=hold)
@@ -2073,6 +2214,7 @@ async def _serve_stackchan_channels(
     def _heal_event(kind: str, extra: dict) -> None:
         voice.heal.observe(kind, extra)
         voice.wake_tester.on_event(kind, extra)
+        behavior.privacy.observe(kind, extra)
 
     behavior.on_unit_event = _heal_event
     avatar.unit_idle = lambda: not behavior._active.is_set()
@@ -2096,6 +2238,8 @@ async def _serve_stackchan_channels(
         def _head_blocked() -> str | None:
             if voice.robot.robot.estop_engaged:
                 return "the emergency stop is latched"
+            if behavior.privacy.head_blocked() is not None:
+                return "it is in full quiet and holds its head still"
             # A spoken head command is the owner asking for the move, so charging no longer
             # blocks it (owner decision 2026-11-12: the 2026-10-20 charging rule is lifted).
             return None
@@ -2123,6 +2267,8 @@ async def _serve_stackchan_channels(
             head_commander=head_commander,
             level_head=lambda: _move_head(CENTRE_YAW, CENTRE_PITCH, SPEED),
             device_connected=device_connected,
+            full_quiet_reason=behavior.privacy.muted_reason,
+            on_start=sounds.on_dance_start,
         )
         from maipai_body.bodies.stackchan.music_dance_wiring import (
             MusicFeatureSwitch,
@@ -2133,7 +2279,7 @@ async def _serve_stackchan_channels(
         music_switch = MusicFeatureSwitch(
             voice.robot.client._call,
             auto=lambda: behavior.dance_settings.auto,
-            silenced=lambda: bool(behavior.speech_muted()),
+            silenced=lambda: bool(behavior.speech_muted() or _unit_muted(behavior)),
         )
         wire_music_dance(
             behavior=behavior,
@@ -2149,7 +2295,8 @@ async def _serve_stackchan_channels(
         from maipai_body.bodies.stackchan.repeat import RepeatControl
 
         repeat_control = RepeatControl(
-            missed=behavior.missed_log, muted=lambda: bool(behavior.speech_muted())
+            missed=behavior.missed_log,
+            muted=lambda: bool(behavior.speech_muted() or _unit_muted(behavior)),
         )
         behavior.settings_listeners.append(repeat_control.apply_settings)
 
@@ -2178,7 +2325,9 @@ async def _serve_stackchan_channels(
             gaze_control=behavior.gaze,
             sight_control=SightAnswers(
                 face_age=behavior.face_age,
-                camera_on=lambda: behavior.watch_level() != "off",
+                camera_on=lambda: (
+                    behavior.watch_level() != "off" and not behavior.privacy.vision_off
+                ),
                 light=behavior.light_for_sight,
                 camera_running_s=avatar.camera_running_s,
                 watching=lambda: _detector_ready(vision),
@@ -2188,6 +2337,8 @@ async def _serve_stackchan_channels(
             ),
         )
         bridge.vision_ask = behavior.vision_ask
+        bridge.muted_reason = behavior.privacy.muted_reason
+        bridge.on_error_line = sounds.on_error_line
         behavior.announce = bridge.speak_reaction
         voice.audio_handler = bridge.on_audio
         voice.turn_handler = bridge.listen

@@ -1,0 +1,681 @@
+# Intent: the unit's mute, vision off and full quiet (owner design 2026-11-13, hard mute note). State is three independent bits saved in a NEW NVS namespace maipai_priv (mute, vision, quiet, local_unmute; never the websocket namespace) and restored at boot: the codec is powered down in its constructor before anything can open it. MUTE or QUIET: CoreS3AudioCodec::EnableInput(true) returns at once and Read() hands back paced silence (the audio task reopens the input on its own, so the guard sits inside the codec class), the ES7210 power registers are written by hand and READ BACK (mic_off_verified, with mic_regs), and nothing can arm the wake word or stop word. QUIET also drops all speaker output (Write) and freezes the servos (Servo::update_angle_anim_target and a move under way). VISION OFF: StackChanCamera::Capture and StreamCaptures return false and the avatar socket captures nothing; the minute 'camera' report gains vision_off and vision_skipped. New MCP tools self.privacy.set {mute, vision_off, quiet: -1 leave, 0 off, 1 on} (waits up to 1.5 s for the microphone read-back and answers with the state), self.privacy.get and self.privacy.set_policy {local_unmute}. A 'privacy' event is pushed on every change (source face, home or boot); the minute 'wake_stats' report gains muted, vision_off, quiet and mic_off_verified, so a muted unit can be checked for armed 0, fetches 0 and detections 0.
+# Upstream: new files hal/maipai_privacy.h, hal/maipai_privacy.cpp; hal/board/cores3_audio_codec.{h,cc}, stackchan/motion/servo.cpp, hal/board/stackchan_camera.cc, hal/hal_ws_avatar.cpp, hal/hal_head_touch.cpp, hal/hal_mcp.cpp, hal/board/hal_bridge.{h,cc} (MIT). Applies after 105.
+# Check after a flash: on a flashed unit, serial log: 'MAIPAI-PRIVACY: saved state: mute=0 ...' at boot; after a mute 'microphone off, read back verified (47:ff,48:ff,49:ff,4a:ff,4b:ff,4c:ff,06:07,01:7f,40:c0)'; if it says NOT verified the registers listed show what the chip really reads, and the mask in CoreS3AudioCodec::MaipaiMicOff needs adjusting (the mute itself still holds). Talk loudly for 30 s while muted: the next wake_stats shows muted=1 armed=0 fetches=0 detections=0 vad_speech=0. Reboot while muted: the unit boots muted (the log says saved state mute=1 and the microphone is never opened).
+diff --git a/firmware/main/hal/board/cores3_audio_codec.cc b/firmware/main/hal/board/cores3_audio_codec.cc
+index 2bfc451..35d0dac 100644
+--- a/firmware/main/hal/board/cores3_audio_codec.cc
++++ b/firmware/main/hal/board/cores3_audio_codec.cc
+@@ -1,4 +1,9 @@
+ #include "cores3_audio_codec.h"
++#include "../maipai_privacy.h"
++#include <cstring>
++#include <freertos/FreeRTOS.h>
++#include <freertos/task.h>
++#include <cstdio>
+ 
+ #include <esp_log.h>
+ #include <driver/i2c_master.h>
+@@ -6,6 +11,8 @@
+ 
+ #define TAG "CoreS3AudioCodec"
+ 
++static CoreS3AudioCodec* s_instance = nullptr;
++
+ CoreS3AudioCodec::CoreS3AudioCodec(void* i2c_master_handle, int input_sample_rate, int output_sample_rate,
+     gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din,
+     uint8_t aw88298_addr, uint8_t es7210_addr, bool input_reference) {
+@@ -73,9 +80,74 @@ CoreS3AudioCodec::CoreS3AudioCodec(void* i2c_master_handle, int input_sample_rat
+     input_dev_ = esp_codec_dev_new(&dev_cfg);
+     assert(input_dev_ != NULL);
+ 
++    s_instance = this;
++    if (maipai_mic_blocked()) {
++        // The unit boots muted (or in full quiet): the chip is powered down before anything can open it.
++        MaipaiMicOff(nullptr, 0);
++    }
+     ESP_LOGI(TAG, "CoreS3AudioCodec initialized");
+ }
+ 
++CoreS3AudioCodec* CoreS3AudioCodec::Instance() {
++    return s_instance;
++}
++
++// Patch 106. The ES7210 registers the stop sequence of esp_codec_dev writes (es7210_stop): the four and two
++// microphone power registers to 0xff, the analog register to 0xc0, the clock-off register to 0x7f and the
++// power-down register to 0x07. They are written again by hand here because the chip may never have been
++// started (nothing to stop) or may have been closed by the idle timer; then they are read back. Only the
++// power registers and the power-down register decide "verified": the others are reported so the first
++// run on a unit shows what a powered-down chip really reads.
++bool CoreS3AudioCodec::MaipaiMicOff(char* regs, size_t regs_size) {
++    if (input_enabled_) {
++        EnableInput(false);  // esp_codec_dev_close: the chip's own stop, and input_enabled_ goes false
++    }
++    static const int kPower[] = {0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C};
++    bool ok = in_codec_if_ != nullptr && in_codec_if_->set_reg != nullptr && in_codec_if_->get_reg != nullptr;
++    if (ok) {
++        for (int reg : kPower) {
++            in_codec_if_->set_reg(in_codec_if_, reg, 0xff);
++        }
++        in_codec_if_->set_reg(in_codec_if_, 0x40, 0xc0);
++        in_codec_if_->set_reg(in_codec_if_, 0x01, 0x7f);
++        in_codec_if_->set_reg(in_codec_if_, 0x06, 0x07);
++    }
++    char line[96] = "";
++    size_t used = 0;
++    auto note = [&](int reg, int value) {
++        used += snprintf(line + used, sizeof(line) - used, "%s%02x:%02x", used == 0 ? "" : ",", reg, value & 0xff);
++    };
++    for (int reg : kPower) {
++        int value = 0;
++        if (!ok || in_codec_if_->get_reg(in_codec_if_, reg, &value) != 0) {
++            ok = false;
++            value = -1;
++        } else if ((value & 0xff) != 0xff) {
++            ok = false;
++        }
++        note(reg, value);
++    }
++    int value = 0;
++    if (in_codec_if_ != nullptr && in_codec_if_->get_reg != nullptr && in_codec_if_->get_reg(in_codec_if_, 0x06, &value) == 0) {
++        if ((value & 0x07) != 0x07) {
++            ok = false;
++        }
++        note(0x06, value);
++    } else {
++        ok = false;
++    }
++    if (in_codec_if_ != nullptr && in_codec_if_->get_reg != nullptr && in_codec_if_->get_reg(in_codec_if_, 0x01, &value) == 0) {
++        note(0x01, value);
++    }
++    if (in_codec_if_ != nullptr && in_codec_if_->get_reg != nullptr && in_codec_if_->get_reg(in_codec_if_, 0x40, &value) == 0) {
++        note(0x40, value);
++    }
++    if (regs != nullptr && regs_size > 0) {
++        snprintf(regs, regs_size, "%s", line);
++    }
++    return ok;
++}
++
+ CoreS3AudioCodec::~CoreS3AudioCodec() {
+     ESP_ERROR_CHECK(esp_codec_dev_close(output_dev_));
+     esp_codec_dev_delete(output_dev_);
+@@ -191,6 +263,11 @@ void CoreS3AudioCodec::EnableInput(bool enable) {
+     if (enable == input_enabled_) {
+         return;
+     }
++    if (enable && maipai_mic_blocked()) {
++        // Patch 106: muted or in full quiet. The audio task asks again on every read, so the guard sits
++        // here, below it: the microphone cannot be opened by anything until the unit is unmuted.
++        return;
++    }
+     if (enable) {
+         esp_codec_dev_sample_info_t fs = {
+             .bits_per_sample = 16,
+@@ -232,6 +309,12 @@ void CoreS3AudioCodec::EnableOutput(bool enable) {
+ }
+ 
+ int CoreS3AudioCodec::Read(int16_t* dest, int samples) {
++    if (maipai_mic_blocked()) {
++        // Never touch the device while muted; hand back silence at about the pace a real read has.
++        memset(dest, 0, samples * sizeof(int16_t));
++        vTaskDelay(pdMS_TO_TICKS(20));
++        return samples;
++    }
+     if (input_enabled_) {
+         ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_read(input_dev_, (void*)dest, samples * sizeof(int16_t)));
+     }
+@@ -239,6 +322,9 @@ int CoreS3AudioCodec::Read(int16_t* dest, int samples) {
+ }
+ 
+ int CoreS3AudioCodec::Write(const int16_t* data, int samples) {
++    if (maipai_quiet()) {
++        return samples;  // full quiet: nothing reaches the speaker (patch 106)
++    }
+     if (output_enabled_) {
+         ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t)));
+     }
+diff --git a/firmware/main/hal/board/cores3_audio_codec.h b/firmware/main/hal/board/cores3_audio_codec.h
+index 4b034b4..b6f8734 100644
+--- a/firmware/main/hal/board/cores3_audio_codec.h
++++ b/firmware/main/hal/board/cores3_audio_codec.h
+@@ -32,6 +32,13 @@ public:
+     virtual void SetOutputVolume(int volume) override;
+     virtual void EnableInput(bool enable) override;
+     virtual void EnableOutput(bool enable) override;
++
++    // Patch 106: the one codec of this board, and the hard microphone-off. MaipaiMicOff closes the input,
++    // writes the ES7210's power-down registers by hand (the chip may never have been started, or closed by
++    // the idle timer), reads them back and fills `regs` (if given) with "47:ff,...". True only when the
++    // read-back matches what a powered-down chip shows.
++    static CoreS3AudioCodec* Instance();
++    bool MaipaiMicOff(char* regs, size_t regs_size);
+ };
+ 
+ #endif // _BOX_AUDIO_CODEC_H
+diff --git a/firmware/main/hal/board/hal_bridge.cc b/firmware/main/hal/board/hal_bridge.cc
+index bc85b40..15e88a2 100644
+--- a/firmware/main/hal/board/hal_bridge.cc
++++ b/firmware/main/hal/board/hal_bridge.cc
+@@ -93,6 +93,12 @@ bool display_set_face_palette(const char* palette, bool night)
+     return display->SetFacePalette(palette, night);
+ }
+ 
++void display_apply_privacy_face(int bits, bool animate)
++{
++    auto display = static_cast<DISPLAY_TYPE*>(Board::GetInstance().GetDisplay());
++    display->ApplyPrivacyFace(bits, animate);
++}
++
+ void display_set_idle_motion_enabled(bool enabled)
+ {
+     auto display = static_cast<DISPLAY_TYPE*>(Board::GetInstance().GetDisplay());
+diff --git a/firmware/main/hal/board/hal_bridge.h b/firmware/main/hal/board/hal_bridge.h
+index d2842f3..c217fb0 100644
+--- a/firmware/main/hal/board/hal_bridge.h
++++ b/firmware/main/hal/board/hal_bridge.h
+@@ -62,6 +62,9 @@ void disply_lvgl_unlock();
+ lv_disp_t* display_get_lvgl_display();
+ bool display_set_face_palette(const char* palette, bool night);
+ void display_set_idle_motion_enabled(bool enabled);
++// Patch 108: draws the mute, vision-off and full-quiet looks for these bits (maipai_privacy.h); the caller
++// holds the LVGL lock. animate plays the short change cue (a blink, then the new look).
++void display_apply_privacy_face(int bits, bool animate);
+ // Screen rotation for a unit that is upside down: 180 flips the panel (mirror x and y), 0 puts it back.
+ // A 180 only lasts display_rotation_lease_ms (the host asks again every minute), and the IMU task calls
+ // display_rotation_tick, so a screen can never stay flipped if the host goes away.
+diff --git a/firmware/main/hal/board/stackchan_camera.cc b/firmware/main/hal/board/stackchan_camera.cc
+index 5ae1912..ee6964a 100644
+--- a/firmware/main/hal/board/stackchan_camera.cc
++++ b/firmware/main/hal/board/stackchan_camera.cc
+@@ -16,6 +16,7 @@
+ #include "board.h"
+ #include "display.h"
+ #include "stackchan_camera.h"
++#include "../maipai_privacy.h"
+ #include "esp_jpeg_common.h"
+ #include "jpg/image_to_jpeg.h"
+ #include "jpg/jpeg_to_image.h"
+@@ -394,6 +395,9 @@ void StackChanCamera::SetExplainUrl(const std::string& url, const std::string& t
+ 
+ bool StackChanCamera::Capture()
+ {
++    if (maipai_vision_off()) {
++        return false;  // vision off (patch 106): no picture for a photo question either
++    }
+     if (encoder_thread_.joinable()) {
+         encoder_thread_.join();
+     }
+@@ -853,6 +857,9 @@ bool StackChanCamera::Capture()
+ 
+ bool StackChanCamera::StreamCaptures()
+ {
++    if (maipai_vision_off()) {
++        return false;  // vision off (patch 106): the sensor is not read
++    }
+     if (encoder_thread_.joinable()) {
+         encoder_thread_.join();
+     }
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index 876eac3..ab3a507 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -7,6 +7,7 @@
+ #include "drivers/Si12T/Si12T.h"
+ #include "board/hal_bridge.h"
+ #include "device_events.h"
++#include "maipai_privacy.h"
+ #include <cstdio>
+ #include <esp_heap_caps.h>
+ #include <esp_system.h>
+@@ -360,11 +361,12 @@ static void _head_touch_update_task(void* param)
+             char cam[192];
+             snprintf(cam, sizeof(cam),
+                      "\"starts\":%u,\"captured\":%u,\"sent\":%u,\"failed\":%u,\"enc_failed\":%u,"
+-                     "\"binary\":%u,\"last_type\":%u,\"paused\":%u",
++                     "\"binary\":%u,\"last_type\":%u,\"paused\":%u,\"vision_off\":%d,\"vision_skipped\":%u",
+                      static_cast<unsigned>(g_cam_starts.exchange(0)), static_cast<unsigned>(g_cam_captured.exchange(0)),
+                      static_cast<unsigned>(g_cam_sent.exchange(0)), static_cast<unsigned>(g_cam_failed.exchange(0)),
+                      static_cast<unsigned>(g_cam_enc_failed.exchange(0)), static_cast<unsigned>(g_avatar_binary.exchange(0)),
+-                     static_cast<unsigned>(g_avatar_last_type.load()), static_cast<unsigned>(g_cam_paused.exchange(0)));
++                     static_cast<unsigned>(g_avatar_last_type.load()), static_cast<unsigned>(g_cam_paused.exchange(0)), maipai_vision_off() ? 1 : 0,
++                     maipai_privacy_take_cam_skips());
+             device_events_push_diag("camera", cam);
+             // Microphone level while the robot speaks (afe_wake_word.cc), to judge barge-in.
+             char barge[192];
+@@ -386,7 +388,7 @@ static void _head_touch_update_task(void* param)
+             // 0 unknown, 1 starting, 2 wifi configuring, 3 idle, 4 connecting, 5 listening,
+             // 6 speaking, 7 upgrading, ...), so a unit that cannot be woken can be told apart from
+             // one that is.
+-            char wake[256];
++            char wake[352];
+             int used_wake = 0;
+             device_events_wake_stats(wake, sizeof(wake) - 64);
+             used_wake = static_cast<int>(strlen(wake));
+@@ -395,6 +397,12 @@ static void _head_touch_update_task(void* param)
+             maipai_heal_status(&heal_n, &heal_hold);
+             snprintf(wake + used_wake, sizeof(wake) - used_wake, ",\"state\":%d,\"heal_n\":%d,\"heal_hold\":%d",
+                      static_cast<int>(Application::GetInstance().GetDeviceState()), heal_n, heal_hold ? 1 : 0);
++            // Patch 106: the privacy state, so the host can read it back every minute (a muted unit shows
++            // armed 0, fetches 0 and detections 0 here; anything else with muted 1 is a leak).
++            used_wake = static_cast<int>(strlen(wake));
++            char privacy[96];
++            maipai_privacy_report_short(privacy, sizeof(privacy));
++            snprintf(wake + used_wake, sizeof(wake) - used_wake, ",%s", privacy);
+             device_events_push_diag("wake_stats", wake);
+ 
+             // Does the touch reach the unit while it speaks? Polls and failures of the controller,
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index 1dad942..e5544ea 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -15,9 +15,12 @@
+ #include <esp_wifi.h>
+ #include <ssid_manager.h>
+ #include <deque>
++#include <freertos/FreeRTOS.h>
++#include <freertos/task.h>
+ #include <mutex>
+ #include "board/hal_bridge.h"
+ #include "device_events.h"
++#include "maipai_privacy.h"
+ #include "maipai_timers.h"
+ #include "maipai_timers_core.h"
+ #include <string>
+@@ -371,6 +374,59 @@ void Hal::xiaozhi_mcp_init()
+                            return true;
+                        });
+ 
++    // Patch 106: mute, vision off and full quiet. Each property is -1 (leave it), 0 (off) or 1 (on). The
++    // answer is the unit's own state after the change, read back (including the microphone chip's
++    // registers); the host shows "muted" only when this says so.
++    auto privacy_state = []() -> std::string {
++        char report[300];
++        maipai_privacy_report(report, sizeof(report));
++        return std::string("{") + report + "}";
++    };
++    mclog::tagInfo(_tag, "add privacy tools");
++    mcp_server.AddTool("self.privacy.set",
++                       "Mute (no listening, microphone chip off), vision off (camera not read) or full quiet (no "
++                       "movement, no sound, no listening). Each is -1 to leave as it is, 0 for off, 1 for on. "
++                       "Returns the state read back from the unit.",
++                       PropertyList({Property("mute", kPropertyTypeInteger, -1, -1, 1),
++                                     Property("vision_off", kPropertyTypeInteger, -1, -1, 1),
++                                     Property("quiet", kPropertyTypeInteger, -1, -1, 1)}),
++                       [this, privacy_state](const PropertyList& properties) -> ReturnValue {
++                           int mask = 0, value = 0;
++                           const struct {
++                               const char* name;
++                               int bit;
++                           } items[] = {{"mute", kPrivMute}, {"vision_off", kPrivVision}, {"quiet", kPrivQuiet}};
++                           for (const auto& item : items) {
++                               const int v = properties[item.name].value<int>();
++                               if (v >= 0) {
++                                   mask |= item.bit;
++                                   value |= v ? item.bit : 0;
++                               }
++                           }
++                           int bits = maipai_privacy_bits();
++                           maipai_privacy_set(mask, value, "home", &bits);
++                           {
++                               LvglLockGuard lock;
++                               hal_bridge::display_apply_privacy_face(bits, true);
++                           }
++                           // The microphone work runs on the main task: wait (at most 1.5 s) for the read-back.
++                           for (int i = 0; i < 30 && maipai_mic_blocked() && !maipai_privacy_mic_verified(); i++) {
++                               vTaskDelay(pdMS_TO_TICKS(50));
++                           }
++                           return privacy_state();
++                       });
++    mcp_server.AddTool("self.privacy.get", "Returns the mute, vision off and full quiet state of the unit.",
++                       std::vector<Property>{},
++                       [privacy_state](const PropertyList& properties) -> ReturnValue { return privacy_state(); });
++    mcp_server.AddTool("self.privacy.set_policy",
++                       "Whether the unit's own face may turn listening back on (unmute or leave full quiet). When "
++                       "off, only the hub can.",
++                       PropertyList({Property("local_unmute", kPropertyTypeBoolean, true)}),
++                       [](const PropertyList& properties) -> ReturnValue {
++                           maipai_privacy_set_local_unmute(properties["local_unmute"].value<bool>());
++                           return true;
++                       });
++
+     mclog::tagInfo(_tag, "add screen.get_ambient_light tool");
+     mcp_server.AddTool("self.screen.get_ambient_light", "Returns the room brightness in lux from the light sensor.",
+                        std::vector<Property>{}, [this](const PropertyList& properties) -> ReturnValue {
+diff --git a/firmware/main/hal/hal_ws_avatar.cpp b/firmware/main/hal/hal_ws_avatar.cpp
+index affc62c..e7a05e5 100644
+--- a/firmware/main/hal/hal_ws_avatar.cpp
++++ b/firmware/main/hal/hal_ws_avatar.cpp
+@@ -6,6 +6,7 @@
+ #include "hal.h"
+ #include <stackchan/stackchan.h>
+ #include "board/hal_bridge.h"
++#include "maipai_privacy.h"
+ #include <mooncake.h>
+ #include <mooncake_log.h>
+ #include <board.h>
+@@ -215,6 +216,11 @@ public:
+         }
+ 
+         if (_is_streaming) {
++            // Vision off (patch 106): no frame is captured or sent; the minute report counts the skips.
++            if (maipai_vision_off()) {
++                maipai_privacy_note_cam_skip();
++                return;
++            }
+             // Camera and voice together are untested hardware territory (the unit froze during a
+             // turn while streaming): no frames while it listens, speaks or connects.
+             if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
+diff --git a/firmware/main/hal/maipai_privacy.cpp b/firmware/main/hal/maipai_privacy.cpp
+new file mode 100644
+index 0000000..ded53b6
+--- /dev/null
++++ b/firmware/main/hal/maipai_privacy.cpp
+@@ -0,0 +1,225 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * Mute, vision off and full quiet (patch 106). See maipai_privacy.h.
++ */
++#include "maipai_privacy.h"
++#include "device_events.h"
++#include "board/cores3_audio_codec.h"
++#include "board/hal_bridge.h"
++#include <application.h>
++#include <settings.h>
++#include <esp_log.h>
++#include <atomic>
++#include <cstdio>
++#include <cstring>
++#include <mutex>
++#include <string>
++
++#define TAG "MAIPAI-PRIVACY"
++
++namespace {
++std::atomic<int> s_bits{0};
++std::atomic<bool> s_local_unmute{true};
++std::atomic<bool> s_mic_off_verified{false};
++std::atomic<unsigned> s_cam_skips{0};
++std::once_flag s_loaded;
++std::mutex s_mutex;
++char s_source[8]  = "boot";
++char s_regs[64]   = "";
++const char* kNamespace = "maipai_priv";
++
++void load_once()
++{
++    std::call_once(s_loaded, []() {
++        Settings settings(kNamespace, false);
++        int bits = 0;
++        if (settings.GetInt("mute", 0) != 0) {
++            bits |= kPrivMute;
++        }
++        if (settings.GetInt("vision", 0) != 0) {
++            bits |= kPrivVision;
++        }
++        if (settings.GetInt("quiet", 0) != 0) {
++            bits |= kPrivQuiet;
++        }
++        s_bits.store(bits);
++        s_local_unmute.store(settings.GetInt("local_unmute", 1) != 0);
++        ESP_LOGI(TAG, "saved state: mute=%d vision_off=%d quiet=%d local_unmute=%d", (bits & kPrivMute) ? 1 : 0,
++                 (bits & kPrivVision) ? 1 : 0, (bits & kPrivQuiet) ? 1 : 0, s_local_unmute.load() ? 1 : 0);
++    });
++}
++
++void save(int bits)
++{
++    Settings settings(kNamespace, true);
++    settings.SetInt("mute", (bits & kPrivMute) ? 1 : 0);
++    settings.SetInt("vision", (bits & kPrivVision) ? 1 : 0);
++    settings.SetInt("quiet", (bits & kPrivQuiet) ? 1 : 0);
++}
++
++CoreS3AudioCodec* codec()
++{
++    return CoreS3AudioCodec::Instance();
++}
++
++void announce(const char* source)
++{
++    char extra[256];
++    maipai_privacy_report(extra, sizeof(extra));
++    // A real event (not a diagnostic): it must reach the host at once and is never rate limited.
++    char with_source[300];
++    snprintf(with_source, sizeof(with_source), "%s,\"source\":\"%s\"", extra, source);
++    device_events_push("privacy", with_source);
++    ESP_LOGI(TAG, "state: %s (source %s)", extra, source);
++}
++
++// Runs on the main task: the saving, then the microphone, then the report.
++void apply(int bits, int old_bits, std::string source)
++{
++    save(bits);
++    const bool mic_off     = (bits & (kPrivMute | kPrivQuiet)) != 0;
++    const bool was_mic_off = (old_bits & (kPrivMute | kPrivQuiet)) != 0;
++    auto& app              = Application::GetInstance();
++    auto& audio            = app.GetAudioService();
++    if (mic_off) {
++        // Stop what is listening, then the wake word, the stop word and voice processing, then the chip.
++        const auto state = app.GetDeviceState();
++        if (state == kDeviceStateListening || state == kDeviceStateConnecting) {
++            app.StopListening();
++        }
++        audio.SetStopWordArmed(false);
++        audio.EnableVoiceProcessing(false);
++        audio.EnableWakeWordDetection(false);
++        if (auto* c = codec()) {
++            const bool verified = c->MaipaiMicOff(s_regs, sizeof(s_regs));
++            s_mic_off_verified.store(verified);
++            ESP_LOGI(TAG, "microphone off, read back %s (%s)", verified ? "verified" : "NOT verified", s_regs);
++        }
++    } else if (was_mic_off) {
++        s_mic_off_verified.store(false);
++        s_regs[0] = '\0';
++        // The audio task opens the microphone again on its own; the wake word is armed for an idle unit.
++        const auto state = app.GetDeviceState();
++        if (state == kDeviceStateIdle || state == kDeviceStateUnknown) {
++            audio.EnableWakeWordDetection(true);
++        }
++    }
++    if ((bits & kPrivQuiet) && !(old_bits & kPrivQuiet)) {
++        // Quiet starts: stop what is being said (the speaker is already dropping what is left).
++        if (app.GetDeviceState() == kDeviceStateSpeaking) {
++            app.AbortSpeaking(kAbortReasonNone);
++        }
++    }
++    announce(source.c_str());
++}
++}  // namespace
++
++int maipai_privacy_bits()
++{
++    load_once();
++    return s_bits.load();
++}
++bool maipai_muted()
++{
++    return (maipai_privacy_bits() & kPrivMute) != 0;
++}
++bool maipai_vision_off()
++{
++    return (maipai_privacy_bits() & kPrivVision) != 0;
++}
++bool maipai_quiet()
++{
++    return (maipai_privacy_bits() & kPrivQuiet) != 0;
++}
++bool maipai_mic_blocked()
++{
++    return (maipai_privacy_bits() & (kPrivMute | kPrivQuiet)) != 0;
++}
++
++bool maipai_privacy_set(int mask, int value, const char* source, int* bits_out)
++{
++    load_once();
++    std::string src = source != nullptr ? source : "home";
++    int old_bits;
++    int bits;
++    {
++        std::lock_guard<std::mutex> lock(s_mutex);
++        old_bits = s_bits.load();
++        bits     = (old_bits & ~mask) | (value & mask);
++        if (bits_out != nullptr) {
++            *bits_out = old_bits;
++        }
++        if (bits == old_bits) {
++            return true;
++        }
++        // The unit's own face may only turn listening back on while the household allows it.
++        const bool turns_listening_on = (old_bits & (kPrivMute | kPrivQuiet)) & ~bits;
++        if (src == "face" && turns_listening_on && !s_local_unmute.load()) {
++            ESP_LOGW(TAG, "face unmute refused: only the hub may unmute (local_unmute is off)");
++            device_events_push("privacy_refused", "\"why\":\"local_unmute_off\"");
++            return false;
++        }
++        s_bits.store(bits);  // the guards see it at once, before the main task does anything
++        snprintf(s_source, sizeof(s_source), "%.7s", src.c_str());
++    }
++    if (bits_out != nullptr) {
++        *bits_out = bits;
++    }
++    Application::GetInstance().Schedule([bits, old_bits, src]() { apply(bits, old_bits, src); });
++    return true;
++}
++
++void maipai_privacy_set_local_unmute(bool allowed)
++{
++    load_once();
++    if (s_local_unmute.exchange(allowed) != allowed) {
++        Application::GetInstance().Schedule([allowed]() {
++            Settings settings(kNamespace, true);
++            settings.SetInt("local_unmute", allowed ? 1 : 0);
++        });
++    }
++}
++
++void maipai_privacy_boot()
++{
++    const int bits = maipai_privacy_bits();
++    if (bits == 0) {
++        return;
++    }
++    snprintf(s_source, sizeof(s_source), "boot");
++    Application::GetInstance().Schedule([bits]() { apply(bits, 0, "boot"); });
++}
++
++void maipai_privacy_report(char* out, size_t size)
++{
++    const int bits = maipai_privacy_bits();
++    snprintf(out, size,
++             "\"muted\":%d,\"vision_off\":%d,\"quiet\":%d,\"mic_off\":%d,\"mic_off_verified\":%d,"
++             "\"mute_source\":\"%s\",\"local_unmute\":%d,\"mic_regs\":\"%s\"",
++             (bits & kPrivMute) ? 1 : 0, (bits & kPrivVision) ? 1 : 0, (bits & kPrivQuiet) ? 1 : 0,
++             (bits & (kPrivMute | kPrivQuiet)) ? 1 : 0, s_mic_off_verified.load() ? 1 : 0, s_source,
++             s_local_unmute.load() ? 1 : 0, s_regs);
++}
++
++void maipai_privacy_report_short(char* out, size_t size)
++{
++    const int bits = maipai_privacy_bits();
++    snprintf(out, size, "\"muted\":%d,\"vision_off\":%d,\"quiet\":%d,\"mic_off_verified\":%d",
++             (bits & kPrivMute) ? 1 : 0, (bits & kPrivVision) ? 1 : 0, (bits & kPrivQuiet) ? 1 : 0,
++             s_mic_off_verified.load() ? 1 : 0);
++}
++
++bool maipai_privacy_mic_verified()
++{
++    return s_mic_off_verified.load();
++}
++
++void maipai_privacy_note_cam_skip()
++{
++    s_cam_skips++;
++}
++unsigned maipai_privacy_take_cam_skips()
++{
++    return s_cam_skips.exchange(0);
++}
+diff --git a/firmware/main/hal/maipai_privacy.h b/firmware/main/hal/maipai_privacy.h
+new file mode 100644
+index 0000000..9c721b0
+--- /dev/null
++++ b/firmware/main/hal/maipai_privacy.h
+@@ -0,0 +1,43 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * The unit's three privacy states (patch 106), independent and combinable:
++ *   mute         no listening: the wake word, the stop word, voice processing and the microphone chip are off,
++ *                and nothing can turn them on until the unit is unmuted. The unit stays alive (face, link, charge).
++ *   vision off   the camera is not read: no frame is captured, none is sent.
++ *   full quiet   no movement (the servos hold), no sound out (the speaker is silent) and no listening
++ *                (the microphone is off exactly as for mute). Vision keeps whatever it was.
++ * The state is saved in the unit's own NVS namespace "maipai_priv" and restored at boot. The unit is the
++ * authority: the host reads it back and never assumes it.
++ */
++#pragma once
++#include <cstddef>
++
++enum MaipaiPrivacyBit { kPrivMute = 1, kPrivVision = 2, kPrivQuiet = 4 };
++
++// Read from every task; the first call reads the saved state.
++int maipai_privacy_bits();
++bool maipai_muted();
++bool maipai_vision_off();
++bool maipai_quiet();
++// True while nothing may open, feed or read the microphone (mute or full quiet).
++bool maipai_mic_blocked();
++
++// Changes the bits in `mask` to those in `value`. `source` is "face", "home" or "boot". Returns false when
++// the change is refused (the face may not unmute or leave quiet while local_unmute is off). `bits_out`, if
++// given, gets the state after the call. The saving and the microphone work run on the main task; the face
++// is the caller's to redraw (hal_bridge::display_apply_privacy_face), because LVGL calls arrive locked.
++bool maipai_privacy_set(int mask, int value, const char* source, int* bits_out);
++// Whether the unit's own face may unmute (default true); saved.
++void maipai_privacy_set_local_unmute(bool allowed);
++// Once the unit is up (the display ready): makes the saved state true (microphone off and read back).
++void maipai_privacy_boot();
++// JSON members without braces: muted, vision_off, quiet, mic_off, mic_off_verified, mute_source, local_unmute, mic_regs.
++void maipai_privacy_report(char* out, size_t size);
++// The short form for the minute report: muted, vision_off, quiet, mic_off_verified.
++void maipai_privacy_report_short(char* out, size_t size);
++// True once the microphone chip has been powered down and the read-back matched.
++bool maipai_privacy_mic_verified();
++// Counts a camera capture skipped because vision is off (hal_ws_avatar.cpp reports it).
++void maipai_privacy_note_cam_skip();
++unsigned maipai_privacy_take_cam_skips();
+diff --git a/firmware/main/stackchan/motion/servo.cpp b/firmware/main/stackchan/motion/servo.cpp
+index cfbefe0..dd57dff 100644
+--- a/firmware/main/stackchan/motion/servo.cpp
++++ b/firmware/main/stackchan/motion/servo.cpp
+@@ -5,6 +5,7 @@
+  */
+ #include "servo.h"
+ #include <hal/hal.h>
++#include <hal/maipai_privacy.h>
+ 
+ using namespace uitk;
+ 
+@@ -43,6 +44,11 @@ void Servo::update()
+     }
+     _last_tick = GetHAL().millis();
+ 
++    // Full quiet (patch 106): a move already under way stops where the head is.
++    if (maipai_quiet() && !_angle_anim.done()) {
++        stop_motion_at_angle(getCurrentAngle());
++    }
++
+     // Apply animation
+     if (!_angle_anim.done()) {
+         _angle_anim.updateWithDelta(0.02f);  // Fixed delta time for consistency
+@@ -107,6 +113,9 @@ void Servo::apply_default_spring_options()
+ 
+ void Servo::update_angle_anim_target(int angle)
+ {
++    if (maipai_quiet()) {
++        return;  // full quiet (patch 106): the head holds where it is, whoever asks it to move
++    }
+     angle = uitk::clamp(angle, _angle_limit.x, _angle_limit.y);
+ 
+     if (_auto_angle_sync_enabled) {

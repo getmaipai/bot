@@ -18,7 +18,7 @@ The robot ships with the maker's own software, which sends voice and pictures to
 
 ## Wake it up
 
-Say **"Hi, StackChan"**, or tap its face. The ring turns blue while it listens. Talk normally and pause when you are done.
+Say **"Hi, StackChan"**, or tap its face. Its eyes open a little wider, its mouth closes and its head lifts, and the ring turns blue while it listens. Talk normally and pause when you are done.
 
 You can ask it anything you would ask Home: questions, timers, the weather, reminders, jokes. It answers aloud and keeps the answer short.
 
@@ -37,11 +37,43 @@ The ring is dark most of the time. It lights only when it needs you or when it i
 | Amber ring, one short pulse every 10 seconds | Look at the screen: Home is not reachable, something is wrong, or the battery is low (not shown at night) |
 | No ring | Everything else: waiting, thinking, speaking, charging, sleeping, night |
 
-Thinking and speaking show on the face and in the voice, never on the ring. While it charges, the small red light on the back is on and the screen shows the battery.
+Listening, thinking and speaking show on the face and in the voice, never on the ring (blue is only for your turn to talk). While it charges, the small red light on the back is on and the screen shows the battery.
 
 The ring is never red. A calm face is the normal look. A smile or a wink shows when it is happy. A surprised face shows when it is shaken or lifted. A small heart shows only when you pet its head, say something kind to it, or show it something sweet.
 
-<!-- picture: the faces side by side: calm, happy, surprised, wink, sleepy, heart -->
+<!-- picture: the faces side by side: calm, listening, thinking, happy, surprised, wink, sleepy, heart -->
+
+| The face | It means |
+|---|---|
+| Wider eyes, closed mouth | It heard you and is listening |
+| Eyes looking up and to one side, a small mouth | It is thinking about your question |
+| Calm face, moving mouth | It is answering |
+| Grey-blue face with a small strip in the top corner | Home is not reachable. The strip says "Offline". It still reacts to touch, and it tries to reconnect on its own |
+| The same strip with a key and "Waiting for Home to approve me" | An admin needs to approve this robot in Home. The ring pulses cyan until they do |
+| Black screen with a Wi-Fi symbol and words | It is starting up: "Connecting to Wi-Fi...", "Wi-Fi setup needed" (with the name of its setup hotspot and the address to open), "Connecting to Home..." or the approval message above |
+
+When Home comes back the colours return and the strip goes away by itself.
+
+## What the sounds mean
+
+The robot makes a few short sounds. They are all one family: notes that go up mean good news, and notes that go down mean bad news. They follow the volume you set, and they stay quiet at night, except the ones that keep you safe.
+
+| You hear | It means | At night |
+|---|---|---|
+| Two notes going up, quick | The charger went in | Quiet |
+| Three notes going up | The battery is full | Quiet |
+| One note going down | The charger came out | Quiet |
+| Two notes going down | Home has been out of reach for 10 seconds | Quiet |
+| Two bright notes going up, then again each minute | Setup is waiting for you (first use) | Plays |
+| A soft click | A picture is being taken | Plays |
+| Three slow notes going down | You are shutting it down by hand | Plays |
+| A falling tone, then "My battery is low. Please plug me in." | The battery is under 15 percent | The tone only |
+
+When Home is away and you say its name, the robot answers by itself with a short phrase, such as "I can't reach my home base right now." It never says the same phrase twice in a row, and it speaks at most once every 10 seconds. At night it only makes a short tone.
+
+An admin can turn the event sounds off, or allow them at night, in Settings, Home, Devices. The picture click and the camera light cannot be turned off. The **Mute** setting silences every sound, the click too. **Settings, Lights and Sounds, Test the sounds** plays each one in turn.
+
+**Credit.** The phrases the robot says when Home is away are made with the voice engine in your Home (Chatterbox Turbo by Resemble AI, Apache-2.0). They are made by a computer. They are not a recording of a person. The lines the robot's own computer keeps for when Home is down use Pocket TTS by Kyutai: "Voice generated with pocket-tts-english, licensed under CC-BY-4.0."
 
 ## Touch
 
@@ -49,6 +81,7 @@ The ring is never red. A calm face is the normal look. A smile or a wink shows w
 - **Pet its head** and it reacts. The heart goes away after a few seconds.
 - **Shake it or lift it** and it makes a surprised face and says something short.
 - **Swipe up from the face** for quick settings: volume and brightness sliders.
+- **Hold the power button** and the ring goes dark and its eyes shut a moment before it switches off. Let go early and it wakes back up.
 
 <!-- picture: the quick settings sliders on the screen -->
 

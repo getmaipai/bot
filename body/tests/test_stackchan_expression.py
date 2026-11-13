@@ -29,7 +29,7 @@ def test_stackchan_expression_maps_account_for_all_cues_and_primitives():
     assert set(PRIMITIVE_BODY_MAP) | set(UNSUPPORTED_PRIMITIVES) == set(PRIMITIVE_NAMES)
     assert all(reason for reason in UNSUPPORTED_PRIMITIVES.values())
     assert all(
-        target.expression in {"neutral", "happy", "angry", "sad", "doubt", "sleepy"}
+        target.expression in {"neutral", "listening", "thinking"}
         for target in CUE_FACE_MAP.values()
     )
     assert set(REPLY_MOOD_FACE_MAP.values()) <= {
@@ -133,8 +133,9 @@ def test_thinking_and_attention_faces_never_read_as_doubt_or_sadness():
         REPLY_MOOD_FACE_MAP,
     )
 
-    assert CUE_FACE_MAP["thinking"].expression == "neutral"
+    assert CUE_FACE_MAP["thinking"].expression == "thinking"  # its own face, patch 110
+    assert CUE_FACE_MAP["listening"].expression == "listening"
     for name in ("listen", "glance", "tilt", "attend", "settle"):
-        assert PRIMITIVE_BODY_MAP[name].face in {"neutral", "happy"}, name
+        assert PRIMITIVE_BODY_MAP[name].face in {"neutral", "happy", None}, name
     assert REPLY_MOOD_FACE_MAP["doubt"] == "neutral"
     assert REPLY_MOOD_FACE_MAP["wry"] == "neutral"

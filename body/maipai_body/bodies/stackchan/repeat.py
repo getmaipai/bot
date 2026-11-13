@@ -279,7 +279,7 @@ class RepeatControl:
     def record(
         self, session_id: str, text: str, frames: list[bytes], speaker: str | None = None
     ) -> None:
-        if self.enabled:
+        if self.enabled and not self.muted():
             self.store.add(session_id, text, frames, speaker)
 
     def answer(

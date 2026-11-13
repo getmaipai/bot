@@ -225,9 +225,9 @@ NORMAL = Timing()
 # for music_test with {"fast": true}: the same chain in about 40 s
 FAST = Timing(detect_s=2.0, nod_to_build_s=6.0, end_silence_s=4.0, rearm_quiet_s=4.0)
 
-MIN_GAP_S = 600.0  # after the end of a dance (and so before the next nod)
+MIN_GAP_S = 120.0  # after the end of a dance (and so before the next nod)
 NOD_GAP_S = 120.0  # between two nods
-MAX_PER_HOUR = 3
+MAX_PER_HOUR = 6
 MAX_PER_DAY = 10
 FULL_BATTERY = 40  # on battery: a full dance from this percent
 NOD_BATTERY = 20  # on battery: only the nod from this percent, nothing under it
@@ -474,6 +474,8 @@ class MusicDance:
         elif self.state == "show":
             if not self._hooks.dance_running():
                 self._dance_over(now)
+            elif (sit := self._hooks.situation()).muted or sit.full_quiet == "muted":
+                self._hooks.stop_dance("muted")
             elif self._music_gone(now):
                 self._hooks.stop_dance("music ended")
         elif self.state == "spent":
@@ -484,8 +486,10 @@ class MusicDance:
     def _gate(self, now: float, *, for_nod: bool) -> tuple[str | None, bool]:
         """(reason it may not, True when only the nod is allowed)."""
         sit = self._hooks.situation()
+        if sit.muted or sit.full_quiet == "muted":
+            return "muted", False
         if sit.full_quiet:
-            return f"full quiet or muted ({sit.full_quiet})", False
+            return "full quiet", False
         if sit.estop:
             return "the emergency stop is latched", False
         if not sit.connected or sit.offline:
@@ -509,7 +513,7 @@ class MusicDance:
             nod_only = sit.battery_percent < FULL_BATTERY
         if for_nod and not self.testing:
             if now - self._last_dance_end < MIN_GAP_S:
-                return "a dance ended less than 10 minutes ago", False
+                return "a dance ended less than 2 minutes ago", False
             if now - self._last_nod < NOD_GAP_S:
                 return "a nod was less than 2 minutes ago", False
             reason = self._caps_reason(now)
@@ -582,8 +586,10 @@ class MusicDance:
             why = "a picture"
         elif not sit.connected or sit.offline:
             why = "offline"
+        elif sit.muted or sit.full_quiet == "muted":
+            why = "muted"
         elif sit.full_quiet:
-            why = "quiet"
+            why = "full quiet"
         elif sit.night:
             why = "night"
         elif not sit.awake:

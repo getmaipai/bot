@@ -9,18 +9,11 @@ from maipai_body.expression.rest import RestOutput
 from maipai_body.hal.seam import BodyProfile, HeadActuator, HeadPose
 
 from .avatar.server import control_avatar, sleeping_avatar
+from .expression_map import version_at_least as _version_at_least
 from .renderer import pitch_for
 
 LOG = logging.getLogger(__name__)
 SLEEPING_FACE_MIN_FIRMWARE = (0, 2, 54)
-
-
-def _version_at_least(value, minimum):
-    try:
-        parts = tuple(int(part) for part in str(value).split(".")[:3])
-        return len(parts) == 3 and parts >= minimum
-    except (TypeError, ValueError):
-        return False
 
 
 RETRY_S = 5.0  # a stage whose face could not be sent is tried again this often

@@ -380,6 +380,16 @@ def test_nothing_to_repeat_says_so(harness):
     assert FakeTurn.streams == [] and RecordingPlayback.replays == []
 
 
+def test_hard_mute_keeps_repeat_silent_and_does_not_record(harness):
+    h = harness(muted=True)
+    h.control.record("s1", "private reply", [b"private audio"])
+    h.say("say that again")
+    assert FakeTurn.streams == []
+    assert RecordingPlayback.replays == []
+    assert FakeTts.sentences == []
+    assert h.control.store.last("s1") is None
+
+
 def test_a_longer_ask_goes_to_the_hub_unchanged(harness):
     h = harness()
     h.say("hello")

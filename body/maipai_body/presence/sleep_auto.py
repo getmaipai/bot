@@ -99,6 +99,13 @@ class QuietHours:
         if end is not None:
             self._to = end
 
+    def minutes(self) -> tuple[int, int]:
+        """The window as minutes of the local day (from, to), or (-1, -1) when it is empty.
+        The StackChan keeps quiet hours on its own clock from these (sounds, patch 116)."""
+        if self._from == self._to:
+            return (-1, -1)
+        return (self._from.hour * 60 + self._from.minute, self._to.hour * 60 + self._to.minute)
+
     def active(self) -> bool:
         if self._from == self._to:
             return False

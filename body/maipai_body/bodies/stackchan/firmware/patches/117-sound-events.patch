@@ -1,0 +1,94 @@
+# Intent: the firmware plays the right earcon itself for the events only it sees (owner approved 2026-11-13; plan rows 2, 30 to 33, 35). Charger: the 1 s power poll feeds the AXP2101 facts (external power, charging) to the core, which confirms a change over three polls: plug_in, unplug, and charged when charging stops with the cable still in; none at boot, none at night, none when muted or switched off. Link: the reconnect task tells the sound module when the socket drops (down), opens (up) and has been down 10 s (offline, the same moment the Offline words show): the offline earcon plays once per outage, and a return after an outage that sounded plays the success chime. First setup: entering the Wi-Fi setup state plays needs_you at once, at night too (the unit cannot work without a person), and once a minute while it waits; a refused state (below, patch 118) plays it once by day. All of it is queued to the main task (the power poll runs on the esp_timer task, the link on the reconnect task) and goes through the same gate as the host's play_sound. The goodbye cue is a function the power key work calls: the PMIC cuts the power on the hold with no warning the firmware can use, so no call exists yet.
+# Upstream: m5stack/StackChan firmware/main/hal/board/stackchan.cc (MIT); 78/xiaozhi-esp32 main/application.cc and main/protocols/websocket_protocol.cc (MIT). Applies after 116.
+# Check after a flash: plug the charger in on a day: two rising notes about 3 s later; unplug: one falling note; leave it until the battery is full: three rising notes once; stop the hub for 15 s: two falling notes at the 10 s mark and the Offline words, then on return the success chime; erase the Wi-Fi: needs_you at once and again each minute; none of these at night (except the setup cue).
+diff --git a/firmware/main/hal/board/stackchan.cc b/firmware/main/hal/board/stackchan.cc
+--- a/firmware/main/hal/board/stackchan.cc
++++ b/firmware/main/hal/board/stackchan.cc
+@@ -21,6 +21,8 @@
+ #include "stackchan_camera.h"
+ #include "hal_bridge.h"
+ #include <hal/device_events.h>
++#include <hal/maipai_sounds.h>
++#include <hal/maipai_sounds.h>
+ 
+ static esp_lcd_panel_handle_t s_panel = nullptr;  // for hal_bridge::display_set_rotation
+ static bool s_rotated                 = false;
+@@ -390,6 +392,8 @@
+         last_power_state_check_ms_ = now_ms;
+ 
+         UpdatePowerSaveEnabled(pmic_->IsExternalPowerConnected(), pmic_->IsDischarging());
++        // The charger cues (plug in, full, unplug; patch 117): one confirmed change per three agreeing polls.
++        maipai_sounds_power_poll(pmic_->IsExternalPowerConnected(), pmic_->IsCharging());
+     }
+ 
+     // Holding the power key. At about 1 s the PMIC flags a long press; at about 4 s it cuts power with no warning.
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -14,6 +14,7 @@
+ #include <cstdio>
+ #include <hal/device_events.h>
+ #include <hal/maipai_timers.h>
++#include <hal/maipai_sounds.h>
+ #include <hal/maipai_privacy.h>
+ #include <hal/board/hal_bridge.h>
+ #include <esp_timer.h>
+@@ -1138,6 +1139,7 @@
+         case kDeviceStateWifiConfiguring:
+             audio_service_.EnableVoiceProcessing(false);
+             audio_service_.EnableWakeWordDetection(false);
++            maipai_sounds_setup_needed();  // first setup: the needs_you cue, at night too (patch 117)
+             break;
+         default:
+             // Do nothing
+diff --git a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+--- a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
++++ b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+@@ -14,6 +14,7 @@
+ #include "assets/lang_config.h"
+ #include <hal/device_events.h>
+ #include <hal/board/hal_bridge.h>
++#include <hal/maipai_sounds.h>
+ #include <esp_timer.h>
+ #include <esp_wifi.h>
+ #include <cstdio>
+@@ -334,6 +335,7 @@
+     unsigned attempt = 0;
+     int64_t down_since_us = esp_timer_get_time();
+     bool offline_shown = false;
++    maipai_sounds_link_event(MAIPAI_LINK_DOWN);  // booting: not connected until the first socket opens
+     bool connecting_shown = false;
+     bool refused_shown = false;
+     constexpr int64_t kConnectingStripAfterUs = 3LL * 1000 * 1000;  // reconnects are constant: a blip shows nothing
+@@ -349,6 +351,7 @@
+             const unsigned took_ms = static_cast<unsigned>((esp_timer_get_time() - started_us) / 1000);
+             attempt = 0;
+             hal_bridge::set_hub_link(true);
++            maipai_sounds_link_event(MAIPAI_LINK_UP);  // after an outage over 10 s: the success chime
+             if (offline_shown || connecting_shown || refused_shown) {
+                 offline_shown    = false;
+                 connecting_shown = false;
+@@ -388,6 +391,7 @@
+             hal_bridge::set_hub_link(false);
+             down_since_us = esp_timer_get_time();
+             push_link_event("ws_down", 0, 0, 0, 0);
++            maipai_sounds_link_event(MAIPAI_LINK_DOWN);
+             if ((xTaskGetTickCount() - connected_at) >= pdMS_TO_TICKS(kStableConnectionMs)) {
+                 delay_ms = kInitialDelayMs;
+             }
+@@ -396,6 +400,7 @@
+             uint32_t next_ms = std::min(kMaximumDelayMs, delay_ms);
+             ESP_LOGW(TAG, "Hub connect failed (attempt %u, %u ms), retry in about %u ms", attempt, took_ms, static_cast<unsigned>(next_ms));
+             push_link_event("ws_retry", attempt, self->last_connect_error_, next_ms, took_ms);
++            maipai_sounds_link_event(MAIPAI_LINK_DOWN);  // a no-op while already down
+         }
+ 
+         if (xEventGroupGetBits(self->event_group_handle_) & WEBSOCKET_PROTOCOL_STOP_EVENT) {
+@@ -414,6 +419,7 @@
+         const int64_t down_us = esp_timer_get_time() - down_since_us;
+         if (!offline_shown && down_us >= kOfflineIndicatorAfterUs) {
+             offline_shown = true;
++            maipai_sounds_link_event(MAIPAI_LINK_OFFLINE);  // the offline earcon, once per outage
+             hal_bridge::leds_offline(!refused_shown);
+             hal_bridge::hub_link_set(true, true, refused_shown);
+         } else if (!connecting_shown && !offline_shown && down_us >= kConnectingStripAfterUs) {

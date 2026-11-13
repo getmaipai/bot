@@ -39,6 +39,8 @@ def wire_dance(
     # HOOK: no muted or full-quiet flag exists in the settings registry yet (the modes are being
     # designed). Return a plain reason ("muted", "full quiet") while one is on, else None.
     full_quiet_reason: Callable[[], str | None] = lambda: None,
+    # Called once as a dance starts (the start chime, bodies/stackchan/sounds.py); never raises.
+    on_start: Callable[[], object] | None = None,
 ) -> DanceRunner:
     battery: dict[str, Any] = {"at": float("-inf"), "percent": None, "charging": None}
 
@@ -75,6 +77,7 @@ def wire_dance(
             charging=battery["charging"],
             battery_low=facts.battery_low,
             full_quiet=full_quiet_reason(),
+            muted=bool(getattr(getattr(behavior, "privacy", None), "muted", False)),
         )
 
     def write_ring(pixels: list[tuple[int, int, int]]) -> None:
@@ -92,8 +95,17 @@ def wire_dance(
         behavior._note_own_move()  # the head's own motion is not the picture changing
 
     companion = voice.robot.client.companion
+
+    def start_dance(name: str) -> object:
+        if on_start is not None:
+            try:
+                on_start()
+            except Exception:  # a chime never stops a dance
+                logger.warning("the dance start sound failed", exc_info=True)
+        return companion().dance(name)
+
     hooks = DanceHooks(
-        start_dance=lambda name: companion().dance(name),
+        start_dance=start_dance,
         stop_dance=lambda: companion().stop_dance(),
         show_face=lambda expression: behavior.show_face(expression),
         write_ring=write_ring,

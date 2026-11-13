@@ -66,8 +66,14 @@ class _HeadAdapter:
         self.client = client
         self.profile = profile
         self.expression_device: _ExpressionDevice | None = None
+        # Why the head must not move right now (full quiet), or None. The app sets it.
+        self.move_blocked: Callable[[], str | None] = lambda: None
 
     def command(self, verb: str, *args: Any, **kwargs: Any) -> object:
+        if verb in {"set", "goto"}:
+            why = self.move_blocked()
+            if why is not None:
+                return {"yaw": None, "pitch": None, "speed": HEAD_COMMAND_SPEED, "blocked": why}
         if verb == "hold":
             self.client.cancel_pending()
             angles = self.client.get_head_angles()
@@ -283,10 +289,25 @@ class _CameraAdapter:
         # Local watching (face tracking, the night light read): governed by the household's
         # robot.camera.watch_level (anything but "off"). It never shows the camera cue.
         self.watch_allowed: Callable[[], bool] = lambda: True
+        # Vision off (firmware patch 106): True while the unit's camera is switched off. No frame is
+        # asked for, kept or taken, and a picture question is refused.
+        self.vision_off: Callable[[], bool] = lambda: False
         # The light standard's camera cue also goes to the light service, when one is attached.
         self.cue_sink: Callable[[bool], None] | None = None
 
     def command(self, verb: str, *args: Any, **kwargs: Any) -> object:
+        if verb in {"frame", "stream_frame"} and self.vision_off():
+            if verb == "stream_frame":
+                return None
+            raise PermissionError(
+                "vision is off on this robot; turn it back on before asking it to look"
+            )
+        if (
+            verb == "stream"
+            and self.vision_off()
+            and kwargs.get("enabled", args[0] if args else True)
+        ):
+            return False
         if verb == "frame":
             if args or kwargs.keys() - {"silent"}:
                 raise TypeError("camera.frame takes no arguments")

@@ -597,6 +597,7 @@ def _wired(*, night=False, awake=True):
     holds = {"moves": 0}
     behavior = SimpleNamespace(
         _rest=SimpleNamespace(stage="awake" if awake else "asleep"),
+        privacy=SimpleNamespace(muted=False),
         _active=SimpleNamespace(is_set=lambda: False),
         pose_held=lambda: False,
         show_face=lambda expression: faces.append(expression),

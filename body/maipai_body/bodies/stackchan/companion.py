@@ -47,6 +47,9 @@ DIAGNOSTIC_KINDS = frozenset(
         "coredump",
         "heal",
         "wake_selftest",
+        # Mute, vision off and full quiet (patch 106): the new state, and a refused face unmute.
+        "privacy",
+        "privacy_refused",
         # On-unit timers (firmware patch 091): id, what, label, late, how, dropped.
         "timer_fired",
         "timer_ended",

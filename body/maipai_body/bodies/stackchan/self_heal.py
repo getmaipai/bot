@@ -59,7 +59,8 @@ class SelfHealState:
                         except Exception:
                             LOG.warning("StackChan hold light failed", exc_info=True)
             if "muted" in extra:
-                self.muted = _flag(extra["muted"])
+                # Full quiet turns the microphone off exactly as mute does: not a deaf robot either.
+                self.muted = _flag(extra["muted"]) or _flag(extra.get("quiet"))
             mic = extra.get("mic_rms_max")
             if isinstance(mic, int) and not isinstance(mic, bool):
                 self.mic_rms_max = mic

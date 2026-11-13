@@ -51,6 +51,8 @@ FIRMWARE_EMOTIONS = {
     "sleeping": "sleeping",
     "surprised": "surprised",
     "wink": "winking",
+    "listening": "listening",
+    "thinking": "thinking",
 }
 MAX_EARLY_DEVICE_REPLIES = 32
 
@@ -67,6 +69,7 @@ _READ_ONLY_TOOLS = frozenset(
         "self.battery.get_status",
         "self.screen.get_ambient_light",
         "self.robot.get_reminders",
+        "self.privacy.get",
     }
 )
 

@@ -615,6 +615,8 @@ class StackChanTurnBridge:
         self.repeat_control = repeat_control
         # (kind) -> True when Home described a fresh picture for this question; set by the app.
         self.vision_ask: Callable[[str], bool] | None = None
+        # Why the robot may not hear or say anything ("muted" or "full quiet"), else None.
+        self.muted_reason: Callable[[], str | None] = lambda: None
         # Kind words and loving replies earn the heart (reactions.py); both may be None.
         self.on_user_words = on_user_words
         self.on_reply_mood = on_reply_mood
@@ -671,6 +673,8 @@ class StackChanTurnBridge:
         self.pitch_semitones = lambda: 0.0
         self._breaker = ErrorLineBreaker(clock=clock)
         self._quiet_streak = 0
+        # Called just before the plain apology is spoken (the error earcon, sounds.py); may be None.
+        self.on_error_line = None
 
     async def on_audio(self, session_id: str, data: bytes) -> None:
         stats = self._audio_stats.setdefault(session_id, [0, 0])
@@ -754,6 +758,12 @@ class StackChanTurnBridge:
         if aec is not None:
             self._aec[session_id] = bool(aec)
         LOG.info("StackChan voice: listen %s (mode %s) for session %s", state, mode, session_id[:8])
+        if state in {"start", "detect"}:
+            silent = self.muted_reason()
+            if silent is not None:
+                LOG.info("StackChan voice: no turn, the robot is %s", silent)
+                await self._go_idle(device_id)
+                return
         if state == "start" and self._clock() - self._reaction_ended_at < REACTION_LISTEN_S:
             LOG.info("StackChan voice: no follow-up listen after a line it said on its own")
             self._quiet_idle.add(session_id)
@@ -1301,6 +1311,8 @@ class StackChanTurnBridge:
     def _keep_for_repeat(self, session_id: str, reply: str, playback, result) -> None:
         """Remember this reply (text and the frames sent) for "say that again"; memory only."""
         control = self.repeat_control
+        if control is not None and control.muted():
+            return
         frames = getattr(playback, "recorded_frames", None)
         if control is None or not control.enabled or not callable(frames):
             return
@@ -1371,7 +1383,9 @@ class StackChanTurnBridge:
         """Say one short line on the robot's own initiative (not an answer). False if it cannot.
 
         It speaks through the same text-to-speech path as a reply, and never while a turn is on or
-        a reply is playing: the line is dropped, not queued."""
+        a reply is playing: the line is dropped, not queued. Never while muted or in full quiet."""
+        if self.muted_reason() is not None:
+            return False
         if self._tasks or any(state == "speaking" for state in self._states.values()):
             return False
         sessions = getattr(self.server, "_sessions", None)
@@ -1475,6 +1489,11 @@ class StackChanTurnBridge:
     def _speak_plain_error(self, playback, base: str, cookie: str) -> None:
         if not self._breaker.allow():
             return
+        if self.on_error_line is not None:
+            try:
+                self.on_error_line()
+            except Exception:  # a sound never decides whether the apology is spoken
+                LOG.debug("StackChan error earcon failed", exc_info=True)
         try:
             self.tts_factory(base, cookie, playback).speak(
                 "I couldn't understand that. Please try again."

@@ -1,0 +1,55 @@
+{
+  "about": "Rendered by body/scripts/render_unit_sounds.py (a synthesized soft bell).",
+  "earcons": {
+    "charged": {
+      "bytes": 2706,
+      "file": "snd_charged.ogg",
+      "seconds": 0.88,
+      "sha256": "e9c4d311d88a05356b8fc14bfed78d2f71805037c977be797a3460881eb955ba"
+    },
+    "goodbye": {
+      "bytes": 2971,
+      "file": "snd_goodbye.ogg",
+      "seconds": 0.98,
+      "sha256": "f412d028cf4ed8b6867d5ec7f27494d72414512770420aa12b66420568e02015"
+    },
+    "needs_you": {
+      "bytes": 2376,
+      "file": "snd_needs_you.ogg",
+      "seconds": 0.8,
+      "sha256": "f4030af6c899cbb95b5bd897897f22f896bc04568c4ddd259b91e22d821ba3a5"
+    },
+    "offline": {
+      "bytes": 1861,
+      "file": "snd_offline.ogg",
+      "seconds": 0.72,
+      "sha256": "fb30f13fd6dc4e2f5a2325edfcc02dcae6854402cb84305bb6aa82297061a56d"
+    },
+    "plug_in": {
+      "bytes": 1287,
+      "file": "snd_plug_in.ogg",
+      "seconds": 0.46,
+      "sha256": "e8818d655b630cda85f5267db6c5d8ef16cdf8e57055148dce5bdc1b6336be06"
+    },
+    "shutter": {
+      "bytes": 541,
+      "file": "snd_shutter.ogg",
+      "seconds": 0.42,
+      "sha256": "95493306d95deb06714609d56c20e977b48b3ac23e4b0b11d3b96c88ce058217"
+    },
+    "unplug": {
+      "bytes": 1434,
+      "file": "snd_unplug.ogg",
+      "seconds": 0.48,
+      "sha256": "fa55f9393f0ef83dbe667d7c460083b3d52c1f8bd9709ec48e03d2dc76b18a14"
+    }
+  },
+  "format": "Ogg Opus, mono, 16 kHz, 24 kbps, 60 ms frames",
+  "shipped": {
+    "exclamation": "xiaozhi common/exclamation.ogg (0.9 s): an error",
+    "low_battery": "xiaozhi common/low_battery.ogg (1.0 s): the battery is low",
+    "popup": "xiaozhi common/popup.ogg (rising, 0.5 s): the wake word",
+    "success": "xiaozhi common/success.ogg (rising, 1.0 s): back online, ready",
+    "vibration": "xiaozhi common/vibration.ogg (0.8 s): the offline tap tone"
+  }
+}

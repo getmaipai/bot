@@ -5,10 +5,12 @@
     "angry",
     "doubt",
     "happy",
+    "listening",
     "neutral",
     "sad",
     "sleepy",
     "surprised",
+    "thinking",
     "wink"
   ]
 }

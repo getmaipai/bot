@@ -14,6 +14,7 @@ from .expression_map import (
     REPLY_MOOD_FACE_MAP,
     UNSUPPORTED_PRIMITIVES,
     FaceFrame,
+    face_for_firmware,
 )
 from .profile import CENTRE_PITCH_DEG
 
@@ -76,13 +77,22 @@ def render(
         else:
             client.command("set", pose=pose)
     send = getattr(client, "send_avatar_frame", None)
-    if callable(send):
+    if callable(send) and action.face is not None:
         send(control_avatar(action.face))
     # The ring carries state through the light standard (indicator/looks.py), never expression.
 
 
-def render_cue(cue: str, client: HeadActuator, *, mood: str | None = None) -> None:
-    """Render a turn-state face from the closed cue table."""
+def render_cue(
+    cue: str,
+    client: HeadActuator,
+    *,
+    mood: str | None = None,
+    firmware_version: object = None,
+) -> None:
+    """Render a turn-state face from the closed cue table.
+
+    ``firmware_version`` is the unit's reported version: the newer listening and thinking faces fall
+    back to neutral on a unit that does not have them."""
     if cue == "reply_mood":
         expression = REPLY_MOOD_FACE_MAP.get(mood or "neutral", "neutral")
         face = FaceFrame(expression)
@@ -93,7 +103,8 @@ def render_cue(cue: str, client: HeadActuator, *, mood: str | None = None) -> No
             raise ValueError(f"unknown StackChan turn cue {cue!r}") from exc
     sender = getattr(client, "send_avatar_frame", None)
     if callable(sender):
-        sender(control_avatar(face.expression, eyes=face.eyes, mouth=face.mouth))
+        expression = face_for_firmware(face.expression, firmware_version)
+        sender(control_avatar(expression, eyes=face.eyes, mouth=face.mouth))
 
 
 register_renderer("stackchan", render)

@@ -26,7 +26,17 @@ _KEPT: dict[str, tuple[str, ...]] = {
     "heap_stats": ("int_free", "int_min", "psram_free"),
     "fw": ("version", "rssi"),
     # The unit restart guard (restarts this hour, 1 while it refuses more) and microphone level.
-    "wake_stats": ("heal_n", "heal_hold", "mic_rms_max"),
+    "wake_stats": (
+        "heal_n",
+        "heal_hold",
+        "mic_rms_max",
+        "muted",
+        "vision_off",
+        "quiet",
+        "mic_off_verified",
+    ),
+    # Mute, vision off and full quiet changed on the unit (firmware patch 106): reported at once.
+    "privacy": ("muted", "vision_off", "quiet", "mic_off_verified", "mute_source"),
 }
 
 
@@ -52,12 +62,17 @@ class UnitFacts:
                         name = f"boot_{key}"
                     if self._values.get(name) != value:
                         self._values[name] = value
-                        if kind in {"boot", "fw"}:
+                        if kind in {"boot", "fw", "privacy"}:
                             self.changed.set()
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._values)
+
+
+def _unit_flag(facts: Mapping[str, Any], key: str) -> bool | None:
+    value = facts.get(key)
+    return bool(value) if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def build_payload(
@@ -106,6 +121,15 @@ def build_payload(
         "charging": battery.get("charging") if isinstance(battery.get("charging"), bool) else None,
         # Timers and alarms the unit is holding (null until it has been asked).
         "timers_active": timers_active if isinstance(timers_active, int) else None,
+        # Mute, vision off and full quiet as the unit last reported them (null until it has).
+        # Home shows "Muted" only when muted is true and mic_off_verified is true.
+        "muted": _unit_flag(facts, "muted"),
+        "vision_off": _unit_flag(facts, "vision_off"),
+        "quiet": _unit_flag(facts, "quiet"),
+        "mic_off_verified": _unit_flag(facts, "mic_off_verified"),
+        "mute_source": facts.get("mute_source")
+        if isinstance(facts.get("mute_source"), str)
+        else None,
     }
 
 

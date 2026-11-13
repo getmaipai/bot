@@ -1,0 +1,471 @@
+# Intent: touches on the face of the screen toggle mute, vision off and full quiet (owner design 2026-11-13): HOLD the mouth 0.5 s = mute on or off, TAP an eye = vision off or on, HOLD the forehead (above and between the eyes) 0.5 s = full quiet on or off. maipai_touch_core.h is plain C (tested on the host by tests/firmware/touch_core_test.c): the screen is tiled into edge margins (28 px top, 20 px sides and bottom, where the quick-settings, volume and stop swipes start), forehead, two eyes, mouth and the rest; a touch only counts if the finger stays within 10 px of where it went down, stays in the region it began in, and is a tap (400 ms or less) or a hold (500 ms or more); a touch that begins in an edge margin is never a toggle; anything that strays is a drag. A hold acts while the finger is still down. The toggle regions and the margins never start a listen (a tap on the rest of the face still does, as before), and no listen starts while muted or in full quiet. The toggle is silent: a short blink and the new look, no sound. ApplyPrivacyFace draws the looks (a flat sealed mouth for mute, half-lidded eyes for vision off, the sleeping face with a small pause mark for full quiet; the mint shapes are patch 108), keeps them through emotion changes (the sleeping face holds against every other emotion) and the saved state is drawn once at boot; a combined state combines the parts. Face unmute is refused when the hub turned off local unmute.
+# Upstream: firmware/main/hal/board/stackchan_display.{h,cc} (MIT); new file hal/maipai_touch_core.h. Applies after 099. Needs patches 106 (maipai_privacy.h) and 108 (mint shapes) to build.
+# Check after a flash: on a flashed unit: hold the mouth for half a second, the eyes blink once and the mouth becomes a flat line, and the host log says 'unit privacy: ... muted=1'; hold it again and the mouth returns; tap an eye, the eyes go half-lidded; hold the forehead, the face sleeps with a small pause mark; drag from the top edge down and up for quick settings, drag left and right for volume, drag down to stop: none of these toggles anything; a tap on a cheek still starts a listen; a slow press on the mouth that lasts 0.45 s does nothing.
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index 4d69c82..edc533a 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -25,6 +25,8 @@
+ #include <hal/hal.h>
+ #include <hal/device_events.h>
+ #include <hal/maipai_timers.h>
++#include <hal/maipai_privacy.h>
++#include <hal/maipai_touch_core.h>
+ 
+ using namespace stackchan;
+ using namespace stackchan::avatar;
+@@ -247,6 +249,11 @@ lv_disp_t* StackChanAvatarDisplay::GetLvglDisplay()
+ // point at y 0 to 16 and then loses it at the edge, which LVGL reads as a tap and used to start
+ // listening (host log 2026-10-21), so a tap that began in the top strip is ignored.
+ static int s_face_press_y             = -1;
++// The touch being followed (patch 105): which toggles it can start is decided by maipai_touch_core.h.
++static mtc_trace_t s_trace;
++static bool s_trace_live              = false;
++static bool s_trace_acted             = false;
++static mtc_region_t s_last_region     = MTC_REGION_REST;
+ constexpr int kTapEdgeDeadZonePx      = 24;
+ constexpr uint32_t kTapDebounceMs     = 800;
+ 
+@@ -281,6 +288,16 @@ void StackChanAvatarDisplay::SetupUI()
+     avatar->getPanel()->onClick().connect([]() {
+         static uint32_t last_toggle_tick = 0;
+         const uint32_t now               = GetHAL().millis();
++        // Patch 105: the toggle places (mouth, eyes, forehead) and the edge margins never start a listen;
++        // only the rest of the face does, as before.
++        if (!mtc_region_listens(s_last_region)) {
++            ESP_LOGI(TAG, "face: click ignored, it began in region %d", static_cast<int>(s_last_region));
++            return;
++        }
++        if (maipai_mic_blocked()) {
++            device_events_push_diag("tap", "\"decision\":\"ignored\",\"why\":\"muted\"");
++            return;
++        }
+         if (last_toggle_tick != 0 && now - last_toggle_tick < kTapDebounceMs) {
+             return;
+         }
+@@ -412,12 +429,49 @@ void StackChanAvatarDisplay::OnTouchDiag(lv_event_t* event)
+             lv_point_t point;
+             lv_indev_get_point(lv_indev_active(), &point);
+             s_face_press_y = point.y;
++            mtc_begin(&s_trace, point.x, point.y, GetHAL().millis());
++            s_trace_live  = true;
++            s_trace_acted = false;
++            s_last_region = s_trace.region0;
+             ESP_LOGI(TAG, "face: pressed (boot_done=%d, panel_open=%d)", self != nullptr && self->boot_done_,
+                      self != nullptr && self->quick_panel_ != nullptr);
+             device_events_push_diag("face_pressed", "");
+             maipai_timers_request_dismiss("touch");  // a ringing timer ends on a touch (patch 093)
+             break;
+         }
++        case LV_EVENT_PRESSING: {
++            // A hold acts while the finger is still down (patch 105), so the person sees the change at once.
++            if (s_trace_live && !s_trace_acted && self != nullptr && self->boot_done_ && self->quick_panel_ == nullptr) {
++                lv_point_t point;
++                lv_indev_get_point(lv_indev_active(), &point);
++                const uint32_t now = GetHAL().millis();
++                mtc_move(&s_trace, point.x, point.y, now);
++                const mtc_action_t action = mtc_action_while_down(&s_trace, now);
++                if (action != MTC_ACTION_NONE) {
++                    s_trace_acted = true;
++                    self->OnFaceToggle(static_cast<int>(action));
++                }
++            }
++            break;
++        }
++        case LV_EVENT_RELEASED:
++        case LV_EVENT_PRESS_LOST: {
++            if (s_trace_live) {
++                s_trace_live = false;
++                if (!s_trace_acted && self != nullptr && self->boot_done_ && self->quick_panel_ == nullptr) {
++                    lv_point_t point;
++                    lv_indev_get_point(lv_indev_active(), &point);
++                    mtc_move(&s_trace, point.x, point.y, GetHAL().millis());
++                    const mtc_action_t action = mtc_action_on_release(&s_trace);
++                    ESP_LOGI(TAG, "face: touch ended kind=%d region=%d action=%d", static_cast<int>(mtc_classify(&s_trace)),
++                             static_cast<int>(s_trace.region0), static_cast<int>(action));
++                    if (action != MTC_ACTION_NONE) {
++                        self->OnFaceToggle(static_cast<int>(action));
++                    }
++                }
++            }
++            break;
++        }
+         case LV_EVENT_CLICKED:
+             ESP_LOGI(TAG, "face: clicked (xiaozhi_ready=%d)", hal_bridge::is_xiaozhi_ready());
+             device_events_push_diag("face_clicked", hal_bridge::is_xiaozhi_ready() ? "\"ready\":true" : "\"ready\":false");
+@@ -441,6 +495,28 @@ void StackChanAvatarDisplay::OnTouchDiag(lv_event_t* event)
+     }
+ }
+ 
++// A toggle started from the face (patch 105): called from the LVGL task, so the lock is held. Silent: no sound,
++// a short blink and the new look (ApplyPrivacyFace, patch 108); the "privacy" event tells the host.
++void StackChanAvatarDisplay::OnFaceToggle(int action)
++{
++    int bit            = kPrivQuiet;
++    const char* name   = "quiet";
++    if (action == MTC_ACTION_MUTE) {
++        bit  = kPrivMute;
++        name = "mute";
++    } else if (action == MTC_ACTION_VISION) {
++        bit  = kPrivVision;
++        name = "vision";
++    }
++    const bool turning_on = (maipai_privacy_bits() & bit) == 0;
++    int bits              = 0;
++    const bool ok         = maipai_privacy_set(bit, turning_on ? bit : 0, "face", &bits);
++    ESP_LOGI(TAG, "face: %s %s from the face (%s)", name, turning_on ? "on" : "off", ok ? "done" : "refused");
++    if (ok) {
++        ApplyPrivacyFace(bits, true);
++    }
++}
++
+ void StackChanAvatarDisplay::OnGesture(lv_event_t* event)
+ {
+     auto* self = static_cast<StackChanAvatarDisplay*>(lv_event_get_user_data(event));
+@@ -761,6 +837,11 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
+ 
+     DisplayLockGuard lock(this);
+ 
++    // Full quiet keeps the sleeping face: no other emotion draws over it (patch 108).
++    if (quiet_face_ && strcmp(emotion, "sleeping") != 0) {
++        return;
++    }
++
+     // ESP_LOGE(TAG, "SetEmotion: %s", emotion);
+ 
+     auto& avatar = stackchan.avatar();
+@@ -835,6 +916,101 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
+     }
+ }
+ 
++void StackChanAvatarDisplay::EnsureQuietMarker()
++{
++    if (quiet_marker_ != nullptr) {
++        return;
++    }
++    auto* mint = dynamic_cast<MintAvatar*>(&GetStackChan().avatar());
++    if (mint == nullptr || mint->getPanel() == nullptr) {
++        return;
++    }
++    // Two short bars, like a pause mark, above the eyes. Children of the face panel, so the palette recolors
++    // them; never clickable, so a touch on them is a touch on the face.
++    quiet_marker_ = lv_obj_create(mint->getPanel()->get());
++    lv_obj_remove_style_all(quiet_marker_);
++    lv_obj_remove_flag(quiet_marker_, LV_OBJ_FLAG_SCROLLABLE);
++    lv_obj_remove_flag(quiet_marker_, LV_OBJ_FLAG_CLICKABLE);
++    lv_obj_set_size(quiet_marker_, 26, 22);
++    lv_obj_align(quiet_marker_, LV_ALIGN_TOP_MID, 0, 34);
++    for (int i = 0; i < 2; i++) {
++        lv_obj_t* bar = lv_obj_create(quiet_marker_);
++        lv_obj_remove_style_all(bar);
++        lv_obj_remove_flag(bar, LV_OBJ_FLAG_CLICKABLE);
++        lv_obj_set_size(bar, 7, 22);
++        lv_obj_set_pos(bar, i * 19, 0);
++        lv_obj_set_style_radius(bar, 3, 0);
++        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
++        lv_obj_set_style_bg_color(bar, MintAvatar::inkColor(), 0);
++    }
++    lv_obj_add_flag(quiet_marker_, LV_OBJ_FLAG_HIDDEN);
++}
++
++void StackChanAvatarDisplay::ApplyPrivacyFace(int bits, bool animate)
++{
++    auto& stackchan = GetStackChan();
++    if (!stackchan.hasAvatar()) {
++        return;
++    }
++    auto& avatar        = stackchan.avatar();
++    const bool muted    = (bits & kPrivMute) != 0;
++    const bool vision   = (bits & kPrivVision) != 0;
++    const bool quiet    = (bits & kPrivQuiet) != 0;
++    privacy_bits_       = bits;
++    auto* left          = dynamic_cast<MintEye*>(&avatar.leftEye());
++    auto* right         = dynamic_cast<MintEye*>(&avatar.rightEye());
++    auto* mouth         = dynamic_cast<MintMouth*>(&avatar.mouth());
++    // Mute: a flat closed mouth. Vision off: half-lidded eyes (in full quiet the eyes are shut anyway).
++    if (mouth != nullptr) {
++        mouth->setSealed(muted);
++    }
++    if (left != nullptr && right != nullptr) {
++        left->setLowered(vision && !quiet);
++        right->setLowered(vision && !quiet);
++    }
++    if (quiet && !quiet_face_) {
++        quiet_face_ = true;
++        EnsureQuietMarker();
++        if (quiet_marker_ != nullptr) {
++            lv_obj_remove_flag(quiet_marker_, LV_OBJ_FLAG_HIDDEN);
++        }
++        SetEmotion("sleeping");
++    } else if (!quiet && quiet_face_) {
++        quiet_face_ = false;
++        if (quiet_marker_ != nullptr) {
++            lv_obj_add_flag(quiet_marker_, LV_OBJ_FLAG_HIDDEN);
++        }
++        SetEmotion("neutral");
++        if (hal_bridge::is_xiaozhi_idle() && idle_expression_modifier_id_ < 0) {
++            idle_expression_modifier_id_ = stackchan.addModifier(std::make_unique<IdleExpressionModifier>());
++        }
++    }
++    if (animate && !quiet && left != nullptr && right != nullptr) {
++        // The change cue: the eyes close for a moment and open again. No sound.
++        avatar.leftEye().setWeight(0);
++        avatar.rightEye().setWeight(0);
++        if (cue_timer_ != nullptr) {
++            lv_timer_delete(cue_timer_);
++        }
++        cue_timer_ = lv_timer_create(
++            [](lv_timer_t* timer) {
++                auto* display = static_cast<StackChanAvatarDisplay*>(lv_timer_get_user_data(timer));
++                auto& chan    = GetStackChan();
++                if (chan.hasAvatar() && !display->quiet_face_) {
++                    chan.avatar().leftEye().setWeight(100);
++                    chan.avatar().rightEye().setWeight(100);
++                    auto blink = static_cast<BlinkModifier*>(chan.getModifier(display->blink_modifier_id_));
++                    if (blink) {
++                        blink->resyncEyeWeights();
++                    }
++                }
++                display->cue_timer_ = nullptr;
++            },
++            260, this);
++        lv_timer_set_repeat_count(cue_timer_, 1);
++    }
++}
++
+ // The compiled-in text font (font_puhui_basic_20_4) covers ASCII, Latin-1 and Latin Extended, but not the
+ // typographic punctuation a language model writes. Map those to ASCII so they never draw as blanks
+ // (patch 096). Anything else without a glyph is skipped by LVGL (no placeholder glyph).
+@@ -1018,6 +1194,16 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
+ 
+     } else if (strcmp(status, Lang::Strings::STANDBY) == 0) {
+         _is_xiaozhi_ready = true;
++        {
++            // Patch 108: the saved mute, vision-off and full-quiet state is made true once the unit is up
++            // (microphone off and read back, the looks drawn), before the first reply or tap.
++            static bool privacy_booted = false;
++            if (!privacy_booted) {
++                privacy_booted = true;
++                maipai_privacy_boot();
++                ApplyPrivacyFace(maipai_privacy_bits(), false);
++            }
++        }
+         GetHAL().startAvatarChannel();  // idempotent; opens the camera and avatar socket (patch 054)
+ 
+         if (speaking_modifier_id_ >= 0) {
+diff --git a/firmware/main/hal/board/stackchan_display.h b/firmware/main/hal/board/stackchan_display.h
+index ae8bcb5..df87e55 100644
+--- a/firmware/main/hal/board/stackchan_display.h
++++ b/firmware/main/hal/board/stackchan_display.h
+@@ -39,6 +39,14 @@ private:
+     lv_obj_t*   toast_label_   = nullptr;
+     lv_timer_t* toast_timer_   = nullptr;
+ 
++    // Patch 105 (touch) and 108 (looks): mute, vision off and full quiet toggled from the face.
++    int         privacy_bits_  = 0;
++    bool        quiet_face_    = false;
++    lv_obj_t*   quiet_marker_  = nullptr;
++    lv_timer_t* cue_timer_     = nullptr;
++    void OnFaceToggle(int action);
++    void EnsureQuietMarker();
++
+     void CreateIdleMotionModifier();
+     void ShowBootCover(const char* text, int ring_kind);
+     void HideBootCover();
+@@ -78,6 +86,10 @@ public:
+     lv_disp_t* GetLvglDisplay();
+ 
+     // Both expect the LVGL lock held by the caller.
++    // Draws the looks for these privacy bits (maipai_privacy.h): a flat closed mouth for mute, half-lidded eyes for
++    // vision off, the sleeping face and a small marker for full quiet. The LVGL lock is held by the caller.
++    // animate adds a short blink on top of the new look.
++    void ApplyPrivacyFace(int bits, bool animate);
+     bool SetFacePalette(const char* palette, bool night);
+     void SetIdleMotionEnabled(bool enabled);
+ };
+diff --git a/firmware/main/hal/maipai_touch_core.h b/firmware/main/hal/maipai_touch_core.h
+new file mode 100644
+index 0000000..ae66ff0
+--- /dev/null
++++ b/firmware/main/hal/maipai_touch_core.h
+@@ -0,0 +1,180 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * Face touch classification for the 320x240 screen (patch 105). Plain C99, no firmware headers, so a
++ * host test compiles and runs it (body/tests/firmware/touch_core_test.c).
++ *
++ * A touch is a trace: where the finger went down, where it is now, how far it ever strayed from the
++ * down point, and how long it has been down. The face has five kinds of place:
++ *
++ *   EDGE       the margin all round the screen. Swipes from the top (quick settings), the sides (volume)
++ *              and the bottom (stop) start here, so a touch that begins in an edge zone is never a toggle.
++ *   FOREHEAD   the strip above the eyes and the gap between them:  hold 0.5 s = full quiet on or off.
++ *   EYE_L/R    the two eyes:                                          tap     = vision off or on.
++ *   MOUTH      the mouth box:                                         hold 0.5 s = mute on or off.
++ *   REST       everything else; the unit's old behaviour (a tap starts a listen) is unchanged there.
++ *
++ * Only a still finger counts: it may stray at most MTC_STILL_PX from where it went down, and it must be
++ * released (or still held) inside the region it started in. A tap is at most MTC_TAP_MAX_MS; a hold is
++ * at least MTC_HOLD_MS; between the two is a dead band that does nothing, so a slow tap is never a
++ * hold. Anything that strays further is a drag and toggles nothing.
++ */
++#ifndef MAIPAI_TOUCH_CORE_H
++#define MAIPAI_TOUCH_CORE_H
++
++#include <stdint.h>
++
++#define MTC_WIDTH 320
++#define MTC_HEIGHT 240
++
++#define MTC_EDGE_TOP 28    /* the top strip also carries the quick-settings swipe */
++#define MTC_EDGE_SIDE 20
++#define MTC_EDGE_BOTTOM 20
++
++#define MTC_STILL_PX 10    /* farthest a tap or hold may stray from where it went down */
++#define MTC_TAP_MAX_MS 400
++#define MTC_HOLD_MS 500
++
++typedef enum {
++    MTC_REGION_EDGE = 0,
++    MTC_REGION_FOREHEAD,
++    MTC_REGION_EYE_LEFT,
++    MTC_REGION_EYE_RIGHT,
++    MTC_REGION_MOUTH,
++    MTC_REGION_REST
++} mtc_region_t;
++
++typedef enum { MTC_KIND_NONE = 0, MTC_KIND_TAP, MTC_KIND_HOLD, MTC_KIND_DRAG } mtc_kind_t;
++
++typedef enum { MTC_ACTION_NONE = 0, MTC_ACTION_MUTE, MTC_ACTION_VISION, MTC_ACTION_QUIET } mtc_action_t;
++
++typedef struct {
++    int x0, y0;           /* where the finger went down */
++    int x, y;             /* the latest point */
++    int max_stray2;       /* the farthest the finger has been from (x0, y0), squared */
++    uint32_t t0, t;       /* down time and latest time, ms */
++    mtc_region_t region0; /* the region the touch began in */
++} mtc_trace_t;
++
++/* The regions tile the screen with no overlap (the first match wins, top to bottom):
++ *   edge margins                         x < 20, x >= 300, y < 28, y >= 220
++ *   forehead strip above the eyes        y 28..55, any x inside the margins
++ *   left eye 20..111   right eye 208..299   y 56..149   (the eyes are drawn at x 56..108 and 212..264)
++ *   forehead gap between the eyes        x 112..207, y 56..119
++ *   mouth box                            x 112..207, y 120..219  (the mouth is drawn at y 130..190)
++ */
++static inline mtc_region_t mtc_region_at(int x, int y)
++{
++    if (x < MTC_EDGE_SIDE || x >= MTC_WIDTH - MTC_EDGE_SIDE || y < MTC_EDGE_TOP || y >= MTC_HEIGHT - MTC_EDGE_BOTTOM) {
++        return MTC_REGION_EDGE;
++    }
++    if (y < 56) {
++        return MTC_REGION_FOREHEAD;
++    }
++    if (y < 150) {
++        if (x < 112) {
++            return MTC_REGION_EYE_LEFT;
++        }
++        if (x >= 208) {
++            return MTC_REGION_EYE_RIGHT;
++        }
++        return y < 120 ? MTC_REGION_FOREHEAD : MTC_REGION_MOUTH;
++    }
++    if (x >= 112 && x < 208) {
++        return MTC_REGION_MOUTH;
++    }
++    return MTC_REGION_REST;
++}
++
++static inline void mtc_begin(mtc_trace_t* trace, int x, int y, uint32_t now_ms)
++{
++    trace->x0 = trace->x = x;
++    trace->y0 = trace->y = y;
++    trace->max_stray2 = 0;
++    trace->t0 = trace->t = now_ms;
++    trace->region0 = mtc_region_at(x, y);
++}
++
++static inline void mtc_move(mtc_trace_t* trace, int x, int y, uint32_t now_ms)
++{
++    const int dx = x - trace->x0;
++    const int dy = y - trace->y0;
++    const int d2 = dx * dx + dy * dy;
++    trace->x = x;
++    trace->y = y;
++    trace->t = now_ms;
++    if (d2 > trace->max_stray2) {
++        trace->max_stray2 = d2;
++    }
++}
++
++static inline int mtc_is_still(const mtc_trace_t* trace)
++{
++    return trace->max_stray2 <= MTC_STILL_PX * MTC_STILL_PX;
++}
++
++/* Only a touch that began and is still inside one toggle region can be a toggle. */
++static inline int mtc_in_start_region(const mtc_trace_t* trace)
++{
++    return trace->region0 != MTC_REGION_EDGE && mtc_region_at(trace->x, trace->y) == trace->region0;
++}
++
++/* What the finished touch was. */
++static inline mtc_kind_t mtc_classify(const mtc_trace_t* trace)
++{
++    if (trace->region0 == MTC_REGION_EDGE || !mtc_is_still(trace) || !mtc_in_start_region(trace)) {
++        return MTC_KIND_DRAG;
++    }
++    const uint32_t held = trace->t - trace->t0;
++    if (held <= MTC_TAP_MAX_MS) {
++        return MTC_KIND_TAP;
++    }
++    if (held >= MTC_HOLD_MS) {
++        return MTC_KIND_HOLD;
++    }
++    return MTC_KIND_NONE; /* the dead band between a tap and a hold */
++}
++
++/* Which toggle (if any) a kind of touch starts in a region: the eyes toggle on a tap; the mouth and
++ * the forehead need the hold. */
++static inline mtc_action_t mtc_action_for(mtc_region_t region, mtc_kind_t kind)
++{
++    if (kind == MTC_KIND_TAP && (region == MTC_REGION_EYE_LEFT || region == MTC_REGION_EYE_RIGHT)) {
++        return MTC_ACTION_VISION;
++    }
++    if (kind == MTC_KIND_HOLD && region == MTC_REGION_MOUTH) {
++        return MTC_ACTION_MUTE;
++    }
++    if (kind == MTC_KIND_HOLD && region == MTC_REGION_FOREHEAD) {
++        return MTC_ACTION_QUIET;
++    }
++    return MTC_ACTION_NONE;
++}
++
++/* The action when the finger lifts. A hold is normally acted on while the finger is still down
++ * (mtc_hold_ready), so the release of a hold the caller already acted on must not call this. */
++static inline mtc_action_t mtc_action_on_release(const mtc_trace_t* trace)
++{
++    return mtc_action_for(trace->region0, mtc_classify(trace));
++}
++
++/* While the finger is still down: has it been held still, in place, long enough to count as a hold in a
++ * hold region? The caller acts once and then ignores the rest of the touch. */
++static inline mtc_action_t mtc_action_while_down(const mtc_trace_t* trace, uint32_t now_ms)
++{
++    if (trace->region0 == MTC_REGION_EDGE || !mtc_is_still(trace) || !mtc_in_start_region(trace)) {
++        return MTC_ACTION_NONE;
++    }
++    if (now_ms - trace->t0 < MTC_HOLD_MS) {
++        return MTC_ACTION_NONE;
++    }
++    return mtc_action_for(trace->region0, MTC_KIND_HOLD);
++}
++
++/* Does the unit's old tap-starts-a-listen rule still apply to this touch? Only where no toggle lives. */
++static inline int mtc_region_listens(mtc_region_t region)
++{
++    return region == MTC_REGION_REST;
++}
++
++#endif

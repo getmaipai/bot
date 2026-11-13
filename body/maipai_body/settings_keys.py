@@ -35,3 +35,13 @@ QUIET_KEY = "robot.quiet"
 # replies and a small log of what it could not tell the person; off sends them to the hub like any
 # other question (and keeps nothing). Home's registry default is on.
 REPEAT_ENABLED_KEY = "robot.repeat.enabled"
+# StackChan hard mute (firmware patches 105 to 108): vision off, and whether the unit's own face may
+# turn listening back on. Home's registry defaults: false and true.
+VISION_OFF_KEY = "robot.vision_off"
+LOCAL_UNMUTE_KEY = "robot.mute.local_unmute"
+# The StackChan's own sounds (firmware patches 115 to 118, bodies/stackchan/sounds.py). Both are
+# device-scope registry keys honoured by the bot: event sounds on (default true) and event sounds
+# also at night (default false). The safety and privacy cues (a picture, a low battery, an error)
+# ignore "off" and the night rule; the hard mute (MUTED_KEY, QUIET_KEY) silences all of them.
+SOUNDS_ENABLED_KEY = "robot.sounds.enabled"
+SOUNDS_NIGHT_KEY = "robot.sounds.night"

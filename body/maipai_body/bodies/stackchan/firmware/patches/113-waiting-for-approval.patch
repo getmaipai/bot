@@ -1,0 +1,103 @@
+# Intent: the "refused" state, so a unit Home has not approved says so instead of looking offline (owner, 2026-11-13). Home accepts the websocket and closes it with code 1008 before its hello; the websocket class does not pass the close code on, so the unit counts connects that were accepted and closed before the hello. Two in a row show the approval look: the full link screen with the slash glyph, a key and "Waiting for Home to approve me" before the first face, or the corner strip, the muted palette and the cyan ring blink after it; the steady amber ring steps aside. A "ws_refused" event goes to the host log. The first hello clears it.
+# Upstream: 78/xiaozhi-esp32 main/protocols/websocket_protocol.cc and .h; m5stack/StackChan firmware/main/hal/board/stackchan_display.cc (MIT). Applies after 112.
+# Check after a flash: with this unit's Device-Id not approved in Home: "Waiting for Home to approve me" within a minute and a cyan blink; approve it in Home: the look clears at the next connect and the unit works. A Home restart alone must read as Offline, not as waiting for approval.
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index 4040e8a..1c63120 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -567,7 +567,8 @@ void StackChanAvatarDisplay::ApplyLink()
+     LinkLook screen = LinkLook::None;
+     LinkLook strip  = LinkLook::None;
+     if (!boot_done_) {
+-        screen = boot_look_;
++        // Home turning the unit away outranks "Connecting to Home..." (Wi-Fi setup still comes first).
++        screen = (hub_refused_ && boot_look_ != LinkLook::WifiSetup) ? LinkLook::Approval : boot_look_;
+     } else if (hub_refused_) {
+         strip = LinkLook::Approval;
+     } else if (hub_offline_) {
+diff --git a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+index e5b4846..9efb59d 100644
+--- a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
++++ b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+@@ -288,13 +288,19 @@ bool WebsocketProtocol::ConnectAudioChannel() {
+     }
+ 
+     // Wait for server hello
+-    EventBits_t bits = xEventGroupWaitBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(10000));
++    EventBits_t bits = xEventGroupWaitBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT | WEBSOCKET_PROTOCOL_DISCONNECTED_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(10000));
+     if (!(bits & WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT)) {
+-        ESP_LOGE(TAG, "Failed to receive server hello");
++        // Accepted, then closed before the hub's hello: how Home turns away a unit it has not approved (it
++        // closes with code 1008 and a reason; the websocket class does not hand the code to us). Two in a row
++        // read as "waiting for approval"; a hub that is just restarting does not accept the handshake at all.
++        refused_streak_ = (bits & WEBSOCKET_PROTOCOL_DISCONNECTED_EVENT) != 0 ? refused_streak_ + 1 : 0;
++        ESP_LOGE(TAG, "Failed to receive server hello (closed by the hub: %d, in a row: %d)",
++                 (bits & WEBSOCKET_PROTOCOL_DISCONNECTED_EVENT) != 0 ? 1 : 0, refused_streak_);
+         SetError(Lang::Strings::SERVER_TIMEOUT);
+         return false;
+     }
+ 
++    refused_streak_ = 0;
+ #if CONFIG_STACKCHAN_PERSISTENT_WEBSOCKET
+     xEventGroupSetBits(event_group_handle_, WEBSOCKET_PROTOCOL_CONNECTED_EVENT);
+ #else
+@@ -329,6 +335,7 @@ void WebsocketProtocol::ReconnectTask(void* arg) {
+     int64_t down_since_us = esp_timer_get_time();
+     bool offline_shown = false;
+     bool connecting_shown = false;
++    bool refused_shown = false;
+     constexpr int64_t kConnectingStripAfterUs = 3LL * 1000 * 1000;  // reconnects are constant: a blip shows nothing
+ 
+     while (!(xEventGroupGetBits(self->event_group_handle_) & WEBSOCKET_PROTOCOL_STOP_EVENT)) {
+@@ -342,9 +349,10 @@ void WebsocketProtocol::ReconnectTask(void* arg) {
+             const unsigned took_ms = static_cast<unsigned>((esp_timer_get_time() - started_us) / 1000);
+             attempt = 0;
+             hal_bridge::set_hub_link(true);
+-            if (offline_shown || connecting_shown) {
++            if (offline_shown || connecting_shown || refused_shown) {
+                 offline_shown    = false;
+                 connecting_shown = false;
++                refused_shown    = false;
+                 hal_bridge::leds_offline(false);
+                 hal_bridge::hub_link_set(false, false, false);
+             }
+@@ -393,14 +401,24 @@ void WebsocketProtocol::ReconnectTask(void* arg) {
+         if (xEventGroupGetBits(self->event_group_handle_) & WEBSOCKET_PROTOCOL_STOP_EVENT) {
+             break;
+         }
++        const bool refused = self->refused_streak_ >= 2;
++        if (refused != refused_shown) {
++            refused_shown = refused;
++            // Cyan blinks for approval, so the steady amber steps aside while it shows.
++            hal_bridge::leds_offline(offline_shown && !refused_shown);
++            hal_bridge::hub_link_set(connecting_shown || offline_shown, offline_shown, refused_shown);
++            if (refused_shown) {
++                push_link_event("ws_refused", attempt, self->last_connect_error_, 0, 0);
++            }
++        }
+         const int64_t down_us = esp_timer_get_time() - down_since_us;
+         if (!offline_shown && down_us >= kOfflineIndicatorAfterUs) {
+             offline_shown = true;
+-            hal_bridge::leds_offline(true);
+-            hal_bridge::hub_link_set(true, true, false);
++            hal_bridge::leds_offline(!refused_shown);
++            hal_bridge::hub_link_set(true, true, refused_shown);
+         } else if (!connecting_shown && !offline_shown && down_us >= kConnectingStripAfterUs) {
+             connecting_shown = true;
+-            hal_bridge::hub_link_set(true, false, false);
++            hal_bridge::hub_link_set(true, false, refused_shown);
+         }
+         uint32_t jitter_ms = esp_random() % (delay_ms / 4 + 1);
+         uint32_t wait_ms = std::min(kMaximumDelayMs, delay_ms + jitter_ms);
+diff --git a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.h b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.h
+index 634a925..a5225e7 100644
+--- a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.h
++++ b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.h
+@@ -35,6 +35,7 @@ private:
+     TaskHandle_t reconnect_task_handle_ = nullptr;
+     std::atomic<uint32_t> websocket_generation_{0};
+     int last_connect_error_ = 0;  // the last failed connect, for the "wifi" event
++    int refused_streak_ = 0;      // connects the hub accepted and closed before its hello, in a row
+     std::atomic<int> version_{1};
+ 
+     void ParseServerHello(const cJSON* root);

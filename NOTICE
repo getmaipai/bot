@@ -21,3 +21,20 @@ model redistributed by Pollen Robotics (pollen-robotics/face_detection_yunet_202
 hub syncs it at a pinned revision with a sha256 checksum; it is never vendored. The
 decoding in body/maipai_body/vision/yunet.py follows reachy_mini.vision.face_detector
 (Apache-2.0, Pollen Robotics).
+
+Chatterbox Turbo (Resemble AI), Apache-2.0, as mlx-community/chatterbox-turbo-fp16 at the revision
+the MaiPai Stack pins (b2d0a13aa7cfff0a06d9acb247ae91c8f19a6d75). It is the household's default
+voice, and with it body/scripts/render_unit_phrases.py synthesizes the sixteen offline phrases the
+StackChan says by itself when it has no link to Home (body/maipai_body/bodies/stackchan/firmware/
+assets/phrases, firmware patch 118). The clips are machine-made speech, never a recording of a
+person; the model is not redistributed here. The licence was checked against the Stack's pinned
+catalog record on 2026-11-13 and is recorded in assets/phrases/phrases.json.
+
+Pocket TTS (Kyutai), CC-BY-4.0, as pocket-tts-english (kyutai/pocket-tts-without-voice-cloning at
+the revision the Stack pins). It renders the pre-rendered offline lines of the clip bundle
+(body/maipai_body/speech/offline_clips.json). Credit line, carried in that manifest and in
+docs/user/stackchan.md: "Voice generated with pocket-tts-english, licensed under CC-BY-4.0." The
+licence was checked against the Stack's pinned catalog record on 2026-11-13.
+
+The StackChan earcons (firmware/assets/sounds) are synthesized by body/scripts/render_unit_sounds.py
+from sine waves: no recording, no third-party sound, MIT with the rest of this repo's firmware work.

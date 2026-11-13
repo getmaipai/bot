@@ -1,0 +1,499 @@
+# Intent: the standing offline look (owner, 2026-11-13), driven by the firmware's own link state. While Home is out of reach the normal face stays and reacts locally, in a muted palette named "offline" (grey-blue, eyes 5 px lower; reserved for the firmware: the host's palette tool cannot pick it and it is never saved), with a small strip in the top-left corner (the slash glyph and "Offline") instead of a speech bubble the mint skin does not have. After 3 s down a connecting strip shows (the bars cycling, no words); after 10 s the offline look and the existing dim amber ring; when the session opens the saved palette, the glyph and the words are removed. "Can't reach Home" on a tap while offline now rides on the strip for 3 s. hal_bridge gets hub_link_set(connecting, offline, refused) and link_note(text); offline_indicator and offline_indicator_refresh (patch 075's bubble writes) are removed.
+# Upstream: m5stack/StackChan firmware/main/stackchan/avatar/skins/mint/mint.cpp, hal/board/ (stackchan_display, hal_bridge, stackchan.cc) and 78/xiaozhi-esp32 main/application.cc, main/protocols/websocket_protocol.cc (MIT). Applies after 111.
+# Check after a flash: stop Home: after about 3 s a Wi-Fi glyph cycles in the corner, after 10 s the face goes grey-blue with the slash glyph and "Offline" and the ring shows dim amber; tap the face: the doubt face and "Can't reach Home" for 3 s, then back to "Offline"; start Home: the colours, the strip and the amber ring clear and the host's palette (or night) is back.
+diff --git a/firmware/main/hal/board/hal_bridge.cc b/firmware/main/hal/board/hal_bridge.cc
+index 15e88a2..d21935c 100644
+--- a/firmware/main/hal/board/hal_bridge.cc
++++ b/firmware/main/hal/board/hal_bridge.cc
+@@ -105,6 +105,22 @@ void display_set_idle_motion_enabled(bool enabled)
+     display->SetIdleMotionEnabled(enabled);
+ }
+ 
++void hub_link_set(bool connecting, bool offline, bool refused)
++{
++    auto display = static_cast<DISPLAY_TYPE*>(Board::GetInstance().GetDisplay());
++    if (display != nullptr) {
++        display->SetHubLink(connecting, offline, refused);
++    }
++}
++
++void link_note(const char* text)
++{
++    auto display = static_cast<DISPLAY_TYPE*>(Board::GetInstance().GetDisplay());
++    if (display != nullptr) {
++        display->SetLinkNote(text);
++    }
++}
++
+ void disply_lvgl_lock()
+ {
+     auto display = static_cast<DISPLAY_TYPE*>(Board::GetInstance().GetDisplay());
+diff --git a/firmware/main/hal/board/hal_bridge.h b/firmware/main/hal/board/hal_bridge.h
+index c217fb0..a4ede07 100644
+--- a/firmware/main/hal/board/hal_bridge.h
++++ b/firmware/main/hal/board/hal_bridge.h
+@@ -51,11 +51,13 @@ void power_keep_awake();
+ // mesh AP did not deliver frames to a modem-sleeping unit); once up, idle uses MIN_MODEM instead of MAX_MODEM.
+ void set_hub_link(bool up);
+ bool hub_link_up();
+-// The hub has been unreachable for a while: a dim amber ring and "Offline" in the speech bubble, both
+-// cleared when the link returns. offline_indicator_refresh() puts the words back after a message covered them.
+-void offline_indicator(bool on);
+-void offline_indicator_refresh();
+-void leds_offline(bool on);
++// The hub has been unreachable for a while: a dim amber ring, cleared when the link returns.
++void leds_offline(bool on);  // the dim amber ring while Home is out of reach
++// What the screen shows of the link to Home (patch 112): a connecting strip after a few seconds, the offline
++// look (muted face, glyph and "Offline") after ten, and "waiting for approval" when Home turns the unit away.
++void hub_link_set(bool connecting, bool offline, bool refused);
++// A short line in the link strip ("Can't reach Home"); "" puts the standing words back.
++void link_note(const char* text);
+ 
+ void disply_lvgl_lock();
+ void disply_lvgl_unlock();
+diff --git a/firmware/main/hal/board/stackchan.cc b/firmware/main/hal/board/stackchan.cc
+index 108bd23..8e1bbca 100644
+--- a/firmware/main/hal/board/stackchan.cc
++++ b/firmware/main/hal/board/stackchan.cc
+@@ -747,7 +747,6 @@ StackChanCamera* hal_bridge::board_get_camera()
+ }
+ 
+ static std::atomic<bool> g_hub_link_up{false};
+-static std::atomic<bool> g_offline_shown{false};
+ 
+ void hal_bridge::set_hub_link(bool up)
+ {
+@@ -763,24 +762,6 @@ bool hal_bridge::hub_link_up()
+     return g_hub_link_up.load();
+ }
+ 
+-void hal_bridge::offline_indicator(bool on)
+-{
+-    g_offline_shown = on;
+-    hal_bridge::leds_offline(on);
+-    auto display = Board::GetInstance().GetDisplay();
+-    if (display != nullptr) {
+-        display->SetChatMessage("system", on ? "Offline" : "");
+-    }
+-}
+-
+-void hal_bridge::offline_indicator_refresh()
+-{
+-    auto display = Board::GetInstance().GetDisplay();
+-    if (display != nullptr) {
+-        display->SetChatMessage("system", g_offline_shown.load() ? "Offline" : "");
+-    }
+-}
+-
+ void hal_bridge::power_keep_awake()
+ {
+     static_cast<M5StackCoreS3Board&>(Board::GetInstance()).KeepAwake();
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index 920fff2..d4c1b2d 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -285,7 +285,8 @@ void StackChanAvatarDisplay::SetupUI()
+     {
+         // The saved palette (never night); an unknown or missing name leaves the default mint.
+         Settings face_settings("xiaozhi", false);
+-        avatar->setPalette(face_settings.GetString("face_pal", "mint").c_str(), false);
++        face_pal_ = face_settings.GetString("face_pal", "mint");
++        avatar->setPalette(face_pal_.c_str(), false);
+     }
+     avatar->init(lv_screen_active());
+     avatar->getPanel()->onClick().connect([]() {
+@@ -341,6 +342,35 @@ void StackChanAvatarDisplay::SetupUI()
+         idle_motion_enabled_ = motion_settings.GetInt("idle_motion", 0) != 0;
+     }
+ 
++    // Link strip: the same glyph and words as the link screen, small, in the corner over the face. It does
++    // not take touches, so a tap still reaches the face.
++    link_strip_ = lv_obj_create(lv_screen_active());
++    lv_obj_remove_style_all(link_strip_);
++    lv_obj_set_size(link_strip_, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
++    lv_obj_set_style_max_width(link_strip_, 308, 0);
++    lv_obj_set_style_bg_color(link_strip_, lv_color_black(), 0);
++    lv_obj_set_style_bg_opa(link_strip_, LV_OPA_70, 0);
++    lv_obj_set_style_radius(link_strip_, 12, 0);
++    lv_obj_set_style_pad_hor(link_strip_, 8, 0);
++    lv_obj_set_style_pad_ver(link_strip_, 4, 0);
++    lv_obj_set_style_pad_column(link_strip_, 4, 0);
++    lv_obj_set_flex_flow(link_strip_, LV_FLEX_FLOW_ROW);
++    lv_obj_set_flex_align(link_strip_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
++    lv_obj_remove_flag(link_strip_, static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
++    lv_obj_align(link_strip_, LV_ALIGN_TOP_LEFT, 6, 6);
++    strip_glyph_ = lv_image_create(link_strip_);
++    lv_obj_set_size(strip_glyph_, 20, 20);
++    lv_obj_set_style_image_recolor(strip_glyph_, lv_color_white(), 0);
++    lv_obj_set_style_image_recolor_opa(strip_glyph_, LV_OPA_COVER, 0);
++    strip_key_ = make_link_key(link_strip_, lv_color_white());
++    lv_obj_add_flag(strip_key_, LV_OBJ_FLAG_HIDDEN);
++    strip_label_ = lv_label_create(link_strip_);
++    lv_obj_set_style_text_font(strip_label_, &lv_font_montserrat_16, 0);
++    lv_obj_set_style_text_color(strip_label_, lv_color_white(), 0);
++    lv_label_set_long_mode(strip_label_, LV_LABEL_LONG_WRAP);
++    lv_obj_set_style_max_width(strip_label_, 236, 0);
++    lv_obj_add_flag(link_strip_, LV_OBJ_FLAG_HIDDEN);
++
+     // Link screen: hides the face until the unit is linked. One black cover, a glyph slot on top and a text
+     // slot below it; ApplyLink() picks the look from the boot statuses and the hub link.
+     link_cover_ = lv_obj_create(lv_screen_active());
+@@ -505,28 +535,110 @@ void StackChanAvatarDisplay::HideLinkScreen()
+     }
+ }
+ 
++void StackChanAvatarDisplay::ShowLinkStrip(LinkLook look)
++{
++    if (link_strip_ == nullptr) {
++        return;
++    }
++    LoadLinkIcons();
++    // A short note (a tap that found no Home) replaces the standing words for a moment.
++    std::string text = link_note_;
++    if (text.empty()) {
++        text = look == LinkLook::Offline ? "Offline" : (look == LinkLook::Approval ? "Waiting for Home to approve me" : "");
++    }
++    if (strcmp(lv_label_get_text(strip_label_), text.c_str()) != 0) {
++        lv_label_set_text(strip_label_, text.c_str());
++    }
++    if (text.empty()) {
++        lv_obj_add_flag(strip_label_, LV_OBJ_FLAG_HIDDEN);
++    } else {
++        lv_obj_remove_flag(strip_label_, LV_OBJ_FLAG_HIDDEN);
++    }
++    if (look == LinkLook::Approval) {
++        lv_obj_remove_flag(strip_key_, LV_OBJ_FLAG_HIDDEN);
++    } else {
++        lv_obj_add_flag(strip_key_, LV_OBJ_FLAG_HIDDEN);
++    }
++    if (strip_look_ != look) {
++        strip_look_ = look;
++        link_t0_    = GetHAL().millis();
++    }
++    SetLinkGlyph(strip_glyph_, look == LinkLook::Connecting, true);
++    lv_obj_remove_flag(link_strip_, LV_OBJ_FLAG_HIDDEN);
++    lv_obj_move_foreground(link_strip_);
++}
++
++void StackChanAvatarDisplay::HideLinkStrip()
++{
++    strip_look_ = LinkLook::None;
++    if (link_strip_ != nullptr) {
++        lv_obj_add_flag(link_strip_, LV_OBJ_FLAG_HIDDEN);
++    }
++}
++
+ // One place decides what the link looks like from what the unit knows; called under the display lock.
++// The full screen shows before the first face (and for Wi-Fi setup); afterwards the face stays, with a strip
++// in its corner and, when Home is out of reach, the muted palette.
+ void StackChanAvatarDisplay::ApplyLink()
+ {
+-    const LinkLook look = boot_done_ ? LinkLook::None : boot_look_;
+-    if (look == LinkLook::None) {
++    LinkLook screen = LinkLook::None;
++    LinkLook strip  = LinkLook::None;
++    if (!boot_done_) {
++        screen = boot_look_;
++    } else if (hub_refused_) {
++        strip = LinkLook::Approval;
++    } else if (hub_offline_) {
++        strip = LinkLook::Offline;
++    } else if (hub_connecting_) {
++        strip = LinkLook::Connecting;
++    } else if (!link_note_.empty()) {
++        strip = LinkLook::Offline;  // the note alone still needs the strip
++    }
++    if (screen != LinkLook::None) {
++        ShowLinkScreen(screen);
++    } else {
+         HideLinkScreen();
++    }
++    if (strip != LinkLook::None) {
++        ShowLinkStrip(strip);
+     } else {
+-        ShowLinkScreen(look);
++        HideLinkStrip();
++    }
++    const bool muted = boot_done_ && (hub_offline_ || hub_refused_);
++    if (muted != look_offline_) {
++        look_offline_ = muted;
++        ApplyOfflinePalette();
+     }
+     // The ring is dark unless the unit needs a person (Wi-Fi setup, waiting for approval).
+-    const bool ring = look == LinkLook::WifiSetup || look == LinkLook::Approval;
++    const bool ring = screen == LinkLook::WifiSetup || screen == LinkLook::Approval || strip == LinkLook::Approval;
+     if (!ring) {
+         SetLinkRing(false);
+     }
+     UpdateLinkTimer();
+ }
+ 
++void StackChanAvatarDisplay::SetHubLink(bool connecting, bool offline, bool refused)
++{
++    DisplayLockGuard lock(this);
++    hub_connecting_ = connecting;
++    hub_offline_    = offline;
++    hub_refused_    = refused;
++    ApplyLink();
++}
++
++void StackChanAvatarDisplay::SetLinkNote(const char* text)
++{
++    DisplayLockGuard lock(this);
++    link_note_ = text != nullptr ? text : "";
++    ApplyLink();
++}
++
+ // The timer runs only while something animates: the Wi-Fi bars, or the ring's blink.
+ void StackChanAvatarDisplay::UpdateLinkTimer()
+ {
+-    const bool need = link_look_ == LinkLook::WifiJoin || link_look_ == LinkLook::HomeJoin ||
+-                      link_look_ == LinkLook::WifiSetup || link_look_ == LinkLook::Approval;
++    const LinkLook look = link_look_ != LinkLook::None ? link_look_ : strip_look_;
++    const bool need = look == LinkLook::WifiJoin || look == LinkLook::HomeJoin || look == LinkLook::WifiSetup ||
++                      look == LinkLook::Approval || look == LinkLook::Connecting;
+     if (need && link_timer_ == nullptr) {
+         link_timer_ = lv_timer_create(LinkTick, 100, this);
+     } else if (!need && link_timer_ != nullptr) {
+@@ -537,15 +649,16 @@ void StackChanAvatarDisplay::UpdateLinkTimer()
+ 
+ void StackChanAvatarDisplay::LinkTick(lv_timer_t* timer)
+ {
+-    auto* display     = static_cast<StackChanAvatarDisplay*>(lv_timer_get_user_data(timer));
+-    const uint32_t t  = GetHAL().millis() - display->link_t0_;
+-    const int frame   = static_cast<int>(t / kLinkGlyphStepMs) % 3;
++    auto* display      = static_cast<StackChanAvatarDisplay*>(lv_timer_get_user_data(timer));
++    const uint32_t t   = GetHAL().millis() - display->link_t0_;
++    const int frame    = static_cast<int>(t / kLinkGlyphStepMs) % 3;
++    const bool screen  = display->link_look_ != LinkLook::None;
++    const LinkLook look = screen ? display->link_look_ : display->strip_look_;
+     if (frame != display->link_frame_) {
+         display->link_frame_ = frame;
+-        const LinkLook look  = display->link_look_;
+-        display->SetLinkGlyph(display->link_glyph_, look == LinkLook::WifiJoin || look == LinkLook::HomeJoin, true);
++        const bool cycling   = look == LinkLook::WifiJoin || look == LinkLook::HomeJoin || look == LinkLook::Connecting;
++        display->SetLinkGlyph(screen ? display->link_glyph_ : display->strip_glyph_, cycling, true);
+     }
+-    const LinkLook look = display->link_look_;
+     if (look == LinkLook::WifiSetup || look == LinkLook::Approval) {
+         display->SetLinkRing((t % kLinkBlinkPeriodMs) < kLinkBlinkOnMs);
+     }
+@@ -908,16 +1021,38 @@ bool StackChanAvatarDisplay::SetFacePalette(const char* palette, bool night)
+         return false;
+     }
+     auto* avatar = dynamic_cast<MintAvatar*>(&stackchan.avatar());
+-    if (!avatar || !avatar->setPalette(palette, night)) {
++    // "offline" is the firmware's own look, never a choice (and never saved).
++    if (!avatar || (!night && palette != nullptr && strcmp(palette, "offline") == 0) || !avatar->setPalette(palette, night)) {
+         return false;
+     }
++    face_night_ = night;
+     if (!night) {  // night is a mode, not a choice: only the palette name is saved
++        face_pal_ = palette;
+         Settings settings("xiaozhi", true);
+         settings.SetString("face_pal", palette);
+     }
++    ApplyOfflinePalette();  // an offline look stays over a colour chosen meanwhile
+     return true;
+ }
+ 
++// The face's palette follows the link: muted while Home is out of reach, the host's choice (or night) otherwise.
++void StackChanAvatarDisplay::ApplyOfflinePalette()
++{
++    auto& stackchan = GetStackChan();
++    if (!stackchan.hasAvatar()) {
++        return;
++    }
++    auto* avatar = dynamic_cast<MintAvatar*>(&stackchan.avatar());
++    if (avatar == nullptr) {
++        return;
++    }
++    if (face_night_) {
++        avatar->setPalette("", true);  // night is already dim: it wins
++    } else {
++        avatar->setPalette(look_offline_ ? "offline" : face_pal_.c_str(), false);
++    }
++}
++
+ void StackChanAvatarDisplay::SetIdleMotionEnabled(bool enabled)
+ {
+     // A runtime gate: the stored idle_lv is not touched. The choice is saved (only when it
+diff --git a/firmware/main/hal/board/stackchan_display.h b/firmware/main/hal/board/stackchan_display.h
+index 489f470..4b4910e 100644
+--- a/firmware/main/hal/board/stackchan_display.h
++++ b/firmware/main/hal/board/stackchan_display.h
+@@ -30,7 +30,7 @@ private:
+ 
+     // The shared link screen (patch 111): one black cover with a glyph slot and a text slot, used for every
+     // state where the unit is not yet linked (joining Wi-Fi, Wi-Fi setup, joining Home, waiting to be approved).
+-    enum class LinkLook : uint8_t { None, WifiJoin, WifiSetup, HomeJoin, Approval };
++    enum class LinkLook : uint8_t { None, WifiJoin, WifiSetup, HomeJoin, Approval, Connecting, Offline };
+     lv_obj_t*      link_cover_       = nullptr;
+     lv_obj_t*      link_glyph_       = nullptr;
+     lv_obj_t*      link_key_         = nullptr;
+@@ -46,6 +46,19 @@ private:
+     lv_image_dsc_t link_icons_[4]    = {};                  // Wi-Fi low, medium, high, slash
+     bool           link_icons_ready_ = false;
+     int            link_icon_tries_  = 0;
++    // The same glyph and words as a small strip over the face, once the face is up (patch 112).
++    lv_obj_t*      link_strip_       = nullptr;
++    lv_obj_t*      strip_glyph_      = nullptr;
++    lv_obj_t*      strip_key_        = nullptr;
++    lv_obj_t*      strip_label_      = nullptr;
++    LinkLook       strip_look_       = LinkLook::None;
++    bool           hub_connecting_   = false;  // the hub link, as the websocket task reports it
++    bool           hub_offline_      = false;
++    bool           hub_refused_      = false;
++    std::string    link_note_;                 // a short line over the standing words ("Can't reach Home")
++    std::string    face_pal_         = "mint";  // the host's palette choice, restored after an offline look
++    bool           face_night_       = false;
++    bool           look_offline_     = false;
+ 
+     lv_obj_t*   quick_panel_   = nullptr;
+     lv_obj_t*   toast_label_   = nullptr;
+@@ -64,6 +77,9 @@ private:
+     void SetLinkGlyph(lv_obj_t* image, bool cycling, bool slash);
+     void ShowLinkScreen(LinkLook look);
+     void HideLinkScreen();
++    void ShowLinkStrip(LinkLook look);
++    void HideLinkStrip();
++    void ApplyOfflinePalette();
+     void ApplyLink();
+     void UpdateLinkTimer();
+     void SetLinkRing(bool on);
+@@ -109,4 +125,8 @@ public:
+     void ApplyPrivacyFace(int bits, bool animate);
+     bool SetFacePalette(const char* palette, bool night);
+     void SetIdleMotionEnabled(bool enabled);
++
++    // The hub link (patch 112): what the websocket task knows. Takes the display lock itself.
++    void SetHubLink(bool connecting, bool offline, bool refused);
++    void SetLinkNote(const char* text);
+ };
+diff --git a/firmware/main/stackchan/avatar/skins/mint/mint.cpp b/firmware/main/stackchan/avatar/skins/mint/mint.cpp
+index 972c9fc..07b6c43 100644
+--- a/firmware/main/stackchan/avatar/skins/mint/mint.cpp
++++ b/firmware/main/stackchan/avatar/skins/mint/mint.cpp
+@@ -19,6 +19,7 @@ static constexpr float kScale       = 1.35f;
+ struct Palette {
+     const char* name;
+     uint32_t bg, ink, fill, tongue;
++    int eye_drop = 0;  // pixels the eyes sit lower
+ };
+ static constexpr Palette kPalettes[] = {
+     {"mint", 0xC4F0DA, 0x18241F, 0x3E9E6B, 0x8ED6A4},     {"sky", 0xC9E6FA, 0x172431, 0x3C7FB8, 0x9CC9EE},
+@@ -27,6 +28,10 @@ static constexpr Palette kPalettes[] = {
+     {"cloud", 0xEEF1F4, 0x1C2126, 0x6C7A89, 0xB4BEC9},
+ };
+ static constexpr Palette kNightPalette = {"night", 0x000000, 0xD8E8DF, 0x2E7A52, 0x5FA37E};
++// The firmware's own look while the hub is out of reach (patch 112): the same face in grey-blue, the eyes a
++// little lowered. Reserved: the host's palette tool never picks it, and it is never saved.
++static constexpr Palette kOfflinePalette = {"offline", 0xBBC6CE, 0x26303A, 0x62788A, 0xA5B6C3, 5};
++static int kEyeDrop = 0;
+ static lv_color_t kBg                  = lv_color_hex(kPalettes[0].bg);
+ static lv_color_t kInk                 = lv_color_hex(kPalettes[0].ink);
+ static lv_color_t kFill                = lv_color_hex(kPalettes[0].fill);
+@@ -200,6 +205,9 @@ lv_color_t MintAvatar::inkColor()
+ bool MintAvatar::setPalette(const char* name, bool night)
+ {
+     const Palette* next = night ? &kNightPalette : nullptr;
++    if (!next && name && std::strcmp(kOfflinePalette.name, name) == 0) {
++        next = &kOfflinePalette;
++    }
+     for (const auto& palette : kPalettes) {
+         if (!next && name && std::strcmp(palette.name, name) == 0) {
+             next = &palette;
+@@ -213,11 +221,17 @@ bool MintAvatar::setPalette(const char* name, bool night)
+     kInk    = lv_color_hex(next->ink);
+     kFill   = lv_color_hex(next->fill);
+     kTongue = lv_color_hex(next->tongue);
++    kEyeDrop = next->eye_drop;
+     if (_panel) {  // before init() there is nothing drawn yet; init() reads the colors above
+         _panel->setBgColor(kBg);
+         for (uint32_t i = 0; i < lv_obj_get_child_count(_panel->get()); ++i) {
+             recolor(lv_obj_get_child(_panel->get(), i), oldInk, oldFill, oldTongue);
+         }
++        for (auto* eye : {_key_elements.leftEye.get(), _key_elements.rightEye.get()}) {
++            if (eye) {
++                eye->setPosition(eye->getPosition());  // sit at the new height now
++            }
++        }
+         lv_obj_invalidate(_panel->get());
+     }
+     return true;
+@@ -284,7 +298,7 @@ void MintEye::setPosition(const Vector2i& position)
+ {
+     Element::setPosition(position);
+     int x = (_is_left_eye ? -kEyeX : kEyeX) + lerp(_position.x, -100, 100, -kOffsetRange, kOffsetRange);
+-    int y = kEyeY + lerp(_position.y, -100, 100, -kOffsetRange, kOffsetRange);
++    int y = kEyeY + kEyeDrop + lerp(_position.y, -100, 100, -kOffsetRange, kOffsetRange);
+     align(_container, LV_ALIGN_CENTER, x, y);
+ }
+ 
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index e7ac1b1..e346bfd 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -1004,7 +1004,7 @@ void Application::ShowCantReachHome() {
+     SetDeviceState(kDeviceStateIdle);
+     auto display = Board::GetInstance().GetDisplay();
+     display->SetEmotion("doubtful");
+-    display->SetChatMessage("system", "Can't reach Home");
++    hal_bridge::link_note("Can't reach Home");  // the link strip; the face has no speech bubble
+     audio_service_.PlaySound(Lang::Sounds::OGG_VIBRATION);
+     // After three seconds the face goes back to neutral and the "Offline" words return if the outage goes on.
+     static esp_timer_handle_t restore_timer = nullptr;
+@@ -1017,7 +1017,7 @@ void Application::ShowCantReachHome() {
+                     return;
+                 }
+                 Board::GetInstance().GetDisplay()->SetEmotion("neutral");
+-                hal_bridge::offline_indicator_refresh();
++                hal_bridge::link_note("");
+             });
+         };
+         args.name = "cant_reach_home";
+diff --git a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+index b17ae6a..e5b4846 100644
+--- a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
++++ b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+@@ -328,6 +328,8 @@ void WebsocketProtocol::ReconnectTask(void* arg) {
+     unsigned attempt = 0;
+     int64_t down_since_us = esp_timer_get_time();
+     bool offline_shown = false;
++    bool connecting_shown = false;
++    constexpr int64_t kConnectingStripAfterUs = 3LL * 1000 * 1000;  // reconnects are constant: a blip shows nothing
+ 
+     while (!(xEventGroupGetBits(self->event_group_handle_) & WEBSOCKET_PROTOCOL_STOP_EVENT)) {
+         xEventGroupClearBits(self->event_group_handle_, WEBSOCKET_PROTOCOL_DISCONNECTED_EVENT | WEBSOCKET_PROTOCOL_CONNECTED_EVENT);
+@@ -340,9 +342,11 @@ void WebsocketProtocol::ReconnectTask(void* arg) {
+             const unsigned took_ms = static_cast<unsigned>((esp_timer_get_time() - started_us) / 1000);
+             attempt = 0;
+             hal_bridge::set_hub_link(true);
+-            if (offline_shown) {
+-                offline_shown = false;
+-                hal_bridge::offline_indicator(false);
++            if (offline_shown || connecting_shown) {
++                offline_shown    = false;
++                connecting_shown = false;
++                hal_bridge::leds_offline(false);
++                hal_bridge::hub_link_set(false, false, false);
+             }
+             push_link_event("ws_up", 0, 0, 0, took_ms);
+             TickType_t connected_at = xTaskGetTickCount();
+@@ -389,9 +393,14 @@ void WebsocketProtocol::ReconnectTask(void* arg) {
+         if (xEventGroupGetBits(self->event_group_handle_) & WEBSOCKET_PROTOCOL_STOP_EVENT) {
+             break;
+         }
+-        if (!offline_shown && (esp_timer_get_time() - down_since_us) >= kOfflineIndicatorAfterUs) {
++        const int64_t down_us = esp_timer_get_time() - down_since_us;
++        if (!offline_shown && down_us >= kOfflineIndicatorAfterUs) {
+             offline_shown = true;
+-            hal_bridge::offline_indicator(true);
++            hal_bridge::leds_offline(true);
++            hal_bridge::hub_link_set(true, true, false);
++        } else if (!connecting_shown && !offline_shown && down_us >= kConnectingStripAfterUs) {
++            connecting_shown = true;
++            hal_bridge::hub_link_set(true, false, false);
+         }
+         uint32_t jitter_ms = esp_random() % (delay_ms / 4 + 1);
+         uint32_t wait_ms = std::min(kMaximumDelayMs, delay_ms + jitter_ms);

@@ -83,6 +83,8 @@ def test_dances_and_event_kinds_export_the_supported_sets():
             "timer_missed",
             "music_feat",
             "music_stats",
+            "privacy",
+            "privacy_refused",
         }
     )
 

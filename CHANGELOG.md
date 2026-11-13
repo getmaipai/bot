@@ -7,6 +7,22 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.71] - 2026-11-13
+
+### Changed
+- Dancing to music: the wait after a dance is 2 minutes (was 10) and the cap is 6 dances an hour (was 3).
+
+### Added
+- StackChan `listening` and `thinking` faces (firmware patch 110; owner, 2026-11-13: the face carries both, the ring does not). The turn code sends them where it sent `neutral`; a unit below firmware 0.2.66 still gets `neutral`. The head moves that go with the cues (`perk`, `attend`, `speak`) no longer send a face of their own.
+- StackChan shared link screen, standing offline look, waiting-for-approval look and power-key blanking (firmware patches 111 to 114, built, not yet flashed): one screen layout for joining Wi-Fi, Wi-Fi setup, joining Home and waiting for approval; the face stays while Home is out of reach, in a muted palette with a corner strip ("Offline", or the cycling Wi-Fi glyph while reconnecting); the ring is dark at boot and goes dark with the eyes shut when the power button is held. Note: `docs/dev/stackchan-faces-and-link-2026-11-13.md`.
+- StackChan sounds (firmware patches 115 to 118, `bodies/stackchan/sounds.py`, `docs/dev/stackchan-sounds-2026-11-13.md`): one earcon family in one soft-bell timbre (needs_you, plug_in, charged, unplug, offline, goodbye, shutter; rising for good news, falling for bad), a `self.audio.play_sound` tool for the host and the unit's own cues for the charger, the link going down and first setup, a sound policy kept in the unit (on, night, mute, quiet hours on its own clock), the low battery earcon then its spoken line, the camera shutter, an error earcon and a `sound_test` command. Tier 2 of the offline voice: sixteen short local phrases in five groups that the unit says itself when the wake word fires with no link, never repeating, at most one per 10 seconds, the tone only at night. Settings `robot.sounds.enabled` and `robot.sounds.night`. The phrase voice licence is checked and credited in `NOTICE`.
+
+### Added
+- StackChan batch 4 host integration for hard mute, listening/thinking and link faces, unit sounds and offline phrases. Repeat stays silent while the unit is hard muted; music analysis is disabled while muted, new dances are refused, and an active dance stops with reason `muted`. Home settings and owner hardware checks are recorded in `docs/dev/home-needs-bot-0.2.71-2026-11-13.md`.
+
+### Changed
+- Dancing to music: the wait after a dance is 2 minutes (was 10) and the cap is 6 dances an hour (was 3).
+- StackChan batch 4 firmware patches 105–108, 110–118 and host behavior are described in the dated development notes; patch 109 is intentionally unused.
 ## [0.2.70] - 2026-11-13
 
 ### Changed

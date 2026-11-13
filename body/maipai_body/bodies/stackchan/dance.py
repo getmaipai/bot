@@ -219,6 +219,7 @@ class DanceSituation:
     charging: bool | None = None
     battery_low: bool = False  # the light service's low-battery flag
     full_quiet: str | None = None  # why the unit is muted or in full quiet, else None
+    muted: bool = False
 
 
 @dataclass(frozen=True)

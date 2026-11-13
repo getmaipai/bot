@@ -36,6 +36,31 @@ except (OSError, ValueError, KeyError, TypeError) as exc:
 SUPPORTED_PRIMITIVES = set(PRIMITIVE_NAMES) - {"stop", "muted", "held"}
 
 
+# The firmware release that draws the `listening` and `thinking` faces (mint skin, patch 110). An
+# older unit does not know the names and would log them as unknown, so it gets `neutral` as before.
+FACES_MIN_FIRMWARE = (0, 2, 66)
+NEW_FACE_FALLBACK = {"listening": "neutral", "thinking": "neutral"}
+
+
+def version_at_least(value: object, minimum: tuple[int, int, int]) -> bool:
+    """True when a "major.minor.patch" firmware version string is at or above ``minimum``."""
+    try:
+        parts = tuple(int(part) for part in str(value).split(".")[:3])
+        return len(parts) == 3 and parts >= minimum
+    except (TypeError, ValueError):
+        return False
+
+
+def face_for_firmware(expression: str, firmware_version: object) -> str:
+    """The face for a unit running ``firmware_version``: a newer face falls back to ``neutral``
+    on firmware without it (an unknown version counts as old)."""
+    if expression in NEW_FACE_FALLBACK and not version_at_least(
+        firmware_version, FACES_MIN_FIRMWARE
+    ):
+        return NEW_FACE_FALLBACK[expression]
+    return expression
+
+
 @dataclass(frozen=True)
 class FaceFrame:
     expression: str
@@ -45,15 +70,18 @@ class FaceFrame:
 
 @dataclass(frozen=True)
 class BodyAction:
-    face: str
+    face: str | None  # None leaves the face alone: the turn cue before this move owns it
     yaw_fraction: float = 0.0
     pitch_fraction: float = 0.0  # of the way up from level (the head only travels up)
 
 
-# Turn-state cues are selected by the expression layer. Model text is never a token.
+# Turn-state cues are selected by the expression layer. Model text is never a token. The face
+# carries listening and thinking (owner, 2026-11-13); the ring does not.
 CUE_FACE_MAP = {
-    "listening": FaceFrame("neutral", mouth=False),
-    "thinking": FaceFrame("neutral", mouth=False),  # friendly attention, never doubt
+    "listening": FaceFrame(
+        "listening", mouth=False
+    ),  # wider eyes, closed mouth, from the wake word
+    "thinking": FaceFrame("thinking", mouth=False),  # eyes up and aside, small mouth; never doubt
     "speaking": FaceFrame("neutral"),  # the firmware animates the mouth while it speaks
     "reply_mood": FaceFrame("neutral"),
 }
@@ -75,10 +103,12 @@ PRIMITIVE_BODY_MAP = {
     "glance": BodyAction("neutral", yaw_fraction=0.12),
     "tilt": BodyAction("neutral", pitch_fraction=0.08),
     "nod": BodyAction("happy", pitch_fraction=0.06),
-    "perk": BodyAction("neutral", pitch_fraction=0.10),  # lifts: pitch only goes up from level
-    "attend": BodyAction("neutral", pitch_fraction=0.04),
+    # The listening and thinking moves leave the face to the turn cue sent just before them (the
+    # `listening` and `thinking` faces); a face of their own would paint neutral over it.
+    "perk": BodyAction(None, pitch_fraction=0.10),  # lifts: pitch only goes up from level
+    "attend": BodyAction(None, pitch_fraction=0.04),
     "settle": BodyAction("neutral"),
-    "speak": BodyAction("neutral", pitch_fraction=0.04),
+    "speak": BodyAction(None, pitch_fraction=0.04),  # the speaking cue and the reply mood own it
 }
 
 UNSUPPORTED_PRIMITIVES = {
@@ -105,7 +135,7 @@ if set(PRIMITIVE_BODY_MAP) | set(UNSUPPORTED_PRIMITIVES) != set(PRIMITIVE_NAMES)
 _USED_FACES = (
     {frame.expression for frame in CUE_FACE_MAP.values()}
     | set(REPLY_MOOD_FACE_MAP.values())
-    | {action.face for action in PRIMITIVE_BODY_MAP.values()}
+    | {action.face for action in PRIMITIVE_BODY_MAP.values() if action.face is not None}
 )
 for _face in sorted(_USED_FACES - SUPPORTED_FACES):
     raise ValueError(f"unsupported StackChan face: {_face}")
@@ -113,7 +143,11 @@ for _face in sorted(_USED_FACES - SUPPORTED_FACES):
 __all__ = [
     "BodyAction",
     "CUE_FACE_MAP",
+    "FACES_MIN_FIRMWARE",
     "FaceFrame",
+    "NEW_FACE_FALLBACK",
     "PRIMITIVE_BODY_MAP",
     "UNSUPPORTED_PRIMITIVES",
+    "face_for_firmware",
+    "version_at_least",
 ]

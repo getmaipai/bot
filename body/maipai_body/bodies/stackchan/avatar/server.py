@@ -45,6 +45,8 @@ EXPRESSIONS = {
     "sleeping": "sleeping",
     "surprised": "surprised",
     "wink": "wink",
+    "listening": "listening",
+    "thinking": "thinking",
 }
 _EYE_WEIGHTS = {
     "neutral": 100,
@@ -56,6 +58,8 @@ _EYE_WEIGHTS = {
     "sleeping": 0,
     "surprised": 100,
     "wink": 100,
+    "listening": 100,
+    "thinking": 100,
 }
 _EYE_ROTATIONS = {
     "neutral": 0,
@@ -67,6 +71,8 @@ _EYE_ROTATIONS = {
     "sleeping": 0,
     "surprised": 0,
     "wink": 0,
+    "listening": 0,
+    "thinking": 0,
 }
 
 
@@ -121,6 +127,11 @@ class AvatarServer:
         # Asked on every connect: True when the camera should already be streaming (local watching
         # is on). The body's one start at boot comes before the unit's socket exists.
         self.start_camera_on_connect: Any = None
+        # Vision off (firmware patch 106): True while the camera is switched off. A frame that
+        # arrives then is dropped (never kept, never analysed) and reported as a leak; the app also
+        # hands this server `on_frame_while_vision_off`.
+        self.vision_blocked: Any = None
+        self.on_frame_while_vision_off: Any = None
         self._camera_seen: set[str] = set()
         self._stream_since: dict[
             str, float
@@ -231,6 +242,10 @@ class AvatarServer:
                 if frame.kind == CONTROL_MOTION and self.estop_engaged:
                     LOG.warning("blocked avatar motion frame while software estop is engaged")
                 elif frame.kind == CAMERA_FRAME:
+                    if callable(self.vision_blocked) and self.vision_blocked():
+                        if callable(self.on_frame_while_vision_off):
+                            self.on_frame_while_vision_off()
+                        continue
                     if not _valid_jpeg(frame.payload):
                         LOG.warning("discarded malformed StackChan camera frame")
                         continue
