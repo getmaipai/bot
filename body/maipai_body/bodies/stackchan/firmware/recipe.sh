@@ -331,6 +331,8 @@ apply_repo_patch 097-remove-mooncake-apps.patch "$SRC"
 apply_repo_patch 098-bluetooth-off.patch "$SRC"
 apply_repo_patch 099-wifi-only-and-fewer-sounds.patch "$SRC"
 apply_repo_patch 099-no-jpeg-decoder.patch "$SRC"
+apply_repo_patch 100-music-features.patch "$SRC"
+apply_repo_patch 101-music-tap.patch "$FW/xiaozhi-esp32"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"

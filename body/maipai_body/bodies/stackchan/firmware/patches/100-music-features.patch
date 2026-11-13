@@ -1,0 +1,628 @@
+# Intent: the unit measures a few numbers about the room's sound so the host can tell clear music from speech and noise (owner request 2026-11-13: the robot hears music, shows a small "I like this" and, if it goes on, dances). Channel 0 of the codec (the microphone with the 60 dB gain) is read at its own rate (24 kHz) by maipai_music_tap, which runs a front end of four band-pass biquads (about 60-250, 250-1000, 1000-3000, 3000-8000 Hz), a DC blocker and a zero-crossing counter and queues one small frame every 20 ms; a low-priority worker task (PSRAM stack, history in PSRAM) keeps 6 s of onset signal and envelope and, once a second, computes the level, the band shares, a tempo and its confidence (autocorrelation of the onset signal over 60 to 187 BPM), the spectral flatness of the bands, the zero-crossing rate and its spread, the share of the envelope's variance at 3 to 6 Hz (high for speech) and the share of near-silent frames. While the last second was louder than RMS 400 and 3 s of history exist, it pushes one "music_feat" device event (lv, b0..b3, bpm, tc, fl, zc, zs, mo, ps, on; about 110 bytes of JSON) and a serial trace line "MF ..." for the first half hour after boot; a "music_stats" diagnostic once a minute. No audio leaves the unit and none is kept. Cost: about 0.7 million float operations a second in the audio task (single precision), about 3 KB of history in PSRAM, a 16-frame queue (512 bytes of internal RAM, 192 bytes of static data) and one 4 KB PSRAM task; the audio task's own stack grows by about 300 bytes (not measured; its headroom was 1,760). Built image 5,584 bytes larger. maipai_music_core.h is plain C so a host test compiles and runs it (tests/firmware/music_core_test.c). The unit never hears itself: patch 101 says "suppress" while the unit listens, speaks or plays a sound (and 1.5 s after) and the tap then stands still and clears the history; maipai_music_set_muted() is the hook for a future hard mute.
+# Upstream: m5stack/StackChan firmware/main/hal/hal.cpp, hal_mcp.cpp (MIT); new files hal_music.cpp and maipai_music_core.h. Applies after 081 with --unidiff-zero (context hunks: it also applies when other patches have added lines nearby). Pairs with 101-music-tap.patch on xiaozhi-esp32.
+# Check after a flash: the boot log says "music features on"; music at normal volume 1 m away prints MF lines on the serial console (lv above 400, bpm near the song's tempo) and the host logs "unit music: music_feat ..."; a quiet room prints nothing; the unit's own speech prints nothing; the wake word and chat work as before.
+diff --git a/firmware/main/hal/maipai_music_core.h b/firmware/main/hal/maipai_music_core.h
+new file mode 100644
+--- /dev/null
++++ b/firmware/main/hal/maipai_music_core.h
+@@ -0,0 +1,393 @@
++/*
++ * Music features (MaiPai patch 100): plain C, no ESP-IDF, so a host test can compile and run it.
++ *
++ * Front end (mm_front_*): takes channel 0 of the codec at its own rate, one sample at a time, removes
++ * DC, and for every 20 ms frame adds up the energy in four bands (about 60-250, 250-1000, 1000-3000,
++ * 3000-8000 Hz, four band-pass biquads), the total energy and the zero crossings.
++ * Analysis (mm_an_*): one call per frame keeps the last 6 s of a log-energy envelope, an onset signal
++ * (the rise of the four band log energies, summed) and the zero-crossing counts. Once a second
++ * mm_summarize turns them into the numbers the host decides on: the level, the band shares, a tempo
++ * (autocorrelation of the onset signal over 60 to 187 BPM) with its confidence, the spectral
++ * flatness of the bands, the zero-crossing rate and its spread, the share of the envelope's energy
++ * at 3 to 6 Hz (high for speech: the syllable rate) and the share of near-silent frames (speech has
++ * pauses). Nothing here keeps or returns audio. Single precision floats only (the S3 has no
++ * double-precision unit). Written to compile as C99 and as C++.
++ */
++#ifndef MAIPAI_MUSIC_CORE_H
++#define MAIPAI_MUSIC_CORE_H
++
++#include <math.h>
++#include <stdint.h>
++#include <string.h>
++
++#define MM_BANDS 4
++#define MM_FPS 50                 /* frames per second: 20 ms frames */
++#define MM_RING 300               /* 6 s of frames */
++#define MM_MIN_FRAMES 150         /* 3 s of history before a summary means anything */
++#define MM_MIN_LAG 16             /* 187 BPM */
++#define MM_MAX_LAG 50             /* 60 BPM */
++#define MM_MOD_FRAMES 150         /* the envelope window for the 3 to 6 Hz share */
++#define MM_MOD_FREQS 7
++#define MM_ZC_THRESHOLD 16.0f     /* Schmitt trigger for zero crossings, int16 units */
++#define MM_MIN_ONSET_STD 15       /* under 0.15 log2 units of onset variation there is no beat to find */
++#define MM_PAUSE_RATIO 0.1f       /* a frame under a tenth of the window's mean energy is a pause */
++
++typedef struct {
++    float b0, b1, b2, a1, a2;
++    float z1, z2;
++} mm_bq_t;
++
++typedef struct {
++    int rate;
++    int frame_len;   /* samples per 20 ms frame */
++    mm_bq_t bq[MM_BANDS];
++    float hp_prev_x, hp_prev_y, hp_r;
++    int zc_sign;
++    /* the frame being built */
++    float e[MM_BANDS];
++    float etot;
++    int zc;
++    int n;
++} mm_front_t;
++
++typedef struct {
++    float e[MM_BANDS];  /* sum of squares per band over the frame */
++    float etot;         /* sum of squares of the DC-removed signal */
++    int zc;             /* zero crossings */
++    int n;              /* samples in the frame */
++} mm_frame_t;
++
++typedef struct {
++    int16_t onset[MM_RING];  /* log2 units times 64 */
++    int16_t lenv[MM_RING];   /* log2(1 + mean square) times 64 */
++    uint8_t zc[MM_RING];
++    int head;                /* next slot */
++    int count;               /* frames held, up to MM_RING */
++    float prev_lb[MM_BANDS];
++    int have_prev;
++    float b_avg[MM_BANDS];   /* band mean squares, about 1 s time constant */
++    float lev_sum;           /* mean squares since the last summary */
++    int lev_n;
++    float scratch[MM_RING];  /* working room for mm_summarize, so no big array sits on a task stack */
++} mm_an_t;
++
++typedef struct {
++    int valid;     /* 0 when there is not enough history */
++    int lv;        /* RMS of the DC-removed signal over the last second, int16 units */
++    int b[MM_BANDS]; /* band shares, percent */
++    int bpm;       /* 0 when no tempo peak */
++    int tc;        /* tempo confidence, 0..100 */
++    int fl;        /* spectral flatness of the band densities, 0..100 */
++    int zc;        /* mean zero crossings per 20 ms frame over the active frames */
++    int zs;        /* spread (std / mean) of those, percent */
++    int mo;        /* share of the envelope's variance at 3 to 6 Hz, 0..100 */
++    int ps;        /* share of near-silent frames, 0..100 */
++    int on;        /* onset strength: std of the onset signal, log2 units times 100 */
++} mm_feat_t;
++
++static const float mm_band_hz[MM_BANDS]  = {120.0f, 500.0f, 1730.0f, 4900.0f};
++static const float mm_band_q[MM_BANDS]   = {0.63f, 0.67f, 0.87f, 0.98f};
++static const float mm_band_bw[MM_BANDS]  = {190.0f, 750.0f, 2000.0f, 5000.0f};
++
++static inline float mm_clampf(float x, float lo, float hi)
++{
++    return x < lo ? lo : (x > hi ? hi : x);
++}
++
++static inline int mm_round(float x)
++{
++    return (int)(x >= 0.0f ? x + 0.5f : x - 0.5f);
++}
++
++static inline float mm_bq_run(mm_bq_t* q, float x)
++{
++    const float y = q->b0 * x + q->z1;
++    q->z1         = q->b1 * x - q->a1 * y + q->z2;
++    q->z2         = q->b2 * x - q->a2 * y;
++    return y;
++}
++
++static inline void mm_front_reset(mm_front_t* f)
++{
++    int i;
++    for (i = 0; i < MM_BANDS; ++i) {
++        f->bq[i].z1 = f->bq[i].z2 = 0.0f;
++        f->e[i] = 0.0f;
++    }
++    f->hp_prev_x = f->hp_prev_y = 0.0f;
++    f->zc_sign = 0;
++    f->etot = 0.0f;
++    f->zc = 0;
++    f->n = 0;
++}
++
++static inline void mm_front_init(mm_front_t* f, int rate)
++{
++    int i;
++    memset(f, 0, sizeof(*f));
++    f->rate      = rate;
++    f->frame_len = rate / MM_FPS;
++    f->hp_r      = 1.0f - 6.2831853f * 20.0f / (float)rate;
++    for (i = 0; i < MM_BANDS; ++i) {
++        float w0    = 6.2831853f * mm_band_hz[i] / (float)rate;
++        float alpha = sinf(w0) / (2.0f * mm_band_q[i]);
++        float a0    = 1.0f + alpha;
++        f->bq[i].b0 = alpha / a0;
++        f->bq[i].b1 = 0.0f;
++        f->bq[i].b2 = -alpha / a0;
++        f->bq[i].a1 = -2.0f * cosf(w0) / a0;
++        f->bq[i].a2 = (1.0f - alpha) / a0;
++    }
++}
++
++/* Feed `frames` samples of one channel (`stride` int16 apart). Completed 20 ms frames go to `out`
++ * (room for at least frames / frame_len + 1); returns how many. */
++static inline int mm_front_feed(mm_front_t* f, const int16_t* x, int frames, int stride, mm_frame_t* out)
++{
++    int done = 0, i, b;
++    for (i = 0; i < frames; ++i) {
++        const float s = (float)x[i * stride];
++        const float y = s - f->hp_prev_x + f->hp_r * f->hp_prev_y;
++        f->hp_prev_x  = s;
++        f->hp_prev_y  = y;
++        f->etot += y * y;
++        for (b = 0; b < MM_BANDS; ++b) {
++            const float yb = mm_bq_run(&f->bq[b], y);
++            f->e[b] += yb * yb;
++        }
++        if (y > MM_ZC_THRESHOLD && f->zc_sign <= 0) {
++            f->zc_sign = 1;
++            f->zc++;
++        } else if (y < -MM_ZC_THRESHOLD && f->zc_sign >= 0) {
++            f->zc_sign = -1;
++            f->zc++;
++        }
++        if (++f->n >= f->frame_len) {
++            for (b = 0; b < MM_BANDS; ++b) {
++                out[done].e[b] = f->e[b];
++                f->e[b]        = 0.0f;
++            }
++            out[done].etot = f->etot;
++            out[done].zc   = f->zc;
++            out[done].n    = f->n;
++            f->etot = 0.0f;
++            f->zc   = 0;
++            f->n    = 0;
++            ++done;
++        }
++    }
++    return done;
++}
++
++static inline void mm_an_reset(mm_an_t* a)
++{
++    memset(a, 0, sizeof(*a));
++}
++
++static inline int mm_ring_at(const mm_an_t* a, int back)
++{
++    return (a->head - 1 - back + 2 * MM_RING) % MM_RING;
++}
++
++static inline int16_t mm_q64(float v)
++{
++    const float s = v * 64.0f;
++    return (int16_t)(s > 32000.0f ? 32000.0f : (s < -32000.0f ? -32000.0f : s));
++}
++
++static inline void mm_an_push(mm_an_t* a, const mm_frame_t* fr)
++{
++    float onset = 0.0f;
++    float nn    = fr->n > 0 ? (float)fr->n : 1.0f;
++    int b;
++    for (b = 0; b < MM_BANDS; ++b) {
++        const float ms = fr->e[b] / nn;
++        const float lb = log2f(1.0f + ms);
++        if (a->have_prev && lb > a->prev_lb[b]) {
++            onset += lb - a->prev_lb[b];
++        }
++        a->prev_lb[b] = lb;
++        a->b_avg[b]   = a->have_prev ? a->b_avg[b] + (ms - a->b_avg[b]) * 0.02f : ms;
++    }
++    a->have_prev          = 1;
++    a->onset[a->head]     = mm_q64(onset);
++    a->lenv[a->head]      = mm_q64(log2f(1.0f + fr->etot / nn));
++    a->zc[a->head]        = (uint8_t)(fr->zc > 255 ? 255 : fr->zc);
++    a->head               = (a->head + 1) % MM_RING;
++    if (a->count < MM_RING) {
++        ++a->count;
++    }
++    a->lev_sum += fr->etot / nn;
++    a->lev_n++;
++}
++
++/* Tempo from the autocorrelation of the onset signal; 0 bpm when there is no usable peak. */
++static inline void mm_tempo(mm_an_t* a, int* bpm, int* conf, int* onset_std)
++{
++    float* x = a->scratch;
++    float mean = 0.0f, r0 = 0.0f, best = 0.0f, r[MM_MAX_LAG + 2];
++    int n = a->count, i, lag, best_lag = 0;
++    *bpm  = 0;
++    *conf = 0;
++    *onset_std = 0;
++    if (n < MM_MIN_FRAMES) {
++        return;
++    }
++    for (i = 0; i < n; ++i) {
++        x[n - 1 - i] = (float)a->onset[mm_ring_at(a, i)];  /* oldest first */
++        mean += x[n - 1 - i];
++    }
++    mean /= (float)n;
++    for (i = 0; i < n; ++i) {
++        x[i] -= mean;
++        r0 += x[i] * x[i];
++    }
++    *onset_std = mm_round(100.0f * sqrtf(r0 / (float)n) / 64.0f);
++    if (*onset_std < MM_MIN_ONSET_STD) {
++        return;  /* a steady sound has no beat; frame-phase ripple must not read as one */
++    }
++    for (lag = 0; lag <= MM_MAX_LAG + 1; ++lag) {
++        float s = 0.0f;
++        if (lag < MM_MIN_LAG - 1 || lag > MM_MAX_LAG + 1) {
++            r[lag] = 0.0f;
++            continue;
++        }
++        for (i = lag; i < n; ++i) {
++            s += x[i] * x[i - lag];
++        }
++        r[lag] = s / r0;
++    }
++    for (lag = MM_MIN_LAG; lag <= MM_MAX_LAG; ++lag) {
++        if (r[lag] > best && r[lag] >= r[lag - 1] && r[lag] >= r[lag + 1]) {
++            best     = r[lag];
++            best_lag = lag;
++        }
++    }
++    if (best_lag == 0) {
++        return;
++    }
++    /* A slow peak whose double-speed lag is nearly as strong is the beat at half speed. */
++    if (best_lag > 32 && best_lag / 2 >= MM_MIN_LAG) {
++        const int half = best_lag / 2;
++        float h        = r[half];
++        if (half + 1 <= MM_MAX_LAG && r[half + 1] > h) {
++            h = r[half + 1];
++        }
++        if (r[half - 1] > h) {
++            h = r[half - 1];
++        }
++        if (h >= 0.7f * best) {
++            best_lag = r[half] >= r[half - 1] && r[half] >= r[half + 1] ? half
++                       : (r[half + 1] > r[half - 1] ? half + 1 : half - 1);
++            if (best_lag < MM_MIN_LAG) {
++                best_lag = MM_MIN_LAG;
++            }
++            best = r[best_lag];
++        }
++    }
++    {
++        float lagf = (float)best_lag;
++        const float y0 = r[best_lag - 1], y1 = r[best_lag], y2 = r[best_lag + 1];
++        const float d  = y0 - 2.0f * y1 + y2;
++        if (d < 0.0f) {
++            lagf += 0.5f * (y0 - y2) / d;
++        }
++        *bpm  = mm_round(60.0f * (float)MM_FPS / lagf);
++        *conf = mm_round(mm_clampf(best, 0.0f, 1.0f) * 100.0f);
++    }
++}
++
++/* Once a second. Resets the level accumulator. */
++static inline void mm_summarize(mm_an_t* a, mm_feat_t* o)
++{
++    float* lin = a->scratch;
++    float mean_e = 0.0f, tot = 0.0f, lnsum = 0.0f, dens_sum = 0.0f;
++    int n = a->count, i, b, pauses = 0, active = 0;
++    memset(o, 0, sizeof(*o));
++    o->lv = a->lev_n > 0 ? mm_round(sqrtf(a->lev_sum / (float)a->lev_n)) : 0;
++    a->lev_sum = 0.0f;
++    a->lev_n   = 0;
++    if (n < MM_MIN_FRAMES) {
++        return;
++    }
++    o->valid = 1;
++    for (b = 0; b < MM_BANDS; ++b) {
++        tot += a->b_avg[b];
++    }
++    if (tot > 0.0f) {
++        for (b = 0; b < MM_BANDS; ++b) {
++            o->b[b] = mm_round(100.0f * a->b_avg[b] / tot);
++        }
++    }
++    for (b = 0; b < MM_BANDS; ++b) {
++        float d = a->b_avg[b] / mm_band_bw[b];
++        if (d < 1e-3f) {
++            d = 1e-3f;
++        }
++        lnsum += logf(d);
++        dens_sum += d;
++    }
++    o->fl = mm_round(100.0f * mm_clampf(expf(lnsum / (float)MM_BANDS) / (dens_sum / (float)MM_BANDS), 0.0f, 1.0f));
++    mm_tempo(a, &o->bpm, &o->tc, &o->on);
++    for (i = 0; i < n; ++i) {
++        lin[i] = exp2f((float)a->lenv[mm_ring_at(a, i)] / 64.0f);
++        mean_e += lin[i];
++    }
++    mean_e /= (float)n;
++    {
++        float zsum = 0.0f, zsq = 0.0f;
++        for (i = 0; i < n; ++i) {
++            if (lin[i] < MM_PAUSE_RATIO * mean_e) {
++                ++pauses;
++            } else {
++                const float z = (float)a->zc[mm_ring_at(a, i)];
++                zsum += z;
++                zsq += z * z;
++                ++active;
++            }
++        }
++        o->ps = mm_round(100.0f * (float)pauses / (float)n);
++        if (active > 0) {
++            const float m = zsum / (float)active;
++            float var     = zsq / (float)active - m * m;
++            if (var < 0.0f) {
++                var = 0.0f;
++            }
++            o->zc = mm_round(m);
++            o->zs = m > 0.0f ? mm_round(100.0f * sqrtf(var) / m) : 0;
++        }
++    }
++    {
++        /* Variance share of the log-energy envelope at 3 to 6 Hz (Goertzel at seven frequencies). */
++        const int m = n < MM_MOD_FRAMES ? n : MM_MOD_FRAMES;
++        float mean = 0.0f, ssx = 0.0f, share = 0.0f;
++        float* x = a->scratch;
++        int k;
++        for (i = 0; i < m; ++i) {
++            x[m - 1 - i] = (float)a->lenv[mm_ring_at(a, i)] / 64.0f;
++            mean += x[m - 1 - i];
++        }
++        mean /= (float)m;
++        for (i = 0; i < m; ++i) {
++            x[i] -= mean;
++            ssx += x[i] * x[i];
++        }
++        if (ssx > 1e-3f) {
++            for (k = 0; k < MM_MOD_FREQS; ++k) {
++                const float f = 3.0f + 0.5f * (float)k;
++                const float c = 2.0f * cosf(6.2831853f * f / (float)MM_FPS);
++                float s1 = 0.0f, s2 = 0.0f, p;
++                for (i = 0; i < m; ++i) {
++                    const float s0 = x[i] + c * s1 - s2;
++                    s2 = s1;
++                    s1 = s0;
++                }
++                p = s1 * s1 + s2 * s2 - c * s1 * s2;
++                share += 2.0f * p / ((float)m * ssx);
++            }
++            o->mo = mm_round(100.0f * mm_clampf(share, 0.0f, 1.0f));
++        }
++    }
++}
++
++#endif /* MAIPAI_MUSIC_CORE_H */
+diff --git a/firmware/main/hal/hal_music.cpp b/firmware/main/hal/hal_music.cpp
+new file mode 100644
+--- /dev/null
++++ b/firmware/main/hal/hal_music.cpp
+@@ -0,0 +1,194 @@
++/*
++ * Music features (MaiPai patch 100): the unit measures a few numbers about the room's sound so the
++ * host can tell clear music from speech and noise, and sends only those numbers (about once a
++ * second, only when the room is loud). No audio leaves the unit, none is kept.
++ *
++ * The audio input task hands every chunk it reads from the codec (24 kHz, two channels interleaved,
++ * before the 16 kHz resampler) to maipai_music_tap, which looks at channel 0 only (the microphone
++ * with the 60 dB gain). The tap runs the sample-level front end of maipai_music_core.h (four band
++ * energies, total energy, zero crossings per 20 ms frame) and queues each frame. A small
++ * low-priority worker task turns the frames into the features (onset signal, tempo by
++ * autocorrelation, flatness, 3 to 6 Hz envelope share, pauses) once a second and pushes one
++ * "music_feat" device event while the last second was louder than kGateRms and at least 3 s of
++ * history exist. Quiet rooms send nothing.
++ *
++ * The unit must not hear itself: the caller says `suppress` while the unit listens, speaks or plays
++ * a tone (and for 1.5 s after), and while muted (maipai_music_set_muted); then the front end stands
++ * still and the history is cleared, so the unit's own voice or chime never builds a beat.
++ *
++ * Output: a serial trace "MF <ms> <lv> <bpm> <tc> <fl> <zc> <zs> <mo> <ps> <on>" per loud second
++ * during the first half hour after boot (for the owner's measuring), a "music_feat" event, and a
++ * "music_stats" diagnostic once a minute (seconds analysed, loud, sent, dropped frames, seconds
++ * suppressed).
++ */
++#include <algorithm>
++#include <atomic>
++#include <cstdint>
++#include <cstdio>
++#include <cstring>
++#include <esp_heap_caps.h>
++#include <esp_timer.h>
++#include <freertos/FreeRTOS.h>
++#include <freertos/queue.h>
++#include <freertos/task.h>
++#include <mooncake_log.h>
++
++#include "maipai_music_core.h"
++
++void device_events_push_music(const char* extra);
++void device_events_push_diag(const char* kind, const char* extra);
++
++namespace {
++
++static const std::string_view _tag = "HAL-Music";
++
++constexpr int kGateRms            = 400;  // the room must be this loud (int16 RMS, channel 0); a quiet room is 80 to 110
++constexpr int64_t kTraceUntilUs   = 30LL * 60 * 1000000;
++constexpr int kChunkMax           = 480;  // samples per pass through the front end: at most 2 frames
++constexpr int kQueueDepth         = 16;   // 0.3 s of frames
++
++struct Msg {
++    mm_frame_t frame;
++    uint8_t reset;  // 1: forget the history (the unit spoke, listened or was muted)
++};
++
++mm_front_t s_front;
++bool s_front_ready    = false;
++int s_front_rate      = 0;
++bool s_was_suppressed = true;
++QueueHandle_t s_queue = nullptr;
++mm_an_t* s_an         = nullptr;
++std::atomic<bool> s_muted{false};
++std::atomic<uint32_t> s_dropped{0};
++std::atomic<uint32_t> s_suppressed_chunks{0};
++
++void send_reset()
++{
++    Msg m{};
++    m.reset = 1;
++    if (xQueueSend(s_queue, &m, 0) != pdTRUE) {
++        s_dropped.fetch_add(1);
++    }
++}
++
++void worker_task(void*)
++{
++    Msg m;
++    int frames = 0;
++    uint32_t minute_start_ms = 0, seconds = 0, loud = 0, sent = 0;
++    while (true) {
++        if (xQueueReceive(s_queue, &m, portMAX_DELAY) != pdTRUE) {
++            continue;
++        }
++        if (m.reset) {
++            mm_an_reset(s_an);
++            frames = 0;
++            continue;
++        }
++        mm_an_push(s_an, &m.frame);
++        if (++frames % MM_FPS != 0) {
++            continue;
++        }
++        mm_feat_t f;
++        mm_summarize(s_an, &f);
++        const uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
++        if (f.valid) {
++            ++seconds;
++            if (f.lv >= kGateRms) {
++                ++loud;
++                if (esp_timer_get_time() < kTraceUntilUs) {
++                    printf("MF %u %d %d %d %d %d %d %d %d %d\n", static_cast<unsigned>(now_ms), f.lv, f.bpm, f.tc,
++                           f.fl, f.zc, f.zs, f.mo, f.ps, f.on);
++                }
++                if (!s_muted.load()) {
++                    char extra[128];
++                    snprintf(extra, sizeof(extra),
++                             "\"lv\":%d,\"b0\":%d,\"b1\":%d,\"b2\":%d,\"b3\":%d,\"bpm\":%d,\"tc\":%d,\"fl\":%d,"
++                             "\"zc\":%d,\"zs\":%d,\"mo\":%d,\"ps\":%d,\"on\":%d",
++                             f.lv, f.b[0], f.b[1], f.b[2], f.b[3], f.bpm, f.tc, f.fl, f.zc, f.zs, f.mo, f.ps, f.on);
++                    device_events_push_music(extra);
++                    ++sent;
++                }
++            }
++        }
++        if (minute_start_ms == 0) {
++            minute_start_ms = now_ms;
++        } else if (now_ms - minute_start_ms >= 60000) {
++            char extra[120];
++            snprintf(extra, sizeof(extra), "\"seconds\":%u,\"loud\":%u,\"sent\":%u,\"dropped\":%u,\"suppressed\":%u",
++                     static_cast<unsigned>(seconds), static_cast<unsigned>(loud), static_cast<unsigned>(sent),
++                     static_cast<unsigned>(s_dropped.exchange(0)),
++                     static_cast<unsigned>(s_suppressed_chunks.exchange(0)));
++            device_events_push_diag("music_stats", extra);
++            minute_start_ms = now_ms;
++            seconds = loud = sent = 0;
++        }
++    }
++}
++
++}  // namespace
++
++// Called by the audio input task (xiaozhi audio_service.cc) with every chunk read from the codec.
++// `suppress` is true while the unit listens, speaks or plays a sound (and just after).
++void maipai_music_tap(const int16_t* interleaved, size_t frames, int channels, int sample_rate, bool suppress)
++{
++    if (s_queue == nullptr || interleaved == nullptr || channels < 1 || sample_rate < 8000) {
++        return;
++    }
++    if (suppress || s_muted.load()) {
++        s_suppressed_chunks.fetch_add(1);
++        if (!s_was_suppressed) {
++            s_was_suppressed = true;
++            s_front_ready    = false;
++            send_reset();
++        }
++        return;
++    }
++    if (s_was_suppressed || !s_front_ready || s_front_rate != sample_rate) {
++        mm_front_init(&s_front, sample_rate);
++        s_front_ready    = true;
++        s_front_rate     = sample_rate;
++        s_was_suppressed = false;
++        send_reset();
++    }
++    mm_frame_t out[4];
++    size_t done = 0;
++    while (done < frames) {
++        const int n   = static_cast<int>(std::min<size_t>(kChunkMax, frames - done));
++        const int got = mm_front_feed(&s_front, interleaved + done * channels, n, channels, out);
++        for (int i = 0; i < got; ++i) {
++            Msg m{};
++            m.frame = out[i];
++            if (xQueueSend(s_queue, &m, 0) != pdTRUE) {
++                s_dropped.fetch_add(1);
++            }
++        }
++        done += n;
++    }
++}
++
++// A hard mute: no music features while set. Nothing sets it yet (the unit has no mute); the host
++// also honours a "muted" field if an event carries one.
++void maipai_music_set_muted(bool muted)
++{
++    s_muted.store(muted);
++}
++
++void maipai_music_init()
++{
++    if (s_queue != nullptr) {
++        return;
++    }
++    s_an = static_cast<mm_an_t*>(heap_caps_calloc(1, sizeof(mm_an_t), MALLOC_CAP_SPIRAM));
++    if (s_an == nullptr) {
++        s_an = static_cast<mm_an_t*>(heap_caps_calloc(1, sizeof(mm_an_t), MALLOC_CAP_8BIT));
++    }
++    s_queue = xQueueCreate(kQueueDepth, sizeof(Msg));
++    if (s_an == nullptr || s_queue == nullptr) {
++        mclog::tagError(_tag, "no memory for the music features; the feature is off");
++        s_queue = nullptr;
++        return;
++    }
++    xTaskCreatePinnedToCoreWithCaps(worker_task, "musicfeat", 4096, nullptr, 1, nullptr, 1, MALLOC_CAP_SPIRAM);
++    mclog::tagInfo(_tag, "music features on: {} byte history, gate rms {}", sizeof(mm_an_t), kGateRms);
++}
+diff --git a/firmware/main/hal/hal.cpp b/firmware/main/hal/hal.cpp
+--- a/firmware/main/hal/hal.cpp
++++ b/firmware/main/hal/hal.cpp
+@@ -12,2 +12,3 @@
+ 
++void maipai_music_init();
+ static std::unique_ptr<Hal> _hal_instance;
+@@ -56,2 +57,3 @@
+     io_expander_init();
++    maipai_music_init();  // patch 100: music features from the first microphone
+     rtc_init();
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -167,2 +167,13 @@
+     push_diag_event(kind, extra);
++}
++
++// The room's music features (patch 100, hal_music.cpp): one small event about once a second while
++// the room is loud. Dropped when the queue is half full, so a feature never pushes a touch out.
++void device_events_push_music(const char* extra)
++{
++    std::lock_guard<std::mutex> lock(s_events_mutex);
++    if (s_events.size() >= 8) {
++        return;
++    }
++    s_events.push_back({"music_feat", static_cast<uint32_t>(esp_timer_get_time() / 1000), extra});
+ }

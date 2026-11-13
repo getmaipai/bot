@@ -1,0 +1,653 @@
+"""The StackChan music dance: hear clear music, show a small "I like this", dance if it goes on.
+
+Design: the StackChan dance note of 2026-11-13 (parts 2 and 3), owner request the same day. The
+unit measures the room's sound (firmware patches 100 and 101, ``maipai_music_core.h``) and sends
+one small ``music_feat`` event about once a second, only when the room is loud and the unit is
+not speaking, listening or playing a sound. No audio leaves the unit. This module is the host
+half: it reads those numbers, decides "clear music" with hysteresis, and runs the stages.
+
+Every time and number here is an UNMEASURED design default; the logs below exist to tune them.
+
+1. Detection: clear rhythmic music for ``detect_s`` (4 s) in a row (one missed or doubtful second
+   is forgiven). "Clear music" means a steady beat (tempo 60 to 187 BPM with enough confidence
+   for the sensitivity), a spectrum that is not flat noise, and none of the speech cues (a 3 to
+   6 Hz rhythm in the loudness, many pauses). A TV theme or music under talk should score as
+   speech or not at all.
+2. The nod: one subtle "I like this": two small slow nods and a happy or a wink face for about
+   3 s. No ring light. Once per music session.
+3. The build-up: if the music is still clear ``nod_to_build_s`` (20 s) after the nod began, about
+   10 s of the firmware's happy sway with a slow two-colour glow on the ring in the last 3 s
+   (0.2 bright).
+4. The dance: straight on, up to 20 s of the firmware keyframe dances (the head moves only inside
+   the unit: it refuses more than 40 head calls a minute, patch 038) with the ring show. It is
+   the little dance's machinery (dance.py ``DanceRunner`` with its own ``Plan``).
+5. The end: 5 s without clear music, the 20 s cap, or any touch, turn, wake word, shake, tilt,
+   picture, low battery, offline or estop (the runner's own checks). Then the ring goes dark and
+   the head goes back to level.
+
+Never annoying, as rules: off by default (``robot.dance.auto``); nothing at night, asleep, during
+a turn, with the camera or live cue showing, in full quiet or muted, or while the emergency stop
+is latched; at least ``MIN_GAP_S`` (10 min) after the last dance and ``NOD_GAP_S`` between nods;
+at most 3 dances an hour and 10 a day (a nod needs room under those caps too, since it is the
+first stage of a dance); the same music never starts a second session (the unit must hear
+``Timing.rearm_quiet_s`` of quiet first). Battery: on battery a full dance needs
+``FULL_BATTERY`` percent (40), from ``NOD_BATTERY`` (20) up to that only the nod, under 20 or
+unknown nothing; while charging there is no battery gate (no battery cost; the design note's
+question 3 recommendation, to be confirmed) but every other rule applies.
+
+Not the ambient head gate: the nod and the dance are explicit behaviours behind an explicit
+setting, so the 2026-10-20 "still while charging or at idle level still" rule for wandering does
+not apply, the same as for the asked dance. They obey the situation gates above.
+
+Measuring (while ``robot.dance.auto`` is on, or a test runs): one INFO line per stage change, one
+per detection (tempo and confidence), one a minute (feature windows, music windows, false-start
+candidates: a run of music-like windows that ended before ``detect_s``). ``music_test`` (a hub
+device command) feeds scripted music-like numbers for a minute so the whole chain can be seen
+without music; it obeys the safety gates but not the setting, the caps or the gaps, and counts
+toward no cap.
+"""
+
+from __future__ import annotations
+
+import logging
+import random
+import threading
+from collections import deque
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+
+from maipai_body.bodies.stackchan.dance import (
+    GOLD,
+    HAPPY_S,
+    LIME,
+    ROBOT_S,
+    DanceSettings,
+    DanceSituation,
+    Plan,
+    Rgb,
+    _scaled,
+    ring_frame,
+)
+
+logger = logging.getLogger("maipai_body.bodies.stackchan.music_dance")
+
+LED_COUNT = 12
+
+# ---------------------------------------------------------------- the numbers from the unit
+
+MUSIC_FEAT_KIND = "music_feat"
+MIN_BPM = 60
+MAX_BPM = 187  # the firmware's lag range (patch 100)
+MIN_LEVEL = 400  # RMS of channel 0; the unit already sends nothing under this
+
+
+@dataclass(frozen=True)
+class MusicFeat:
+    """One second of the room, as the unit measured it (patch 100). All integers."""
+
+    lv: int  # RMS level
+    b: tuple[int, int, int, int]  # band shares, percent
+    bpm: int  # tempo, 0 when no beat was found
+    tc: int  # tempo confidence 0..100
+    fl: int  # spectral flatness 0..100 (white noise 97, music 5 to 50)
+    zc: int  # mean zero crossings per 20 ms
+    zs: int  # their spread, percent
+    mo: int  # share of the loudness' variance at 3 to 6 Hz, 0..100 (speech is high)
+    ps: int  # share of near-silent 20 ms frames, 0..100
+    on: int = 0  # onset strength
+    muted: bool = False
+
+
+def _int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def parse_music_feat(extra: Mapping[str, object] | None) -> MusicFeat | None:
+    """The event's fields as a ``MusicFeat``, or None when a needed one is missing or not a
+    number."""
+    if not extra:
+        return None
+    needed = {}
+    for key in ("lv", "bpm", "tc", "fl", "mo", "ps"):
+        value = _int(extra.get(key))
+        if value is None:
+            return None
+        needed[key] = value
+    shares = tuple(_int(extra.get(f"b{i}")) or 0 for i in range(4))
+    return MusicFeat(
+        lv=needed["lv"],
+        b=(shares[0], shares[1], shares[2], shares[3]),
+        bpm=needed["bpm"],
+        tc=needed["tc"],
+        fl=needed["fl"],
+        zc=_int(extra.get("zc")) or 0,
+        zs=_int(extra.get("zs")) or 0,
+        mo=needed["mo"],
+        ps=needed["ps"],
+        on=_int(extra.get("on")) or 0,
+        muted=bool(extra.get("muted")),
+    )
+
+
+@dataclass(frozen=True)
+class Sensitivity:
+    tc_min: int  # the least tempo confidence that counts as a beat
+    mo_max: int  # at or above this share at 3 to 6 Hz it is speech
+    ps_max: int = 40  # at or above this share of pauses it is speech...
+    ps_tc_free: int = 50  # ...unless the beat is this steady (a sparse click track)
+    fl_max: int = 70  # at or above this flatness it is noise
+
+
+# low wants a clearer beat; high takes a weaker one. UNMEASURED: tune from the logs.
+SENSITIVITIES: dict[str, Sensitivity] = {
+    "low": Sensitivity(tc_min=55, mo_max=40),
+    "medium": Sensitivity(tc_min=35, mo_max=45),
+    "high": Sensitivity(tc_min=25, mo_max=55),
+}
+
+
+@dataclass(frozen=True)
+class Verdict:
+    music: bool
+    why: str  # the reason it is not music, "" when it is
+
+
+def judge(feat: MusicFeat, sensitivity: str = "medium", *, relaxed: bool = False) -> Verdict:
+    """Is this second clear rhythmic music? ``relaxed`` is for a stage that is already running (the
+    unit's own servo noise and a long song's quiet bars must not end it): the bars are lowered."""
+    sens = SENSITIVITIES.get(sensitivity, SENSITIVITIES["medium"])
+    tc_min, mo_max, ps_max = sens.tc_min, sens.mo_max, sens.ps_max
+    if relaxed:
+        tc_min = max(10, tc_min * 3 // 4)
+        mo_max += 10
+        ps_max += 10
+    if feat.muted:
+        return Verdict(False, "muted")
+    if feat.lv < MIN_LEVEL:
+        return Verdict(False, "quiet")
+    if not MIN_BPM <= feat.bpm <= MAX_BPM or feat.tc < tc_min:
+        return Verdict(False, "no steady beat")
+    if feat.fl >= sens.fl_max:
+        return Verdict(False, "noise")
+    if feat.mo >= mo_max:
+        return Verdict(False, "speech rhythm")
+    if feat.ps >= ps_max and feat.tc < sens.ps_tc_free:
+        return Verdict(False, "pauses")
+    return Verdict(True, "")
+
+
+# ---------------------------------------------------------------- timing and the plan
+
+
+@dataclass(frozen=True)
+class Timing:
+    detect_s: float = 4.0  # clear music this long starts the nod
+    gap_s: float = 2.5  # one missed or doubtful second between music seconds is forgiven
+    nod_to_build_s: float = 20.0  # from the nod's start to the build-up
+    end_silence_s: float = 5.0  # no clear music this long ends a running dance
+    rearm_quiet_s: float = 10.0  # quiet this long before another session can begin
+    nod_s: float = 3.0  # the nod's face stays this long
+
+
+NORMAL = Timing()
+# for music_test with {"fast": true}: the same chain in about 40 s
+FAST = Timing(detect_s=2.0, nod_to_build_s=6.0, end_silence_s=4.0, rearm_quiet_s=4.0)
+
+MIN_GAP_S = 600.0  # after the end of a dance (and so before the next nod)
+NOD_GAP_S = 120.0  # between two nods
+MAX_PER_HOUR = 3
+MAX_PER_DAY = 10
+FULL_BATTERY = 40  # on battery: a full dance from this percent
+NOD_BATTERY = 20  # on battery: only the nod from this percent, nothing under it
+TEST_S = 60.0  # how long music_test feeds music-like seconds
+
+GAP_FACE_S = 0.3
+BUILD_S = 2 * HAPPY_S + GAP_FACE_S + 1.0  # 9.7 s: sway, wink, sway, a held beat
+DANCE_S = 20.0
+TOTAL_S = BUILD_S + DANCE_S
+GLOW_FROM_S = BUILD_S - 3.0  # the first light, in the last 3 s of the build-up
+GLOW_LEVEL = 0.4  # times the show's 0.5 brightness: 0.2
+SHOW_PHASE_S = 6.7  # each ring pattern of the dance runs this long
+
+_BUILD_AND_DANCE: tuple[tuple[float, str, str], ...] = (
+    # the build-up: the firmware's happy sway twice, a wink between, a held beat
+    (0.0, "face", "happy"),
+    (0.0, "dance", "happy"),
+    (HAPPY_S, "face", "wink"),
+    (HAPPY_S + GAP_FACE_S, "dance", "happy"),
+    (2 * HAPPY_S + GAP_FACE_S, "face", "happy"),
+    # the dance: stiff turns and sways with the faces of the little dance
+    (BUILD_S, "dance", "robot"),
+    (BUILD_S + ROBOT_S, "face", "surprised"),
+    (BUILD_S + ROBOT_S + GAP_FACE_S, "face", "happy"),
+    (BUILD_S + ROBOT_S + GAP_FACE_S, "dance", "happy"),
+    (BUILD_S + ROBOT_S + GAP_FACE_S + HAPPY_S, "face", "wink"),
+    (BUILD_S + ROBOT_S + 2 * GAP_FACE_S + HAPPY_S, "dance", "robot"),
+    (BUILD_S + 2 * ROBOT_S + 2 * GAP_FACE_S + HAPPY_S, "face", "happy"),
+    (BUILD_S + 2 * ROBOT_S + 2 * GAP_FACE_S + HAPPY_S, "dance", "happy"),  # cut at the cap
+)
+
+
+def glow_frame(tick: int) -> list[Rgb]:
+    """The build-up's ring: gold and lime in alternating pixels that swap every second tick, at
+    0.2 brightness. Always two colours, always moving."""
+    first, second = (GOLD, LIME) if (tick // 2) % 2 == 0 else (LIME, GOLD)
+    return [_scaled(first if i % 2 == 0 else second, GLOW_LEVEL) for i in range(LED_COUNT)]
+
+
+def _ring(tick: int, t_s: float) -> list[Rgb] | None:
+    if t_s < GLOW_FROM_S:
+        return None  # dark: the build-up is a head and face thing until the glow
+    if t_s < BUILD_S:
+        return glow_frame(tick)
+    return ring_frame(tick, int((t_s - BUILD_S) // SHOW_PHASE_S) % 3)
+
+
+AUTO_PLAN = Plan(_BUILD_AND_DANCE, TOTAL_S, _ring)
+
+# ---------------------------------------------------------------- the controller
+
+NodFn = Callable[[str, Callable[[], bool]], object]  # (face, cancelled) -> blocks until done
+
+
+@dataclass
+class MusicDanceHooks:
+    """The robot side of the music dance, all injected (a test passes recorders)."""
+
+    request_dance: Callable[[], tuple[bool, str]]  # starts the build-up and dance: (started, why)
+    stop_dance: Callable[[str], object]
+    dance_running: Callable[[], bool]
+    nod: NodFn  # the small nod with a face; blocks, runs on its own thread
+    restore_face: Callable[[], object]  # the idle face again
+    situation: Callable[[], DanceSituation]
+
+
+class MusicDance:
+    """Decides "music" from the unit's numbers and runs the stages. Pure but for its hooks: the
+    clock
+    is passed in (``feed`` and ``tick``), so a test drives it with a scripted stream."""
+
+    def __init__(
+        self,
+        hooks: MusicDanceHooks,
+        settings: DanceSettings,
+        *,
+        spawn: Callable[[Callable[[], None]], object] | None = None,
+        choose_face: Callable[[], str] | None = None,
+        timing: Timing = NORMAL,
+    ) -> None:
+        self._hooks = hooks
+        self.settings = settings
+        self._spawn = spawn or self._thread
+        self._choose_face = choose_face or (lambda: "wink" if random.random() < 0.3 else "happy")
+        self._timing = timing
+        self._normal_timing = timing
+        self._lock = threading.RLock()
+        self.state = "idle"  # idle | nod | watch | show | spent
+        self._run_start: float | None = None
+        self._last_pos: float | None = None
+        self._run_len_pos = 0
+        self._nod_at = float("-inf")
+        self._nod_cancel = False
+        self._last_dance_end = float("-inf")
+        self._last_nod = float("-inf")
+        self._dance_starts: deque[float] = deque()
+        self._test_until = -1.0
+        self._test_next = 0.0
+        self._session_test = False  # the running session began in a test: it ends on its own
+        self._dance_started_at = float("-inf")
+        # per-minute stats
+        self._minute_at: float | None = None
+        self._windows = 0
+        self._music_windows = 0
+        self._false_starts = 0
+        self.last_detection = ""
+
+    # -- inputs
+
+    @property
+    def testing(self) -> bool:
+        return self._test_until > 0
+
+    def _active(self) -> bool:
+        return self.settings.enabled and (self.settings.auto or self.testing or self._session_test)
+
+    def feed(self, feat: MusicFeat, now: float) -> None:
+        """One second of the room from the unit. Ignored (not even logged) while the music dance is
+        off. A test's own scripted seconds come through here too."""
+        with self._lock:
+            if not self._active():
+                return
+            self._count_minute(now)
+            relaxed = self.state in ("nod", "watch", "show")
+            verdict = judge(feat, self.settings.auto_sensitivity, relaxed=relaxed)
+            self._windows += 1
+            if verdict.music:
+                self._music_windows += 1
+                self._positive(feat, now)
+            else:
+                self._negative(now)
+            self._advance(now, feat if verdict.music else None)
+
+    def tick(self, now: float) -> None:
+        """Time passing: a music session ends, a running dance is checked, a test feeds its
+        seconds."""
+        with self._lock:
+            if self.testing:
+                self._feed_test(now)
+            if not self._active():
+                if self.state in ("nod", "watch", "show"):
+                    self._abort(now, "the setting is off")
+                elif self.state != "idle":
+                    self.state = "idle"
+                return
+            self._count_minute(now)
+            self._advance(now, None)
+
+    def on_events(self, events: object, now: float) -> None:
+        """The unit's touch and shake events: a touch or shake in the nod or the wait ends the
+        session
+        (the running dance's own touch handling is the runner's)."""
+        if self.state not in ("nod", "watch"):
+            return
+        if now - self._nod_at < 1.5:
+            return  # the nod's own motion
+        for event in events if isinstance(events, (list, tuple)) else []:
+            kind = getattr(event, "kind", None)
+            if kind in ("head_touch", "head_swipe_forward", "head_swipe_back", "shake"):
+                with self._lock:
+                    self._abort(now, "a touch" if kind != "shake" else "a shake")
+                return
+
+    # -- music tracking
+
+    def _positive(self, feat: MusicFeat, now: float) -> None:
+        if self._last_pos is None or now - self._last_pos > self._timing.gap_s:
+            self._end_run(now)
+            self._run_start = now
+            self._run_len_pos = 0
+        self._last_pos = now
+        self._run_len_pos += 1
+        self.last_detection = f"tempo {feat.bpm} bpm, confidence {feat.tc}%"
+
+    def _negative(self, now: float) -> None:
+        if self._last_pos is not None and now - self._last_pos > self._timing.gap_s:
+            self._end_run(now)
+
+    def _end_run(self, now: float) -> None:
+        """A run of music-like seconds is over; one that never reached the nod is a false-start
+        candidate (two seconds or more of it, so a single stray second is not counted)."""
+        if (
+            self._run_start is not None
+            and self._last_pos is not None
+            and self.state == "idle"
+            and self._run_len_pos >= 2
+            and self._last_pos - self._run_start < self._timing.detect_s
+        ):
+            self._false_starts += 1
+        self._run_start = None
+
+    def _music_for(self, now: float) -> float:
+        """Seconds of unbroken clear music up to the last positive second (0 when it is gone)."""
+        if self._run_start is None or self._last_pos is None:
+            return 0.0
+        if now - self._last_pos > self._timing.gap_s:
+            return 0.0
+        return self._last_pos - self._run_start
+
+    def _music_gone(self, now: float) -> bool:
+        return self._last_pos is None or now - self._last_pos >= self._timing.end_silence_s
+
+    # -- the stages
+
+    def _advance(self, now: float, positive: MusicFeat | None) -> None:
+        t = self._timing
+        if self.state == "idle":
+            if self._run_start is not None and (
+                self._last_pos is None or now - self._last_pos > t.gap_s
+            ):
+                self._end_run(now)
+            if positive is not None and self._music_for(now) >= t.detect_s:
+                logger.info(
+                    "StackChan music: detected clear music for %.0f s (%s)",
+                    self._music_for(now),
+                    self.last_detection,
+                )
+                self._try_nod(now)
+        elif self.state == "nod":
+            if now - self._nod_at >= t.nod_s:
+                self._set_state("watch", "the nod is done; waiting to see if the music goes on")
+                self._hooks.restore_face()
+            self._check_interrupt(now)
+        elif self.state == "watch":
+            if self._check_interrupt(now):
+                return
+            if self._music_gone(now):
+                self._set_state("spent", "the music stopped before the build-up")
+            elif now - self._nod_at >= t.nod_to_build_s and positive is not None:
+                self._try_dance(now)
+        elif self.state == "show":
+            if not self._hooks.dance_running():
+                self._dance_over(now)
+            elif self._music_gone(now):
+                self._hooks.stop_dance("music ended")
+        elif self.state == "spent":
+            if self._last_pos is None or now - self._last_pos >= t.rearm_quiet_s:
+                self._set_state("idle", "quiet again; ready for the next song")
+                self._run_start = None
+
+    def _gate(self, now: float, *, for_nod: bool) -> tuple[str | None, bool]:
+        """(reason it may not, True when only the nod is allowed)."""
+        sit = self._hooks.situation()
+        if sit.full_quiet:
+            return f"full quiet or muted ({sit.full_quiet})", False
+        if sit.estop:
+            return "the emergency stop is latched", False
+        if not sit.connected or sit.offline:
+            return "the unit is offline", False
+        if not sit.upright:
+            return "the unit is not upright", False
+        if sit.camera_cue or sit.live_cue:
+            return "a camera or live cue is showing", False
+        if sit.in_turn:
+            return "a turn is on", False
+        if not sit.awake:
+            return "the unit is asleep", False
+        if sit.night:
+            return "it is night", False
+        nod_only = False
+        if sit.charging is not True:
+            if sit.battery_percent is None:
+                return "the battery level is unknown", False
+            if sit.battery_percent < NOD_BATTERY or sit.battery_low:
+                return f"battery {sit.battery_percent}%", False
+            nod_only = sit.battery_percent < FULL_BATTERY
+        if for_nod and not self.testing:
+            if now - self._last_dance_end < MIN_GAP_S:
+                return "a dance ended less than 10 minutes ago", False
+            if now - self._last_nod < NOD_GAP_S:
+                return "a nod was less than 2 minutes ago", False
+            reason = self._caps_reason(now)
+            if reason:
+                return reason, False
+        return None, nod_only
+
+    def _caps_reason(self, now: float) -> str | None:
+        while self._dance_starts and now - self._dance_starts[0] >= 24 * 3600.0:
+            self._dance_starts.popleft()
+        if sum(1 for s in self._dance_starts if now - s < 3600.0) >= MAX_PER_HOUR:
+            return f"{MAX_PER_HOUR} dances in the last hour"
+        if len(self._dance_starts) >= MAX_PER_DAY:
+            return f"{MAX_PER_DAY} dances in the last day"
+        return None
+
+    def _try_nod(self, now: float) -> None:
+        why, _ = self._gate(now, for_nod=True)
+        if why is not None:
+            self._set_state("spent", f"no nod: {why}")
+            return
+        face = self._choose_face()
+        self._session_test = self.testing
+        self._nod_at = now
+        if not self.testing:
+            self._last_nod = now
+        self._nod_cancel = False
+        self._set_state("nod", f"the nod (face {face}, no ring light)")
+        self._spawn(lambda: self._do_nod(face))
+
+    def _do_nod(self, face: str) -> None:
+        try:
+            self._hooks.nod(face, lambda: self._nod_cancel)
+        except Exception:
+            logger.warning("StackChan music nod failed", exc_info=True)
+
+    def _try_dance(self, now: float) -> None:
+        why, nod_only = self._gate(now, for_nod=False)
+        if why is None and nod_only:
+            why = "battery under 40% and not charging: the nod only"
+        if why is None and not self.testing:
+            why = self._caps_reason(now)
+        if why is not None:
+            self._set_state("spent", f"no dance: {why}")
+            return
+        started, refused = self._hooks.request_dance()
+        if not started:
+            self._set_state("spent", f"no dance: {refused or 'the dance runner refused'}")
+            return
+        self._dance_started_at = now
+        if not self.testing:
+            self._dance_starts.append(now)
+        self._set_state("show", "the build-up and the dance")
+
+    def _dance_over(self, now: float) -> None:
+        if not self._session_test:
+            self._last_dance_end = now
+        self._set_state("spent", "the dance is over")
+
+    def _check_interrupt(self, now: float) -> bool:
+        sit = self._hooks.situation()
+        why = None
+        if sit.estop:
+            why = "the emergency stop"
+        elif sit.in_turn or sit.live_cue:
+            why = "a turn"
+        elif not sit.upright:
+            why = "a tilt"
+        elif sit.camera_cue:
+            why = "a picture"
+        elif not sit.connected or sit.offline:
+            why = "offline"
+        elif sit.full_quiet:
+            why = "quiet"
+        elif sit.night:
+            why = "night"
+        elif not sit.awake:
+            why = "sleep"
+        if why is None:
+            return False
+        self._abort(now, why)
+        return True
+
+    def _abort(self, now: float, why: str) -> None:
+        self._nod_cancel = True
+        if self.state == "show":
+            self._hooks.stop_dance(why)
+            return
+        if self.state in ("nod", "watch"):
+            self._set_state("spent", why if why == "the setting is off" else f"ended by {why}")
+
+    def _set_state(self, state: str, why: str) -> None:
+        if state == self.state:
+            return
+        logger.info("StackChan music: stage %s -> %s (%s)", self.state, state, why)
+        self.state = state
+        if state == "idle":
+            self._session_test = False
+
+    # -- stats
+
+    def _count_minute(self, now: float) -> None:
+        if self._minute_at is None:
+            self._minute_at = now
+            return
+        if now - self._minute_at < 60.0:
+            return
+        line = (
+            "StackChan music minute: %d feature windows, %d music windows, %d false-start "
+            "candidates, stage %s"
+        )
+        args = (self._windows, self._music_windows, self._false_starts, self.state)
+        (logger.info if self._windows else logger.debug)(line, *args)
+        self._minute_at = now
+        self._windows = self._music_windows = self._false_starts = 0
+
+    # -- the test
+
+    def start_test(self, now: float, *, fast: bool = False) -> tuple[bool, str]:
+        """``music_test``: feed music-like seconds for a minute. The safety gates still apply."""
+        with self._lock:
+            if self.settings.enabled is False:
+                return False, "robot.dance.enabled is off"
+            if self.testing:
+                return False, "a music test is already running"
+            if self.state in ("nod", "watch", "show"):
+                return False, "a music session is already running"
+            why, _ = self._gate(now, for_nod=False)
+            if why is not None:
+                logger.info("StackChan music test refused: %s", why)
+                return False, why
+            self._timing = FAST if fast else self._normal_timing
+            self._test_until = now + (30.0 if fast else TEST_S)
+            self._test_next = now
+            self.state = "idle"
+            self._run_start = self._last_pos = None
+            logger.info("StackChan music test started (%s)", "fast" if fast else "normal")
+            return True, ""
+
+    def _feed_test(self, now: float) -> None:
+        if now >= self._test_until:
+            self._test_until = -1.0
+            self._timing = self._normal_timing
+            logger.info("StackChan music test: the scripted music has stopped")
+            return
+        while self._test_next <= now:
+            self._test_next += 1.0
+            self.feed(TEST_FEAT, now)
+
+    # -- plumbing
+
+    @staticmethod
+    def _thread(target: Callable[[], None]) -> threading.Thread:
+        thread = threading.Thread(target=target, name="stackchan-music-nod", daemon=True)
+        thread.start()
+        return thread
+
+
+TEST_FEAT = MusicFeat(lv=2400, b=(40, 35, 18, 7), bpm=120, tc=80, fl=12, zc=15, zs=80, mo=15, ps=3)
+
+
+def nod_steps(centre_pitch: int, speed: int) -> list[tuple[int, int, int, float]]:
+    """The nod as (yaw, pitch, speed, pause after): two small slow nods of 8 degrees, then level."""
+    steps: list[tuple[int, int, int, float]] = []
+    for _ in range(2):
+        steps.append((0, centre_pitch + 8, speed, 0.55))
+        steps.append((0, centre_pitch, speed, 0.55))
+    return steps
+
+
+__all__ = [
+    "AUTO_PLAN",
+    "FAST",
+    "NORMAL",
+    "MusicDance",
+    "MusicDanceHooks",
+    "MusicFeat",
+    "Timing",
+    "Verdict",
+    "glow_frame",
+    "judge",
+    "nod_steps",
+    "parse_music_feat",
+]

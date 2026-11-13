@@ -48,6 +48,9 @@ logger = logging.getLogger("maipai_body.bodies.stackchan.dance")
 
 ENABLED_KEY = "robot.dance.enabled"
 SHOW_RING_KEY = "robot.dance.show_ring"
+AUTO_KEY = "robot.dance.auto"  # the music-driven dance (music_dance.py); off by default
+AUTO_SENSITIVITY_KEY = "robot.dance.auto_sensitivity"  # "low", "medium" or "high"
+AUTO_SENSITIVITIES = ("low", "medium", "high")
 
 LED_COUNT = 12
 RING_BRIGHTNESS = 0.5  # by day; the show never runs at night
@@ -134,6 +137,20 @@ def phase_at(t_s: float) -> int:
     return 2
 
 
+@dataclass(frozen=True)
+class Plan:
+    """What a dance plays: (seconds from the start, "face" or "dance", name) steps, the length, and
+    the ring picture at (tick, seconds in) or None for a dark ring. The little dance is the
+    default; the music dance (music_dance.py) passes its own build-up and dance."""
+
+    script: tuple[tuple[float, str, str], ...]
+    total_s: float
+    ring: Callable[[int, float], list[Rgb] | None]
+
+
+LITTLE_PLAN = Plan(SCRIPT, TOTAL_S, lambda tick, t_s: ring_frame(tick, phase_at(t_s)))
+
+
 # ---------------------------------------------------------------- the ask, in words
 
 _DANCE = re.compile(
@@ -157,11 +174,15 @@ def is_dance_request(spoken: str) -> bool:
 
 
 class DanceSettings:
-    """``robot.dance.enabled`` and ``robot.dance.show_ring`` (both default true)."""
+    """``robot.dance.enabled`` and ``robot.dance.show_ring`` (both default true), and the music
+    dance's ``robot.dance.auto`` (default false) and ``robot.dance.auto_sensitivity`` (default
+    "medium")."""
 
     def __init__(self) -> None:
         self.enabled = True
         self.show_ring = True
+        self.auto = False
+        self.auto_sensitivity = "medium"
 
     def apply(self, values: Mapping[str, object]) -> None:
         enabled = values.get(ENABLED_KEY)
@@ -170,6 +191,12 @@ class DanceSettings:
         show_ring = values.get(SHOW_RING_KEY)
         if isinstance(show_ring, bool):
             self.show_ring = show_ring
+        auto = values.get(AUTO_KEY)
+        if isinstance(auto, bool):
+            self.auto = auto
+        sensitivity = values.get(AUTO_SENSITIVITY_KEY)
+        if isinstance(sensitivity, str) and sensitivity in AUTO_SENSITIVITIES:
+            self.auto_sensitivity = sensitivity
 
 
 # ---------------------------------------------------------------- the routine
@@ -253,14 +280,19 @@ class DanceRunner:
     def running(self) -> bool:
         return self._running
 
+    def situation(self) -> DanceSituation:
+        """The robot's situation as the gates see it (the music dance reads it too)."""
+        return self._hooks.situation()
+
     # -- triggers
 
-    def request(self, trigger: str) -> DanceReply:
-        """Ask for a dance. ``trigger`` is "voice" or "hub".
+    def request(self, trigger: str, plan: Plan | None = None) -> DanceReply:
+        """Ask for a dance. ``trigger`` is "voice", "hub" or "auto" (the music dance, which
+        passes its own ``plan`` and never runs at night).
 
         The gates run now. A started dance runs on its own thread (a spoken ask first waits for its
         own turn to end); the reply's line is what the caller says."""
-        if trigger not in ("voice", "hub"):
+        if trigger not in ("voice", "hub", "auto"):
             raise ValueError(f"unknown dance trigger {trigger!r}")
         now = self._clock()
         with self._lock:
@@ -275,8 +307,8 @@ class DanceRunner:
             self._last_end = float("inf")  # no second dance can slip in before this one ends
         situation = self._hooks.situation()
         quiet_start = situation.night
-        self._spawn(lambda: self._run(trigger))
-        return DanceReply(True, "" if quiet_start else LINE_START)
+        self._spawn(lambda: self._run(trigger, plan or LITTLE_PLAN))
+        return DanceReply(True, "" if quiet_start or trigger == "auto" else LINE_START)
 
     def stop(self, reason: str) -> None:
         """End a running dance at once (a touch, a shake, a settings change ...)."""
@@ -323,6 +355,8 @@ class DanceRunner:
             return ("a turn is on", LINE_NOT_NOW)
         if not situation.awake and not (trigger == "hub" and self._hooks.wake is not None):
             return ("the unit is asleep", "")
+        if situation.night and trigger == "auto":
+            return ("it is night", "")
         if situation.charging is not True:
             if situation.battery_percent is None:
                 return ("the battery level is unknown", LINE_NOT_NOW)
@@ -362,14 +396,14 @@ class DanceRunner:
 
     # -- the dance
 
-    def _run(self, trigger: str) -> None:
+    def _run(self, trigger: str, plan: Plan) -> None:
         reason = "done"
         started = False
         try:
             reason = self._prepare(trigger)
             if reason == "":
                 started = True
-                reason = self._play()
+                reason = self._play(plan)
         except Exception:
             logger.warning("StackChan dance failed", exc_info=True)
             reason = "error"
@@ -397,7 +431,7 @@ class DanceRunner:
                 return self.last_end_reason or "stopped"
             waited += TICK_S
 
-    def _play(self) -> str:
+    def _play(self, plan: Plan) -> str:
         hooks = self._hooks
         situation = hooks.situation()
         quiet = situation.night
@@ -406,7 +440,7 @@ class DanceRunner:
         if ring_on:
             hooks.take_ring()
         begin = self._clock()
-        script = list(SCRIPT)
+        script = list(plan.script)
         tick = 0
         while True:
             elapsed = self._clock() - begin
@@ -423,10 +457,12 @@ class DanceRunner:
                 return why
             if self._stop.is_set():
                 return self.last_end_reason or "stopped"
-            if elapsed >= TOTAL_S:
+            if elapsed >= plan.total_s:
                 return "done"
             if ring_on and not (situation.camera_cue or situation.live_cue):
-                hooks.write_ring(ring_frame(tick, phase_at(elapsed)))
+                pixels = plan.ring(tick, elapsed)
+                if pixels is not None:
+                    hooks.write_ring(pixels)
             tick += 1
             if self._wait(TICK_S):
                 return self.last_end_reason or "stopped"
@@ -475,6 +511,8 @@ class DanceRunner:
 
 
 __all__ = [
+    "LITTLE_PLAN",
+    "Plan",
     "DanceHooks",
     "DanceReply",
     "DanceRunner",

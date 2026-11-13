@@ -51,6 +51,8 @@ DIAGNOSTIC_KINDS = frozenset(
         "timer_fired",
         "timer_ended",
         "timer_missed",
+        "music_feat",  # patch 100: the room's music numbers, about one a second while it is loud
+        "music_stats",
     }
 )
 EVENT_KINDS = (

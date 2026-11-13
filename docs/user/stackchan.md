@@ -79,6 +79,15 @@ It lasts about 12 seconds: the head sways and turns, the face changes between ha
 - At night, if you ask, it dances with its head and face only: no lights, no sound.
 - Settings: **Dance** (on by default) and **Dance light show** (on by default) are in the robot's settings.
 
+## Dancing to music (off until you turn it on)
+
+With **Dance to music** on in the robot's settings, StackChan listens for clear music with a steady beat. After about five seconds it nods twice and smiles or winks. If the song goes on for about twenty more seconds it sways for about ten seconds, then dances for up to twenty with the light ring. It stops a few seconds after the music stops, or at once if you touch it, talk to it, shake it or take a picture.
+
+- It only sends a few numbers about the sound to the hub, never the sound itself, and only when the room is loud.
+- It does nothing at night, while asleep, while it listens or talks, or in quiet mode. It waits at least 10 minutes between dances, at most 3 an hour and 10 a day.
+- On battery it dances at 40 percent or more, only nods from 20 to 39 percent, and does nothing under 20 percent. Plugged in, the battery level does not matter.
+- Talk and TV usually do not count, but a TV theme tune sometimes does. If it nods at the wrong things, set the sensitivity to low.
+
 ## Day and night
 
 At night the robot dims its screen, plays quieter and keeps still. Night starts in quiet hours, 9 pm to 7 am by default, and also when the room is dark for a couple of minutes. It goes back to day when the room is bright again or quiet hours end. Your normal volume and brightness come back exactly as you set them.

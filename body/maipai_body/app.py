@@ -268,6 +268,13 @@ class StackChanBehavior:
             "dance": "refused",
             "why": "the dance is not ready",
         }
+        # The music dance (music_dance.py, music_dance_wiring.py): the unit's per-second music
+        # numbers and the hub's "music_test" device command.
+        self.music_feat: Callable[[dict, float], object] | None = None
+        self.music_command: Callable[[dict], dict | None] = lambda _payload: {
+            "music_test": "refused",
+            "why": "the music dance is not ready",
+        }
         self._last_event_poll = float("-inf")
         self._last_touch_wake = float("-inf")
         self._event_queue_drained = False
@@ -1506,6 +1513,15 @@ class StackChanBehavior:
                     except Exception:
                         self._warn_limited("timers", "StackChan timer event failed")
         for event in events:
+            if getattr(event, "kind", None) == "music_feat":
+                # About one a second while the room is loud (firmware patch 100): the music dance
+                # decides on them. The first look after a pause only drains old ones.
+                if self.music_feat is not None and not (paused or not self._event_queue_drained):
+                    try:
+                        self.music_feat(getattr(event, "extra", None) or {}, now)
+                    except Exception:
+                        self._warn_limited("music", "StackChan music features handling failed")
+                continue
             if getattr(event, "kind", None) in DIAGNOSTIC_KINDS:
                 extra = getattr(event, "extra", None) or {}
                 if self.unit_facts is not None:
@@ -1553,6 +1569,7 @@ class StackChanBehavior:
                     "timer_fired": "unit timer",
                     "timer_ended": "unit timer",
                     "timer_missed": "unit timer",
+                    "music_stats": "unit music",
                 }.get(event.kind, "unit touch")
                 logger.info("%s: %s %s", label, event.kind, detail)
         events = [e for e in events if getattr(e, "kind", None) not in DIAGNOSTIC_KINDS]
@@ -1783,6 +1800,7 @@ def _start_stackchan_night(
             handlers={
                 "dance": lambda payload: behavior.dance_command(payload),
                 **(hub_handlers or {}),
+                "music_test": lambda payload: behavior.music_command(payload),
             },
             on_drop=link.channel_lost,
         )
@@ -2076,7 +2094,7 @@ async def _serve_stackchan_channels(
         from maipai_body.bodies.stackchan.dance_wiring import wire_dance
         from maipai_body.bodies.stackchan.head_commands import CENTRE_PITCH, CENTRE_YAW, SPEED
 
-        wire_dance(
+        runner = wire_dance(
             voice=voice,
             behavior=behavior,
             light=light,
@@ -2084,6 +2102,15 @@ async def _serve_stackchan_channels(
             head_commander=head_commander,
             level_head=lambda: _move_head(CENTRE_YAW, CENTRE_PITCH, SPEED),
             device_connected=device_connected,
+        )
+        from maipai_body.bodies.stackchan.music_dance_wiring import wire_music_dance
+
+        wire_music_dance(
+            behavior=behavior,
+            runner=runner,
+            move_head=_move_head,
+            centre_pitch=CENTRE_PITCH,
+            speed=SPEED,
         )
 
         bridge = StackChanTurnBridge(
