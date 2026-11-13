@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.75] - 2026-11-13
+
+### Changed
+- StackChan firmware patch 122: tapping an eye (vision off) shuts both eyes fully instead of the half-lidded look (owner: "tapping eyes should close them, not half close").
+
 ## [0.2.74] - 2026-11-13
 
 ### Added

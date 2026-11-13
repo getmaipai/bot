@@ -1,0 +1,15 @@
+# Intent: tapping an eye closes the eyes fully (owner 2026-11-13: "tapping eyes should close them, not half close"). Vision off used the calm half-lidded eye of patch 108; the lowered flag now makes the eye take the same closed shape a blink and the sleepy look use: the flat line. Every emotion keeps its own drawing except the dot eyes, which are shut while vision is off, and open again when it is switched back on.
+# Upstream: m5stack/StackChan firmware/main/stackchan/avatar/skins/mint/mint.cpp (MIT). Applies after 108.
+# Check after a flash: tap an eye: both eyes become flat closed lines; tap again: they open.
+diff --git a/firmware/main/stackchan/avatar/skins/mint/mint.cpp b/firmware/main/stackchan/avatar/skins/mint/mint.cpp
+--- a/firmware/main/stackchan/avatar/skins/mint/mint.cpp
++++ b/firmware/main/stackchan/avatar/skins/mint/mint.cpp
+@@ -349,7 +349,7 @@
+ {
+     const int cx      = kEyeBoxW / 2;
+     const int cy      = kEyeBoxH / 2;
+-    const bool closed = _weight < kClosedEyeAt;
++    const bool closed = _weight < kClosedEyeAt || _lowered;  // vision off: eyes shut, not half (patch 122)
+     const float side  = _is_left_eye ? 1.0f : -1.0f;
+     uint32_t points   = 0;
+     float dot_radius  = 0;
