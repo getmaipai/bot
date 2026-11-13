@@ -137,3 +137,11 @@ Steady-sound path (0.2.70): a second real song never gave a stable tempo, so the
 ## On the unit with no hub
 
 The standalone unit can make the same per-second music decision and track its nod and dance session locally with the plain C99 header `body/maipai_body/bodies/stackchan/firmware/assets/maipai_music_judge.h`.
+
+## Cycles for hours (owner 2026-11-13)
+
+A music session is one stretch of music whose gaps stay under 60 s (a song change does not end it). Inside it: the slow start (nod, build-up,
+dance), then a dance block of rounds (5 minutes on USB or charging, 2 minutes on battery), then a 90 s break (calm, no dancing), then the next
+cycle starts with the build-up again, and so on for as long as the music goes on. The hourly and daily caps are gone; the 2 minute wait
+after a session, the interrupts (touch, wake word, turn, mute, quiet, tilt, picture, offline) and the battery rules remain. The unit's own
+offline dance (patch 121) still does one block: the same cycles on the unit are the next step.

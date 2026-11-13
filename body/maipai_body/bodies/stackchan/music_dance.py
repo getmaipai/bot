@@ -52,7 +52,6 @@ from __future__ import annotations
 import logging
 import random
 import threading
-from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
@@ -218,17 +217,28 @@ class Timing:
     nod_to_build_s: float = 20.0  # from the nod's start to the build-up
     end_silence_s: float = 9.0  # no clear music this long ends a running dance
     rearm_quiet_s: float = 10.0  # quiet this long before another session can begin
+    session_gap_s: float = 60.0  # a song change: gaps under this keep the music session going
+    break_s: float = 90.0  # a rest between dance blocks: a calm face, no dancing
+    block_usb_s: float = 300.0  # one dance block on USB power or charging
+    block_battery_s: float = 120.0  # one dance block on battery
     nod_s: float = 3.0  # the nod's face stays this long
 
 
 NORMAL = Timing()
 # for music_test with {"fast": true}: the same chain in about 40 s
-FAST = Timing(detect_s=2.0, nod_to_build_s=6.0, end_silence_s=4.0, rearm_quiet_s=4.0)
+FAST = Timing(
+    detect_s=2.0,
+    nod_to_build_s=6.0,
+    end_silence_s=4.0,
+    rearm_quiet_s=4.0,
+    session_gap_s=8.0,
+    break_s=6.0,
+    block_usb_s=40.0,
+    block_battery_s=40.0,
+)
 
 MIN_GAP_S = 120.0  # after the end of a dance (and so before the next nod)
 NOD_GAP_S = 120.0  # between two nods
-MAX_PER_HOUR = 6
-MAX_PER_DAY = 10
 FULL_BATTERY = 40  # on battery: a full dance from this percent
 NOD_BATTERY = 20  # on battery: only the nod from this percent, nothing under it
 TEST_S = 60.0  # how long music_test feeds music-like seconds
@@ -276,6 +286,13 @@ def _ring(tick: int, t_s: float) -> list[Rgb] | None:
 
 
 AUTO_PLAN = Plan(_BUILD_AND_DANCE, TOTAL_S, _ring)
+# the dance rounds after the first one of a cycle: the dance part only, the same ring show
+_DANCE_ONLY = tuple(
+    (at - BUILD_S, action, name) for at, action, name in _BUILD_AND_DANCE if at >= BUILD_S
+)
+DANCE_PLAN = Plan(
+    _DANCE_ONLY, DANCE_S, lambda tick, t_s: ring_frame(tick, int(t_s // SHOW_PHASE_S) % 3)
+)
 
 # ---------------------------------------------------------------- the controller
 
@@ -315,7 +332,11 @@ class MusicDance:
         self._timing = timing
         self._normal_timing = timing
         self._lock = threading.RLock()
-        self.state = "idle"  # idle | nod | watch | show | spent
+        self.state = "idle"  # idle | nod | watch | show | break | spent
+        self.full_plan = True  # the next dance request: the build-up and dance, or the dance only
+        self._cycle = 0
+        self._block_start = float("-inf")
+        self._break_at = float("-inf")
         self._run_start: float | None = None
         self._last_pos: float | None = None
         self._run_len_pos = 0
@@ -323,7 +344,6 @@ class MusicDance:
         self._nod_cancel = False
         self._last_dance_end = float("-inf")
         self._last_nod = float("-inf")
-        self._dance_starts: deque[float] = deque()
         self._test_until = -1.0
         self._test_next = 0.0
         self._session_test = False  # the running session began in a test: it ends on its own
@@ -354,7 +374,7 @@ class MusicDance:
             if not self._active():
                 return
             self._count_minute(now)
-            relaxed = self.state in ("nod", "watch", "show")
+            relaxed = self.state in ("nod", "watch", "show", "break")
             verdict = judge(feat, self.settings.auto_sensitivity, relaxed=relaxed)
             self._windows += 1
             self._reason_counts[verdict.why] = self._reason_counts.get(verdict.why, 0) + 1
@@ -441,7 +461,12 @@ class MusicDance:
         return self._last_pos - self._run_start
 
     def _music_gone(self, now: float) -> bool:
+        """The music dipped: no clear second for the end-silence time (a round stops)."""
         return self._last_pos is None or now - self._last_pos >= self._timing.end_silence_s
+
+    def _session_over(self, now: float) -> bool:
+        """The music session is over: no clear second for the session gap (a song change is not)."""
+        return self._last_pos is None or now - self._last_pos >= self._timing.session_gap_s
 
     # -- the stages
 
@@ -472,16 +497,58 @@ class MusicDance:
             elif now - self._nod_at >= t.nod_to_build_s and positive is not None:
                 self._try_dance(now)
         elif self.state == "show":
-            if not self._hooks.dance_running():
-                self._dance_over(now)
-            elif (sit := self._hooks.situation()).muted or sit.full_quiet == "muted":
-                self._hooks.stop_dance("muted")
-            elif self._music_gone(now):
-                self._hooks.stop_dance("music ended")
+            self._show(now)
+        elif self.state == "break":
+            self._rest(now, positive)
         elif self.state == "spent":
             if self._last_pos is None or now - self._last_pos >= t.rearm_quiet_s:
                 self._set_state("idle", "quiet again; ready for the next song")
                 self._run_start = None
+
+    def _block_s(self) -> float:
+        sit = self._hooks.situation()
+        return self._timing.block_usb_s if sit.charging is True else self._timing.block_battery_s
+
+    def _show(self, now: float) -> None:
+        """A dance block: rounds of dancing while the music goes on, then a break."""
+        sit = self._hooks.situation()
+        if self._hooks.dance_running():
+            if sit.muted or sit.full_quiet == "muted":
+                self._hooks.stop_dance("muted")
+            elif self._music_gone(now):
+                self._hooks.stop_dance("music ended")
+            return
+        # a round just ended (or was stopped): what next?
+        if self._check_interrupt(now):
+            self._dance_over(now)
+        elif self._session_test or self._session_over(now):
+            self._dance_over(now)
+        elif self._music_gone(now) or now - self._block_start >= self._block_s():
+            why, nod_only = self._gate(now, for_nod=False)
+            if why is not None and not nod_only:
+                self._dance_over(now)
+                return
+            logger.info("StackChan music: cycle %d (break)", self._cycle)
+            self._break_at = now
+            self._set_state("break", "a rest between dance blocks")
+        else:
+            why, nod_only = self._gate(now, for_nod=False)
+            if why is not None or nod_only:
+                self._dance_over(now)
+                return
+            self.full_plan = False
+            started, refused = self._hooks.request_dance()
+            if not started:
+                self._dance_over(now)
+                return
+            logger.info("StackChan music: cycle %d (dance round, music still going)", self._cycle)
+
+    def _rest(self, now: float, positive: MusicFeat | None) -> None:
+        """The break between dance blocks: calm, and ready to start the slow start again."""
+        if self._check_interrupt(now) or self._session_over(now):
+            self._dance_over(now)
+        elif now - self._break_at >= self._timing.break_s and positive is not None:
+            self._try_dance(now, new_cycle=True)
 
     def _gate(self, now: float, *, for_nod: bool) -> tuple[str | None, bool]:
         """(reason it may not, True when only the nod is allowed)."""
@@ -516,19 +583,7 @@ class MusicDance:
                 return "a dance ended less than 2 minutes ago", False
             if now - self._last_nod < NOD_GAP_S:
                 return "a nod was less than 2 minutes ago", False
-            reason = self._caps_reason(now)
-            if reason:
-                return reason, False
         return None, nod_only
-
-    def _caps_reason(self, now: float) -> str | None:
-        while self._dance_starts and now - self._dance_starts[0] >= 24 * 3600.0:
-            self._dance_starts.popleft()
-        if sum(1 for s in self._dance_starts if now - s < 3600.0) >= MAX_PER_HOUR:
-            return f"{MAX_PER_HOUR} dances in the last hour"
-        if len(self._dance_starts) >= MAX_PER_DAY:
-            return f"{MAX_PER_DAY} dances in the last day"
-        return None
 
     def _try_nod(self, now: float) -> None:
         why, _ = self._gate(now, for_nod=True)
@@ -550,22 +605,25 @@ class MusicDance:
         except Exception:
             logger.warning("StackChan music nod failed", exc_info=True)
 
-    def _try_dance(self, now: float) -> None:
+    def _try_dance(self, now: float, *, new_cycle: bool = False) -> None:
         why, nod_only = self._gate(now, for_nod=False)
         if why is None and nod_only:
             why = "battery under 40% and not charging: the nod only"
-        if why is None and not self.testing:
-            why = self._caps_reason(now)
         if why is not None:
+            if new_cycle and (nod_only or why.startswith("battery")):
+                self._break_at = now  # try again after another break
+                return
             self._set_state("spent", f"no dance: {why}")
             return
+        self.full_plan = True  # every cycle starts with the build-up (the slow start)
         started, refused = self._hooks.request_dance()
         if not started:
             self._set_state("spent", f"no dance: {refused or 'the dance runner refused'}")
             return
+        self._cycle += 1
         self._dance_started_at = now
-        if not self.testing:
-            self._dance_starts.append(now)
+        self._block_start = now
+        logger.info("StackChan music: cycle %d (slow start, then the dance)", self._cycle)
         self._set_state("show", "the build-up and the dance")
 
     def _dance_over(self, now: float) -> None:
@@ -604,7 +662,7 @@ class MusicDance:
         if self.state == "show":
             self._hooks.stop_dance(why)
             return
-        if self.state in ("nod", "watch"):
+        if self.state in ("nod", "watch", "break"):
             self._set_state("spent", why if why == "the setting is off" else f"ended by {why}")
 
     def _set_state(self, state: str, why: str) -> None:
@@ -725,6 +783,7 @@ def nod_steps(centre_pitch: int, speed: int) -> list[tuple[int, int, int, float]
 
 __all__ = [
     "AUTO_PLAN",
+    "DANCE_PLAN",
     "FAST",
     "NORMAL",
     "MusicDance",

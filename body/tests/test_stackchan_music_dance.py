@@ -51,7 +51,7 @@ class World:
 
     def __init__(self, *, auto: bool = True, sensitivity: str = "medium", **situation) -> None:
         self.t = 5000.0
-        self.sit = DanceSituation(battery_percent=90, charging=False, **situation)
+        self.sit = DanceSituation(**{"battery_percent": 90, "charging": False, **situation})
         self.settings = DanceSettings()
         self.settings.auto = auto
         self.settings.auto_sensitivity = sensitivity
@@ -102,7 +102,7 @@ class World:
         if self.dancing:
             self.play(MUSIC, 2)
             self.dancing = False  # the runner finished
-        self.play(None, 16)  # quiet: the session ends and re-arms
+        self.play(None, 75)  # quiet: the session gap (60 s) passes, the session ends and re-arms
 
 
 # ------------------------------------------------------------------ the numbers from the unit
@@ -267,7 +267,9 @@ def test_the_dance_ends_on_nine_seconds_of_silence():
     world.play(None, 1)  # nine seconds since the last clear second
     assert [a for _, n, a in world.calls if n == "stop_dance"] == ["music ended"]
     world.second(None)
-    assert world.ctl.state == "spent"
+    assert world.ctl.state == "break"  # the round ended; the session waits for the music to return
+    world.play(None, 60)  # a minute without music: the session is over
+    assert world.ctl.state in ("spent", "idle")
 
 
 def test_the_same_music_never_starts_a_second_session():
@@ -275,10 +277,10 @@ def test_the_same_music_never_starts_a_second_session():
     world.play(MUSIC, 26)
     world.dancing = False  # the dance reached its 20 s cap
     world.play(MUSIC, 120)  # the song goes on
-    assert len(world.names("nod")) == 1
-    assert len(world.names("request_dance")) == 1
-    world.play(None, 11)
-    assert world.ctl.state == "idle"  # quiet re-arms it
+    assert len(world.names("nod")) == 1  # one nod, one session
+    assert len(world.names("request_dance")) >= 2  # the song goes on: more dance rounds
+    world.play(None, 75)
+    assert world.ctl.state == "idle"  # a minute of quiet ends the session and re-arms it
 
 
 def test_a_dance_that_the_runner_refuses_spends_the_session():
@@ -421,44 +423,71 @@ def test_muted_music_dance_refuses_new_start_and_stops_running_dance_as_muted():
 # ------------------------------------------------------------------ caps and gaps
 
 
-def test_ten_minutes_minimum_gap_after_a_dance():
+def test_two_minutes_minimum_gap_after_a_session():
     world = World()
     world.session()
     end = world.t
     world.play(MUSIC, 60)  # a new song a minute later
     assert len(world.names("nod")) == 1
     assert world.ctl.state == "spent"
-    world.play(None, 20)
+    world.play(None, 75)
     assert world.ctl.state == "idle"
     world.t = end + 601.0
     world.session()
     assert len(world.names("nod")) == 2
 
 
-def test_six_dances_an_hour_and_ten_a_day():
+def test_there_are_no_hourly_or_daily_caps():
     world = World()
-    for i in range(6):
+    for _ in range(12):
         world.session()
         world.t += 121.0  # past the gap
-    world.session()  # the seventh within the hour: no nod, no dance
-    assert len(world.names("request_dance")) == 6
-    assert len(world.names("nod")) == 6
-    # a day: one dance every 70 minutes is under the hourly cap and runs into the daily one
-    day = World()
-    for _ in range(12):
-        day.session()
-        day.t += 4200.0
-    assert len(day.names("request_dance")) == 10
+    assert len(world.names("nod")) == 12  # twelve sessions in about as many minutes, none refused
 
 
-def test_the_caps_age_out():
-    world = World()
-    for _ in range(6):
-        world.session()
-        world.t += 121.0
-    world.t += 3600.0
-    world.session()
-    assert len(world.names("request_dance")) == 7
+def _song(world: World, seconds: int) -> None:
+    """Music for ``seconds`` with a runner that finishes each dance on its own (30 s the build-up
+    and dance, 20 s a dance-only round)."""
+    started = -1.0
+    length = 0.0
+    for _ in range(seconds):
+        before = len(world.names("request_dance"))
+        world.second(MUSIC)
+        if len(world.names("request_dance")) > before:
+            started = world.t
+            length = 30.0 if world.ctl.full_plan else 20.0
+        if world.dancing and started >= 0 and world.t - started >= length:
+            world.dancing = False
+
+
+def test_a_forty_minute_song_dances_in_cycles_with_breaks_and_never_ends():
+    world = World(charging=True)
+    _song(world, 40 * 60)
+    states = [t for t in world.names("request_dance")]
+    assert len(states) > 40  # rounds all the way through
+    assert len(world.names("nod")) == 1
+    assert world.ctl.state in ("show", "break")  # still in the session after forty minutes
+    assert world.ctl._cycle >= 6  # a block of 5 minutes and a break of 90 s: about one every 6.5
+
+
+def test_a_gap_between_songs_under_a_minute_keeps_the_session_and_over_ends_it():
+    world = World(charging=True)
+    _song(world, 60)
+    world.play(None, 50)  # the next song starts within a minute
+    _song(world, 10)
+    assert world.ctl.state in ("show", "break")
+    assert len(world.names("nod")) == 1
+    world.dancing = False
+    world.play(None, 70)  # a long gap: the session is over
+    assert world.ctl.state in ("spent", "idle")
+
+
+def test_on_battery_the_block_is_shorter():
+    usb = World(charging=True)
+    _song(usb, 400)
+    batt = World(charging=False)
+    _song(batt, 400)
+    assert batt.ctl._cycle > usb.ctl._cycle
 
 
 def test_nods_alone_are_spaced_two_minutes_apart():
@@ -498,8 +527,8 @@ def test_music_test_counts_toward_no_cap_and_ignores_the_gap():
         world.dancing = False
         world.play(None, 20)
     assert len(world.names("request_dance")) == 4
-    world.session()  # a real session still has its whole allowance and no recent dance
-    assert len(world.names("request_dance")) == 5
+    world.session()  # a real session still has no recent dance in the way
+    assert len(world.names("request_dance")) >= 5
 
 
 def test_music_test_fast_compresses_the_waits():
@@ -543,7 +572,8 @@ def test_the_log_has_a_line_per_stage_detection_and_minute(caplog):
     assert "stage idle -> nod" in text
     assert "stage nod -> watch" in text
     assert "stage watch -> show" in text
-    assert "stage show -> spent" in text
+    assert "stage show -> break" in text
+    assert "stage break -> spent" in text
     assert "music minute:" in text and "why[music:" in text and "lv=" in text
 
 
