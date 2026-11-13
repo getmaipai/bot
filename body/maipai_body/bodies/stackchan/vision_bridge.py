@@ -31,9 +31,13 @@ class StackChanVisionBridge:
         consent_for_print: Callable[[str], bool] | None = None,
         clock: Callable[[], float] = time.monotonic,
         frame_provider: Callable[[float], bytes | None] | None = None,
+        look_detector: Any = None,
     ) -> None:
         self.robot = robot
         self.detector = detector
+        # The robot's own fast Look pass (vision/look_fast.py): people and household things on
+        # the same decoded frame. Optional; without it only faces are known.
+        self.look_detector = look_detector
         self.embedder = embedder
         self.gallery = gallery
         self.decode = decode or _decode_jpeg
@@ -53,6 +57,15 @@ class StackChanVisionBridge:
         self.last_motion: float = 0.0
         self._last_motion_at: float | None = None
         self._last_thumb: Any = None  # the thumbnail of the look before, for the next comparison
+        # The fast pass of the newest look: the LookResult objects (labels, counts, boxes) and the
+        # person boxes, each with the frame's arrival time. Scalars only, replaced by the next look.
+        self._latest_objects: tuple[list[dict], float] | None = None
+        self._latest_people: tuple[list[Any], float] | None = None
+        self._last_person: tuple[Any, float] | None = None  # the largest box last seen, when
+        self._last_person_at: float | None = None
+        self.last_look_ms: float | None = None  # how long the Look detector took on the last look
+        self.last_best_person = 0.0  # the detector's best person score on the last look
+        self.last_pose_deg: tuple[float, float] | None = None  # yaw, pitch up: the last follow
 
     def track_stream_frame(
         self, *, deadline_s: float = 0.4, may_move: Callable[[], bool] | None = None
@@ -82,6 +95,8 @@ class StackChanVisionBridge:
             from maipai_body.bodies.stackchan.presence_watch import MOTION_FRACTION, motion_fraction
             from maipai_body.bodies.stackchan.vision_post import scene_luma, thumbnail
 
+            frame_at = self._frame_arrival() or self.clock()
+            self._fast_pass(frame, frame_at)
             thumb = thumbnail(frame)
             previous = self._latest_look[4] if self._latest_look is not None else self._last_thumb
             self.last_motion = motion_fraction(previous, thumb)
@@ -90,7 +105,7 @@ class StackChanVisionBridge:
             self._last_thumb = thumb
             self._latest_look = (
                 bytes(frame_bytes),
-                self.clock(),
+                frame_at,
                 len(faces),
                 scene_luma(frame),
                 thumb,
@@ -110,6 +125,7 @@ class StackChanVisionBridge:
                 return target
             self._cancel_timer()
             pose = follow_pose(target)
+            self.last_pose_deg = follow_pose_degrees(target)
             holder = "stackchan-vision"
             if self.robot.lease_holder != holder:
                 self.robot.lease.acquire(priority="expression", holder=holder)
@@ -130,6 +146,74 @@ class StackChanVisionBridge:
             done = getattr(driver, "stream_frame_done", None)
             if callable(done):
                 done()
+
+    def _frame_arrival(self) -> float | None:
+        """When the frame just popped arrived from the unit (the camera driver keeps it)."""
+        driver = self.robot._driver("camera") if hasattr(self.robot, "_driver") else None
+        at = getattr(driver, "last_frame_at", None)
+        return float(at) if isinstance(at, (int, float)) else None
+
+    def _fast_pass(self, frame: npt.NDArray[np.uint8], frame_at: float) -> None:
+        """Run the Look detector on the decoded frame; keep its objects and person boxes."""
+        detector = self.look_detector
+        if detector is None:
+            return
+        from maipai_body.bodies.stackchan.person_tracker import PersonBox
+        from maipai_body.vision.look_fast import PERSON, objects_of
+
+        try:
+            found = detector.detect(frame)
+        except Exception:
+            self.last_look_ms = None
+            return
+        self.last_look_ms = getattr(detector, "last_ms", None)
+        self.last_best_person = float(getattr(detector, "last_best_person", 0.0) or 0.0)
+        people = [
+            PersonBox(d.box[0], d.box[1], d.box[2], d.box[3], d.score)
+            for d in found
+            if d.label == PERSON
+        ]
+        self._latest_objects = (objects_of(found), frame_at)
+        self._latest_people = (people, frame_at)
+        if people:
+            self._last_person_at = frame_at
+            self._last_person = (max(people, key=lambda b: b.area), frame_at)
+
+    def people(self, *, max_age_s: float) -> list[Any]:
+        """The person boxes of the newest look if it is young enough (empty otherwise)."""
+        latest = self._latest_people
+        if latest is None or self.clock() - latest[1] > max_age_s:
+            return []
+        return list(latest[0])
+
+    def last_person(self, *, max_age_s: float) -> Any | None:
+        """The largest person box seen within ``max_age_s``, even if a newer look had none."""
+        last = self._last_person
+        if last is None or self.clock() - last[1] > max_age_s:
+            return None
+        return last[0]
+
+    def look_at(self) -> float | None:
+        """When the newest look's frame arrived (monotonic), or None before any look."""
+        look = self._latest_look
+        return None if look is None else look[1]
+
+    def person_age(self) -> float | None:
+        """Seconds since the Look detector last saw a person, or None if it never has."""
+        at = self._last_person_at
+        return None if at is None else self.clock() - at
+
+    def objects(self, max_age_s: float) -> list[dict] | None:
+        """The LookResult objects of the newest look if young enough, else None."""
+        latest = self._latest_objects
+        if latest is None or self.clock() - latest[1] > max_age_s:
+            return None
+        return list(latest[0])
+
+    def look_ready(self) -> bool:
+        """True once the Look model is loaded, so "no person" is an answer, not a gap."""
+        ready = getattr(self.look_detector, "ready", False)
+        return bool(ready() if callable(ready) else ready)
 
     def set_print_consent(self, authorize: Callable[[str], bool]) -> None:
         """Install the print-store authorization check for child/teen profiles."""
@@ -295,6 +379,18 @@ def follow_pose(target: FaceTrackTarget) -> HeadPose:
     return HeadPose(
         yaw=math.radians((target.x - 0.5) * FOLLOW_YAW_SPAN_DEG),
         pitch=math.radians(CENTRE_PITCH_DEG + up_degrees),
+    )
+
+
+def follow_pose_degrees(target: FaceTrackTarget) -> tuple[float, float]:
+    """The same pose as `follow_pose`, as (yaw, pitch up from level) in degrees: what the person
+    tracker remembers as the head's position after a follow."""
+    from maipai_body.bodies.stackchan.profile import FOLLOW_PITCH_SPAN_DEG, FOLLOW_YAW_SPAN_DEG
+
+    assert target.x is not None and target.y is not None
+    return (
+        (target.x - 0.5) * FOLLOW_YAW_SPAN_DEG,
+        max(0.0, 0.5 - target.y) * FOLLOW_PITCH_SPAN_DEG,
     )
 
 

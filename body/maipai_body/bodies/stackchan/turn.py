@@ -1094,6 +1094,17 @@ class StackChanTurnBridge:
             if self.sight_control is not None:
                 sight_kind = self.sight_control.kind(result.text or "")
                 described = False
+                quick = None
+                if sight_kind == "picture":
+                    # The robot's own fast pass answers at once ("I see a person and a laptop");
+                    # Home's detailed sentence follows through the normal turn. The words are
+                    # never logged, only that there were some.
+                    quick_look = getattr(self.sight_control, "quick_look", None)
+                    quick = quick_look() if callable(quick_look) else None
+                    if quick:
+                        LOG.info("StackChan voice: quick look answered from the robot's own pass")
+                        await asyncio.to_thread(self._say, playback, base, cookie, quick)
+                        self._breaker.note_speech()
                 if sight_kind in {"see_me", "picture"} and self.vision_ask is not None:
                     # Ask Home to describe one picture now; the hub then answers the question
                     # itself with that description in the turn's context (nothing here keeps it).
@@ -1104,6 +1115,8 @@ class StackChanTurnBridge:
                         sight_kind,
                         "Home described a picture" if described else "no description, host answer",
                     )
+                if quick and not described:
+                    return  # the quick look was the answer; nothing more to add
                 sight_line = None if described else self.sight_control.answer(result.text or "")
                 if sight_line:
                     LOG.info("StackChan voice: sight question answered (%r)", sight_line)

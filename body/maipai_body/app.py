@@ -45,6 +45,12 @@ from maipai_body.bodies.stackchan.head_search import (
     HeadSearch,
 )
 from maipai_body.bodies.stackchan.head_touch_filter import HEAD_KINDS, HeadTouchFilter
+from maipai_body.bodies.stackchan.person_tracker import (
+    PERSON_HINT_SCORE,
+    SPEAKER_PERSON_FRESH_S,
+    PersonTracker,
+    choose_person,
+)
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.suppression import SuppressionContext
 from maipai_body.hal.errors import BodyLost
@@ -179,6 +185,7 @@ def _no_hub_discovery(timeout_s: float = 5.0):
 FACE_QUIET_S = 5.0
 # While drowsy or asleep the unit is asked for touch events this often; wakes repeat no sooner.
 LOOK_INTERVAL_S = 0.5  # two looks a second at most
+SEES_HOLD_S = 2.0  # the vision indicator keeps its glow this long after the last sighting
 TURN_FACE_FRESH_S = 60.0  # turn toward a face seen this recently when a turn starts
 LOST_AFTER_LOOKS = 4  # two seconds without the face it was following: it was lost
 TOUCH_POLL_S = 0.5  # asleep too: at 5 s a tap or shake took up to 5 s to wake the unit
@@ -250,6 +257,21 @@ class StackChanBehavior:
         # A short look around (head_search.py): for a face when the picture moves without one,
         # and before concluding the room is dark. Quiet, gated, never in a turn or while resting.
         self._search = HeadSearch()
+        # Find the person, then the face (person_tracker.py, owner design 2026-11-12): the Look
+        # detector's person box aims the head, then the face is looked for above it. It replaces
+        # the ambient sweep above whenever the Look model is loaded.
+        self._tracker = PersonTracker()
+        self._tracker_last_look_at: float | None = None
+        # The false-person rate: looks and looks with a person box over a window with no face.
+        self._fp_window_at: float | None = None
+        self._fp_looks = 0
+        self._fp_person_looks = 0
+        self._fp_face_seen = False
+        # The vision indicator (light_service.py `sees`): told on every change of what the camera
+        # sees ("maybe", "person", "face" or None); the ring shows it only when the setting is on.
+        self.on_sees: Callable[[str | None], object] | None = None
+        self._sees: str | None = None
+        self._sees_at = float("-inf")  # when something was last seen: the glow holds a moment
         # A spoken "turn to me" / "find me" (head_commands.py): the look for the face the person
         # asked for, started after the reply, ignoring the back-off. (reason, asked at)
         self._find_request: tuple[str, float] | None = None
@@ -623,6 +645,8 @@ class StackChanBehavior:
 
         search = self._search
         in_turn = self._active.is_set()
+        if not search.active and self._tracker_tick(now, in_turn):
+            return
         if search.active:
             # Never mid-reply, asleep or at night; a look for the speaker may run while listening.
             if (
@@ -640,6 +664,21 @@ class StackChanBehavior:
                         f"found a face at x {face[0]:.2f}, y {face[1]:.2f} of the picture",
                         found=True,
                     )
+                    return
+                # The sweep has done its job once a person is in the picture: the tracker takes
+                # over from there and looks for the face above the body.
+                box = (
+                    choose_person(self._vision.people(max_age_s=1.0))
+                    if self._vision is not None and self._look_ready()
+                    else None
+                )
+                if box is not None:
+                    self._end_search(
+                        now,
+                        f"found a person at x {box.centre_x:.2f}; looking for the face there",
+                        found=True,
+                    )
+                    self._tracker_start(now, box, "found by the sweep")
                     return
             elif search.reason == "dark" and self._vision is not None:
                 newest = self._vision.latest_look(max_age_s=1.0)
@@ -693,25 +732,42 @@ class StackChanBehavior:
         )
         if no_face and self._search_after_turn:
             self._search_after_turn = False
-            if search.start("speaker", now):
+            box = (
+                self._vision.last_person(max_age_s=SPEAKER_PERSON_FRESH_S + 30.0)
+                if self._look_ready()
+                else None
+            )
+            if box is not None:
+                # The body of whoever spoke is known: aim there and look for the face, no sweep.
+                self._tracker_start(now, box, "spoke")
+            elif search.start("speaker", now):
                 logger.info("StackChan looking for the person who spoke: no face was in view")
             return
         # Person-like: the picture differs from the learned empty room, or moves, or is flat
-        # while the sensor says the room is lit (a body or an arm right against the lens).
-        if no_face and (different or moved or (flat and flat_verdict is None)):
+        # while the sensor says the room is lit (a body or an arm right against the lens), or
+        # the Look detector hints at a person below its threshold (measured 2026-11-12: a dark
+        # hoodie filling the frame scores 0.05 to 0.17, nothing a detector calls a person). The
+        # glance up and the small sweep look for the face; a person box or a face hands over to
+        # the tracker at once.
+        hint = self._person_hint() >= PERSON_HINT_SCORE
+        if no_face and (different or moved or hint or (flat and flat_verdict is None)):
             if search.start("person", now):
-                self._search_cause = "moved" if moved else "different" if different else "flat"
+                self._search_cause = (
+                    "moved" if moved else "different" if different else "hint" if hint else "flat"
+                )
                 logger.info(
                     "StackChan looking for a face: %s, no face in the picture",
                     f"the picture differs from the empty room in {self._person_share:.0%}"
                     if different
                     else f"the picture moved {motion_age:.0f} s ago"
                     if moved
+                    else f"the detector hints at a person ({self._person_hint():.2f})"
+                    if hint
                     else "something is right against the lens in a lit room",
                 )
             return
         self._search_after_turn = False
-        if flat and flat_verdict == "dark" and not self.dark_confirmed(now):
+        if flat and flat_verdict == "dark" and not hint and not self.dark_confirmed(now):
             if search.start("dark", now):
                 self._search_detail_seen = False
                 logger.info(
@@ -719,6 +775,128 @@ class StackChanBehavior:
                     "looking around before it concludes",
                     self.lux(),
                 )
+
+    # -- find the person, then the face (person_tracker.py) -----------------------------------
+
+    FALSE_PERSON_WINDOW_S = 300.0  # the false-person rate is logged over windows this long
+
+    def _look_ready(self) -> bool:
+        ready = getattr(self._vision, "look_ready", None)
+        return bool(ready()) if callable(ready) else False
+
+    def _tracker_tick(self, now: float, in_turn: bool) -> bool:
+        """Feed the tracker the newest look and perform what it asks. True when it has the head
+        now (an attempt is running or just ended), so the older looks around stay out."""
+        tracker = self._tracker
+        if self._vision is None or not self._look_ready():
+            return False
+        asleep = self._rest.stage != "awake" or self.night_active()
+        if tracker.active and asleep:
+            tracker.cancel(now, "a rest or the night started")
+            self._log_tracker()
+            return False
+        if in_turn:
+            # The camera pauses while the unit listens and speaks: a follow waits for the reply
+            # to end (the turn's own moves tell the tracker where the head went); an aim or a
+            # face search is dropped, the person is found again after the reply.
+            if tracker.active and not tracker.following:
+                tracker.cancel(now, "a reply started")
+                self._log_tracker()
+            return False
+        if asleep or self.watch_level() == "off":
+            return False
+        look_at = self._vision.look_at()
+        if look_at is None or look_at == self._tracker_last_look_at:
+            return tracker.active  # no new look since the last tick: nothing new to judge
+        self._tracker_last_look_at = look_at
+        face = self._last_face
+        face_age = None if face is None else now - face[2]
+        action = tracker.observe(
+            now,
+            self._vision.people(max_age_s=2.0),
+            face_age=face_age,
+            look_at=look_at,
+            face_xy=None if face is None else (face[0], face[1]),
+        )
+        return self._tracker_apply(now, action)
+
+    def _tracker_start(self, now: float, box: Any, how: str) -> None:
+        """Begin an attempt on a person someone else already found (the speaker turn, the sweep)."""
+        if self._tracker.active or not self._look_ready():
+            return
+        self._tracker_apply(now, self._tracker.start(now, box, how))
+
+    def _tracker_apply(self, now: float, action: Any) -> bool:
+        from maipai_body.bodies.stackchan.gaze import GazeReason
+        from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
+
+        tracker = self._tracker
+        self._log_tracker()
+        if action.kind == "move":
+            following = tracker.following
+            source = "person-then-face:follow" if following else "person-then-face"
+            if not self.head_gate.allow(source, response=True):
+                if following:
+                    return True  # the gate's cap: skip this step, the follow goes on
+                tracker.cancel(now, "the head may not move now")
+                self._log_tracker()
+                return False
+            move = action.move
+            pose = HeadPose(
+                yaw=math.radians(move.yaw_deg),
+                pitch=math.radians(CENTRE_PITCH_DEG + move.pitch_deg),
+            )
+            self._with_lease(
+                lambda: self.robot.head.set(pose=pose, duration_s=move.duration_s, speed=move.speed)
+            )
+            self._note_own_move()
+            self._head_off_centre = True
+            self.gaze.note(GazeReason.SEARCH)
+            logger.info(
+                "StackChan person-then-face: %s, yaw %.0f, pitch %.0f up from level",
+                move.why,
+                move.yaw_deg,
+                move.pitch_deg,
+            )
+            return True
+        if action.kind == "return":
+            self.head_gate.allow("person-then-face:return", essential=True)
+            self._note_own_move()
+            self._move_head_slowly(HeadPose(yaw=0.0, pitch=math.radians(CENTRE_PITCH_DEG)))
+            tracker.note_pose(0.0, 0.0)
+            return True
+        return tracker.active
+
+    def _log_tracker(self) -> None:
+        for line in self._tracker.drain_events():
+            logger.info("StackChan person-then-face: %s", line)
+            if line.startswith("follow ->"):
+                report = self._tracker.follow_report()
+                if report:
+                    logger.info("StackChan person-then-face: following measured: %s", report)
+
+    def _false_person_tick(self, now: float, person: bool, face: bool) -> None:
+        """Count looks with a person box while no face is seen; one line per window without a
+        face says the rate (how often the detector sees a person in an empty room)."""
+        if self._fp_window_at is None:
+            self._fp_window_at = now
+        self._fp_looks += 1
+        self._fp_person_looks += 1 if person else 0
+        self._fp_face_seen = self._fp_face_seen or face
+        if now - self._fp_window_at < self.FALSE_PERSON_WINDOW_S:
+            return
+        if not self._fp_face_seen and self._fp_looks:
+            logger.info(
+                "StackChan person detector: no face for %.0f min, a person box in %d of %d looks "
+                "(%.1f%%)",
+                self.FALSE_PERSON_WINDOW_S / 60.0,
+                self._fp_person_looks,
+                self._fp_looks,
+                100.0 * self._fp_person_looks / self._fp_looks,
+            )
+        self._fp_window_at = now
+        self._fp_looks = self._fp_person_looks = 0
+        self._fp_face_seen = False
 
     FIND_REQUEST_FRESH_S = 30.0  # a spoken request not started by then is dropped
     FIND_FACE_FRESH_S = 15.0  # "turn to me" turns at once to a face seen this recently
@@ -757,6 +935,7 @@ class StackChanBehavior:
             self._warn_limited("search", "StackChan first move toward the person failed")
             return
         self._head_off_centre = True
+        self._tracker.note_pose(-self.REACT_PAN_DEG, up)
         self.hold_pose(4.0)  # the settle after the reply must not undo it before the look starts
         self.gaze.note(GazeReason.COMMAND, "face")
 
@@ -776,10 +955,11 @@ class StackChanBehavior:
         if face is None or time.monotonic() - face[2] > max_age_s:
             return False
         from maipai_body.bodies.stackchan.gaze import GazeReason
-        from maipai_body.bodies.stackchan.vision_bridge import follow_pose
+        from maipai_body.bodies.stackchan.vision_bridge import follow_pose, follow_pose_degrees
         from maipai_body.hal.seam import FaceTrackTarget
 
-        pose = follow_pose(FaceTrackTarget(detected=True, x=face[0], y=face[1]))
+        target = FaceTrackTarget(detected=True, x=face[0], y=face[1])
+        pose = follow_pose(target)
         try:
             if not self._with_lease(lambda: self.robot.head.set(pose=pose)):
                 return False
@@ -787,6 +967,7 @@ class StackChanBehavior:
             self._warn_limited("search", "StackChan turn to the person failed")
             return False
         self._head_off_centre = True
+        self._tracker.note_pose(*follow_pose_degrees(target))
         self.gaze.note(GazeReason.COMMAND, "face")
         return True
 
@@ -894,6 +1075,7 @@ class StackChanBehavior:
         self._head_off_centre = True
         self._note_own_move()
         self._search_after_turn = True
+        self._tracker.note_pose(0.0, SPEAKER_PITCH_DEG)
         self.gaze.note(GazeReason.SEARCH)
         logger.info(
             "StackChan glanced up toward the speaker: pitch %.0f up from level", SPEAKER_PITCH_DEG
@@ -910,6 +1092,7 @@ class StackChanBehavior:
         self._move_head_slowly(pose, hold_s, speed)
         self._note_own_move()
         self._head_off_centre = True
+        self._tracker.note_pose(yaw_deg, pitch_deg)
         self.gaze.note(GazeReason.SEARCH)
 
     def _move_head_slowly(
@@ -982,6 +1165,7 @@ class StackChanBehavior:
         from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
 
         self._move_head_slowly(HeadPose(yaw=0.0, pitch=math.radians(CENTRE_PITCH_DEG)))
+        self._tracker.note_pose(0.0, 0.0)
 
     def dark_confirmed(self, now: float | None = None) -> bool:
         current = time.monotonic() if now is None else now
@@ -1040,6 +1224,8 @@ class StackChanBehavior:
             self._note_own_move()  # the head followed the face: the picture moved with it
         latest = getattr(self._vision, "latest_look", None)
         newest = latest(max_age_s=2.0) if latest is not None else None
+        people = getattr(self._vision, "people", None)
+        person_now = bool(people(max_age_s=1.0)) if callable(people) else False
         self._camera_stats.looked(
             time.monotonic() - started,
             target.detected,
@@ -1047,10 +1233,22 @@ class StackChanBehavior:
             flat=newest is not None and newest[2] is None,
             lux=self.lux(),
             motion=getattr(self._vision, "last_motion", None),
+            person=person_now,
+            detector_ms=getattr(self._vision, "last_look_ms", None),
+            person_best=getattr(self._vision, "last_best_person", None),
         )
+        if self._look_ready():
+            self._false_person_tick(now, person_now, target.detected)
+        self._note_sees(now, target.detected, person_now)
         from maipai_body.bodies.stackchan.gaze import GazeReason
 
         if not target.detected:
+            if person_now:
+                # A body with no face (an arm, a torso at the desk) is a person: it keeps the rest
+                # policy awake and stops the empty room from being learned over them.
+                self._last_person_seen = now
+                self._still_failures = 0
+                self._still_thumb = None
             self._missed_looks += 1
             if (
                 self._missed_looks == LOST_AFTER_LOOKS
@@ -1079,9 +1277,46 @@ class StackChanBehavior:
             self.on_face_found()
         if self._followed:
             self.gaze.note(GazeReason.TRACK)
+            last_pose = getattr(self._vision, "last_pose_deg", None)
+            if last_pose is not None:
+                self._tracker.note_pose(*last_pose)
         if self._greeting.seen(now):
             self.greet()
         return True
+
+    def _person_hint(self) -> float:
+        """The detector's best person score on the newest look (below the box threshold)."""
+        return float(getattr(self._vision, "last_best_person", 0.0) or 0.0)
+
+    def _note_sees(self, now: float, face: bool, person: bool) -> None:
+        """What the camera sees now, for the ring: a face, a person box, a possible person (a
+        weak detector hint, movement, or a picture unlike the empty room), or nothing."""
+        if face:
+            state: str | None = "face"
+        elif person:
+            state = "person"
+        else:
+            motion_age = self._real_motion_age(now)
+            from maipai_body.bodies.stackchan.presence_watch import PERSON_SHARE
+
+            maybe = (
+                self._person_hint() >= PERSON_HINT_SCORE
+                or (motion_age is not None and motion_age <= 1.0)
+                or self._person_share >= PERSON_SHARE
+            )
+            state = "maybe" if maybe else None
+        if state is not None:
+            self._sees_at = now
+        elif now - self._sees_at < SEES_HOLD_S:
+            return  # a miss between two looks: the glow holds, no flicker
+        if state == self._sees:
+            return
+        self._sees = state
+        if self.on_sees is not None:
+            try:
+                self.on_sees(state)
+            except Exception:
+                self._warn_limited("sees", "StackChan vision indicator update failed")
 
     def face_age(self) -> float | None:
         """Seconds since a face was last seen, or None if none has been."""
@@ -1092,20 +1327,57 @@ class StackChanBehavior:
         reply. Nothing happens when no face was seen in the last few seconds (no hunting)."""
         face = self._last_face
         if face is None or time.monotonic() - face[2] > TURN_FACE_FRESH_S:
-            return False
+            return self._turn_toward_person()
         from maipai_body.bodies.stackchan.gaze import GazeReason
-        from maipai_body.bodies.stackchan.vision_bridge import follow_pose
+        from maipai_body.bodies.stackchan.vision_bridge import follow_pose, follow_pose_degrees
         from maipai_body.hal.seam import FaceTrackTarget
 
-        pose = follow_pose(FaceTrackTarget(detected=True, x=face[0], y=face[1]))
+        target = FaceTrackTarget(detected=True, x=face[0], y=face[1])
+        pose = follow_pose(target)
         self.robot.head.set(pose=pose)  # the lease is held by the turn state that called this
         self._head_off_centre = True
         self._note_own_move()
+        self._tracker.note_pose(*follow_pose_degrees(target))
         self.gaze.note(GazeReason.TRACK)
         logger.info("StackChan turned toward the speaker")
         return True
 
+    def _turn_toward_person(self) -> bool:
+        """No fresh face at listen start, but the Look detector saw a body a moment ago: one brisk
+        turn toward it (the box centre, tilted toward its top) instead of the blind glance up; the
+        tracker then looks for the face there after the reply."""
+        if self._vision is None or not self._look_ready():
+            return False
+        box = self._vision.last_person(max_age_s=SPEAKER_PERSON_FRESH_S)
+        if box is None:
+            return False
+        from maipai_body.bodies.stackchan.gaze import GazeReason
+        from maipai_body.bodies.stackchan.vision_bridge import follow_pose, follow_pose_degrees
+        from maipai_body.hal.seam import FaceTrackTarget
+
+        target = FaceTrackTarget(detected=True, x=box.centre_x, y=box.top)
+        try:
+            self.robot.head.set(pose=follow_pose(target), duration_s=0.5, speed=TURN_SPEED)
+        except Exception:
+            self._warn_limited("search", "StackChan turn toward the person failed")
+            return False
+        self._head_off_centre = True
+        self._note_own_move()
+        self._tracker.note_pose(*follow_pose_degrees(target))
+        self._search_after_turn = True  # look for the face there once the reply is over
+        self.gaze.note(GazeReason.SEARCH)
+        logger.info(
+            "StackChan turned toward the person who spoke: a body at x %.2f, no face in view",
+            box.centre_x,
+        )
+        return True
+
     def _may_follow(self) -> bool:
+        if self._look_ready():
+            # The person tracker follows faces and bodies alike (relative moves, a dead zone):
+            # the bridge's own absolute follow stays for a robot without the Look model.
+            self._followed = False
+            return False
         self._followed = (not self.idle_still()) and self.head_gate.allow("ambient:track")
         return self._followed
 
@@ -1487,15 +1759,21 @@ async def _serve_stackchan_channels(
     vision = None
     try:
         from maipai_body.bodies.stackchan.vision_bridge import StackChanVisionBridge
-        from maipai_body.vision.yunet import LazyFaceDetector
 
         # The pinned YuNet model comes from Home like every other model; until it has been synced
         # the detector finds nothing and says so once every ten minutes.
+        from maipai_body.vision.look_fast import LazyLookDetector
+        from maipai_body.vision.models import YOLOX_NANO
+        from maipai_body.vision.yunet import LazyFaceDetector
+
         vision = StackChanVisionBridge(
             voice.robot.robot,
             detector=LazyFaceDetector(lambda: _load_yunet_model(link)),
             embedder=None,
             gallery=None,
+            # The Look detector (people and household things) rides the same frames; its model
+            # is synced from Home like YuNet and the robot works without it until it arrives.
+            look_detector=LazyLookDetector(lambda: _load_pinned_model(link, YOLOX_NANO)),
         )
     except Exception as exc:
         # One line, not a traceback: the cause is almost always a package the bundle lacks.
@@ -1571,6 +1849,7 @@ async def _serve_stackchan_channels(
         daemon=True,
     ).start()
     voice.robot.robot._driver("camera").cue_sink = light.cue_camera
+    behavior.on_sees = lambda state: light.update(sees=state)
     from maipai_body.bodies.stackchan.uplink_stats import UplinkStats
 
     uplink = UplinkStats()
@@ -1636,6 +1915,8 @@ async def _serve_stackchan_channels(
                 camera_running_s=avatar.camera_running_s,
                 watching=lambda: _detector_ready(vision),
                 motion_age=lambda: None if vision is None else vision.motion_age(),
+                person_age=lambda: None if vision is None else vision.person_age(),
+                objects=lambda max_age_s: None if vision is None else vision.objects(max_age_s),
             ),
         )
         bridge.vision_ask = behavior.vision_ask
@@ -2533,22 +2814,28 @@ def _hub_credentials_reader(link: LinkLifecycle, base_url: str) -> Callable[[], 
 
 def _load_yunet_model(link: LinkLifecycle | None) -> Path:
     """The verified YuNet file: from the local model cache, else synced from the paired hub."""
+    from maipai_body.vision.models import YUNET
+
+    return _load_pinned_model(link, YUNET)
+
+
+def _load_pinned_model(link: LinkLifecycle | None, asset: Any) -> Path:
+    """A verified pinned model file: from the local cache, else synced from the paired hub."""
     from maipai_body.link.assets import AssetSync
     from maipai_body.model_assets import AssetUnavailable, ensure_asset
-    from maipai_body.vision.models import YUNET
 
     cache = _default_models_cache_dir()
     try:
-        return ensure_asset(YUNET, cache)  # already synced (or the fetcher is configured)
+        return ensure_asset(asset, cache)  # already synced (or the fetcher is configured)
     except AssetUnavailable:
         pass
     if link is None:
-        raise AssetUnavailable("YuNet is not synced and the robot is not paired with Home")
+        raise AssetUnavailable(f"{asset.file} is not synced and the robot is not paired with Home")
     url, cookie = _command_credentials(link)()
     if not url or not cookie:
-        raise AssetUnavailable("YuNet is not synced and Home has not answered yet")
+        raise AssetUnavailable(f"{asset.file} is not synced and Home has not answered yet")
     sync = AssetSync(url, cookie, refresh_credentials=_command_credentials(link))
-    return sync.ensure(YUNET, cache)
+    return sync.ensure(asset, cache)
 
 
 def _effective_idle_level(level: str) -> str:

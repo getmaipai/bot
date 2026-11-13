@@ -22,6 +22,7 @@ EXPECTED_KEYS = {
     "robot.indicator.night_brightness",
     "robot.indicator.sleep_eyes",
     "robot.indicator.alarm",
+    "robot.indicator.sees",
 }
 # The fields the existing declaration already uses, plus the two this order names.
 ALLOWED_FIELDS = {
@@ -37,10 +38,10 @@ ALLOWED_FIELDS = {
 }
 
 
-def test_exactly_the_five_keys():
+def test_exactly_the_six_keys():
     declared = eyes_settings_declaration("eyes")
     assert {entry["key"] for entry in declared} == EXPECTED_KEYS
-    assert len(declared) == 5
+    assert len(declared) == 6
     assert set(INDICATOR_KEYS) == EXPECTED_KEYS
 
 

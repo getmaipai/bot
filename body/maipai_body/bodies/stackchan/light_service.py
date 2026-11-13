@@ -59,6 +59,7 @@ class LightFacts:
     battery_low: bool = False
     updating: bool = False
     dancing: bool = False
+    sees: str | None = None  # "maybe", "person", "face" or None: the vision indicator
     funnel: FunnelState = FunnelState.IDLE
 
 
@@ -97,7 +98,7 @@ class StackChanLightService:
     def facts(self) -> LightFacts:
         return self._facts
 
-    def update(self, **changes: bool | FunnelState) -> None:
+    def update(self, **changes: bool | str | None | FunnelState) -> None:
         """Replace the named facts and re-resolve; an unknown name raises
         ``TypeError``."""
         self._facts = replace(self._facts, **changes)
@@ -216,6 +217,7 @@ class StackChanLightService:
             battery_low=facts.battery_low,
             updating=facts.updating,
             dancing=facts.dancing,
+            sees=facts.sees,
         )
         look = looks.resolve(request)
         key = looks.resolve_key(request)

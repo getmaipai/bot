@@ -292,6 +292,7 @@ class _CameraAdapter:
         self.robot = robot
         self.avatar_server: Any = None
         self.device_id: str | None = None
+        self.last_frame_at: float | None = None  # when the last streamed frame arrived
         self._stream_indicator_active = False
         self.silent_capture_allowed: Callable[[], bool] = lambda: False
         # Local watching (face tracking, the night light read): governed by the household's
@@ -342,6 +343,7 @@ class _CameraAdapter:
                 )
                 if frame is None or time.monotonic() - started > deadline:
                     return None
+                self.last_frame_at = getattr(self.avatar_server, "last_popped_frame_at", None)
                 return frame
             except BaseException:
                 raise

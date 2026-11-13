@@ -66,6 +66,10 @@ class CameraStats:
         self._lux: float | None = None  # the unit's light sensor at the newest look
         self._moved = 0
         self._motion_max = 0.0
+        self._with_person = 0  # looks with a person box (the Look detector, no face needed)
+        self._look_detector_ms = 0.0
+        self._look_detector_runs = 0
+        self._person_best_miss = 0.0  # best person score in a look that found no person
 
     def looked(
         self,
@@ -76,12 +80,22 @@ class CameraStats:
         flat: bool = False,
         lux: float | None = None,
         motion: float | None = None,
+        person: bool = False,
+        detector_ms: float | None = None,
+        person_best: float | None = None,
     ) -> None:
         """One frame was decoded and searched for a face (``elapsed_s`` is the whole look).
-        ``luma`` is its light level, ``flat`` says the picture had no detail to read one from, and
-        ``motion`` is the share of the picture that changed since the look before."""
+        ``luma`` is its light level, ``flat`` says the picture had no detail to read one from,
+        ``motion`` is the share of the picture that changed since the look before, ``person``
+        says the Look detector saw a person and ``detector_ms`` how long that detector took."""
         self._looked += 1
         self._with_face += 1 if face else 0
+        self._with_person += 1 if person else 0
+        if detector_ms is not None:
+            self._look_detector_ms += detector_ms
+            self._look_detector_runs += 1
+        if not person and person_best is not None:
+            self._person_best_miss = max(self._person_best_miss, person_best)
         ms = elapsed_s * 1000.0
         self._look_ms += ms
         self._look_ms_max = max(self._look_ms_max, ms)
@@ -127,9 +141,18 @@ class CameraStats:
                 f"; movement in {self._moved} looks "
                 f"(at most {self._motion_max * 100:.0f}% of the picture)"
             )
+        if self._look_detector_runs:
+            line += (
+                f"; a person in {self._with_person} looks, detector mean "
+                f"{self._look_detector_ms / self._look_detector_runs:.1f} ms"
+            )
+            if self._with_person < self._looked:
+                line += f" (best person score with nobody found: {self._person_best_miss:.2f})"
         self._since, self._frames0, self._bytes0 = now, frames, nbytes
-        self._looked = self._with_face = self._moved = 0
-        self._look_ms = self._look_ms_max = self._motion_max = 0.0
+        self._looked = self._with_face = self._moved = self._with_person = 0
+        self._look_detector_runs = 0
+        self._look_ms = self._look_ms_max = self._motion_max = self._look_detector_ms = 0.0
+        self._person_best_miss = 0.0
         return line
 
 

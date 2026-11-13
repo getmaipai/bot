@@ -133,6 +133,7 @@ class AvatarServer:
         # Running totals of the unit's camera stream, for the one-line-a-minute load report.
         self.camera_frames_received = 0
         self.camera_bytes_received = 0
+        self.last_popped_frame_at: float | None = None
 
     async def start(self, host: str = "127.0.0.1", port: int = 8766, **kwargs: Any) -> None:
         self._server = await serve(
@@ -312,6 +313,8 @@ class AvatarServer:
         self.camera_frame_count = len(self._camera_frames)
         if item is None or time.monotonic() - item[1] > max_age_s:
             return None
+        # When the frame arrived (monotonic): a head move is judged only by a frame newer than it.
+        self.last_popped_frame_at = item[1]
         return item[0]
 
     def clear_camera_frame(self, device_id: str) -> None:

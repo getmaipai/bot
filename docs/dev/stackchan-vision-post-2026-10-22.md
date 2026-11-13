@@ -57,3 +57,7 @@ for 90 seconds; the description is never returned to the bot, so a question abou
   stopped. Every value is at the top of `head_search.py` and `presence_watch.py`.
 - Phantom pets ("it keeps smiling", 2026-11-12): firmware patch 080 makes a weak run (reading 1) need 32 samples and marks weak
   presses `strong=0`; `head_touch_filter.py` already drops a lone weak event unless it repeats within 4.5 s.
+- Person, then face, then follow (2026-11-12, owner design): the Look detector (YOLOX-nano, the shared robot asset) runs beside YuNet on
+  the same frames (`vision/look_fast.py`, `vision_bridge._fast_pass`), and `bodies/stackchan/person_tracker.py` turns its person box
+  into the head moves: aim, face search above a still body, follow. With the model loaded it replaces the ambient look around above;
+  the design, the constants and the frame budget are in `stackchan-person-then-face-2026-11-12.md`.

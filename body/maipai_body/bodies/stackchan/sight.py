@@ -14,6 +14,10 @@ import re
 from collections.abc import Callable
 
 FACE_FRESH_S = 10.0  # "I can see you" only for a face seen this recently
+PERSON_FRESH_S = 10.0  # the Look detector saw a person (no face needed) this recently
+OBJECTS_FRESH_S = (
+    90.0  # "what do you see" answers from a look this young (the camera pauses in a turn)
+)
 MOTION_FRESH_S = 30.0  # something moved in the picture this recently: someone is probably there
 
 _CAN_SEE_ME = re.compile(
@@ -39,6 +43,11 @@ YES = (
     "Yes! I can see you right there.",
     "Yes, there you are!",
     "I can see you, hi!",
+)
+# No face, but the Look detector sees a person: they are there, the face is out of the picture.
+PERSON_NO_FACE = (
+    "I can see someone right in front of me, but not your face yet.",
+    "Yes, I can see you, though not your face. Sit back a little and I'll find it.",
 )
 # No face, but the picture is changing: a person is probably there, too close or too low for a face.
 MOVING = (
@@ -78,6 +87,8 @@ class SightAnswers:
         camera_running_s: Callable[[], float | None] = lambda: STARTING_S,
         watching: Callable[[], bool] = lambda: False,
         motion_age: Callable[[], float | None] = lambda: None,
+        person_age: Callable[[], float | None] = lambda: None,
+        objects: Callable[[float], list[dict] | None] = lambda _max_age_s: None,
         rng: random.Random | None = None,
     ) -> None:
         self._face_age = face_age
@@ -86,8 +97,25 @@ class SightAnswers:
         self._camera_running_s = camera_running_s
         self._watching = watching
         self._motion_age = motion_age
+        self._person_age = person_age
+        self._objects = objects
         self._rng = rng or random.Random()
         self._last: dict[str, str] = {}
+
+    def quick_look(self) -> str | None:
+        """The instant answer to "what do you see" from the robot's own fast pass ("I see a person
+        and a laptop."), or None when no young look named anything. Home's detailed sentence
+        follows through the normal turn; this line is never logged."""
+        from maipai_body.vision.look_fast import spoken_line
+
+        if not self._camera_on():
+            return None
+        objects = self._objects(OBJECTS_FRESH_S)
+        return spoken_line(objects) if objects else None
+
+    def _person_seen(self) -> bool:
+        age = self._person_age()
+        return age is not None and age <= PERSON_FRESH_S
 
     def kind(self, text: str | None) -> str | None:
         """What sort of sight question this is: "light", "picture", "see_me", or None."""
@@ -116,6 +144,8 @@ class SightAnswers:
             age = self._face_age()
             if age is not None and age <= FACE_FRESH_S:
                 return self._pick("yes", YES)
+            if self._person_seen():
+                return self._pick("person", PERSON_NO_FACE)
         running = self._camera_running_s()
         if running is None or running < STARTING_S:
             return self._pick("not_ready", NOT_READY)
@@ -132,6 +162,11 @@ class SightAnswers:
                 age = self._face_age()
                 if age is not None and age <= FACE_FRESH_S:
                     return f"It is {room} here and I can see someone, but {NO_LOOK}"
+                if self._person_seen():
+                    return (
+                        f"It is {room} here and I can see someone in front of me, "
+                        f"though not a face, and {NO_LOOK}"
+                    )
                 if self._moving():
                     return (
                         f"It is {room} here and something is moving close to me, "
@@ -141,6 +176,8 @@ class SightAnswers:
             if room:
                 return f"My camera is on and it is {room} here, but {NO_LOOK}"
             return f"My camera is on, but {NO_LOOK}"
+        if self._person_seen():
+            return self._pick("person", PERSON_NO_FACE)
         if self._moving():
             return self._pick("moving", MOVING)
         if room:

@@ -221,3 +221,35 @@ def test_an_unknown_update_field_raises_type_error():
     service, _, _, _ = _service()
     with pytest.raises(TypeError):
         service.update(not_a_fact=True)
+
+
+def test_the_vision_indicator_shows_three_steady_pinks_only_when_asked_for():
+    """Owner request 2026-11-12: faint pink for a possible person, medium for a person box, full
+    for a face; steady, so it never reads as the flashing camera cue; off by default."""
+    service, ring, _, state = _service()
+    service.update(sees="face")
+    assert ring.current is None  # the setting is off by default: the idle ring stays dark
+    state["settings"] = IndicatorSettings(sees=True)
+    weights = {}
+    for seen in ("maybe", "person", "face"):
+        service.update(sees=seen)
+        look = ring.current
+        assert look is not None and look.colour is Palette.PINK
+        assert look.style is LookStyle.STEADY
+        weights[seen] = look.brightness
+    assert weights["maybe"] < weights["person"] < weights["face"]
+    service.update(sees=None)
+    assert ring.current is None
+    # Other looks win: listening, the camera cue, offline.
+    service.update(sees="face", funnel=FunnelState.LISTENING)
+    assert ring.current is not None and ring.current.colour is not Palette.PINK
+    service.update(funnel=FunnelState.IDLE, camera=True)
+    assert ring.current.style is LookStyle.FLASH
+    service.update(camera=False, offline=True)
+    assert ring.current.colour is not Palette.PINK
+    # At night the sleep row would dim the ring; the indicator was asked for, so it still shows.
+    service.update(offline=False)
+    state["settings"] = IndicatorSettings(sees=True, night_from=20 * 60, night_to=8 * 60)
+    state["minute"] = NIGHT
+    service.update(sees="person")
+    assert ring.current.colour is Palette.PINK and ring.current.style is LookStyle.STEADY

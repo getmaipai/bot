@@ -15,7 +15,8 @@ it when ``MAIPAI_SPEC_SETTINGS_KEY_SCHEMA`` points at the file).
 Night is the household's quiet hours: ``household.quiet_hours.from`` and ``.to``
 from the registry (honoured by ``bot`` since spec-v0.1.151), delivered in the
 settings frame. The temporary robot-only ``night_from`` and ``night_to`` keys are
-retired, so only five keys are declared here.
+retired. Six keys are declared here: the five eye keys and the vision indicator
+(``robot.indicator.sees``, off by default: the idle ring stays dark unless asked).
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ KEY_QUIET_FROM = QUIET_FROM_KEY
 KEY_QUIET_TO = QUIET_TO_KEY
 KEY_SLEEP_EYES = "robot.indicator.sleep_eyes"
 KEY_ALARM = "robot.indicator.alarm"
+KEY_SEES = "robot.indicator.sees"
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,7 @@ class IndicatorSettings:
     night_to: int = 7 * 60
     sleep_eyes: str = "dim"
     alarm: bool = True
+    sees: bool = False  # the pink "I see someone" glow; off by default (owner 2026-10-21)
 
 
 def _time_text(minute: int) -> str:
@@ -75,6 +78,7 @@ def parse_settings(values: Mapping[str, object]) -> IndicatorSettings:
     d = IndicatorSettings()
     enabled = values.get(KEY_ENABLED, d.enabled)
     alarm = values.get(KEY_ALARM, d.alarm)
+    sees = values.get(KEY_SEES, d.sees)
     sleep = values.get(KEY_SLEEP_EYES, d.sleep_eyes)
     return IndicatorSettings(
         enabled=enabled if isinstance(enabled, bool) else d.enabled,
@@ -86,6 +90,7 @@ def parse_settings(values: Mapping[str, object]) -> IndicatorSettings:
         night_to=_parse_time(values.get(KEY_QUIET_TO), d.night_to),
         sleep_eyes=sleep if sleep in SLEEP_EYES_OPTIONS else d.sleep_eyes,
         alarm=alarm if isinstance(alarm, bool) else d.alarm,
+        sees=sees if isinstance(sees, bool) else d.sees,
     )
 
 
@@ -123,6 +128,12 @@ def _specs() -> list[dict[str, Any]]:
             list(SLEEP_EYES_OPTIONS),
         ),
         _spec(KEY_ALARM, "boolean", d.alarm, "Blink amber when I tip or fall"),
+        _spec(
+            KEY_SEES,
+            "boolean",
+            d.sees,
+            "Glow pink when I see someone (faint: maybe, medium: a person, full: a face)",
+        ),
     ]
 
 
@@ -130,5 +141,5 @@ INDICATOR_KEYS: tuple[str, ...] = tuple(spec["key"] for spec in _specs())
 
 
 def eyes_settings_declaration(needs: str) -> list[dict[str, Any]]:
-    """The five declarations for a body whose capability id is ``needs``."""
+    """The declarations for a body whose capability id is ``needs``."""
     return [{**spec, "needs": [needs]} for spec in _specs()]

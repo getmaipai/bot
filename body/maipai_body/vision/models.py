@@ -1,4 +1,4 @@
-"""SFace pin from the shared spec; bytes arrive through the paired hub."""
+"""Vision model pins from the shared spec; bytes arrive through the paired hub."""
 
 from __future__ import annotations
 
@@ -6,3 +6,5 @@ from maipai_body.link.assets import pinned_asset
 
 SFACE = pinned_asset("sface-2021dec")
 YUNET = pinned_asset("yunet-2026may")
+# The Look detector (LOOK-01): people and household things, the robot's own fast pass.
+YOLOX_NANO = pinned_asset("yolox-nano-0_1_1rc0")

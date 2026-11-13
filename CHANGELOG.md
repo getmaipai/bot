@@ -7,6 +7,14 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+### Added
+- The StackChan finds the person, then the face, then follows (owner design 2026-11-12, `docs/dev/stackchan-person-then-face-2026-11-12.md`): the Look detector (YOLOX-nano, the shared robot asset `yolox-nano-0_1_1rc0`, synced from Home like the face model) runs on the same camera frames as the face detector, so an arm or a torso in view is a person. The head turns toward the person box and tilts up when it is cut off at the top, looks for the face above a still body in small steps, and follows the person (face when in view, body when not) with a dead zone and natural steps; it relaxes after a long still spell and rests when nobody is left. Every stage change is one INFO line; the camera minute line counts people and the detector's time, and a false-person rate is logged over windows with no face.
+- "What do you see" answers at once from the robot's own fast pass ("I see a person and a laptop"), then Home's detailed sentence follows as before. "Can you see me" with a body but no face says so.
+
+### Changed
+- The shared spec pin moves to spec-v0.1.208 (the first tag carrying the Look asset and vocabulary).
+- With the Look model loaded, a picture that merely differs from the learned empty room no longer starts a look around; a person box does. The bridge's older absolute face follow stays only for a robot without the model.
+
 ## [0.2.63] - 2026-11-12
 
 ### Changed

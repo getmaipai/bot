@@ -64,6 +64,11 @@ class LookKey(StrEnum):
     BATTERY_LOW = "battery_low"
     UPDATING = "updating"
     DANCING = "dancing"
+    # The vision indicator (owner request 2026-11-12): steady pink, faint for a possible person,
+    # medium for a person box, full for a face. Behind ``robot.indicator.sees``, off by default.
+    SEES_MAYBE = "sees_maybe"
+    SEES_PERSON = "sees_person"
+    SEES_FACE = "sees_face"
 
 
 # row: (colour, weight, style). The weight is the share of the day or night level
@@ -92,6 +97,15 @@ LOOKS: dict[LookKey, tuple[Palette, float, LookStyle]] = {
     LookKey.BATTERY_LOW: (Palette.AMBER, 0.3, LookStyle.PULSE),
     LookKey.UPDATING: (Palette.WHITE, 0.5, LookStyle.PULSE),
     LookKey.DANCING: (Palette.WHITE, 0.35, LookStyle.STEADY),
+    # Steady, unlike the flashing camera cue, so the two pinks never read the same.
+    LookKey.SEES_MAYBE: (Palette.PINK, 0.25, LookStyle.STEADY),
+    LookKey.SEES_PERSON: (Palette.PINK, 0.55, LookStyle.STEADY),
+    LookKey.SEES_FACE: (Palette.PINK, 1.0, LookStyle.STEADY),
+}
+SEES_ROWS: dict[str, LookKey] = {
+    "maybe": LookKey.SEES_MAYBE,
+    "person": LookKey.SEES_PERSON,
+    "face": LookKey.SEES_FACE,
 }
 
 # The period each style runs at. UNMEASURED design defaults; a key named in
@@ -145,6 +159,7 @@ class LookRequest:
     battery_low: bool = False
     updating: bool = False
     dancing: bool = False
+    sees: str | None = None  # "maybe", "person" or "face": what the camera sees right now
 
 
 def is_night(minute: int, start: int, end: int) -> bool:
@@ -229,6 +244,9 @@ def resolve_key(request: LookRequest) -> LookKey | None:
         return LookKey.OFFER
     if request.charging and request.funnel is FunnelState.IDLE:
         return LookKey.CHARGING
+    # The vision indicator is asked for on purpose, so it shows at night too (over the sleep row).
+    if request.sees in SEES_ROWS and settings.sees and request.funnel is FunnelState.IDLE:
+        return SEES_ROWS[request.sees]
     if request.funnel is FunnelState.IDLE and is_night(
         request.minute, settings.night_from, settings.night_to
     ):
