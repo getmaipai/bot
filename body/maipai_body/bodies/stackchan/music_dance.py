@@ -151,7 +151,7 @@ SENSITIVITIES: dict[str, Sensitivity] = {
 @dataclass(frozen=True)
 class Verdict:
     music: bool
-    why: str  # the reason it is not music, "" when it is
+    why: str  # exactly one reason code, including "music"
 
 
 def judge(feat: MusicFeat, sensitivity: str = "medium", *, relaxed: bool = False) -> Verdict:
@@ -164,18 +164,22 @@ def judge(feat: MusicFeat, sensitivity: str = "medium", *, relaxed: bool = False
         mo_max += 10
         ps_max += 10
     if feat.muted:
-        return Verdict(False, "muted")
+        return Verdict(False, "self_hearing_blank")
     if feat.lv < MIN_LEVEL:
-        return Verdict(False, "quiet")
-    if not MIN_BPM <= feat.bpm <= MAX_BPM or feat.tc < tc_min:
-        return Verdict(False, "no steady beat")
+        return Verdict(False, "below_level_gate")
+    if feat.tc < tc_min:
+        return Verdict(False, "weak_beat")
+    if feat.bpm == 0:
+        return Verdict(False, "no_tempo")
+    if not MIN_BPM <= feat.bpm <= MAX_BPM:
+        return Verdict(False, "tempo_out_of_range")
     if feat.fl >= sens.fl_max:
-        return Verdict(False, "noise")
+        return Verdict(False, "too_flat")
     if feat.mo >= mo_max:
-        return Verdict(False, "speech rhythm")
+        return Verdict(False, "speech_like_modulation")
     if feat.ps >= ps_max and feat.tc < sens.ps_tc_free:
-        return Verdict(False, "pauses")
-    return Verdict(True, "")
+        return Verdict(False, "speech_like_pauses")
+    return Verdict(True, "music")
 
 
 # ---------------------------------------------------------------- timing and the plan
@@ -303,6 +307,9 @@ class MusicDance:
         self._windows = 0
         self._music_windows = 0
         self._false_starts = 0
+        self._reason_counts: dict[str, int] = {}
+        self._feature_values: dict[str, list[int]] = {}
+        self._last_reject_log = float("-inf")
         self.last_detection = ""
 
     # -- inputs
@@ -324,11 +331,21 @@ class MusicDance:
             relaxed = self.state in ("nod", "watch", "show")
             verdict = judge(feat, self.settings.auto_sensitivity, relaxed=relaxed)
             self._windows += 1
+            self._reason_counts[verdict.why] = self._reason_counts.get(verdict.why, 0) + 1
+            for name, value in self._features(feat).items():
+                self._feature_values.setdefault(name, []).append(value)
             if verdict.music:
                 self._music_windows += 1
                 self._positive(feat, now)
             else:
                 self._negative(now)
+                if feat.lv >= MIN_LEVEL and now - self._last_reject_log >= 5.0:
+                    self._last_reject_log = now
+                    logger.info(
+                        "StackChan music window rejected: reason=%s %s",
+                        verdict.why,
+                        self._feature_text(feat),
+                    )
             self._advance(now, feat if verdict.music else None)
 
     def tick(self, now: float) -> None:
@@ -574,14 +591,51 @@ class MusicDance:
             return
         if now - self._minute_at < 60.0:
             return
-        line = (
-            "StackChan music minute: %d feature windows, %d music windows, %d false-start "
-            "candidates, stage %s"
-        )
-        args = (self._windows, self._music_windows, self._false_starts, self.state)
-        (logger.info if self._windows else logger.debug)(line, *args)
+        if self._windows:
+            counts = ",".join(f"{k}:{v}" for k, v in sorted(self._reason_counts.items()))
+            ranges = " ".join(
+                f"{k}={self._summary(v)}" for k, v in self._feature_values.items() if v
+            )
+            line = (
+                f"StackChan music minute: n={self._windows} mus={self._music_windows} "
+                f"false={self._false_starts} stage={self.state} why[{counts}] {ranges}"
+            )[:400]
+            logger.info("%s", line)
+        else:
+            logger.debug("StackChan music minute: n=0 stage=%s", self.state)
         self._minute_at = now
         self._windows = self._music_windows = self._false_starts = 0
+        self._reason_counts.clear()
+        self._feature_values.clear()
+
+    @staticmethod
+    def _features(feat: MusicFeat) -> dict[str, int]:
+        return {
+            "lv": feat.lv,
+            "b0": feat.b[0],
+            "b1": feat.b[1],
+            "b2": feat.b[2],
+            "b3": feat.b[3],
+            "on": feat.on,
+            "bpm": feat.bpm,
+            "tc": feat.tc,
+            "fl": feat.fl,
+            "zc": feat.zc,
+            "zs": feat.zs,
+            "mo": feat.mo,
+            "ps": feat.ps,
+        }
+
+    @staticmethod
+    def _summary(values: list[int]) -> str:
+        ordered = sorted(values)
+        n = len(ordered)
+        median = ordered[n // 2] if n % 2 else (ordered[n // 2 - 1] + ordered[n // 2]) // 2
+        return f"{ordered[0]}/{median}/{ordered[-1]}"
+
+    @classmethod
+    def _feature_text(cls, feat: MusicFeat) -> str:
+        return " ".join(f"{key}={value}" for key, value in cls._features(feat).items())
 
     # -- the test
 

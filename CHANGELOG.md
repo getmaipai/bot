@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.67] - 2026-11-13
+
+### Changed
+- The music detector now says why it rejects a sound: every feature window gets one reason (below the level gate, weak beat, no tempo, tempo out of range, too flat, speech-like modulation or pauses, the unit's own sound, or music), the per-minute line shows the counts and the min, median and max of each measure, and a rate-limited line shows a rejected window's numbers while the room is loud. This is for tuning the thresholds on real songs.
+
 
 ## [0.2.66] - 2026-11-13
 

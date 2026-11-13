@@ -80,9 +80,12 @@ All at INFO in the bot log, logger `maipai_body.bodies.stackchan.music_dance`:
 - `StackChan music: stage idle -> nod (the nod (face happy, no ring light))`, then `nod -> watch`, `watch -> show`,
   `show -> spent`, `spent -> idle` with the reason in brackets (why a stage did not run: `no nod: it is night`, `no dance:
   battery under 40% ...`).
-- Once a minute while features arrive: `StackChan music minute: 41 feature windows, 12 music windows, 2 false-start candidates,
-  stage idle`. "Feature windows" are the loud seconds the unit sent; "false-start candidates" are runs of music-like seconds that
-  ended before 4 s.
+- Once a minute while features arrive, one compact INFO line (at most 400 characters) gives counts by decision reason and
+  min/median/max for `lv`, `b0`-`b3`, `on`, `bpm`, `tc`, `fl`, `zc`, `zs`, `mo` and `ps`. For example:
+  `StackChan music minute: n=41 mus=12 false=2 stage=idle why[music:12,weak_beat:29] lv=...`.
+- For a rejected window at or above the level gate, at most one INFO line per 5 seconds shows its integer feature values and
+  reason, e.g. `StackChan music window rejected: reason=weak_beat lv=... bpm=...`. Quiet windows are not logged per-window;
+  these diagnostics contain no audio.
 - The unit's own once-a-minute line (`unit music: music_stats seconds=.. loud=.. sent=.. dropped=.. suppressed=..`) says how
   many seconds it analysed, how many were loud enough, and how many chunks it skipped while the unit spoke or listened.
 - On the serial console (first half hour after boot): `MF <ms> <level> <bpm> <conf> <flat> <zc> <zcspread> <mod> <pause> <onset>`.

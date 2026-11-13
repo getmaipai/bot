@@ -124,17 +124,17 @@ def test_parse_reads_the_unit_event_and_rejects_missing_fields():
 def test_judge_music_versus_the_rest(sensitivity):
     assert judge(MUSIC, sensitivity).music
     assert not judge(SPEECH, sensitivity).music
-    assert judge(replace(SPEECH, tc=90), sensitivity).why == "speech rhythm"
-    assert judge(NOISE, sensitivity).why == "noise"
-    assert judge(QUIET_MUSIC, sensitivity).why == "quiet"
-    assert judge(NO_BEAT, sensitivity).why == "no steady beat"
-    assert judge(replace(MUSIC, muted=True), sensitivity).why == "muted"
-    assert judge(replace(MUSIC, bpm=40), sensitivity).why == "no steady beat"
-    assert judge(replace(MUSIC, bpm=200), sensitivity).why == "no steady beat"
+    assert judge(replace(SPEECH, tc=90), sensitivity).why == "speech_like_modulation"
+    assert judge(NOISE, sensitivity).why == "too_flat"
+    assert judge(QUIET_MUSIC, sensitivity).why == "below_level_gate"
+    assert judge(NO_BEAT, sensitivity).why == "weak_beat"
+    assert judge(replace(MUSIC, muted=True), sensitivity).why == "self_hearing_blank"
+    assert judge(replace(MUSIC, bpm=40), sensitivity).why == "tempo_out_of_range"
+    assert judge(replace(MUSIC, bpm=200), sensitivity).why == "tempo_out_of_range"
 
 
 def test_pauses_with_a_loose_beat_are_speech_but_a_steady_sparse_beat_is_music():
-    assert judge(TALK_PAUSES, "high").why == "pauses"
+    assert judge(TALK_PAUSES, "high").why == "speech_like_pauses"
     assert judge(replace(MUSIC, ps=95, tc=90), "medium").music  # a click track
 
 
@@ -520,9 +520,7 @@ def test_the_log_has_a_line_per_stage_detection_and_minute(caplog):
     assert "stage nod -> watch" in text
     assert "stage watch -> show" in text
     assert "stage show -> spent" in text
-    assert (
-        "music minute:" in text and "feature windows" in text and "false-start candidates" in text
-    )
+    assert "music minute:" in text and "why[music:" in text and "lv=" in text
 
 
 def test_false_start_candidates_are_counted_in_the_minute_line(caplog):
@@ -533,7 +531,32 @@ def test_false_start_candidates_are_counted_in_the_minute_line(caplog):
             world.play(SPEECH, 4)
         world.play(SPEECH, 40)
     lines = [r.getMessage() for r in caplog.records if "music minute" in r.getMessage()]
-    assert lines and any("5 false-start" in line or "4 false-start" in line for line in lines)
+    assert lines and any("false=5" in line or "false=4" in line for line in lines)
+
+
+def test_window_rejections_are_reasoned_rate_limited_and_quiet_is_silent(caplog):
+    world = World()
+    with caplog.at_level(logging.INFO, logger="maipai_body.bodies.stackchan.music_dance"):
+        world.play(QUIET_MUSIC, 8)
+        world.play(NO_BEAT, 12)
+    rejected = [r.getMessage() for r in caplog.records if "window rejected:" in r.getMessage()]
+    assert len(rejected) == 3
+    assert all("reason=weak_beat" in line and "lv=" in line and "bpm=" in line for line in rejected)
+
+
+def test_minute_logs_counts_and_feature_min_median_max(caplog):
+    world = World()
+    with caplog.at_level(logging.INFO, logger="maipai_body.bodies.stackchan.music_dance"):
+        world.second(replace(MUSIC, lv=1200, on=10))
+        world.second(replace(MUSIC, lv=1800, on=30))
+        world.second(replace(MUSIC, lv=2400, on=50))
+        world.play(NO_BEAT, 60)
+    lines = [r.getMessage() for r in caplog.records if "music minute:" in r.getMessage()]
+    assert lines
+    line = lines[0]
+    assert "weak_beat:" in line and "music:" in line
+    assert "lv=1200/2400/2400" in line  # Includes the later scripted no-beat windows.
+    assert len(line) <= 400
 
 
 # ------------------------------------------------------------------ the plan on the real runner
