@@ -980,3 +980,16 @@ def test_a_loud_steady_song_with_a_wandering_tempo_is_music():
     assert not judge(replace(wandering, ps=30), "medium").music  # pauses
     assert not judge(replace(wandering, fl=98), "medium").music  # noise
     assert not judge(replace(wandering, lv=600), "medium").music  # too quiet for this path
+
+
+def test_the_notes_follow_the_stages():
+    world = World()
+    shown: list[int] = []
+    hooks = world.ctl._hooks
+    hooks.notes = shown.append
+    world.play(MUSIC, 30)
+    assert shown[0] == 1  # the nod
+    assert 0 in shown  # cleared when the nod ends
+    assert 3 in shown  # the dance
+    world.play(None, 80)
+    assert shown[-1] == 0  # and gone when it ends

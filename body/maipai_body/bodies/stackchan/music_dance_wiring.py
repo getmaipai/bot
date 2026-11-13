@@ -30,6 +30,8 @@ logger = logging.getLogger("maipai_body.bodies.stackchan.music_dance_wiring")
 TICK_S = 0.5
 SWITCH_RETRY_S = 15.0
 SWITCH_TOOL = "self.music.set"
+NOTES_TOOL = "self.face.music_notes"  # firmware patch 123: notes on the face while it dances
+TITLE_TOOL = "self.face.song_title"
 
 
 class MusicFeatureSwitch:
@@ -83,6 +85,10 @@ class MusicFeatureSwitch:
             self._sent = want
             logger.info("StackChan music features %s", "on" if want else "off")
 
+    def call(self, tool: str, arguments: dict) -> object:
+        """A unit tool through the same channel (the music notes and the song title)."""
+        return self._call(tool, arguments)
+
     def apply_settings(self, _values: dict) -> None:
         self.sync()
 
@@ -132,6 +138,7 @@ def wire_music_dance(
             nod=nod,
             restore_face=restore_face,
             situation=runner.situation,
+            notes=(lambda count: switch.call(NOTES_TOOL, {"count": count})) if switch else None,
         ),
         behavior.dance_settings,
     )

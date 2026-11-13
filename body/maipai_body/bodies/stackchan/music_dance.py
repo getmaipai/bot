@@ -309,6 +309,7 @@ class MusicDanceHooks:
     nod: NodFn  # the small nod with a face; blocks, runs on its own thread
     restore_face: Callable[[], object]  # the idle face again
     situation: Callable[[], DanceSituation]
+    notes: Callable[[int], object] | None = None  # music notes on the face: 0 hides, 1 nod, 3 dance
 
 
 class MusicDance:
@@ -335,6 +336,8 @@ class MusicDance:
         self.state = "idle"  # idle | nod | watch | show | break | spent
         self.full_plan = True  # the next dance request: the build-up and dance, or the dance only
         self._cycle = 0
+        self._notes_at = float("-inf")
+        self._now = 0.0
         self._block_start = float("-inf")
         self._break_at = float("-inf")
         self._run_start: float | None = None
@@ -371,6 +374,7 @@ class MusicDance:
         """One second of the room from the unit. Ignored (not even logged) while the music dance is
         off. A test's own scripted seconds come through here too."""
         with self._lock:
+            self._now = now
             if not self._active():
                 return
             self._count_minute(now)
@@ -398,6 +402,7 @@ class MusicDance:
         """Time passing: a music session ends, a running dance is checked, a test feeds its
         seconds."""
         with self._lock:
+            self._now = now
             if self.testing:
                 self._feed_test(now)
             if not self._active():
@@ -505,6 +510,17 @@ class MusicDance:
                 self._set_state("idle", "quiet again; ready for the next song")
                 self._run_start = None
 
+    def _notes(self, count: int, now: float) -> None:
+        """Music notes on the face (the unit hides them itself 30 s after the last call)."""
+        hook = self._hooks.notes
+        if hook is None:
+            return
+        self._notes_at = now
+        try:
+            hook(count)
+        except Exception:
+            logger.debug("StackChan music notes call failed", exc_info=True)
+
     def _block_s(self) -> float:
         sit = self._hooks.situation()
         return self._timing.block_usb_s if sit.charging is True else self._timing.block_battery_s
@@ -517,6 +533,8 @@ class MusicDance:
                 self._hooks.stop_dance("muted")
             elif self._music_gone(now):
                 self._hooks.stop_dance("music ended")
+            elif now - self._notes_at >= 10.0:
+                self._notes(3, now)  # keep the notes hopping while the dance goes on
             return
         # a round just ended (or was stopped): what next?
         if self._check_interrupt(now):
@@ -672,6 +690,7 @@ class MusicDance:
         self.state = state
         if state == "idle":
             self._session_test = False
+        self._notes({"nod": 1, "show": 3}.get(state, 0), self._now)
 
     # -- stats
 
