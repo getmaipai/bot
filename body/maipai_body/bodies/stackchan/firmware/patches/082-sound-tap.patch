@@ -1,0 +1,17 @@
+# Intent: hand every chunk the audio input task reads from the codec (24 kHz, two channels, before the 16 kHz resampler) to the StackChan sound-direction tap (patch 082, hal/hal_sound_dir.cpp). Nothing in the chunk changes; the wake word, the audio processor and the encoder see the same data as before.
+# Upstream: 78/xiaozhi-esp32 main/audio/audio_service.cc (MIT). Applies after 079-dev-voice-url with --unidiff-zero (patches 053 and 055, applied to the StackChan tree, also edit this file; the line numbers include them).
+# Check after a flash: see 082-sound-direction.patch.
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+index b165cf2..62aa9dd 100644
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -187,0 +188,3 @@ void AudioService::Stop() {
++// MaiPai patch 082 (StackChan hal/hal_sound_dir.cpp): every chunk read from the codec, before resampling.
++void maipai_sound_tap(const int16_t* interleaved, size_t frames, int channels, int sample_rate);
++
+@@ -199,0 +203,2 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
++        maipai_sound_tap(data.data(), data.size() / codec_->input_channels(), codec_->input_channels(),
++                         codec_->input_sample_rate());
+@@ -216,0 +222,2 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
++        maipai_sound_tap(data.data(), data.size() / codec_->input_channels(), codec_->input_channels(),
++                         codec_->input_sample_rate());

@@ -582,3 +582,24 @@ def test_a_face_seen_a_moment_ago_is_turned_to_at_once_without_a_look():
         assert behavior.face_yaw() is not None
     finally:
         behavior.close()
+
+
+def test_turn_to_me_moves_at_once_and_the_look_starts_on_the_first_tick_after_the_reply():
+    vision = _Vision(detected=False, motion_age=None)
+    behavior, device = _behavior(vision)
+    try:
+        behavior._active.set()  # the turn: the command is answered here
+        before = len(_head_calls(device))
+        assert behavior.find_person(False) == "searching"
+        first = _head_calls(device)[before:]
+        assert len(first) == 1 and first[0]["yaw"] != 0  # a frame-free glance and small pan
+        assert first[0]["pitch"] > round(CENTRE_PITCH_DEG)
+        behavior.search_tick(100.0)
+        assert not behavior._search.active  # not mid-turn
+        behavior._active.clear()  # the reply is over, the unit is idle
+        behavior.search_tick(100.2)  # the very next tick
+        assert behavior._search.reason == "ask"
+        behavior.search_tick(100.2)
+        assert len(_head_calls(device)) == before + 2  # the first look pose is already moving
+    finally:
+        behavior.close()

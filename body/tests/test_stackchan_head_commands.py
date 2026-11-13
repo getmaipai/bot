@@ -239,6 +239,7 @@ def _bridge_says(monkeypatch, text, head_control):
     asyncio.set_event_loop(loop)
     server = FakeServer()
     server._loop = loop
+    _bridge_says.server = server
     FakeTurn.streams = []
     FakeTts.sentences = []
     monkeypatch.setattr(turn_module, "StackChanAudioPlayback", FakePlayback)
@@ -468,3 +469,14 @@ def test_the_bridge_handles_turn_to_me_before_the_hub_and_the_sight_question(mon
     assert streams == [] and said == [LOOKING_FOR_YOU] and asked == [False]
     streams, said = _bridge_says(monkeypatch, "I'm down here", commander)
     assert streams == [] and asked == [False, True]
+
+
+def test_a_face_request_ends_the_follow_up_listening_so_the_look_can_start(monkeypatch):
+    rec = _Recorder()
+    commander = HeadCommander(rec.move, find_face=lambda level_only: "searching")
+    streams, said = _bridge_says(monkeypatch, "turn to me", commander)
+    assert streams == [] and said == [LOOKING_FOR_YOU]
+    assert len(_bridge_says.server.idles) == 1  # the unit goes idle, the camera resumes
+    _bridge_says(monkeypatch, "look left", rec.commander())
+    assert _bridge_says.server.idles == []  # other head commands keep the follow-up listening
+    assert LOOKING_FOR_YOU.count(".") == 1 and len(LOOKING_FOR_YOU.split()) <= 4

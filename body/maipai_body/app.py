@@ -37,6 +37,7 @@ from maipai_body.bodies.stackchan.companion import DIAGNOSTIC_KINDS
 from maipai_body.bodies.stackchan.head_search import (
     ASKED_REASONS,
     FACE_REASONS,
+    GLANCE_PITCH_DEG,
     MOVE_SPEED,
     SPEAKER_PITCH_DEG,
     STEP_S,
@@ -728,7 +729,31 @@ class StackChanBehavior:
             logger.info("StackChan turned to the person who asked: a face was in view")
             return "turned"
         self._find_request = ("ask_level" if level_only else "ask", time.monotonic())
+        self._react_at_once(level_only)
         return "searching"
+
+    REACT_PAN_DEG = 12.0  # the first, frame-free move of a find-me: a small pan (and a glance up)
+
+    def _react_at_once(self, level_only: bool) -> None:
+        """Move now, before any frame can be seen (the camera is paused while the unit listens
+        and speaks), so the person sees the head react; the look for the face confirms it."""
+        from maipai_body.bodies.stackchan.gaze import GazeReason
+        from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
+
+        up = 0.0 if level_only else GLANCE_PITCH_DEG
+        pose = HeadPose(
+            yaw=math.radians(-self.REACT_PAN_DEG), pitch=math.radians(CENTRE_PITCH_DEG + up)
+        )
+        try:
+            self._with_lease(
+                lambda: self.robot.head.set(pose=pose, duration_s=0.5, speed=TURN_SPEED)
+            )
+        except Exception:
+            self._warn_limited("search", "StackChan first move toward the person failed")
+            return
+        self._head_off_centre = True
+        self.hold_pose(4.0)  # the settle after the reply must not undo it before the look starts
+        self.gaze.note(GazeReason.COMMAND, "face")
 
     def face_yaw(self) -> float | None:
         """Yaw in degrees (left negative) toward the face seen a moment ago, or None."""

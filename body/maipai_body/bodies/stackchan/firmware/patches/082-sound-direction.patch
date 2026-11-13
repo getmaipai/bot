@@ -1,0 +1,321 @@
+# Intent: tell which side a sound comes from (owner mission 2026-11-12, "can the StackChan hear direction"). The CoreS3 has two front microphones on the ES7210 (MIC1 and MIC2; MIC3 is the speaker loopback, not read) and the firmware already reads both as the two input channels, so no codec change is needed. The audio input task hands every chunk it reads (24 kHz, two channels interleaved, before the 16 kHz resampler) to maipai_sound_tap, which only adds up sums: each channel's energy and their cross-correlation for lags of -8..8 samples (333 us, 11.4 cm of path). Every 100 ms a small worker task turns the sums into features: the RMS of each channel, the lag of the correlation peak (sub-sample by parabolic interpolation; positive when the sound reached channel 0 first), a confidence (the normalised peak, 0..1) and the level difference in dB. Output: a serial trace "SD <ms> <rms0> <rms1> <lag_x100> <conf_x100> <db_x10>" for every window above the quiet floor (RMS 40) in the first half hour after boot, a "sound_dir" event (l, r, lag, conf, db, rate) at most every 1.5 s while a confident (0.5) sound louder than RMS 120 is heard, and a "sound_stats" diagnostic once a minute (windows, loud, confident, lag mean/min/max, conf max, dropped). The host maps lag and level to a side; the firmware does not know where the microphones are. Cost: about 0.4 M multiply-adds a second in the audio task, static buffers only (its stack is 6 KB), one 4 KB task in PSRAM.
+# Upstream: m5stack/StackChan firmware/main/hal/hal.cpp, hal_mcp.cpp, hal/board/cores3_audio_codec.cc (MIT); new file hal_sound_dir.cpp. Applies after 081 with --unidiff-zero (the hal_mcp.cpp hunk sits after 081's front-tap push). Pairs with 082-sound-tap.patch on xiaozhi-esp32.
+# Check after a flash: the boot log says "sound direction on: 17 lags, 100 ms windows"; a clap or music beside the unit prints SD lines on the serial console and the host logs "unit sound: sound_dir l=.. r=.. lag=.. conf=.. db=.."; a quiet room prints nothing and the minute's sound_stats has loud near 0; the wake word and chat work as before.
+diff --git a/firmware/main/hal/hal.cpp b/firmware/main/hal/hal.cpp
+index 81121de..dbf7a3b 100644
+--- a/firmware/main/hal/hal.cpp
++++ b/firmware/main/hal/hal.cpp
+@@ -13,0 +14 @@ static std::unique_ptr<Hal> _hal_instance;
++void maipai_sound_dir_init();
+@@ -58,0 +60 @@ void Hal::init()
++    maipai_sound_dir_init();  // patch 082: sound direction from the two microphones
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index 4315f0e..fa78f67 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -164,0 +165,7 @@ void device_events_push_front_tap(int jolt_x100)
++// A sound heard by the two microphones (patch 082, hal_sound_dir.cpp): the host turns the numbers
++// into a side. Uncapped like a touch; the firmware sends one at most every 1.5 s.
++void device_events_push_sound(const char* extra)
++{
++    push_event("sound_dir", extra);
++}
++
+diff --git a/firmware/main/hal/hal_sound_dir.cpp b/firmware/main/hal/hal_sound_dir.cpp
+new file mode 100644
+index 0000000..66a40e9
+--- /dev/null
++++ b/firmware/main/hal/hal_sound_dir.cpp
+@@ -0,0 +1,275 @@
++/*
++ * Sound direction (MaiPai patch 082): which side a sound comes from, from the two front
++ * microphones of the CoreS3 (ES7210 MIC1 and MIC2, the two channels the firmware already reads;
++ * MIC3 carries the speaker loopback and is not read). The audio input task hands every chunk it
++ * reads from the codec (24 kHz, two channels interleaved, before the 16 kHz resampler) to
++ * maipai_sound_tap, which only adds up sums: the energy of each channel and the cross-correlation
++ * of the two for lags of -kMaxLag..kMaxLag samples. Every 100 ms the sums go to a small worker
++ * task that turns them into features: the RMS of each channel, the lag of the correlation peak
++ * (sub-sample, by parabolic interpolation; positive when the sound reached channel 0 first),
++ * a confidence (the normalised peak, 0..1) and the level difference in dB.
++ *
++ * Output: a serial trace "SD <ms> <rms0> <rms1> <lag_x100> <conf_x100> <db_x10>" for every window
++ * above the quiet floor during the first half hour after boot (for the owner's left/right tests),
++ * a "sound_dir" device event (the same numbers) at most every kEventMinGapMs while a confident
++ * sound is heard, and a "sound_stats" diagnostic once a minute. The host maps lag and level to a
++ * bearing; this file has no idea where the microphones are.
++ */
++#include <algorithm>
++#include <atomic>
++#include <cmath>
++#include <cstdint>
++#include <cstdio>
++#include <cstring>
++#include <esp_heap_caps.h>
++#include <esp_timer.h>
++#include <freertos/FreeRTOS.h>
++#include <freertos/queue.h>
++#include <freertos/task.h>
++#include <mooncake_log.h>
++
++void device_events_push_sound(const char* extra);
++void device_events_push_diag(const char* kind, const char* extra);
++
++namespace {
++
++static const std::string_view _tag = "HAL-SoundDir";
++
++constexpr int kMaxLag   = 8;  // samples at the codec rate: 8 at 24 kHz is 333 us, 11.4 cm of path
++constexpr int kLagCount = 2 * kMaxLag + 1;
++constexpr int kWindowMs = 100;
++constexpr int kChunkMax = 256;  // frames per pass through the static buffers
++// Quiet floor: an RMS under this (int16 units) is the room's hush, not a sound to place.
++constexpr uint32_t kFloorRms      = 40;
++constexpr uint32_t kEventRms      = 120;  // a sound worth an event is louder than the floor
++constexpr int kEventMinConf       = 50;   // conf_x100
++constexpr uint32_t kEventMinGapMs = 1500;
++constexpr int64_t kTraceUntilUs   = 30LL * 60 * 1000000;
++
++struct Sums {
++    uint32_t ms;
++    uint32_t frames;
++    int rate;
++    int64_t e0;  // raw energy of each channel, for the RMS
++    int64_t e1;
++    int64_t de0;  // energy of the first difference of each channel, for the confidence
++    int64_t de1;
++    int64_t xc[kLagCount];  // index k + kMaxLag: sum d0[n - k] * d1[n] for k >= 0, d0[n] * d1[n + k] for k < 0
++};
++
++// Accumulators, touched only by the audio input task. The correlation runs on a band-passed copy
++// of each channel: the first difference (drops DC and hum, which gave the quiet room a steady false
++// lag on 2026-11-12) summed over the last kBoxLen samples (a box low-pass, first null at
++// rate / kBoxLen = 4 kHz). Without the low-pass the sibilants decide the peak and a 6 kHz
++// component, four samples a period, puts a second peak four samples away: speech from one spot
++// read -1.8 and +2.1 by turns (2026-11-12). With it every component that can still peak has a
++// period longer than the whole lag range of the two microphones.
++constexpr int kBoxLen = 6;
++Sums s_sums{};
++int16_t s_ext0[kMaxLag + kChunkMax];  // the filtered channels, with kMaxLag of history
++int16_t s_ext1[kMaxLag + kChunkMax];
++int16_t s_last0 = 0;
++int16_t s_last1 = 0;
++int32_t s_diff0[kBoxLen] = {};  // the last kBoxLen first differences, a ring
++int32_t s_diff1[kBoxLen] = {};
++int s_ring            = 0;
++int32_t s_box0        = 0;  // their running sums
++int32_t s_box1        = 0;
++QueueHandle_t s_queue = nullptr;
++std::atomic<uint32_t> s_dropped{0};
++
++void tap_chunk(const int16_t* interleaved, int frames, int channels)
++{
++    int64_t e0 = 0, e1 = 0;
++    for (int i = 0; i < frames; ++i) {
++        const int16_t x0 = interleaved[i * channels];
++        const int16_t x1 = interleaved[i * channels + 1];
++        e0 += static_cast<int32_t>(x0) * x0;
++        e1 += static_cast<int32_t>(x1) * x1;
++        const int32_t d0 = x0 - s_last0;
++        const int32_t d1 = x1 - s_last1;
++        s_last0 = x0;
++        s_last1 = x1;
++        s_box0 += d0 - s_diff0[s_ring];
++        s_box1 += d1 - s_diff1[s_ring];
++        s_diff0[s_ring] = d0;
++        s_diff1[s_ring] = d1;
++        s_ring          = (s_ring + 1) % kBoxLen;
++        s_ext0[kMaxLag + i] = static_cast<int16_t>(std::max<int32_t>(-32768, std::min<int32_t>(32767, s_box0 / 2)));
++        s_ext1[kMaxLag + i] = static_cast<int16_t>(std::max<int32_t>(-32768, std::min<int32_t>(32767, s_box1 / 2)));
++    }
++    int64_t de0 = 0, de1 = 0;
++    int64_t xc[kLagCount] = {};
++    for (int n = kMaxLag; n < kMaxLag + frames; ++n) {
++        const int32_t a = s_ext0[n];
++        const int32_t b = s_ext1[n];
++        de0 += a * a;
++        de1 += b * b;
++        for (int k = 0; k <= kMaxLag; ++k) {
++            xc[kMaxLag + k] += static_cast<int32_t>(s_ext0[n - k]) * b;  // channel 1 later by k
++        }
++        for (int k = 1; k <= kMaxLag; ++k) {
++            xc[kMaxLag - k] += a * static_cast<int32_t>(s_ext1[n - k]);  // channel 0 later by k
++        }
++    }
++    s_sums.e0 += e0;
++    s_sums.e1 += e1;
++    s_sums.de0 += de0;
++    s_sums.de1 += de1;
++    for (int i = 0; i < kLagCount; ++i) {
++        s_sums.xc[i] += xc[i];
++    }
++    s_sums.frames += frames;
++    std::memmove(s_ext0, s_ext0 + frames, kMaxLag * sizeof(int16_t));
++    std::memmove(s_ext1, s_ext1 + frames, kMaxLag * sizeof(int16_t));
++}
++
++struct Features {
++    uint32_t ms;
++    uint32_t rms0;
++    uint32_t rms1;
++    int lag_x100;
++    int conf_x100;
++    int db_x10;
++};
++
++Features features_of(const Sums& s)
++{
++    Features f{};
++    f.ms = s.ms;
++    if (s.frames == 0) {
++        return f;
++    }
++    const double e0 = static_cast<double>(s.e0);
++    const double e1 = static_cast<double>(s.e1);
++    f.rms0          = static_cast<uint32_t>(std::sqrt(e0 / s.frames));
++    f.rms1          = static_cast<uint32_t>(std::sqrt(e1 / s.frames));
++    int best        = kMaxLag;
++    for (int i = 0; i < kLagCount; ++i) {
++        if (s.xc[i] > s.xc[best]) {
++            best = i;
++        }
++    }
++    const double denom = std::sqrt(static_cast<double>(s.de0) * static_cast<double>(s.de1));
++    double conf        = denom > 0 ? static_cast<double>(s.xc[best]) / denom : 0.0;
++    conf               = std::max(0.0, std::min(1.0, conf));
++    double lag         = best - kMaxLag;
++    if (best > 0 && best < kLagCount - 1) {
++        const double y0 = static_cast<double>(s.xc[best - 1]);
++        const double y1 = static_cast<double>(s.xc[best]);
++        const double y2 = static_cast<double>(s.xc[best + 1]);
++        const double d  = y0 - 2 * y1 + y2;
++        if (d < 0) {
++            lag += 0.5 * (y0 - y2) / d;
++        }
++    }
++    f.lag_x100  = static_cast<int>(std::lround(lag * 100));
++    f.conf_x100 = static_cast<int>(std::lround(conf * 100));
++    if (f.rms0 > 0 && f.rms1 > 0) {
++        f.db_x10 = static_cast<int>(std::lround(200.0 * std::log10(static_cast<double>(f.rms0) / f.rms1)));
++    }
++    return f;
++}
++
++void worker_task(void*)
++{
++    Sums s{};
++    uint32_t last_event_ms = 0;
++    // Per-minute stats.
++    uint32_t minute_start_ms = 0, windows = 0, loud = 0, confident = 0;
++    int64_t lag_sum_x100 = 0;
++    int conf_max = 0, lag_min_x100 = 0, lag_max_x100 = 0;
++    while (true) {
++        if (xQueueReceive(s_queue, &s, portMAX_DELAY) != pdTRUE) {
++            continue;
++        }
++        const Features f    = features_of(s);
++        const int64_t now_us = esp_timer_get_time();
++        const uint32_t peak  = std::max(f.rms0, f.rms1);
++        ++windows;
++        if (peak >= kFloorRms) {
++            ++loud;
++            if (now_us < kTraceUntilUs) {
++                printf("SD %u %u %u %d %d %d\n", static_cast<unsigned>(f.ms), static_cast<unsigned>(f.rms0),
++                       static_cast<unsigned>(f.rms1), f.lag_x100, f.conf_x100, f.db_x10);
++            }
++            if (f.conf_x100 >= kEventMinConf) {
++                if (confident == 0) {
++                    lag_min_x100 = lag_max_x100 = f.lag_x100;
++                }
++                ++confident;
++                lag_sum_x100 += f.lag_x100;
++                lag_min_x100 = std::min(lag_min_x100, f.lag_x100);
++                lag_max_x100 = std::max(lag_max_x100, f.lag_x100);
++                conf_max     = std::max(conf_max, f.conf_x100);
++                if (peak >= kEventRms && f.ms - last_event_ms >= kEventMinGapMs) {
++                    last_event_ms = f.ms;
++                    char extra[120];
++                    snprintf(extra, sizeof(extra), "\"l\":%u,\"r\":%u,\"lag\":%d,\"conf\":%d,\"db\":%d,\"rate\":%d",
++                             static_cast<unsigned>(f.rms0), static_cast<unsigned>(f.rms1), f.lag_x100, f.conf_x100,
++                             f.db_x10, s.rate);
++                    device_events_push_sound(extra);
++                }
++            }
++        }
++        if (minute_start_ms == 0) {
++            minute_start_ms = f.ms;
++        } else if (f.ms - minute_start_ms >= 60000) {
++            char extra[160];
++            snprintf(extra, sizeof(extra),
++                     "\"windows\":%u,\"loud\":%u,\"confident\":%u,\"lag_mean\":%d,\"lag_min\":%d,\"lag_max\":%d,"
++                     "\"conf_max\":%d,\"dropped\":%u",
++                     static_cast<unsigned>(windows), static_cast<unsigned>(loud), static_cast<unsigned>(confident),
++                     confident ? static_cast<int>(lag_sum_x100 / confident) : 0, lag_min_x100, lag_max_x100, conf_max,
++                     static_cast<unsigned>(s_dropped.exchange(0)));
++            device_events_push_diag("sound_stats", extra);
++            minute_start_ms = f.ms;
++            windows = loud = confident = 0;
++            lag_sum_x100 = 0;
++            conf_max = lag_min_x100 = lag_max_x100 = 0;
++        }
++    }
++}
++
++}  // namespace
++
++// Called by the audio input task (xiaozhi audio_service.cc) with every chunk read from the codec.
++void maipai_sound_tap(const int16_t* interleaved, size_t frames, int channels, int sample_rate)
++{
++    if (s_queue == nullptr || channels < 2 || interleaved == nullptr) {
++        return;
++    }
++    s_sums.rate = sample_rate;
++    size_t done = 0;
++    while (done < frames) {
++        const int n = static_cast<int>(std::min<size_t>(kChunkMax, frames - done));
++        tap_chunk(interleaved + done * channels, n, channels);
++        done += n;
++    }
++    const uint32_t window_frames = static_cast<uint32_t>(sample_rate) * kWindowMs / 1000;
++    if (s_sums.frames >= window_frames) {
++        s_sums.ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
++        if (xQueueSend(s_queue, &s_sums, 0) != pdTRUE) {
++            s_dropped.fetch_add(1);
++        }
++        s_sums.frames = 0;
++        s_sums.e0 = s_sums.e1 = s_sums.de0 = s_sums.de1 = 0;
++        std::memset(s_sums.xc, 0, sizeof(s_sums.xc));
++    }
++}
++
++void maipai_sound_dir_init()
++{
++    if (s_queue != nullptr) {
++        return;
++    }
++    std::memset(s_ext0, 0, sizeof(s_ext0));
++    std::memset(s_ext1, 0, sizeof(s_ext1));
++    s_queue = xQueueCreate(8, sizeof(Sums));
++    if (s_queue == nullptr) {
++        mclog::tagError(_tag, "no memory for the sound direction queue; the feature is off");
++        return;
++    }
++    xTaskCreatePinnedToCoreWithCaps(worker_task, "sounddir", 4096, nullptr, 2, nullptr, 1, MALLOC_CAP_SPIRAM);
++    mclog::tagInfo(_tag, "sound direction on: {} lags, {} ms windows", kLagCount, kWindowMs);
++}
+diff --git a/firmware/main/hal/board/cores3_audio_codec.cc b/firmware/main/hal/board/cores3_audio_codec.cc
+index 2bfc451..60ca6b3 100644
+--- a/firmware/main/hal/board/cores3_audio_codec.cc
++++ b/firmware/main/hal/board/cores3_audio_codec.cc
+@@ -8,0 +9,2 @@
++static constexpr bool kMatchSecondMicGain = false;  // MaiPai patch 082, see EnableInput; true only in a measuring build
++
+@@ -206,0 +209,9 @@ void CoreS3AudioCodec::EnableInput(bool enable) {
++        // MaiPai patch 082: the second microphone (ES7210 MIC2, TDM slot 1) gets the same gain as the
++        // first. Without this it keeps the codec's 30 dB default against 60 dB on MIC1 and reads about
++        // 38 dB lower (measured 2026-11-12: RMS 10 against 900), too quiet to place a sound. Note the
++        // AFE treats this channel as its echo "reference" (it never was the speaker loopback, that is
++        // MIC3, which is not read); with both mics at one level the echo canceller may cancel speech.
++        // Off in production until the AFE is moved to MIC1 + MIC3 (see the design note); a measuring build sets it on.
++        if (kMatchSecondMicGain) {
++            ESP_ERROR_CHECK(esp_codec_dev_set_in_channel_gain(input_dev_, ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1), input_gain_));
++        }

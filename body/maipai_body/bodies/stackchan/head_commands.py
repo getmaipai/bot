@@ -50,7 +50,7 @@ AWAY_DEG = 45
 
 CAN_DO = "I can look left, right, up or down."
 CANT_NOW = "I can't move right now."
-LOOKING_FOR_YOU = "Okay, looking for you."
+LOOKING_FOR_YOU = "Looking for you."
 LOOKING_AT_YOU = "Here you are."
 NOT_FOUND = "I can't see you yet, say something or move closer."
 NOT_FOUND_LEVEL = "I can't see you yet. I can only look level, so come up a little or move closer."

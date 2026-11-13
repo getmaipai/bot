@@ -1076,6 +1076,13 @@ class StackChanTurnBridge:
                     if line:
                         await asyncio.to_thread(self._say, playback, base, cookie, line)
                         self._breaker.note_speech()
+                    if head_command.kind == "face":
+                        # "Turn to me": end the follow-up listening now. The camera sends no frames
+                        # while the unit listens or speaks, so the look for the face can only start
+                        # (and see) once the unit is idle; it begins on the next presence tick.
+                        LOG.info("StackChan voice: face request answered; going idle for the look")
+                        self._quiet_idle.add(session_id)
+                        await self._go_idle(device_id)
                     return
             if self.gaze_control is not None:
                 gaze_line = self.gaze_control.answer(result.text or "")

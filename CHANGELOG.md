@@ -7,6 +7,14 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.61] - 2026-11-12
+
+### Fixed
+- "Turn to me", "look at me" and "over here" now move the head at once and start the face search within a second of the reply: the unit stops listening for a follow-up after that reply (the camera is off while it listens, which delayed the search by 17 s), and the reply is one short sentence.
+
+### Documentation
+- Sound direction measured on the unit: the two microphones are stacked vertically, so left against right cannot be told by sound (docs/dev/stackchan-sound-direction-2026-11-12.md). Up against down can, but turning the head toward a speaker stays face-based.
+
 ## [0.2.60] - 2026-11-12
 
 ### Added
