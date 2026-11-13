@@ -211,7 +211,7 @@ def test_a_run_of_music_with_one_missed_second_still_counts():
 def test_a_gap_resets_the_count():
     world = World()
     world.play(MUSIC, 3)
-    world.play(SPEECH, 3)
+    world.play(NO_BEAT, 3)  # a gap without a beat (speech would also trip the talker rule)
     world.play(MUSIC, 4)  # only a 3 s run again
     assert world.names("nod") == []
     world.second(MUSIC)
@@ -582,7 +582,7 @@ def test_false_start_candidates_are_counted_in_the_minute_line(caplog):
     with caplog.at_level(logging.INFO, logger="maipai_body.bodies.stackchan.music_dance"):
         for _ in range(5):  # three music-like seconds, then speech: never reaches four
             world.play(MUSIC, 3)
-            world.play(SPEECH, 4)
+            world.play(NO_BEAT, 4)
         world.play(SPEECH, 40)
     lines = [r.getMessage() for r in caplog.records if "music minute" in r.getMessage()]
     assert lines and any("false=5" in line or "false=4" in line for line in lines)
@@ -993,3 +993,23 @@ def test_the_notes_follow_the_stages():
     assert 3 in shown  # the dance
     world.play(None, 80)
     assert shown[-1] == 0  # and gone when it ends
+
+
+def test_a_talker_over_background_music_is_not_a_song():
+    world = World()
+    talk = replace(MUSIC, ps=30, mo=20)  # a beat, but a third of the frames are speech pauses
+    song = replace(MUSIC, ps=3, mo=15)
+    for i in range(30):
+        world.second(talk if i % 2 == 0 else replace(song, ps=26))
+    assert world.names("nod") == []
+    assert world.names("request_dance") == []
+    clean = World()
+    clean.play(song, 30)
+    assert clean.names("nod")  # a plain song still nods
+
+
+def test_a_song_with_a_few_quiet_seconds_still_dances():
+    world = World()
+    for i in range(40):
+        world.second(replace(MUSIC, ps=30) if i % 8 == 0 else MUSIC)
+    assert world.names("nod")

@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.77] - 2026-11-13
+
+### Fixed
+- A person talking over background music (a video with a loud speaker and quiet music) no longer starts a dance: when 4 of the last 10 seconds are speech-like (many near-silent frames or a strong 3 to 6 Hz loudness rhythm) the seconds do not count as music (reason `talker_over_music` in the log). The unit's own offline dance does not have this check yet.
+
 ## [0.2.76] - 2026-11-13
 
 ### Added

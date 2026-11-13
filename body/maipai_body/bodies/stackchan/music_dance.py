@@ -52,6 +52,7 @@ from __future__ import annotations
 import logging
 import random
 import threading
+from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
@@ -157,6 +158,11 @@ class Verdict:
 
 
 STEADY_TC_MIN = 8  # some tempo was found at all (a song measured 12 to 27 here)
+TALKER_WINDOWS = 10  # the last seconds looked at for a person talking over the sound
+TALKER_MIN_WINDOWS = 4
+TALKER_SHARE = 0.4  # this share of speech-like seconds: a talker, not a song
+TALKER_PS = 24  # a speech-like second: many near-silent frames...
+TALKER_MO = 28  # ...or a strong 3 to 6 Hz loudness rhythm
 STEADY_LEVEL = 800  # a song heard across a room measured 1000 to 1900
 STEADY_MO_MAX = 32  # speech modulates at 3 to 6 Hz (45 to 60); songs measured 6 to 30
 STEADY_PS_MAX = 20  # speech has pauses (45); songs measured 0 to 28
@@ -336,6 +342,7 @@ class MusicDance:
         self.state = "idle"  # idle | nod | watch | show | break | spent
         self.full_plan = True  # the next dance request: the build-up and dance, or the dance only
         self._cycle = 0
+        self._talk: deque[bool] = deque(maxlen=TALKER_WINDOWS)
         self._notes_at = float("-inf")
         self._now = 0.0
         self._block_start = float("-inf")
@@ -380,6 +387,9 @@ class MusicDance:
             self._count_minute(now)
             relaxed = self.state in ("nod", "watch", "show", "break")
             verdict = judge(feat, self.settings.auto_sensitivity, relaxed=relaxed)
+            self._talk.append(feat.ps >= TALKER_PS or feat.mo >= TALKER_MO)
+            if verdict.music and self._talker_over():
+                verdict = Verdict(False, "talker_over_music")
             self._windows += 1
             self._reason_counts[verdict.why] = self._reason_counts.get(verdict.why, 0) + 1
             for name, value in self._features(feat).items():
@@ -397,6 +407,13 @@ class MusicDance:
                         self._feature_text(feat),
                     )
             self._advance(now, feat if verdict.music else None)
+
+    def _talker_over(self) -> bool:
+        """Someone is talking over the sound (a video with a speaker and background music): a
+        stretch of seconds that are mostly speech-like is not a song, even when a beat shows."""
+        if len(self._talk) < TALKER_MIN_WINDOWS:
+            return False
+        return sum(self._talk) / len(self._talk) >= TALKER_SHARE
 
     def tick(self, now: float) -> None:
         """Time passing: a music session ends, a running dance is checked, a test feeds its
