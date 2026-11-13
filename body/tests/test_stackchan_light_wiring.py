@@ -308,7 +308,22 @@ def _join_started_threads(stop: threading.Event) -> list[threading.Thread]:
     return threads
 
 
-def test_start_builds_the_light_and_starts_stoppable_threads():
+def test_start_builds_the_light_and_starts_stoppable_threads(monkeypatch):
+    # The idle look is dark by day and the dim sleep look inside the quiet hours (21:00 to 07:00):
+    # pin the clock to noon so the test does not depend on when it runs.
+    import datetime as real_datetime
+
+    import maipai_body.bodies.stackchan.light_service as light_service
+    import maipai_body.indicator.director as director
+
+    class _Noon(real_datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, 12, 12, 0)
+
+    # The default minute sources call datetime.now() when they run, so replace the class they use.
+    monkeypatch.setattr(light_service, "datetime", _Noon)
+    monkeypatch.setattr(director, "datetime", _Noon)
     voice = _FakeVoiceRobot()
     stop = threading.Event()
     service = start_stackchan_light(voice, _fake_link(), stop)

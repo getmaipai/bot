@@ -41,7 +41,7 @@ SPEAKER_PITCH_DEG = 15.0  # the glance up when someone speaks and no face is in 
 
 # A failed look (no face found) is not repeated at once: the wait grows 1, 3, 10 minutes and
 # resets when a face is found. "speaker" and "dark" have one fixed wait each.
-PERSON_BACKOFF_S = (60.0, 180.0, 600.0)
+PERSON_BACKOFF_S = (60.0, 3 * 60.0, 600.0)
 SPEAKER_COOLDOWN_S = 15.0
 DARK_COOLDOWN_S = 600.0
 
@@ -51,7 +51,7 @@ DARK_COOLDOWN_S = 600.0
 # Owner request 2026-11-12: "when it's trying to find me it should scan more and faster". Only a
 # spoken request gets this; the ambient looks above stay small, slow and rare.
 ASK_PAN_DEG = 80.0  # how far to each side (the profile allows 128; the Robot clamps again)
-ASK_NEAR_PAN_DEG = 40.0  # the halfway pose on each side, so no move is longer than 40 degrees
+ASK_NEAR_PAN_DEG = ASK_PAN_DEG / 2  # the halfway pose on each side: no move is longer than this
 ASK_LOW_PITCH_DEG = 0.0  # the low height: level (the head cannot tilt below it)
 ASK_HIGH_PITCH_DEG = 22.0  # the high height: a face above the frame at desk distance
 ASK_FAST_STEP_S = 0.36  # first pass: each pose takes this long in all (ten poses, about 3.6 s)

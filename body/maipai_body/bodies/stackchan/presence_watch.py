@@ -197,7 +197,7 @@ BASELINE_SAVE_EVERY_S = 300.0  # the learned room is kept on disk, so a restart 
 # learned with the owner in it made the genuinely empty room "a person" every 3 minutes and kept
 # the unit awake), and does not run again at all while the picture has not changed since the
 # look that found nobody.
-STILL_BACKOFF_S = (180.0, 600.0, 1800.0)
+STILL_BACKOFF_S = (3 * 60.0, 600.0, 1800.0)
 STILL_CHANGE_SHARE = 0.10  # the picture must differ this much from the one that failed
 # The unit's own head moves make the picture move; motion this soon after one is its own.
 OWN_MOVE_BLIND_S = 3.0
