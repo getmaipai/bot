@@ -25,6 +25,11 @@ logger = logging.getLogger("maipai_body.vision.yunet")
 _STRIDES = (8, 16, 32)
 _MAX_STRIDE = 32
 MAX_INPUT_WIDTH = 320  # wider frames are sampled down before detection
+# Measured on the unit 2026-11-12 (the per-minute "best face score with nobody found" line): the
+# owner's dark, backlit face at desk distance scored 0.41 to 0.66, the empty room 0.12 to 0.34.
+# OpenCV's default is 0.6; at 0.5 his face flickered in and out (seen in one look of three),
+# so 0.42 catches it steadily and still sits above the room's best miss.
+SCORE_THRESHOLD = 0.42
 
 
 @dataclass(frozen=True)
@@ -71,7 +76,7 @@ class YuNetDetector:
         self,
         model_path: Path | str,
         *,
-        score_threshold: float = 0.6,
+        score_threshold: float = SCORE_THRESHOLD,
         nms_threshold: float = 0.3,
     ) -> None:
         import onnxruntime as ort

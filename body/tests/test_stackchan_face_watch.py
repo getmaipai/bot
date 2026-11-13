@@ -188,7 +188,11 @@ def test_a_listen_start_turns_toward_a_face_seen_a_moment_ago_and_holds_it_throu
         moves = _head_moves(device)
         assert moves, "the head should have turned"
         turn = moves[-1].arguments
-        assert turn["yaw"] > 15  # 0.4 of a 60 degree view to the robot's right
+        from maipai_body.bodies.stackchan.profile import FOLLOW_YAW_SIGN
+
+        # 0.4 of the camera's width toward the picture's right, in the unit's own yaw sign
+        # (FOLLOW_YAW_SIGN and the span are measured on the unit, 2026-11-12).
+        assert turn["yaw"] * FOLLOW_YAW_SIGN > 15
         assert turn["pitch"] > 5  # a high face lifts the head a little
         count = len(moves)
         behavior.render_turn_state("thinking")
@@ -231,13 +235,16 @@ def test_the_face_age_is_kept_so_the_looking_at_you_answer_is_true():
 def test_the_follow_pose_uses_the_whole_field_of_view():
     import math
 
+    from maipai_body.bodies.stackchan.profile import FOLLOW_YAW_SIGN, FOLLOW_YAW_SPAN_DEG
     from maipai_body.bodies.stackchan.vision_bridge import follow_pose
     from maipai_body.hal.seam import FaceTrackTarget
 
     right = follow_pose(FaceTrackTarget(detected=True, x=1.0, y=0.5))
     left = follow_pose(FaceTrackTarget(detected=True, x=0.0, y=0.5))
-    assert math.degrees(right.yaw) == pytest.approx(30)
-    assert math.degrees(left.yaw) == pytest.approx(-30)
+    # Half the measured camera width each way, in the unit's own sign (profile.py, 2026-11-12).
+    half = FOLLOW_YAW_SPAN_DEG / 2 * FOLLOW_YAW_SIGN
+    assert math.degrees(right.yaw) == pytest.approx(half)
+    assert math.degrees(left.yaw) == pytest.approx(-half)
     low = follow_pose(FaceTrackTarget(detected=True, x=0.5, y=0.9))
     assert math.degrees(low.pitch) == pytest.approx(5)  # below the middle: level, never below
 

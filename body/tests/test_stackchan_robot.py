@@ -39,7 +39,9 @@ def test_stackchan_profile_declares_available_parts_including_camera():
     assert STACKCHAN_PROFILE.axis("head_yaw").max == 128
     assert STACKCHAN_PROFILE.axis("head_pitch").min == 5
     assert STACKCHAN_PROFILE.axis("head_pitch").max == 85
-    assert STACKCHAN_PROFILE.axis("head_speed").max == 150
+    from maipai_body.bodies.stackchan.profile import HEAD_SPEED_SOFT_MAX
+
+    assert STACKCHAN_PROFILE.axis("head_speed").max == HEAD_SPEED_SOFT_MAX  # measured 2026-11-12
     assert STACKCHAN_PROFILE.axis("head_speed").unit == "firmware-units"
 
 

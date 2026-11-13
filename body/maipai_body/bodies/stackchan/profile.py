@@ -30,10 +30,13 @@ SENSOR_MCP_TOOLS = {
     },
 }
 
-# Firmware accepts 100..1000. The profile's 150 soft ceiling is the only
-# clamp applied by the Robot object until movement is measured on hardware.
+# Firmware accepts 100..1000: the number sets a spring's stiffness (k = 10 + (speed/1000)^2 *
+# 640, main/stackchan/motion/servo.cpp), so a move eases in and the tail is slow. Measured on the
+# unit 2026-11-12: at 120 a 60 degree turn made two thirds of its way in 2 s and settled by about
+# 6 s. The ceiling was 150 until that measurement; 400 (k about 112, under a second to settle)
+# lets a turn toward a person be quick while the idle and the look-around moves stay slow.
 HEAD_COMMAND_SPEED = 150
-HEAD_SPEED_SOFT_MAX = 150
+HEAD_SPEED_SOFT_MAX = 400
 LED_COUNT = 12
 LED_CHANNEL_MAX = 168
 # Level, the head's resting pose, in degrees. The pitch servo only travels UP from level: its limit
@@ -42,10 +45,16 @@ LED_CHANNEL_MAX = 168
 # default pose. The middle of the 5..85 profile range (45) is therefore 45 degrees UP, which is
 # why the head always looked at the ceiling. If 5 does not look level by eye, change this number.
 CENTRE_PITCH_DEG = 5
-# A face at the top of the frame turns the head up by half this many degrees (frame middle: none).
-FOLLOW_PITCH_SPAN_DEG = 40
-# The camera sees about this many degrees side to side; a face at the edge is half of it away.
-FOLLOW_YAW_SPAN_DEG = 60
+# How many degrees the camera sees side to side and top to bottom: a face at an edge is half
+# of it away. Measured on the unit 2026-11-12 22:12 (a swing of yaw 0, +60, 0, -60 with the head
+# tilted up 50, eight seconds a pose, a frame kept at every look): 60 degrees of yaw moved the
+# ceiling lamp three quarters of the frame once the servo had settled, so the picture is about
+# 80 degrees across; the vertical span follows the 4:3 picture.
+FOLLOW_YAW_SPAN_DEG = 80
+FOLLOW_PITCH_SPAN_DEG = 60
+# +yaw turns the camera toward the picture's right (the same swing: at +60 the content moved
+# left, at -60 right). The sign lives here so the one measurement is the one place to change.
+FOLLOW_YAW_SIGN = 1.0
 EXPRESSION_YAW_FRACTION = 0.12
 EXPRESSION_PITCH_FRACTION = 0.08
 
