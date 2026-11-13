@@ -57,7 +57,24 @@ DARK_STEPS = (
     SearchStep(PAN_DEG, 0.0),
     SearchStep(0.0, DARK_PITCH_DEG),
 )
-STEPS = {"person": PERSON_STEPS, "speaker": PERSON_STEPS, "dark": DARK_STEPS}
+# A spoken "turn to me" / "find me" ("ask") is the same look as for a person. "I'm down here"
+# ("ask_level"): the head cannot tilt below level, so it looks level and to each side.
+ASK_LEVEL_STEPS = (
+    SearchStep(0.0, 0.0),
+    SearchStep(-PAN_DEG, 0.0),
+    SearchStep(PAN_DEG, 0.0),
+)
+STEPS = {
+    "person": PERSON_STEPS,
+    "speaker": PERSON_STEPS,
+    "dark": DARK_STEPS,
+    "ask": PERSON_STEPS,
+    "ask_level": ASK_LEVEL_STEPS,
+}
+# Looks for a face: a miss of one of these lengthens the back-off of the ambient look only for the
+# ambient reasons; a spoken request ignores the back-off and does not add to it.
+FACE_REASONS = ("person", "speaker", "ask", "ask_level")
+ASKED_REASONS = ("ask", "ask_level")
 
 
 class HeadSearch:
@@ -81,6 +98,8 @@ class HeadSearch:
             return SPEAKER_COOLDOWN_S
         if reason == "dark":
             return DARK_COOLDOWN_S
+        if reason in ASKED_REASONS:
+            return 0.0  # the person asked: no waiting
         if self._failures == 0:
             return 0.0
         return PERSON_BACKOFF_S[min(self._failures, len(PERSON_BACKOFF_S)) - 1]
@@ -131,6 +150,8 @@ class HeadSearch:
             self._last_done[reason] = current
             if reason in ("person", "speaker"):
                 self._failures = 0 if found else self._failures + 1
+            elif reason in ASKED_REASONS and found:
+                self._failures = 0
         self.reason = None
         self._steps = ()
         self._index = -1
@@ -139,7 +160,10 @@ class HeadSearch:
 
 
 __all__ = [
+    "ASKED_REASONS",
+    "ASK_LEVEL_STEPS",
     "DARK_STEPS",
+    "FACE_REASONS",
     "MOVE_SPEED",
     "PERSON_BACKOFF_S",
     "PERSON_STEPS",

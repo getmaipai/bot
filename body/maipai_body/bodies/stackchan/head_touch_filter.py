@@ -50,12 +50,24 @@ class HeadTouchFilter:
         return [e for e in events if getattr(e, "kind", None) not in HEAD_KINDS]
 
     def _is_real(self, now: float, head: list) -> bool:
-        if len(head) >= 2:
-            return True
-        extra = getattr(head[0], "extra", None) or {}
-        if extra.get("strong") in (1, True):
-            return True  # the unit's recogniser saw a touch that reached reading 2 or more
-        held = extra.get("held_ms")
-        if isinstance(held, int) and not isinstance(held, bool) and held >= HELD_MS:
+        for event in head:
+            extra = getattr(event, "extra", None) or {}
+            if extra.get("strong") in (1, True):
+                return True  # the unit's recogniser saw a touch that reached reading 2 or more
+            if extra.get("tap") in (1, True):
+                return True  # the strip and the motion sensor agreed on a tap (firmware patch 081)
+            held = extra.get("held_ms")
+            if isinstance(held, int) and not isinstance(held, bool) and held >= HELD_MS:
+                return True
+        # Several events in one look are a stroke, unless every one is a "maybe" (strong=0): right
+        # after a boot the strip's baseline is unsettled and one long noise run gave a weak press
+        # and a weak swipe in the same look (live log 2026-11-12 18:38, a phantom smile). Maybes
+        # count only as a repeat within a few seconds.
+        if len(head) >= 2 and not all(self._is_maybe(e) for e in head):
             return True
         return self._lone_at is not None and now - self._lone_at <= REPEAT_WINDOW_S
+
+    @staticmethod
+    def _is_maybe(event) -> bool:
+        extra = getattr(event, "extra", None) or {}
+        return extra.get("strong") in (0, False)

@@ -1,0 +1,344 @@
+# Intent: a light tap on the head counts, and the strip's idle noise never makes a touch by itself (owner mission 2026-11-12, "IMU-assisted head tap"). The owner's light taps read only 1 on the strip, the level its idle noise reads on 200 to 400 samples a minute on a noisy day, so every rule so far either ignored them (080) or smiled at phantoms (076, 078). The motion sensor (BMI270) tells them apart: a tap jolts the head, noise does not. The IMU task now reads the sensor every 10 ms (it read every 100 ms and could not see a tap; the shake, orientation and stall checks keep their 100 ms rhythm on every tenth sample) and marks a jolt: one sample whose change from the previous one is at least 1.0 m/s^2 after 150 ms of stillness, and not within 0.6 s of a servo command (a head move of the unit's own can start with a jerk of 3 to 5; a longer blank swallowed taps while the host was centring the head). Measured 2026-11-12 on the unit: idle floor 0.1 with one 0.46 blip in ten minutes; ten light taps on the strip 1.1 to 4.6 (seven read strong, three read 1 for 2 to 4 samples and were lost before); fifteen light taps on the front shell 2.0 to 7.8; five desk slaps beside it 2.3 to 4.4; typing under 0.5; a pick-up starts under 0.5; a put-down is big but moving before. The strip feels the finger before the impact (capacitive), so the strip recogniser turns a contact at any level into a press when a jolt lands within 100 ms before or 150 ms after its first touched sample (the three weak-reading taps: -58, +70, +112 ms); a jolt makes at most one tap. A tap by the motion sensor alone ("front tap", a jolt of 2.0 with no strip contact) is built but off: a desk slap is the same size as a light tap on the shell. Residual, measured: on a noisy day a hard knock on the desk that lands inside a noise run's 250 ms window counts as a tap (two of five shell taps did so through noise); with nobody knocking there is nothing. Press events say strong=1 (an older host trusts it), tap=1, strip=1 or 0, the jolt size (m/s^2 times 100) and its distance from the first touched sample in ms; head_touch_stats counts taps, imu_stats counts jolts, the biggest, those blanked by a servo move and front taps. A serial trace for tuning runs for the first half hour after boot (I, IS, J, F, T, P lines).
+# Upstream: m5stack/StackChan firmware/main/hal/hal_imu.cpp, hal_head_touch.cpp, hal_mcp.cpp, hal_servo.cpp (MIT). Applies after 080 with --unidiff-zero.
+# Check after a flash: a light tap on the strip (the big grey area at the back of the head top) gives "unit touch: head_touch strong=1 tap=1 strip=1 jolt=N gap=M" at once and wakes a sleeping unit on its next look; a slow rub still gives presses with tap=0; typing beside it gives nothing; the unit's own head moves give imu_stats blanked>0 and no head_touch; ten untouched minutes with head_touch_stats weak high give presses=0 taps=0.
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index 57bf1a3..ff26cd0 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -28,0 +29 @@ extern std::atomic<uint32_t> g_avatar_binary, g_avatar_last_type, g_cam_paused;
++#include <esp_timer.h>
+@@ -31,0 +33,4 @@ static const std::string_view _tag = "HAL-HeadTouch";
++// Serial trace for tuning (patch 081), for the first half hour after boot: every touched strip
++// sample "T <ms> <r0> <r1> <r2>" and every press "P <ms> <strong> <tap>".
++constexpr int64_t kTouchTraceUntilUs = 30LL * 60 * 1000000;
++
+@@ -62,0 +68,25 @@ std::atomic<uint32_t> g_head_touch_strong{0};
++// A tap (patch 081): the strip reads a contact at any level, even 1, and the motion sensor read a
++// jolt (hal_imu.cpp) within kTapBeforeMs before the first touched sample or kTapAfterMs after it.
++// The owner's light taps read only 1 on the strip, so they were noise to every rule above; the
++// strip's idle noise has no jolt, and a jolt without a contact is a bump, not a touch. A tap is a
++// press with strong=1 (an older host trusts it) and tap=1, with the jolt's size and its distance
++// from the first touched sample for the host log.
++// Measured 2026-11-12: the strip feels the finger before the impact's jolt (it is capacitive): on
++// the three light taps that read only 1 the jolt came 58 ms before, 70 ms after and 112 ms after
++// the first touched sample (on strong-reading taps up to 230 ms after, but those are presses by
++// their reading alone). The window is kept small on purpose: on a noisy day the strip starts a
++// noise run more than once a second, and a knock on the desk hard enough to jolt the head (a slap
++// beside it: 2.3 to 4.4) that lands inside a noise run's window counts as a tap. With 250 ms that
++// is a fraction of hard knocks on noisy days; with nobody knocking it is nothing.
++constexpr int kTapBeforeMs = 100;
++constexpr int kTapAfterMs  = 150;
++// The strip task only looks at its own samples (every 62 ms), so a run keeps waiting one sample
++// longer than the window for a jolt that landed just inside it.
++constexpr int kTapPendingMs = kTapAfterMs + 70;
++extern std::atomic<int64_t> g_imu_jolt_us;
++extern std::atomic<int32_t> g_imu_jolt_x100;
++std::atomic<int64_t> g_head_strip_touch_us{0};      // the latest touched sample, for the front tap
++std::atomic<int64_t> g_head_strip_used_jolt_us{0};  // the jolt this task made a tap from
++std::atomic<uint32_t> g_head_touch_tap{0};
++std::atomic<int32_t> g_head_touch_tap_jolt_x100{0};
++std::atomic<int32_t> g_head_touch_tap_gap_ms{0};
+@@ -117,0 +148,34 @@ public:
++    uint32_t taps         = 0;  // presses that were taps (strip contact with a jolt)
++
++    // The latest jolt against this run's first touched sample: true, and the jolt's size and
++    // distance filled in, when it is inside the tap window and not already used for a tap.
++    bool jolt_near(int64_t now_us, int32_t& jolt_x100, int32_t& gap_ms)
++    {
++        const int64_t jolt_us = g_imu_jolt_us.load();
++        if (jolt_us == 0 || jolt_us == used_jolt_us || run_start_us == 0) {
++            return false;
++        }
++        const int64_t gap = jolt_us - run_start_us;
++        if (gap < -static_cast<int64_t>(kTapBeforeMs) * 1000 || gap > static_cast<int64_t>(kTapAfterMs) * 1000) {
++            return false;
++        }
++        used_jolt_us = jolt_us;
++        g_head_strip_used_jolt_us.store(jolt_us);
++        jolt_x100    = g_imu_jolt_x100.load();
++        gap_ms       = static_cast<int32_t>(gap / 1000);
++        return true;
++    }
++
++    void press(bool strong, bool tap, int32_t jolt_x100, int32_t gap_ms)
++    {
++        current_state    = TouchState::TOUCHED;
++        initial_position = last_position;
++        g_head_touch_strong.store(strong || tap ? 1 : 0);
++        g_head_touch_tap.store(tap ? 1 : 0);
++        g_head_touch_tap_jolt_x100.store(tap ? jolt_x100 : 0);
++        g_head_touch_tap_gap_ms.store(tap ? gap_ms : 0);
++        presses++;
++        if (tap) {
++            taps++;
++        }
++    }
+@@ -120 +184 @@ public:
+-    HeadPetGesture update(const TouchData& data)
++    HeadPetGesture update(const TouchData& data, int64_t now_us)
+@@ -129,0 +194,14 @@ public:
++        // A run that started lately and is not a press yet becomes a tap the moment a jolt lands in
++        // its window, on a touched or an untouched sample (the jolt may come after the strip read).
++        if (current_state == TouchState::IDLE && run_start_us != 0 &&
++            now_us - run_start_us <= static_cast<int64_t>(kTapPendingMs) * 1000) {
++            int32_t jolt_x100 = 0, gap_ms = 0;
++            if (jolt_near(now_us, jolt_x100, gap_ms)) {
++                press(run_peak >= kPetPeak, true, jolt_x100, gap_ms);
++                gesture = HeadPetGesture::Press;
++                if (run_len == 0) {
++                    current_state = TouchState::IDLE;  // the contact is already over
++                }
++            }
++        }
++
+@@ -131,0 +210,3 @@ public:
++            if (run_len == 0) {
++                run_start_us = now_us;
++            }
+@@ -139 +220,3 @@ public:
+-            if (current_state == TouchState::IDLE && run_len >= static_cast<uint32_t>(kPetSamples) &&
++            if (gesture == HeadPetGesture::Press) {
++                // Became a tap above on this very sample.
++            } else if (current_state == TouchState::IDLE && run_len >= static_cast<uint32_t>(kPetSamples) &&
+@@ -141,5 +224,4 @@ public:
+-                current_state    = TouchState::TOUCHED;
+-                initial_position = last_position;
+-                gesture          = HeadPetGesture::Press;
+-                g_head_touch_strong.store(run_peak >= kPetPeak ? 1 : 0);
+-                presses++;
++                int32_t jolt_x100 = 0, gap_ms = 0;
++                const bool tap = jolt_near(now_us, jolt_x100, gap_ms);  // a firm tap is a tap too
++                press(run_peak >= kPetPeak, tap, jolt_x100, gap_ms);
++                gesture = HeadPetGesture::Press;
+@@ -169,0 +252 @@ public:
++            // run_start_us stays: a jolt may still arrive inside the tap window.
+@@ -191,0 +275,2 @@ private:
++    int64_t run_start_us  = 0;  // first touched sample of the current or latest run
++    int64_t used_jolt_us  = 0;  // a jolt makes at most one tap
+@@ -219 +304,9 @@ static void _head_touch_update_task(void* param)
+-        gesture               = recognizer.update(data);
++        const int64_t now_us  = esp_timer_get_time();
++        if (data.is_touched()) {
++            g_head_strip_touch_us.store(now_us);
++        }
++        if (now_us < kTouchTraceUntilUs && data.is_touched()) {
++            printf("T %u %d %d %d\n", static_cast<unsigned>(now_us / 1000), data.intensity[0], data.intensity[1],
++                   data.intensity[2]);
++        }
++        gesture               = recognizer.update(data, now_us);
+@@ -220,0 +314,4 @@ static void _head_touch_update_task(void* param)
++            if (now_us < kTouchTraceUntilUs && gesture == HeadPetGesture::Press) {
++                printf("P %u %u %u\n", static_cast<unsigned>(now_us / 1000), static_cast<unsigned>(g_head_touch_strong.load()),
++                       static_cast<unsigned>(g_head_touch_tap.load()));
++            }
+@@ -234 +331 @@ static void _head_touch_update_task(void* param)
+-                     "\"runs_strong\":%u,\"run_max\":%u,\"strong_run_max\":%u",
++                     "\"runs_strong\":%u,\"run_max\":%u,\"strong_run_max\":%u,\"taps\":%u",
+@@ -239 +336 @@ static void _head_touch_update_task(void* param)
+-                     static_cast<unsigned>(recognizer.strong_run_max));
++                     static_cast<unsigned>(recognizer.strong_run_max), static_cast<unsigned>(recognizer.taps));
+@@ -306,0 +404 @@ static void _head_touch_update_task(void* param)
++            recognizer.taps = 0;
+diff --git a/firmware/main/hal/hal_imu.cpp b/firmware/main/hal/hal_imu.cpp
+index 1220bae..7075277 100644
+--- a/firmware/main/hal/hal_imu.cpp
++++ b/firmware/main/hal/hal_imu.cpp
+@@ -13,0 +14 @@
++#include <cstdlib>
+@@ -19,0 +21 @@
++#include <esp_timer.h>
+@@ -22,0 +25,39 @@ static const std::string_view _tag = "HAL-IMU";
++// Head tap (patch 081). The sensor is read every 10 ms (its own rate is 100 Hz; the old task read it
++// every 100 ms and could not see a tap). A tap on the head is a short jolt on a still body: one
++// sample whose change from the previous one (the three axes' changes added, the shake detector's
++// measure) is at least kTapJoltMin, after kTapQuietSamples samples whose changes all stayed under
++// kTapQuietMax. The time and size of the latest jolt are shared with the head strip task
++// (hal_head_touch.cpp), which turns a strip contact near it into a tap; a jolt alone (a bump on the
++// desk, a nudge) is never a touch. Measured 2026-11-12 on the unit: at rest the change stays under
++// 0.1 m/s^2 and reached 0.46 once in ten minutes; a servo move (looking around) runs 1.7 to 2.8 for
++// seconds at a time and is never quiet before, so it cannot arm a jolt.
++// Measured 2026-11-12 (owner): 10 light taps on the strip jolted 1.1 to 4.6; 15 light taps on the
++// front shell above the screen 2.0 to 7.8; five slaps on the desk beside the unit 2.3 to 4.4;
++// typing beside it under 0.5; a pick-up starts under 0.5; a put-down is big but never still
++// before. The unit's own head moves can start with a jerk of 3 to 5, so jolts are ignored for
++// kServoBlankUs after any servo command (hal_servo.cpp). A tap by the motion sensor alone (a jolt
++// of kFrontTapJoltMin that no strip contact claims within kFrontTapWaitUs, "front tap") is built
++// but OFF: a desk slap beside the unit is the same size as a light tap on the shell, and only the
++// gyro told them apart (3 to 6 against 13 to 29 deg/s) on five taps, too few to ship on.
++constexpr float kTapJoltMin      = 1.0f;   // m/s^2, with a strip contact
++constexpr float kTapQuietMax     = 0.4f;   // m/s^2: a change under this is "still"
++constexpr int kTapQuietSamples   = 15;     // 150 ms still before the jolt
++constexpr bool kFrontTapEnabled  = false;
++constexpr float kFrontTapJoltMin = 2.0f;   // m/s^2, with no strip contact
++constexpr int64_t kFrontTapWaitUs = 300000;
++// 0.6 s: the jerk is at a move's start and the move itself is never still; 1.5 s swallowed five
++// light taps while the host was returning the head to centre (18:32:24 on 2026-11-12).
++constexpr int64_t kServoBlankUs  = 600000;
++std::atomic<int64_t> g_imu_jolt_us{0};    // when the latest jolt was read (esp_timer, us)
++std::atomic<int32_t> g_imu_jolt_x100{0};  // its size, m/s^2 times 100
++extern std::atomic<int64_t> g_servo_cmd_us;
++extern std::atomic<int64_t> g_head_strip_touch_us;  // the latest touched strip sample (hal_head_touch.cpp)
++extern std::atomic<int64_t> g_head_strip_used_jolt_us;  // the jolt the strip made a tap from
++void device_events_push_front_tap(int jolt_x100);
++// Serial trace for tuning, for the first half hour after boot: moving samples
++// "I <ms> <change*100> <ax*100> <ay*100> <az*100> <gx> <gy> <gz>", once a second
++// "IS <ms> <samples> <change_max*100> <gyro_max>", and "J <ms> <change*100>" for each jolt.
++constexpr int64_t kTraceUntilUs = 30LL * 60 * 1000000;
++constexpr float kTraceAdiff     = 0.5f;   // m/s^2
++constexpr float kTraceGyro      = 10.0f;  // deg/s, sum of the three axes
++
+@@ -174,0 +216,18 @@ static void _imu_task(void* param)
++    // Fast sampling: the sensor is read every 10 ms (its own rate is 100 Hz); the shake, orientation
++    // and stall checks keep their 100 ms rhythm by running on every tenth sample.
++    constexpr int kSlowEvery = 10;
++    int fast_n               = 0;
++    TickType_t last_wake     = xTaskGetTickCount();
++    float prev[3]            = {0, 0, 0};
++    bool have_prev           = false;
++    int64_t sec_start_us     = 0;
++    int sec_n                = 0;
++    float sec_amax = 0, sec_gmax = 0;
++    int quiet_run            = 0;  // samples in a row whose change stayed under kTapQuietMax
++    uint32_t jolts           = 0;  // this minute, for imu_stats
++    float jolt_max           = 0;
++    uint32_t blanked         = 0;  // jolts ignored because a servo was moving
++    uint32_t front_taps      = 0;
++    int64_t front_pending_us = 0;  // a big jolt waiting to see whether the strip claims it
++    int32_t front_pending_x100 = 0;
++
+@@ -175,0 +235 @@ static void _imu_task(void* param)
++        const bool slow = (fast_n++ % kSlowEvery) == 0;
+@@ -178,0 +239,64 @@ static void _imu_task(void* param)
++            {
++                const int64_t now_us = esp_timer_get_time();
++                const float adiff    = have_prev ? std::fabs(data.accel_x - prev[0]) + std::fabs(data.accel_y - prev[1]) +
++                                                    std::fabs(data.accel_z - prev[2])
++                                                 : 0.0f;
++                prev[0] = data.accel_x, prev[1] = data.accel_y, prev[2] = data.accel_z;
++                have_prev        = true;
++                const float gsum = std::fabs(data.gyro_x) + std::fabs(data.gyro_y) + std::fabs(data.gyro_z);
++                if (adiff >= kTapJoltMin && quiet_run >= kTapQuietSamples) {
++                    if (now_us - g_servo_cmd_us.load() < kServoBlankUs) {
++                        blanked++;
++                    } else {
++                        g_imu_jolt_x100.store(static_cast<int32_t>(adiff * 100));
++                        g_imu_jolt_us.store(now_us);
++                        jolts++;
++                        if (adiff > jolt_max) jolt_max = adiff;
++                        if (kFrontTapEnabled && adiff >= kFrontTapJoltMin && front_pending_us == 0) {
++                            front_pending_us   = now_us;
++                            front_pending_x100 = static_cast<int32_t>(adiff * 100);
++                        }
++                        if (now_us < kTraceUntilUs) {
++                            printf("J %u %d\n", static_cast<unsigned>(now_us / 1000), static_cast<int>(adiff * 100));
++                        }
++                    }
++                }
++                if (front_pending_us != 0 && now_us - front_pending_us >= kFrontTapWaitUs) {
++                    // The strip had its chance: a contact near the jolt makes it the strip's tap.
++                    const int64_t strip_us = g_head_strip_touch_us.load();
++                    const bool strip_near  = std::llabs(strip_us - front_pending_us) <= kFrontTapWaitUs;
++                    if (!strip_near && g_head_strip_used_jolt_us.load() != front_pending_us) {
++                        front_taps++;
++                        device_events_push_front_tap(front_pending_x100);
++                        if (now_us < kTraceUntilUs) {
++                            printf("F %u %d\n", static_cast<unsigned>(front_pending_us / 1000),
++                                   static_cast<int>(front_pending_x100));
++                        }
++                    }
++                    front_pending_us = 0;
++                }
++                quiet_run = adiff < kTapQuietMax ? quiet_run + 1 : 0;
++                if (now_us < kTraceUntilUs) {
++                    if (adiff > kTraceAdiff || gsum > kTraceGyro) {
++                        printf("I %u %d %d %d %d %d %d %d\n", static_cast<unsigned>(now_us / 1000),
++                               static_cast<int>(adiff * 100), static_cast<int>(data.accel_x * 100),
++                               static_cast<int>(data.accel_y * 100), static_cast<int>(data.accel_z * 100),
++                               static_cast<int>(data.gyro_x), static_cast<int>(data.gyro_y), static_cast<int>(data.gyro_z));
++                    }
++                    sec_n++;
++                    if (adiff > sec_amax) sec_amax = adiff;
++                    if (gsum > sec_gmax) sec_gmax = gsum;
++                    if (sec_start_us == 0) {
++                        sec_start_us = now_us;
++                    } else if (now_us - sec_start_us >= 1000000) {
++                        printf("IS %u %d %d %d\n", static_cast<unsigned>(now_us / 1000), sec_n,
++                               static_cast<int>(sec_amax * 100), static_cast<int>(sec_gmax));
++                        sec_n = 0, sec_amax = 0, sec_gmax = 0;
++                        sec_start_us = now_us;
++                    }
++                }
++            }
++            if (!slow) {
++                vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
++                continue;
++            }
+@@ -198,3 +322,6 @@ static void _imu_task(void* param)
+-                char stats[64];
+-                snprintf(stats, sizeof(stats), "\"max_diff\":%d,\"shakes\":%u",
+-                         static_cast<int>(motion_detector->takeMaxDiff()), static_cast<unsigned>(shakes));
++                char stats[128];
++                snprintf(stats, sizeof(stats),
++                         "\"max_diff\":%d,\"shakes\":%u,\"jolts\":%u,\"jolt_max\":%d,\"blanked\":%u,\"front_taps\":%u",
++                         static_cast<int>(motion_detector->takeMaxDiff()), static_cast<unsigned>(shakes),
++                         static_cast<unsigned>(jolts), static_cast<int>(jolt_max * 100), static_cast<unsigned>(blanked),
++                         static_cast<unsigned>(front_taps));
+@@ -202,0 +330,4 @@ static void _imu_task(void* param)
++                jolts          = 0;
++                jolt_max       = 0;
++                blanked        = 0;
++                front_taps     = 0;
+@@ -209,0 +341,5 @@ static void _imu_task(void* param)
++        if (!slow) {
++            // A failed read on a fast sample: keep the 100 ms rhythm of the checks below.
++            vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
++            continue;
++        }
+@@ -222 +358 @@ static void _imu_task(void* param)
+-        vTaskDelay(pdMS_TO_TICKS(100));
++        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index 603b91a..4315f0e 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -155,0 +156,9 @@ std::string json_escape(const std::string& input)
++// A tap on the shell by the motion sensor alone (patch 081, hal_imu.cpp): a head_touch like any
++// other for the host, marked strip=0 and carrying the jolt's size.
++void device_events_push_front_tap(int jolt_x100)
++{
++    char extra[80];
++    snprintf(extra, sizeof(extra), "\"strong\":1,\"tap\":1,\"strip\":0,\"jolt\":%d,\"gap\":0", jolt_x100);
++    push_event("head_touch", extra);
++}
++
+@@ -161,0 +171 @@ void device_events_push_diag(const char* kind, const char* extra)
++#include <cstdio>
+@@ -162,0 +173,3 @@ extern std::atomic<uint32_t> g_head_touch_strong;
++extern std::atomic<uint32_t> g_head_touch_tap;
++extern std::atomic<int32_t> g_head_touch_tap_jolt_x100;
++extern std::atomic<int32_t> g_head_touch_tap_gap_ms;
+@@ -181 +194,8 @@ void Hal::xiaozhi_mcp_init()
+-                push_event("head_touch", strength);
++                // A tap (patch 081) also says how big the jolt was (m/s^2 times 100) and how far it
++                // was from the first touched sample (ms, negative when the jolt came first).
++                char extra[112];
++                snprintf(extra, sizeof(extra), "%s,\"tap\":%u,\"strip\":1,\"jolt\":%d,\"gap\":%d", strength,
++                         static_cast<unsigned>(g_head_touch_tap.load()),
++                         static_cast<int>(g_head_touch_tap_jolt_x100.load()),
++                         static_cast<int>(g_head_touch_tap_gap_ms.load()));
++                push_event("head_touch", extra);
+diff --git a/firmware/main/hal/hal_servo.cpp b/firmware/main/hal/hal_servo.cpp
+index a2429e2..6aa7975 100644
+--- a/firmware/main/hal/hal_servo.cpp
++++ b/firmware/main/hal/hal_servo.cpp
+@@ -11,0 +12,6 @@
++#include <atomic>
++#include <esp_timer.h>
++
++// When a servo was last told to move (patch 081): the IMU task ignores jolts for a while after it,
++// because a head move of the unit's own can start with a jerk as big as a tap.
++std::atomic<int64_t> g_servo_cmd_us{0};
+@@ -85,0 +92 @@ public:
++        g_servo_cmd_us.store(esp_timer_get_time());
+@@ -312,0 +320 @@ private:
++        g_servo_cmd_us.store(esp_timer_get_time());

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -13,6 +14,7 @@ from maipai_body.app import StackChanBehavior
 from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
 from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
 from maipai_body.bodies.stackchan.head_search import (
+    ASK_LEVEL_STEPS,
     DARK_COOLDOWN_S,
     DARK_STEPS,
     GLANCE_PITCH_DEG,
@@ -144,23 +146,31 @@ def test_a_picture_that_differs_from_the_empty_room_starts_the_look_without_any_
         lines = [r.getMessage() for r in caplog.records]
         assert any("differs from the empty room" in line for line in lines)
         assert any("looking around (person): yaw -25, pitch 22" in line for line in lines)
-        assert any("next look waits 60 s" in line for line in lines)
+        # Started by the picture alone, with nothing moving: the harder back-off (3 minutes).
+        assert any("next look waits 180 s" in line for line in lines)
         behavior.search_tick(110.0)  # not again inside the back-off
         assert not behavior._search.active
     finally:
         behavior.close()
 
 
-def test_the_empty_room_is_learned_only_while_nobody_seems_to_be_there():
+def test_the_empty_room_is_learned_only_after_two_quiet_minutes_never_from_the_first_picture():
+    """Live log 2026-11-12 18:51: the room was learned from the first picture after a restart,
+    with the owner in it, so the empty room looked like a person for the rest of the evening."""
     room = np.full((12, 16), 120.0, dtype=np.float32)
-    vision = _Vision(detected=False, motion_age=None, thumb=room)
+    body = room.copy()
+    body[:, :8] = 40.0
+    vision = _Vision(detected=False, motion_age=None, thumb=body)
     behavior, _device = _behavior(vision)
     try:
         behavior.watch_for_faces(100.0)
-        assert behavior._baseline.known  # the first picture starts the room
+        assert not behavior._baseline.known  # the first picture starts nothing
+        behavior.watch_for_faces(150.0)
+        assert not behavior._baseline.known  # not yet two quiet minutes of watching
+        vision.thumb = room
+        behavior.watch_for_faces(221.0)
+        assert behavior._baseline.known  # two quiet minutes: the room is learned
         behavior._last_person_seen = 500.0  # someone was just here
-        body = room.copy()
-        body[:, :8] = 40.0
         vision.thumb = body
         behavior.watch_for_faces(530.0)
         assert behavior._person_share >= PERSON_SHARE  # the room did not absorb the person
@@ -375,5 +385,200 @@ def test_movement_without_a_face_counts_as_a_person_for_the_rest_policy():
         vision.motion = 40.0  # nothing moved for a while
         behavior.watch_for_faces(100.6)
         assert behavior._last_person_seen == 100.0
+    finally:
+        behavior.close()
+
+
+def test_the_learned_room_is_kept_on_disk_and_a_restart_starts_from_it(tmp_path):
+    room = np.full((12, 16), 120.0, dtype=np.float32)
+    path = tmp_path / "scene_baseline.json"
+    first = SceneBaseline(path)
+    assert not first.known
+    first.learn(room, 0.0)
+    first.save(0.0)
+    assert path.exists() and "cells" in path.read_text()
+    again = SceneBaseline(path)
+    assert again.known and again.differs(room) == 0.0
+    body = room.copy()
+    body[:, :8] = 40.0
+    assert again.differs(body) >= PERSON_SHARE
+    vision = _Vision(detected=False, motion_age=None, thumb=body)
+    device = FakeStackChanDeviceClient()
+    behavior = StackChanBehavior(
+        StackChanRobotAdapter(device).robot, vision_bridge=vision, baseline_path=path
+    )
+    try:
+        assert behavior._baseline.known  # the restart knows the room before its first picture
+    finally:
+        behavior.close()
+
+
+def test_a_picture_that_only_differs_from_the_room_never_counts_as_a_person_for_the_rest_clock():
+    room = np.full((12, 16), 120.0, dtype=np.float32)
+    body = room.copy()
+    body[:, :10] = 40.0
+    vision = _Vision(detected=False, motion_age=None, thumb=body)
+    behavior, _device = _behavior(vision)
+    try:
+        behavior._baseline.learn(room, 0.0)
+        for step in range(6):
+            behavior.watch_for_faces(100.0 + step * 10)
+        assert behavior._person_share >= PERSON_SHARE
+        assert behavior._last_person_seen == float("-inf")  # the rest clock keeps counting quiet
+    finally:
+        behavior.close()
+
+
+def test_the_robots_own_head_move_is_not_a_person_and_starts_no_look():
+    """Live log 2026-11-12: every look around moved the picture, the movement counted as a
+    person, the rest clock reset, and three minutes later it looked again, all evening."""
+    room = np.full((12, 16), 120.0, dtype=np.float32)
+    vision = _Vision(detected=False, motion_age=None, thumb=room)
+    behavior, _device = _behavior(vision)
+    try:
+        behavior._baseline.learn(room, 0.0)
+        behavior._note_own_move()  # the head was just told to move (a search step, a rest pose)
+        vision.motion = 0.4  # and the picture moved right after
+        behavior.watch_for_faces(100.0)
+        assert behavior._last_person_seen == float("-inf")
+        behavior.search_tick(100.2)
+        assert not behavior._search.active
+        vision.motion = 0.4  # still moving 4 s later: that is not the head any more
+        behavior.watch_for_faces(104.0)
+        assert behavior._last_person_seen == 104.0
+    finally:
+        behavior.close()
+
+
+def test_a_look_started_by_the_picture_alone_backs_off_3_10_30_minutes_and_stops_while_unchanged(
+    caplog,
+):
+    room = np.full((12, 16), 120.0, dtype=np.float32)
+    body = room.copy()
+    body[:, :10] = 40.0
+    vision = _Vision(detected=False, motion_age=None, thumb=body)
+    behavior, device = _behavior(vision)
+    try:
+        behavior._baseline.learn(room, 0.0)
+        behavior.watch_for_faces(100.0)
+        with caplog.at_level(logging.INFO, logger="maipai_body.app"):
+            _run_person_look(behavior, device, 100.2)  # found nobody: wait 3 minutes
+            behavior.search_tick(100.2 + 200.0)  # the same still picture: no look, ever
+            assert not behavior._search.active
+            behavior.search_tick(100.2 + 2000.0)
+            assert not behavior._search.active
+            chair = body.copy()
+            chair[:, 10:] = 200.0  # the picture changed: one more look
+            vision.thumb = chair
+            behavior.watch_for_faces(2101.0)
+            _run_person_look(behavior, device, 2101.2)  # found nobody: wait 10 minutes
+            failed_at = behavior._still_failed_at
+            vision.thumb = body
+            behavior.watch_for_faces(failed_at + 400.0)
+            behavior.search_tick(failed_at + 400.0)
+            assert not behavior._search.active  # changed, but inside the 10 minutes
+            behavior.watch_for_faces(failed_at + 601.0)
+            behavior.search_tick(failed_at + 601.2)
+            assert behavior._search.active  # changed and past the wait
+        lines = [r.getMessage() for r in caplog.records]
+        assert any("next look waits 180 s" in line for line in lines)
+        assert any("next look waits 600 s" in line for line in lines)
+    finally:
+        behavior.close()
+
+
+def test_a_spoken_find_me_ignores_the_back_off_and_does_not_add_to_it():
+    search = HeadSearch(clock=lambda: 0.0)
+    assert search.start("person", 0.0)
+    search.stop(6.0)  # nobody found: the ambient look now waits a minute
+    assert not search.may_start("person", 7.0)
+    assert search.start("ask", 7.0)  # the person asked: no waiting
+    search.stop(14.0)
+    assert search.wait_s("person") == PERSON_BACKOFF_S[0]  # the miss was not counted
+    assert search.start("ask_level", 14.0)
+    assert [(s.yaw_deg, s.pitch_deg) for s in ASK_LEVEL_STEPS] == [
+        (0.0, 0.0),
+        (-PAN_DEG, 0.0),
+        (PAN_DEG, 0.0),
+    ]
+
+
+def _said(behavior):
+    lines = []
+    behavior.announce = lines.append
+    return lines
+
+
+def test_turn_to_me_looks_after_the_reply_at_idle_level_still_and_says_so_when_nobody_is_found():
+    vision = _Vision(detected=False, motion_age=None)
+    behavior, device = _behavior(vision)
+    try:
+        lines = _said(behavior)
+        behavior.idle_still = lambda: True  # the owner lifted the still rule for this
+        behavior._search._last_done["person"] = 99.0  # a recent miss: the back-off is running
+        behavior._search._failures = 2
+        assert behavior.find_person(False) == "searching"
+        behavior._active.set()  # still in the turn: nothing starts yet
+        behavior.search_tick(100.0)
+        assert not behavior._search.active
+        behavior._active.clear()
+        behavior.search_tick(100.5)
+        assert behavior._search.reason == "ask"
+        behavior.search_tick(100.5)
+        for i in range(1, 5):
+            behavior.search_tick(100.5 + i * STEP_S)
+        assert not behavior._search.active
+        assert lines == ["I can't see you yet, say something or move closer."]
+        assert _head_calls(device)[-1]["pitch"] == round(CENTRE_PITCH_DEG)  # back to neutral
+    finally:
+        behavior.close()
+
+
+def test_im_down_here_looks_level_and_to_the_sides_and_names_the_limit_when_nobody_is_found():
+    vision = _Vision(detected=False, motion_age=None)
+    behavior, device = _behavior(vision)
+    try:
+        lines = _said(behavior)
+        assert behavior.find_person(True) == "searching"
+        behavior.search_tick(100.0)
+        assert behavior._search.reason == "ask_level"
+        behavior.search_tick(100.0)
+        for i in range(1, 4):
+            behavior.search_tick(100.0 + i * STEP_S)
+        looked = _head_calls(device)[-4:]
+        assert [c["yaw"] for c in looked] == [0, -PAN_DEG, PAN_DEG, 0]
+        assert all(c["pitch"] == round(CENTRE_PITCH_DEG) for c in looked)
+        assert len(lines) == 1 and "I can only look level" in lines[0]
+    finally:
+        behavior.close()
+
+
+def test_a_face_ends_the_asked_look_with_the_head_on_it_and_nothing_is_said():
+    vision = _Vision(detected=False, motion_age=None)
+    behavior, device = _behavior(vision)
+    try:
+        lines = _said(behavior)
+        behavior.find_person(False)
+        behavior.search_tick(100.0)
+        behavior.search_tick(100.0)
+        assert behavior._search.active
+        vision.detected = True
+        behavior.watch_for_faces(100.5)
+        behavior.search_tick(100.5)
+        assert not behavior._search.active and lines == []
+        assert behavior._search.wait_s("person") == 0.0
+    finally:
+        behavior.close()
+
+
+def test_a_face_seen_a_moment_ago_is_turned_to_at_once_without_a_look():
+    vision = _Vision(detected=True, motion_age=None)
+    behavior, device = _behavior(vision)
+    try:
+        behavior.watch_for_faces(time.monotonic())
+        before = len(_head_calls(device))
+        assert behavior.find_person(False) == "turned"
+        assert len(_head_calls(device)) == before + 1 and behavior._find_request is None
+        assert behavior.face_yaw() is not None
     finally:
         behavior.close()

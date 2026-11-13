@@ -7,6 +7,15 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.60] - 2026-11-12
+
+### Added
+- Head taps: the unit reads its motion sensor every 10 ms, and a strip touch at any level with a jolt close to it counts as a tap (firmware patch 081), so light taps on the grey area at the back of the head work and strip noise alone does not. A tap on the front shell is still not recognised.
+- Spoken head commands: "turn to me", "look at me", "face me", "over here", "I'm over here", "I'm down here" start a face search at once; "turn away", "look away"; "turn left/right" hold the new heading and accept degrees; "turn around" turns as far as the head can and says so.
+
+### Fixed
+- The empty-room picture is learned only after two quiet minutes, never from the first picture after a restart, so a unit with nobody in view gets drowsy instead of searching for a face for ever. A search started by the picture alone backs off 3, 10 then 30 minutes.
+
 ## [0.2.59] - 2026-11-12
 
 ### Added

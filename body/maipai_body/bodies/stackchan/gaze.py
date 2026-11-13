@@ -16,7 +16,7 @@ from enum import StrEnum
 
 class GazeReason(StrEnum):
     TRACK = "track"  # following a face
-    COMMAND = "command"  # a spoken "look left"
+    COMMAND = "command"  # a spoken "look left", "turn to me" or "turn away"
     SEARCH = "search"  # a face it was following disappeared
     SWEEP = "sweep"  # idle wandering is allowed
     THINKING = "thinking"  # the thinking gaze during a chat wait
@@ -72,6 +72,11 @@ _COMMAND_NAMES = {
     "up": "look up",
     "down": "look down",
     "around": "look around",
+    "face": "turn to you",
+    "away": "look away",
+    "turnaround": "turn around",
+    "turn_left": "turn left",
+    "turn_right": "turn right",
     "centre": "look straight ahead",
     "nod": "nod",
     "shake": "shake my head",

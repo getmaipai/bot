@@ -35,7 +35,7 @@ _LOVE_CUES = re.compile(
 # Reply moods from the hub's cue that mean a very cute picture or real affection.
 LOVE_MOODS = frozenset({"love", "affection", "adoration"})
 
-_PET_EVENTS = {"head_touch"}
+_PET_EVENTS = {"head_touch", "head_tap"}
 _SWIPE_EVENTS = {"head_swipe_forward", "head_swipe_back"}
 
 
@@ -87,7 +87,7 @@ class Reactions:
             # The unit shows its own open-mouthed happy face for a stroke; take it back soon.
             self._hold_face()
         if any(kind in _PET_EVENTS or kind in _SWIPE_EVENTS for kind in kinds):
-            self._petted()
+            self._petted("tapped" if "head_tap" in kinds else "petted")
         # A stroke across the head already makes the unit show its own happy face and heart.
 
     def _shaken(self) -> None:
@@ -109,9 +109,11 @@ class Reactions:
         self._last_line = self._rng.choice(choices)
         return self._last_line
 
-    def _petted(self) -> None:
-        if self.heart("petted"):
-            logger.info("StackChan was petted")
+    def _petted(self, how: str = "petted") -> None:
+        """A pet, or a tap the unit confirmed with its motion sensor (firmware patch 081): the same
+        heart, so a touch always gets one reaction, and the log says which it was."""
+        if self.heart(how):
+            logger.info("StackChan was %s", how)
 
     def _hold_face(self) -> None:
         self._neutral_at = self._clock() + FACE_HOLD_S

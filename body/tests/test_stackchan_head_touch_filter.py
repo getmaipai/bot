@@ -111,3 +111,42 @@ def test_stop_word_hits_and_start_up_are_logged_with_the_fixed_command_name(capl
 def test_a_touch_the_unit_marks_strong_is_real_at_once():
     filt = HeadTouchFilter()
     assert len(filt.accept(0.0, [_ev("head_touch", strong=1)])) == 1
+
+
+def test_a_tap_the_unit_confirmed_with_its_motion_sensor_is_real_at_once():
+    """Firmware patch 081: a light tap reads 1 on the strip but jolts the motion sensor; the unit
+    sends it as head_touch tap=1 (and strong=1 for older hosts), and it is never a phantom."""
+    filt = HeadTouchFilter()
+    assert len(filt.accept(0.0, [_ev("head_touch", tap=1, strong=1)])) == 1
+    assert len(filt.accept(30.0, [_ev("head_touch", tap=1, strong=0)])) == 1
+    assert filt.accept(60.0, [_ev("head_touch", tap=0, strong=0)]) == []
+
+
+def test_a_confirmed_tap_wakes_a_sleeping_robot_on_the_next_look_and_is_heard_as_a_tap():
+    from maipai_body.app import TOUCH_POLL_S, StackChanBehavior
+    from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
+    from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
+
+    behavior = StackChanBehavior(StackChanRobotAdapter(FakeStackChanDeviceClient()).robot)
+    try:
+        behavior._rest._stage = "asleep"
+        queue = [[], [_ev("head_touch", tap=1, strong=1)]]
+        behavior.event_poll = lambda: queue.pop(0) if queue else []
+        seen = []
+        behavior.reaction = seen.append
+        behavior.wake_on_touch(0.0)  # first look: drains the queue
+        assert behavior.wake_on_touch(TOUCH_POLL_S) is True  # the next look, half a second later
+        assert seen == [["head_tap"]]
+    finally:
+        behavior.close()
+
+
+def test_two_maybes_in_one_look_are_not_a_stroke_but_a_repeat_a_moment_later_is():
+    """Live log 2026-11-12 18:38: right after a boot one long noise run gave a weak press and a
+    weak swipe in the same look and the robot smiled at nobody."""
+    filt = HeadTouchFilter()
+    assert filt.accept(0.0, [_ev("head_touch", strong=0), _ev("head_swipe_back", strong=0)]) == []
+    assert len(filt.accept(2.0, [_ev("head_touch", strong=0)])) == 1  # a second run: a real rub
+    filt = HeadTouchFilter()
+    kept = filt.accept(0.0, [_ev("head_touch", strong=0), _ev("head_swipe_back", strong=1)])
+    assert len(kept) == 2  # one of them reached reading 2: a stroke

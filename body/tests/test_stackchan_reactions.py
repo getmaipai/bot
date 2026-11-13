@@ -319,3 +319,17 @@ def test_a_pet_reacts_while_the_robot_only_listens_but_not_while_it_thinks_or_sp
         assert device.last_expression == "happy"
     finally:
         behavior.close()
+
+
+def test_a_tap_on_the_head_gets_the_heart_like_a_pet_and_is_logged_as_a_tap(caplog):
+    """A tap (strip and motion sensor agreed, firmware patch 081) reacts like a pet: one reaction
+    for every touch, never a different face for a lighter finger."""
+    import logging
+
+    rig = _Rig()
+    with caplog.at_level(logging.INFO, logger="maipai_body.bodies.stackchan.reactions"):
+        rig.reactions.on_events(["head_tap"])
+    assert rig.symbols == ["heart"] and rig.faces == []
+    assert any("StackChan was tapped" in r.getMessage() for r in caplog.records)
+    rig.reactions.on_events(["head_tap"])  # still playing: no second reaction
+    assert rig.symbols == ["heart"]

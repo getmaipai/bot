@@ -168,18 +168,86 @@ PERSON_SHARE = 0.25  # this share of the picture differs from the empty room: so
 BASELINE_LEARN_EVERY_S = 20.0
 BASELINE_BLEND = 0.1  # how much of a new quiet picture goes into the learned room each time
 BASELINE_QUIET_S = 120.0  # no face and no movement for this long before the room is learned
+BASELINE_SAVE_EVERY_S = 300.0  # the learned room is kept on disk, so a restart starts from it
+# A look for a face started by the picture differing from the room, with nothing moving, backs
+# off harder than one started by movement: 3, 10, 30 minutes (live log 2026-11-12: the room
+# learned with the owner in it made the genuinely empty room "a person" every 3 minutes and kept
+# the unit awake), and does not run again at all while the picture has not changed since the
+# look that found nobody.
+STILL_BACKOFF_S = (180.0, 600.0, 1800.0)
+STILL_CHANGE_SHARE = 0.10  # the picture must differ this much from the one that failed
+# The unit's own head moves make the picture move; motion this soon after one is its own.
+OWN_MOVE_BLIND_S = 3.0
 
 
 class SceneBaseline:
-    """The learned picture of the empty room: a few numbers per cell, never a picture."""
+    """The learned picture of the empty room: a few numbers per cell, never a picture. With a
+    ``path`` the cell numbers are kept on disk (a 12 by 16 grid of greys, not an image) so a
+    restart does not start from whatever the first picture shows."""
 
-    def __init__(self) -> None:
+    def __init__(self, path: object = None) -> None:
         self._room: object = None
         self._learned_at = float("-inf")
+        self._saved_at = float("-inf")
+        self._path = path
+        if path is not None:
+            self.load()
 
     @property
     def known(self) -> bool:
         return self._room is not None
+
+    def load(self) -> bool:
+        import json
+        from pathlib import Path
+
+        import numpy as np
+
+        if self._path is None:
+            return False
+        try:
+            data = json.loads(Path(self._path).read_text())
+            room = np.asarray(data["cells"], dtype=np.float32).reshape(data["shape"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+        self._room = room
+        return True
+
+    def save(self, now: float) -> None:
+        import json
+        from pathlib import Path
+
+        import numpy as np
+
+        if self._path is None or self._room is None or now - self._saved_at < BASELINE_SAVE_EVERY_S:
+            return
+        room = np.asarray(self._room)
+        try:
+            path = Path(self._path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(
+                    {"shape": list(room.shape), "cells": [round(float(v), 1) for v in room.ravel()]}
+                )
+            )
+        except OSError:
+            return
+        self._saved_at = now
+
+    @staticmethod
+    def changed(thumb: object, other: object) -> float:
+        """The share of cells that differ between two pictures (1.0 when either is missing)."""
+        import numpy as np
+
+        if thumb is None or other is None:
+            return 1.0
+        a = np.asarray(thumb, dtype=np.float32)
+        b = np.asarray(other, dtype=np.float32)
+        if a.shape != b.shape:
+            return 1.0
+        delta = a - b
+        delta -= float(np.median(delta))
+        return float(np.mean(np.abs(delta) > BASELINE_CELL_DELTA))
 
     def learn(self, thumb: object, now: float) -> None:
         """Blend a quiet picture in (the caller decides it is quiet), at most every 20 s."""
