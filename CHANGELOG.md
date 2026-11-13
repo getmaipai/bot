@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.73] - 2026-11-13
+
+### Fixed
+- StackChan firmware patch 120: the offline earcon waits for 3 minutes of the link being down (it sounded at 10 s, so every Home restart beeped twice: offline and back). The Offline strip still shows at 10 s; a short restart is silent.
+
 ## [0.2.72] - 2026-11-13
 
 ### Fixed
