@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.79] - 2026-11-13
+
+### Fixed
+- The eyes are the same size after a dance (firmware patch 125): upstream `FeatureKeyframe::size` was never initialised, so every dance step gave the eyes and mouth a random size, left in place when the dance ended ("one large eye and one small after dancing", reported three times).
+- The break between dance blocks is a slow mood, not a stop (owner: "a 90 second break is crazy ... it should only not dance if it is paused or there is no music"): after a 5 minute block (2 on battery) the gentle sway goes on for 90 s with one note, then the slow start and the full dance come round again. No music for 9 s pauses the dance and it starts again when clear music returns; the forehead tap, mute, a turn and low battery still stop it. The unit's own offline dance does the same (patch 126).
+
 ## [0.2.78] - 2026-11-13
 
 ### Fixed

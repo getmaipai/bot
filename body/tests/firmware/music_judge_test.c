@@ -22,7 +22,7 @@ int main(int argc, char **argv) {
     }
     fclose(fp);
     {
-        mmj_session_t s; uint32_t t; int dances = 0, breaks = 0, nods = 0, ends = 0;
+        mmj_session_t s; uint32_t t; int dances = 0, breaks = 0, pauses = 0, nods = 0, ends = 0;
         mmj_session_init(&s);
         CHECK(mmj_session_step(&s, 1000, 1) == MMJ_ACTION_NONE);
         CHECK(mmj_session_step(&s, 2000, 1) == MMJ_ACTION_NONE);
@@ -30,9 +30,9 @@ int main(int argc, char **argv) {
         CHECK(mmj_session_step(&s, 4000, 1) == MMJ_ACTION_NONE);
         CHECK(mmj_session_step(&s, 5000, 1) == MMJ_ACTION_NOD);
         CHECK(mmj_session_step(&s, 25000, 1) == MMJ_ACTION_DANCE);
-        /* the music dips: the dance block breaks after 9 s, the session survives */
+        /* the music dips: the dance pauses after 9 s (no music, no dance), the session survives */
         CHECK(mmj_session_step(&s, 33999, 0) == MMJ_ACTION_NONE);
-        CHECK(mmj_session_step(&s, 34000, 0) == MMJ_ACTION_BREAK);
+        CHECK(mmj_session_step(&s, 34000, 0) == MMJ_ACTION_PAUSE);
         /* no music for a minute: the session is over */
         CHECK(mmj_session_step(&s, 84999, 0) == MMJ_ACTION_NONE);
         CHECK(mmj_session_step(&s, 85000, 0) == MMJ_ACTION_END);
@@ -43,11 +43,13 @@ int main(int argc, char **argv) {
             if (a == MMJ_ACTION_NOD) nods++;
             if (a == MMJ_ACTION_DANCE) dances++;
             if (a == MMJ_ACTION_BREAK) breaks++;
+            if (a == MMJ_ACTION_PAUSE) pauses++;
             if (a == MMJ_ACTION_END) ends++;
         }
         CHECK(nods == 1);
         CHECK(dances >= 6);
-        CHECK(breaks >= 5);
+        CHECK(breaks >= 5); /* the slow mood between blocks */
+        CHECK(pauses == 0); /* never a stop while the music plays */
         CHECK(ends == 0);
         /* a gap between songs of 50 s keeps the session; 70 s ends it */
         mmj_session_init(&s);

@@ -145,3 +145,9 @@ dance), then a dance block of rounds (5 minutes on USB or charging, 2 minutes on
 cycle starts with the build-up again, and so on for as long as the music goes on. The hourly and daily caps are gone; the 2 minute wait
 after a session, the interrupts (touch, wake word, turn, mute, quiet, tilt, picture, offline) and the battery rules remain. The unit's own
 offline dance (patch 121) still does one block: the same cycles on the unit are the next step.
+
+## The slow mood (owner 2026-11-13)
+
+The 90 s between dance blocks is a slow mood, not a stop: the gentle happy sway only (no robot moves, no ring show, one note on the
+face), then the slow start and the full dance again. The dance stops only when the music is gone (9 s without clear music pauses it and
+clear music restarts it; 60 s ends the session), the unit is paused (forehead tap, mute), a turn starts, it is tilted or the battery is low.

@@ -455,7 +455,7 @@ def _song(world: World, seconds: int) -> None:
         world.second(MUSIC)
         if len(world.names("request_dance")) > before:
             started = world.t
-            length = 30.0 if world.ctl.full_plan else 20.0
+            length = 30.0 if world.ctl.plan == "full" else 20.0
         if world.dancing and started >= 0 and world.t - started >= length:
             world.dancing = False
 
@@ -1013,3 +1013,36 @@ def test_a_song_with_a_few_quiet_seconds_still_dances():
     for i in range(40):
         world.second(replace(MUSIC, ps=30) if i % 8 == 0 else MUSIC)
     assert world.names("nod")
+
+
+def test_the_break_is_a_slow_mood_the_dance_never_stops_while_music_plays():
+    world = World(charging=True)
+    _song(world, 20 * 60)
+    starts = world.names("request_dance")
+    gaps = [b - a for a, b in zip(starts, starts[1:], strict=False)]
+    assert max(gaps) <= 31.0  # a new round at least every round: no 90 s of standing still
+    assert world.ctl._cycle >= 3  # the slow mood and the slow start came round more than once
+    assert not [1 for _, n, a in world.calls if n == "stop_dance" and a == "music ended"]
+
+
+def test_no_music_means_no_dance_and_it_starts_again_when_music_returns():
+    world = World(charging=True)
+    _song(world, 60)
+    world.play(None, 20)  # the music stops for 20 s: the dance stops, the session stays
+    assert not world.dancing
+    assert world.ctl.state == "break"
+    before = len(world.names("request_dance"))
+    world.play(None, 20)
+    assert len(world.names("request_dance")) == before  # nothing starts without music
+    _song(world, 10)
+    assert len(world.names("request_dance")) > before  # clear music again: it dances
+
+
+def test_a_pause_by_the_forehead_stops_the_dance_and_nothing_restarts_it():
+    world = World(charging=True)
+    _song(world, 60)
+    world.sit = replace(world.sit, full_quiet="quiet")
+    world.play(MUSIC, 5)
+    n = len(world.names("request_dance"))
+    world.play(MUSIC, 60)
+    assert len(world.names("request_dance")) == n

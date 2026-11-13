@@ -18,6 +18,7 @@ from typing import Any
 from maipai_body.bodies.stackchan.dance import DanceRunner
 from maipai_body.bodies.stackchan.music_dance import (
     AUTO_PLAN,
+    CALM_PLAN,
     DANCE_PLAN,
     MusicDance,
     MusicDanceHooks,
@@ -127,7 +128,8 @@ def wire_music_dance(
             behavior.show_face("neutral")
 
     def request_dance() -> tuple[bool, str]:
-        reply = runner.request("auto", AUTO_PLAN if controller.full_plan else DANCE_PLAN)
+        plan = {"full": AUTO_PLAN, "dance": DANCE_PLAN, "calm": CALM_PLAN}[controller.plan]
+        reply = runner.request("auto", plan)
         return reply.started, reply.why
 
     controller = MusicDance(

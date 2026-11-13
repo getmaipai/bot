@@ -74,15 +74,17 @@ static inline mmj_verdict_t mmj_judge(const mmj_feat_t *f, mmj_sens_t sensitivit
     return mmj_make(1, MMJ_MUSIC);
 }
 
-typedef enum { MMJ_ACTION_NONE, MMJ_ACTION_NOD, MMJ_ACTION_DANCE, MMJ_ACTION_BREAK, MMJ_ACTION_END } mmj_action_t;
+typedef enum { MMJ_ACTION_NONE, MMJ_ACTION_NOD, MMJ_ACTION_DANCE, MMJ_ACTION_BREAK, MMJ_ACTION_PAUSE, MMJ_ACTION_END } mmj_action_t;
 
 /* The unit's own music session (no hub), the same cycles as the host's music_dance.py: the slow start (the nod,
  * then the dance 20 s later), a dance block (5 minutes charging, 2 minutes on battery: mmj_session_set_block_ms),
- * a 90 s break, the dance again, and so on for as long as the music goes on. A gap of 60 s ends the session. No
- * hourly or daily caps. The caller stops the dance on BREAK and END. */
+ * then the SLOW MOOD for 90 s (MMJ_ACTION_BREAK: the gentle sway goes on, it does not stop), then the dance again,
+ * and so on for as long as the music goes on. No music for 9 s pauses the dance (MMJ_ACTION_PAUSE: the caller stops
+ * it; it starts again as soon as clear music returns); a gap of 60 s ends the session (MMJ_ACTION_END). No hourly
+ * or daily caps. The caller stops the dance on PAUSE and END only. */
 typedef struct {
     uint32_t run_start, last_music, nod_at, block_at, break_at, last_end, block_ms;
-    uint8_t state; /* 0 idle, 1 nod and watch, 2 dancing, 3 break */
+    uint8_t state; /* 0 idle, 1 nod and watch, 2 dancing, 3 paused (no music), 4 slow mood */
     uint8_t has_music, has_end;
 } mmj_session_t;
 
@@ -117,16 +119,25 @@ static inline mmj_action_t mmj_session_step(mmj_session_t *s, uint32_t now_ms, i
             return MMJ_ACTION_DANCE;
         }
         return MMJ_ACTION_NONE;
-    case 2:
+    case 2: /* dancing */
         if (silence >= MMJ_SESSION_GAP_MS) { s->state = 0; s->last_end = now_ms; s->has_end = 1; return MMJ_ACTION_END; }
-        if (silence >= MMJ_END_SILENCE_MS || mmj_elapsed(now_ms, s->block_at) >= s->block_ms) {
-            s->state = 3; s->break_at = now_ms;
+        if (silence >= MMJ_END_SILENCE_MS) { s->state = 3; return MMJ_ACTION_PAUSE; }
+        if (mmj_elapsed(now_ms, s->block_at) >= s->block_ms) {
+            s->state = 4; s->break_at = now_ms;
             return MMJ_ACTION_BREAK;
         }
         return MMJ_ACTION_NONE;
-    default: /* 3: break */
+    case 4: /* the slow mood */
         if (silence >= MMJ_SESSION_GAP_MS) { s->state = 0; s->last_end = now_ms; s->has_end = 1; return MMJ_ACTION_END; }
+        if (silence >= MMJ_END_SILENCE_MS) { s->state = 3; return MMJ_ACTION_PAUSE; }
         if (music && mmj_elapsed(now_ms, s->break_at) >= MMJ_BREAK_MS) {
+            s->state = 2; s->block_at = now_ms;
+            return MMJ_ACTION_DANCE;
+        }
+        return MMJ_ACTION_NONE;
+    default: /* 3: paused, no music */
+        if (silence >= MMJ_SESSION_GAP_MS) { s->state = 0; s->last_end = now_ms; s->has_end = 1; return MMJ_ACTION_END; }
+        if (music) {
             s->state = 2; s->block_at = now_ms;
             return MMJ_ACTION_DANCE;
         }

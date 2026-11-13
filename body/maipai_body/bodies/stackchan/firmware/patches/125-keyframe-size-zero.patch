@@ -1,0 +1,15 @@
+# Intent: the eyes are the same size after a dance (owner 2026-11-13, three times: "one eye is bigger than the other", "i still see the one large eye and one small after dancing"). Upstream FeatureKeyframe declares `int size;` but its constructor never sets it, so every keyframe of the dance sequences (copied into vectors from temporaries) carries an indeterminate size, and Keyframe::apply() calls feat.setSize(kf.size) on both eyes and the mouth for every step: random sizes per eye, left in place when the dance ends. The constructor now sets size to 0 (the neutral size the mint face and the host's avatar frames use).
+# Upstream: m5stack/StackChan firmware/main/stackchan/animation/animation.h (MIT). Applies after 124.
+# Check after a flash: dance (voice, hub or music): both eyes stay the same size during and after every step.
+diff --git a/firmware/main/stackchan/animation/animation.h b/firmware/main/stackchan/animation/animation.h
+--- a/firmware/main/stackchan/animation/animation.h
++++ b/firmware/main/stackchan/animation/animation.h
+@@ -23,7 +23,7 @@
+     int size;
+ 
+     FeatureKeyframe(int x = 0, int y = 0, int rotation = 0, int weight = 0)
+-        : position(x, y), rotation(rotation), weight(weight)
++        : position(x, y), rotation(rotation), weight(weight), size(0)
+     {
+     }
+ };
