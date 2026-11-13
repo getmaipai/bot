@@ -26,6 +26,7 @@ import hashlib
 import io
 import json
 import sys
+import tempfile
 import wave
 from pathlib import Path
 
@@ -121,11 +122,91 @@ def synthesize(tts: str, text: str) -> tuple[np.ndarray, int]:
     return _decode(response.content)
 
 
+class VoiceUnavailable(Exception):
+    """The requested household voice cannot be resolved by the hub."""
+
+
+def synthesize_robot_voice(tts: str, text: str, voice_id: str) -> tuple[np.ndarray, int]:
+    response = requests.post(
+        f"{tts}/api/tts", json={"text": text, "voice_id": voice_id}, timeout=(10, 180)
+    )
+    if response.status_code in (404, 422):
+        raise VoiceUnavailable
+    response.raise_for_status()
+    return _decode(response.content)
+
+
+def _inside_repo(path: Path) -> bool:
+    root = Path(__file__).resolve().parents[2]
+    try:
+        path.resolve().relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _voice_text_digest(voice_id: str) -> str:
+    data = json.dumps(
+        {"voice_id": voice_id, "phrases": PHRASES}, ensure_ascii=False, sort_keys=True
+    )
+    return hashlib.sha256(data.encode()).hexdigest()
+
+
+def _render_robot_voice(tts: str, voice_id: str, out: Path, ffmpeg: str) -> None:
+    # Stage everything first so a missing voice never leaves a partial bundle.
+    with tempfile.TemporaryDirectory(prefix="unit-phrases-") as temporary:
+        stage = Path(temporary)
+        clips: list[dict[str, object]] = []
+        for group, variants in PHRASES.items():
+            for number, text in enumerate(variants, start=1):
+                samples, rate = synthesize_robot_voice(tts, text, voice_id)
+                clip = shape(samples, rate)
+                path = stage / f"ph_{group}_{number}.ogg"
+                encode_ogg(clip, path, ffmpeg, bitrate="24k", in_rate=rate)
+                data = path.read_bytes()
+                clips.append(
+                    {
+                        "group": group,
+                        "variant": number,
+                        "text": text,
+                        "file": path.name,
+                        "seconds": round(len(clip) / rate, 2),
+                        "bytes": len(data),
+                        "sha256": hashlib.sha256(data).hexdigest(),
+                    }
+                )
+        doc = {
+            "about": "Local offline phrases for the StackChan (tier 2); rendered by "
+            "body/scripts/render_unit_phrases.py, played by firmware patch 118.",
+            "format": f"Ogg Opus, mono, {RATE} Hz, 24 kbps, 60 ms frames",
+            "voice": {"id": voice_id, "engine": "chatterbox-turbo"},
+            "clips": clips,
+        }
+        (stage / "phrases.json").write_text(json.dumps(doc, indent=2) + "\n")
+        (stage / "voice.sha256").write_text(_voice_text_digest(voice_id) + "\n")
+        out.mkdir(parents=True, exist_ok=True)
+        for item in stage.iterdir():
+            item.replace(out / item.name)
+        print(f"{len(clips)} clips, {sum(int(c['bytes']) for c in clips)} bytes")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--tts", required=True, help="base URL of the speech engine")
     parser.add_argument("--out", type=Path, default=OUT_DIR)
+    parser.add_argument("--voice-id", help="render with the robot's bound household voice")
     args = parser.parse_args(argv)
+    if args.voice_id:
+        if _inside_repo(args.out):
+            print("--out must be outside the git work tree", file=sys.stderr)
+            return 1
+        ffmpeg = find_ffmpeg()
+        try:
+            _render_robot_voice(args.tts, args.voice_id, args.out, ffmpeg)
+        except VoiceUnavailable:
+            print(f"the robot's voice {args.voice_id} is not available; nothing was rendered")
+            return 1
+        return 0
     ffmpeg = find_ffmpeg()
     args.out.mkdir(parents=True, exist_ok=True)
     clips: list[dict[str, object]] = []

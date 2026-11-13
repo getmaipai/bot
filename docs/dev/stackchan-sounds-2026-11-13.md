@@ -64,6 +64,16 @@ by the Stack's pinned catalog record (`stack/docs/components.md`, `models/manife
 requires attribution) now has `licence_checked: true` for the same reason and carries its credit line in the manifest, `NOTICE` and
 the user guide. Speech synthesis is not bit-exact between runs, so the committed files and their checksums are the record.
 
+## In the robot's own voice
+
+For a household build, render the sixteen tier 2 phrases on the hub with the voice bound to the robot (`robot.voice.id`). Use
+`body/scripts/render_unit_phrases.py --tts http://127.0.0.1:18791 --voice-id voice-… --out /path/outside/the/repo`. The renderer
+posts each phrase to the hub's `/api/tts` route with that voice id, applies the same streamed WAV normalizer as robot speech,
+then writes the Ogg clips, a per-clip manifest, and `voice.sha256`. The hash changes with either the selected voice or phrase
+text. The output directory must be outside the git work tree: cloned or designed voices may represent a real person, so these
+household clips must stay in hub data and never enter a commit or release. If the voice is unavailable, the renderer reports
+that and leaves no output. Running without `--voice-id` retains the committed default voice render path.
+
 ## Sizes (a real `recipe.sh` build of patches 001 to 099 plus 115 to 118, ESP-IDF 5.5.4)
 
 | Image | Before the strip note's numbers | With the sounds | Limit | Free |
