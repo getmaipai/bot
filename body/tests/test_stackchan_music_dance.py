@@ -812,3 +812,83 @@ def test_dance_settings_read_the_two_new_keys_and_default_off_medium():
     assert settings.auto is True and settings.auto_sensitivity == "high"  # bad values are ignored
     settings.apply({"robot.dance.auto": False})
     assert settings.auto is False
+
+
+# ---------------------------------------------------------------- the unit's music switch
+
+
+class _Unit:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+        self.fail = False
+
+    def __call__(self, name: str, arguments: dict) -> object:
+        if self.fail:
+            raise OSError("unit unreachable")
+        self.calls.append((name, dict(arguments)))
+        return {"ok": True}
+
+
+def _switch(unit: _Unit, state: dict, clock: list[float]):
+    from maipai_body.bodies.stackchan.music_dance_wiring import MusicFeatureSwitch
+
+    return MusicFeatureSwitch(
+        unit,
+        auto=lambda: state["auto"],
+        silenced=lambda: state["silenced"],
+        clock=lambda: clock[0],
+    )
+
+
+def test_the_unit_analyses_music_only_while_the_setting_is_on_and_it_is_not_silenced():
+    unit, state, clock = _Unit(), {"auto": False, "silenced": False}, [0.0]
+    switch = _switch(unit, state, clock)
+    switch.on_session()  # connect with the setting off: the unit is told off
+    assert unit.calls == [("self.music.set", {"enabled": False})]
+    switch.sync()
+    assert len(unit.calls) == 1  # no repeat while nothing changed
+    state["auto"] = True
+    switch.apply_settings({"robot.dance.auto": True})
+    assert unit.calls[-1] == ("self.music.set", {"enabled": True})
+    state["silenced"] = True  # muted or full quiet
+    switch.apply_settings({"robot.muted": True})
+    assert unit.calls[-1] == ("self.music.set", {"enabled": False})
+    state["silenced"] = False
+    switch.apply_settings({"robot.muted": False})
+    assert unit.calls[-1] == ("self.music.set", {"enabled": True})
+    state["auto"] = False
+    switch.apply_settings({"robot.dance.auto": False})
+    assert unit.calls[-1] == ("self.music.set", {"enabled": False})
+
+
+def test_a_reconnect_states_the_switch_again_and_a_failed_call_is_retried():
+    unit, state, clock = _Unit(), {"auto": True, "silenced": False}, [0.0]
+    switch = _switch(unit, state, clock)
+    unit.fail = True
+    switch.apply_settings({})
+    assert switch.sent is None and unit.calls == []
+    unit.fail = False
+    clock[0] = 5.0
+    switch.sync()  # too soon after the failure
+    assert unit.calls == []
+    clock[0] = 20.0
+    switch.sync()
+    assert unit.calls == [("self.music.set", {"enabled": True})]
+    switch.on_session()  # a reboot forgot nothing in flash, but the host says it again anyway
+    assert len(unit.calls) == 2
+
+
+def test_the_firmware_patch_keeps_music_analysis_off_until_the_host_turns_it_on():
+    from pathlib import Path
+
+    patch = (
+        Path(__file__).resolve().parents[1]
+        / "maipai_body/bodies/stackchan/firmware/patches/100-music-features.patch"
+    ).read_text()
+    assert "std::atomic<bool> s_enabled{false};" in patch  # off at boot
+    # The tap leaves before any analysis or counting while off.
+    tap = patch.split("void maipai_music_tap(", 1)[1]
+    assert tap.index("!s_enabled.load()") < tap.index("send_reset()")
+    assert 'tagInfo(_tag, "music features {}", enabled ? "on" : "off")' in patch  # the boot log
+    assert '"self.music.set"' in patch
+    assert 'kNvsNamespace = "mp_music"' in patch  # never the websocket namespace

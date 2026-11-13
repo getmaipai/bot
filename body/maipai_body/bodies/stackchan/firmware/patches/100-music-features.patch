@@ -1,6 +1,6 @@
 # Intent: the unit measures a few numbers about the room's sound so the host can tell clear music from speech and noise (owner request 2026-11-13: the robot hears music, shows a small "I like this" and, if it goes on, dances). Channel 0 of the codec (the microphone with the 60 dB gain) is read at its own rate (24 kHz) by maipai_music_tap, which runs a front end of four band-pass biquads (about 60-250, 250-1000, 1000-3000, 3000-8000 Hz), a DC blocker and a zero-crossing counter and queues one small frame every 20 ms; a low-priority worker task (PSRAM stack, history in PSRAM) keeps 6 s of onset signal and envelope and, once a second, computes the level, the band shares, a tempo and its confidence (autocorrelation of the onset signal over 60 to 187 BPM), the spectral flatness of the bands, the zero-crossing rate and its spread, the share of the envelope's variance at 3 to 6 Hz (high for speech) and the share of near-silent frames. While the last second was louder than RMS 400 and 3 s of history exist, it pushes one "music_feat" device event (lv, b0..b3, bpm, tc, fl, zc, zs, mo, ps, on; about 110 bytes of JSON) and a serial trace line "MF ..." for the first half hour after boot; a "music_stats" diagnostic once a minute. No audio leaves the unit and none is kept. Cost: about 0.7 million float operations a second in the audio task (single precision), about 3 KB of history in PSRAM, a 16-frame queue (512 bytes of internal RAM, 192 bytes of static data) and one 4 KB PSRAM task; the audio task's own stack grows by about 300 bytes (not measured; its headroom was 1,760). Built image 5,584 bytes larger. maipai_music_core.h is plain C so a host test compiles and runs it (tests/firmware/music_core_test.c). The unit never hears itself: patch 101 says "suppress" while the unit listens, speaks or plays a sound (and 1.5 s after) and the tap then stands still and clears the history; maipai_music_set_muted() is the hook for a future hard mute.
 # Upstream: m5stack/StackChan firmware/main/hal/hal.cpp, hal_mcp.cpp (MIT); new files hal_music.cpp and maipai_music_core.h. Applies after 081 with --unidiff-zero (context hunks: it also applies when other patches have added lines nearby). Pairs with 101-music-tap.patch on xiaozhi-esp32.
-# Check after a flash: the boot log says "music features on"; music at normal volume 1 m away prints MF lines on the serial console (lv above 400, bpm near the song's tempo) and the host logs "unit music: music_feat ..."; a quiet room prints nothing; the unit's own speech prints nothing; the wake word and chat work as before.
+# Check after a flash: the boot log says "music features off" (until the host turns robot.dance.auto on: self.music.set enabled=true, then the log says "music features on" and it stays on across a reboot); with it off, music prints no MF lines and sends no music_feat events; with it on, music at normal volume 1 m away prints MF lines on the serial console (lv above 400, bpm near the song's tempo) and the host logs "unit music: music_feat ..."; a quiet room prints nothing; the unit's own speech prints nothing; the wake word and chat work as before.
 diff --git a/firmware/main/hal/maipai_music_core.h b/firmware/main/hal/maipai_music_core.h
 new file mode 100644
 --- /dev/null
@@ -403,7 +403,7 @@ diff --git a/firmware/main/hal/hal_music.cpp b/firmware/main/hal/hal_music.cpp
 new file mode 100644
 --- /dev/null
 +++ b/firmware/main/hal/hal_music.cpp
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,251 @@
 +/*
 + * Music features (MaiPai patch 100): the unit measures a few numbers about the room's sound so the
 + * host can tell clear music from speech and noise, and sends only those numbers (about once a
@@ -437,7 +437,9 @@ new file mode 100644
 +#include <freertos/FreeRTOS.h>
 +#include <freertos/queue.h>
 +#include <freertos/task.h>
++#include <mcp_server.h>
 +#include <mooncake_log.h>
++#include <nvs_flash.h>
 +
 +#include "maipai_music_core.h"
 +
@@ -452,6 +454,8 @@ new file mode 100644
 +constexpr int64_t kTraceUntilUs   = 30LL * 60 * 1000000;
 +constexpr int kChunkMax           = 480;  // samples per pass through the front end: at most 2 frames
 +constexpr int kQueueDepth         = 16;   // 0.3 s of frames
++constexpr const char* kNvsNamespace = "mp_music";  // its own namespace, never the websocket one
++constexpr const char* kNvsKey       = "on";
 +
 +struct Msg {
 +    mm_frame_t frame;
@@ -465,6 +469,7 @@ new file mode 100644
 +QueueHandle_t s_queue = nullptr;
 +mm_an_t* s_an         = nullptr;
 +std::atomic<bool> s_muted{false};
++std::atomic<bool> s_enabled{false};  // the host's switch (robot.dance.auto); off at boot until NVS or the host says on
 +std::atomic<uint32_t> s_dropped{0};
 +std::atomic<uint32_t> s_suppressed_chunks{0};
 +
@@ -538,8 +543,8 @@ new file mode 100644
 +// `suppress` is true while the unit listens, speaks or plays a sound (and just after).
 +void maipai_music_tap(const int16_t* interleaved, size_t frames, int channels, int sample_rate, bool suppress)
 +{
-+    if (s_queue == nullptr || interleaved == nullptr || channels < 1 || sample_rate < 8000) {
-+        return;
++    if (!s_enabled.load() || s_queue == nullptr || interleaved == nullptr || channels < 1 || sample_rate < 8000) {
++        return;  // switched off: no analysis, no event, nothing counted
 +    }
 +    if (suppress || s_muted.load()) {
 +        s_suppressed_chunks.fetch_add(1);
@@ -580,6 +585,44 @@ new file mode 100644
 +    s_muted.store(muted);
 +}
 +
++// The host's switch (patch 100): analysis runs only while the setting robot.dance.auto is on and the
++// robot is not muted. Kept in RAM and in the unit's own flash (namespace mp_music, written only when
++// the value changes), so it survives a reboot before the host is back.
++void maipai_music_set_enabled(bool enabled, bool persist)
++{
++    const bool was = s_enabled.exchange(enabled);
++    if (!enabled && was) {
++        s_was_suppressed = true;  // the next "on" starts from a clean history
++        s_front_ready    = false;
++        if (s_queue != nullptr) {
++            send_reset();
++        }
++    }
++    if (persist && was != enabled) {
++        nvs_handle_t h;
++        if (nvs_open(kNvsNamespace, NVS_READWRITE, &h) == ESP_OK) {
++            nvs_set_u8(h, kNvsKey, enabled ? 1 : 0);
++            nvs_commit(h);
++            nvs_close(h);
++        }
++    }
++    mclog::tagInfo(_tag, "music features {}", enabled ? "on" : "off");
++}
++
++static bool nvs_enabled()
++{
++    nvs_handle_t h;
++    uint8_t v = 0;
++    if (nvs_open(kNvsNamespace, NVS_READONLY, &h) == ESP_OK) {
++        if (nvs_get_u8(h, kNvsKey, &v) != ESP_OK) {
++            v = 0;
++        }
++        nvs_close(h);
++    }
++    return v == 1;
++}
++
++
 +void maipai_music_init()
 +{
 +    if (s_queue != nullptr) {
@@ -596,7 +639,21 @@ new file mode 100644
 +        return;
 +    }
 +    xTaskCreatePinnedToCoreWithCaps(worker_task, "musicfeat", 4096, nullptr, 1, nullptr, 1, MALLOC_CAP_SPIRAM);
-+    mclog::tagInfo(_tag, "music features on: {} byte history, gate rms {}", sizeof(mm_an_t), kGateRms);
++    mclog::tagInfo(_tag, "music features ready: {} byte history, gate rms {}", sizeof(mm_an_t), kGateRms);
++    // Off at boot unless the host last turned it on (stored in flash); the boot log says which.
++    maipai_music_set_enabled(nvs_enabled(), false);
++    // The host's tool: self.music.set(enabled). Called when robot.dance.auto turns on or off, when the
++    // robot is muted or in full quiet, and after every connect.
++    McpServer::GetInstance().AddTool("self.music.set",
++                                     "Turn the music features on or off. Off by default; the unit analyses the room's "
++                                     "sound only while on. Answers the new state.",
++                                     PropertyList({Property("enabled", kPropertyTypeBoolean)}),
++                                     [](const PropertyList& properties) -> ReturnValue {
++                                         const bool on = properties["enabled"].value<bool>();
++                                         maipai_music_set_enabled(on, true);
++                                         return std::string(on ? R"({"ok":true,"enabled":true})"
++                                                               : R"({"ok":true,"enabled":false})");
++                                     });
 +}
 diff --git a/firmware/main/hal/hal.cpp b/firmware/main/hal/hal.cpp
 --- a/firmware/main/hal/hal.cpp

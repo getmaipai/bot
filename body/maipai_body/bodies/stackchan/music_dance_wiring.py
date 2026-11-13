@@ -27,6 +27,67 @@ from maipai_body.bodies.stackchan.music_dance import (
 logger = logging.getLogger("maipai_body.bodies.stackchan.music_dance_wiring")
 
 TICK_S = 0.5
+SWITCH_RETRY_S = 15.0
+SWITCH_TOOL = "self.music.set"
+
+
+class MusicFeatureSwitch:
+    """Tells the unit whether to analyse the room's sound (firmware patch 100's ``self.music.set``).
+
+    The features run only while the setting ``robot.dance.auto`` is on and the robot is neither
+    muted nor in full quiet; otherwise the unit does no analysis and sends no ``music_feat``
+    events. The unit keeps its last state in RAM and flash, but the host states it again on every
+    connect and retries a failed call every ``SWITCH_RETRY_S`` seconds, so the two cannot stay
+    apart."""
+
+    def __init__(
+        self,
+        call: Callable[[str, dict], object],
+        *,
+        auto: Callable[[], bool],
+        silenced: Callable[[], bool],
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._call = call
+        self._auto = auto
+        self._silenced = silenced
+        self._clock = clock
+        self._sent: bool | None = None
+        self._failed_at = float("-inf")
+        self._lock = threading.Lock()
+
+    @property
+    def wanted(self) -> bool:
+        return bool(self._auto()) and not bool(self._silenced())
+
+    @property
+    def sent(self) -> bool | None:
+        return self._sent
+
+    def sync(self, *, force: bool = False) -> None:
+        with self._lock:
+            want = self.wanted
+            now = self._clock()
+            if not force and self._sent is want:
+                return
+            if self._sent is None and now - self._failed_at < SWITCH_RETRY_S and not force:
+                return
+            try:
+                self._call(SWITCH_TOOL, {"enabled": want})
+            except Exception:
+                self._failed_at = now
+                self._sent = None
+                logger.warning("StackChan music features switch failed; will retry", exc_info=True)
+                return
+            self._sent = want
+            logger.info("StackChan music features %s", "on" if want else "off")
+
+    def apply_settings(self, _values: dict) -> None:
+        self.sync()
+
+    def on_session(self, _device_id: object = None) -> None:
+        """A (re)connect: state it again, whatever was sent before."""
+        self.sync(force=True)
 
 
 def wire_music_dance(
@@ -38,6 +99,7 @@ def wire_music_dance(
     speed: int,
     clock: Callable[[], float] = time.monotonic,
     start_ticker: bool = True,
+    switch: MusicFeatureSwitch | None = None,
 ) -> MusicDance:
     def nod(face: str, cancelled: Callable[[], bool]) -> None:
         behavior.show_face(face)
@@ -102,6 +164,8 @@ def wire_music_dance(
             while True:
                 time.sleep(TICK_S)
                 try:
+                    if switch is not None:
+                        switch.sync()  # a no-op unless the last call failed (then rate limited)
                     controller.tick(clock())
                 except Exception:
                     now = time.monotonic()

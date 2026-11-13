@@ -2124,15 +2124,27 @@ async def _serve_stackchan_channels(
             level_head=lambda: _move_head(CENTRE_YAW, CENTRE_PITCH, SPEED),
             device_connected=device_connected,
         )
-        from maipai_body.bodies.stackchan.music_dance_wiring import wire_music_dance
+        from maipai_body.bodies.stackchan.music_dance_wiring import (
+            MusicFeatureSwitch,
+            wire_music_dance,
+        )
 
+        # The unit analyses the room's sound only while robot.dance.auto is on and it is not muted.
+        music_switch = MusicFeatureSwitch(
+            voice.robot.client._call,
+            auto=lambda: behavior.dance_settings.auto,
+            silenced=lambda: bool(behavior.speech_muted()),
+        )
         wire_music_dance(
             behavior=behavior,
             runner=runner,
             move_head=_move_head,
             centre_pitch=CENTRE_PITCH,
             speed=SPEED,
+            switch=music_switch,
         )
+        behavior.settings_listeners.append(music_switch.apply_settings)
+        voice.session_listeners.append(music_switch.on_session)
 
         from maipai_body.bodies.stackchan.repeat import RepeatControl
 

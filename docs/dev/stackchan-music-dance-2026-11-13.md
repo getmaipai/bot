@@ -56,6 +56,22 @@ registered in `commons/spec/settings/keys.json` (device scope, honoured by home 
 Home's Settings page needs the toggle, the sensitivity choice and a "Test music dance" button that sends `music_test`: a commons
 tag plus a Home pin, not done here.
 
+## What is analysed, what leaves the unit, and the switch
+
+- **Local.** The unit measures the room's sound itself. Only about 110 bytes of integer features (level, four band shares, tempo,
+  confidence, flatness and a few more) leave it, about once a second, only while the room is louder than RMS 400, and never audio.
+  No sound is kept on the unit either.
+- **Off unless the setting is on.** The analysis runs only while `robot.dance.auto` is on and the robot is neither muted nor in
+  full quiet. With it off the unit reads no chunk into the features, sends no `music_feat` event and no `music_stats` diagnostic.
+- **The switch.** The host calls the unit's tool `self.music.set(enabled)` (`MusicFeatureSwitch` in `music_dance_wiring.py`)
+  when the setting turns on or off, when muted or full quiet start or end, on every connect, and retries a failed call every
+  15 seconds. The unit keeps the state in RAM and in its own flash (namespace `mp_music`, key `on`, written only when it changes;
+  never the websocket namespace), defaults to off when nothing is stored, and logs `music features off` or `music features on`
+  at boot and at each change.
+- Tests: `test_the_unit_analyses_music_only_while_the_setting_is_on_and_it_is_not_silenced`,
+  `test_a_reconnect_states_the_switch_again_and_a_failed_call_is_retried` and the patch check
+  `test_the_firmware_patch_keeps_music_analysis_off_until_the_host_turns_it_on`.
+
 ## Logging while it is on (`robot.dance.auto`, or a test)
 
 All at INFO in the bot log, logger `maipai_body.bodies.stackchan.music_dance`:
