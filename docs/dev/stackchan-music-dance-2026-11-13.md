@@ -131,3 +131,5 @@ Needs: the firmware with patches 100 and 101 flashed, the bot release with this 
   0.2.24; this task does no flash or NVS work), whether the unit hears its own speech or chimes despite the guard, and whether the
   firmware dances look right (the pitch sign of the built-in dances is still unverified).
 - Not built: a nod and settle at the end, beat-timed dances and ring in firmware, harmonicity as a speech cue, the unit's own mute.
+
+Steady-sound path (0.2.70): a second real song never gave a stable tempo, so the beat bar alone rejected it. A window with level 800 or more, modulation under 32, pauses under 20, flatness under 97 and some tempo found counts as music on medium and high.

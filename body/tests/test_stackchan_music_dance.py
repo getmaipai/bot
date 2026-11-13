@@ -129,8 +129,8 @@ def test_judge_music_versus_the_rest(sensitivity):
     assert judge(QUIET_MUSIC, sensitivity).why == "below_level_gate"
     assert judge(NO_BEAT, sensitivity).why == "weak_beat"
     assert judge(replace(MUSIC, muted=True), sensitivity).why == "self_hearing_blank"
-    assert judge(replace(MUSIC, bpm=40), sensitivity).why == "tempo_out_of_range"
-    assert judge(replace(MUSIC, bpm=200), sensitivity).why == "tempo_out_of_range"
+    assert judge(replace(MUSIC, bpm=40, lv=700), sensitivity).why == "tempo_out_of_range"
+    assert judge(replace(MUSIC, bpm=200, lv=700), sensitivity).why == "tempo_out_of_range"
 
 
 def test_pauses_with_a_loose_beat_are_speech_but_a_steady_sparse_beat_is_music():
@@ -139,23 +139,27 @@ def test_pauses_with_a_loose_beat_are_speech_but_a_steady_sparse_beat_is_music()
 
 
 def test_sensitivity_moves_the_beat_bar():
-    weak = replace(MUSIC, tc=16)
+    weak = replace(MUSIC, tc=16, lv=700)
     assert not judge(weak, "low").music
     assert not judge(weak, "medium").music
     assert judge(weak, "high").music
-    assert judge(replace(MUSIC, tc=24), "medium").music  # a real song at 1 m: tc 9 to 56, median 24
-    assert not judge(replace(MUSIC, tc=24), "low").music
-    assert judge(replace(MUSIC, fl=80), "medium").music  # the same song measured flatness 47 to 85
+    assert judge(
+        replace(MUSIC, tc=24, lv=700), "medium"
+    ).music  # a real song at 1 m: tc 9 to 56, median 24
+    assert not judge(replace(MUSIC, tc=24, lv=700), "low").music
+    assert judge(
+        replace(MUSIC, fl=80, lv=700), "medium"
+    ).music  # the same song measured flatness 47 to 85
 
 
 def test_a_bright_song_keeps_a_running_dance_alive():
-    bright = replace(MUSIC, tc=10, fl=95)
+    bright = replace(MUSIC, tc=10, fl=95, lv=700)
     assert not judge(bright, "medium").music
     assert judge(bright, "medium", relaxed=True).music
 
 
 def test_a_running_stage_judges_a_little_more_gently():
-    dip = replace(MUSIC, tc=17)
+    dip = replace(MUSIC, tc=17, lv=700)
     assert not judge(dip, "medium").music
     assert judge(dip, "medium", relaxed=True).music
 
@@ -922,3 +926,14 @@ def test_the_firmware_patch_keeps_music_analysis_off_until_the_host_turns_it_on(
     assert 'tagInfo(_tag, "music features {}", enabled ? "on" : "off")' in patch  # the boot log
     assert '"self.music.set"' in patch
     assert 'kNvsNamespace = "mp_music"' in patch  # never the websocket namespace
+
+
+def test_a_loud_steady_song_with_a_wandering_tempo_is_music():
+    wandering = replace(MUSIC, tc=15, fl=90, bpm=187, mo=20, ps=5)
+    assert judge(wandering, "medium").why == "music"
+    assert judge(wandering, "high").music
+    assert judge(wandering, "low").why == "weak_beat"
+    assert not judge(replace(wandering, mo=45), "medium").music  # speech modulation
+    assert not judge(replace(wandering, ps=30), "medium").music  # pauses
+    assert not judge(replace(wandering, fl=98), "medium").music  # noise
+    assert not judge(replace(wandering, lv=600), "medium").music  # too quiet for this path

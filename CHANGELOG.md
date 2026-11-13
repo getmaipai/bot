@@ -7,6 +7,14 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.70] - 2026-11-13
+
+### Changed
+
+- A loud, steady, non-speech, non-noise sound counts as music even when its tempo estimate wanders (a second real
+  song gave 60 to 250 BPM and flatness 87 to 96): level 800 or more, modulation under 32, pauses under 20, flatness
+  under 97, some tempo found. Not on the low sensitivity.
+
 ## [0.2.69] - 2026-11-13
 
 ### Changed

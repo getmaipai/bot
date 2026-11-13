@@ -157,6 +157,26 @@ class Verdict:
     why: str  # exactly one reason code, including "music"
 
 
+STEADY_TC_MIN = 8  # some tempo was found at all (a song measured 12 to 27 here)
+STEADY_LEVEL = 800  # a song heard across a room measured 1000 to 1900
+STEADY_MO_MAX = 32  # speech modulates at 3 to 6 Hz (45 to 60); songs measured 6 to 30
+STEADY_PS_MAX = 20  # speech has pauses (45); songs measured 0 to 28
+STEADY_FL_MAX = 97  # white noise is 97 and up
+
+
+def _steady_sound(feat: MusicFeat) -> bool:
+    """Loud, unbroken, not speech-like and not noise. Some songs give no steady tempo estimate
+    (it wandered 60 to 250 BPM on a real one), so the beat bar alone would reject them."""
+    return (
+        feat.lv >= STEADY_LEVEL
+        and feat.bpm > 0
+        and feat.tc >= STEADY_TC_MIN
+        and feat.mo < STEADY_MO_MAX
+        and feat.ps < STEADY_PS_MAX
+        and feat.fl < STEADY_FL_MAX
+    )
+
+
 def judge(feat: MusicFeat, sensitivity: str = "medium", *, relaxed: bool = False) -> Verdict:
     """Is this second clear rhythmic music? ``relaxed`` is for a stage that is already running (the
     unit's own servo noise and a long song's quiet bars must not end it): the bars are lowered."""
@@ -171,6 +191,8 @@ def judge(feat: MusicFeat, sensitivity: str = "medium", *, relaxed: bool = False
         return Verdict(False, "self_hearing_blank")
     if feat.lv < MIN_LEVEL:
         return Verdict(False, "below_level_gate")
+    if sensitivity != "low" and _steady_sound(feat):
+        return Verdict(True, "music")  # loud, steady, not speech or noise: the tempo may wander
     if feat.tc < tc_min:
         return Verdict(False, "weak_beat")
     if feat.bpm == 0:
