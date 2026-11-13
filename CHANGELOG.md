@@ -7,6 +7,14 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.63] - 2026-11-12
+
+### Changed
+- Finding you: a spoken "turn to me", "find me" or "over here" now sweeps much wider and faster (up to 80 degrees each side, 10 poses in about 3.6 s, then a slower second pass if nothing is found). The automatic search keeps its small, slow poses and its back-off.
+
+### Added
+- Spoken head commands with several steps: "look up and then look down", "look left then right", "look left, then right, then straight" run in order (up to 4 steps) with a short pause between, one spoken line for the whole sentence.
+
 ## [0.2.62] - 2026-11-12
 
 ### Fixed
