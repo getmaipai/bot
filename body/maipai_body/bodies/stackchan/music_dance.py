@@ -137,14 +137,17 @@ class Sensitivity:
     mo_max: int  # at or above this share at 3 to 6 Hz it is speech
     ps_max: int = 40  # at or above this share of pauses it is speech...
     ps_tc_free: int = 50  # ...unless the beat is this steady (a sparse click track)
-    fl_max: int = 70  # at or above this flatness it is noise
+    fl_max: int = (
+        88  # at or above this flatness it is noise (white noise 97, a song across a room 47 to 85)
+    )
 
 
-# low wants a clearer beat; high takes a weaker one. UNMEASURED: tune from the logs.
+# low wants a clearer beat; high takes a weaker one. Tuned 2026-11-13 on one real song at 1 m
+# (tc 9 to 56, median 24).
 SENSITIVITIES: dict[str, Sensitivity] = {
-    "low": Sensitivity(tc_min=55, mo_max=40),
-    "medium": Sensitivity(tc_min=35, mo_max=45),
-    "high": Sensitivity(tc_min=25, mo_max=55),
+    "low": Sensitivity(tc_min=40, mo_max=40),
+    "medium": Sensitivity(tc_min=20, mo_max=45),
+    "high": Sensitivity(tc_min=14, mo_max=55),
 }
 
 

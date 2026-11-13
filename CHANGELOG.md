@@ -7,6 +7,13 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.68] - 2026-11-13
+
+### Changed
+
+- The music detector accepts a song heard across a room: the beat bar (medium) drops from 35 to 20 and
+  the noise flatness limit rises from 70 to 88, from one measured song (beat confidence 9 to 56, flatness 47 to 85).
+
 ## [0.2.67] - 2026-11-13
 
 ### Changed

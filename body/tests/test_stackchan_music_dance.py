@@ -139,16 +139,17 @@ def test_pauses_with_a_loose_beat_are_speech_but_a_steady_sparse_beat_is_music()
 
 
 def test_sensitivity_moves_the_beat_bar():
-    weak = replace(MUSIC, tc=30)
+    weak = replace(MUSIC, tc=16)
     assert not judge(weak, "low").music
     assert not judge(weak, "medium").music
     assert judge(weak, "high").music
-    assert judge(replace(MUSIC, tc=40), "medium").music
-    assert not judge(replace(MUSIC, tc=40), "low").music
+    assert judge(replace(MUSIC, tc=24), "medium").music  # a real song at 1 m: tc 9 to 56, median 24
+    assert not judge(replace(MUSIC, tc=24), "low").music
+    assert judge(replace(MUSIC, fl=80), "medium").music  # the same song measured flatness 47 to 85
 
 
 def test_a_running_stage_judges_a_little_more_gently():
-    dip = replace(MUSIC, tc=28)
+    dip = replace(MUSIC, tc=17)
     assert not judge(dip, "medium").music
     assert judge(dip, "medium", relaxed=True).music
 
