@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.72] - 2026-11-13
+
+### Fixed
+- StackChan firmware patch 119: no error chime and no error face on every failed reconnect while Home restarts (the repeated melody). Patch 105: a tap on the mouth or the forehead toggles mute and full quiet (it needed a 0.5 s hold, so taps did nothing); the hold still works.
+
 ## [0.2.71] - 2026-11-13
 
 ### Changed

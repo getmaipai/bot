@@ -351,6 +351,7 @@ apply_repo_patch 115-sounds-core.patch "$SRC"
 apply_repo_patch 116-sounds-device.patch "$SRC"
 apply_repo_patch 117-sound-events.patch "$SRC"
 apply_repo_patch 118-offline-phrases.patch "$SRC"
+apply_repo_patch 119-quiet-reconnect-errors.patch "$SRC"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"

@@ -1,0 +1,17 @@
+# Intent: stop the error chime and the error face on every failed reconnect (owner 2026-11-13: "it keeps playing this melody", heard each time Home restarted for an install). Upstream plays the exclamation tone and shows the circle_xmark face for each network error; the persistent websocket (patch 003) retries every 2 to 16 s, so a Home restart meant a chime every few seconds. The error is logged only; the standing offline look (patch 112) and the sound module (patches 115 to 118) cover the outage once, by their own rules.
+# Upstream: xiaozhi-esp32 main/application.cc (MIT). Applies after 118.
+# Check after a flash: stop the hub for 30 s: no chime on the retries, the offline look and the one offline sound at 10 s, then the back chime.
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -210,7 +210,9 @@
+ 
+         if (bits & MAIN_EVENT_ERROR) {
+             SetDeviceState(kDeviceStateIdle);
+-            Alert(Lang::Strings::ERROR, last_error_message_.c_str(), "circle_xmark", Lang::Sounds::OGG_EXCLAMATION);
++            // A failed reconnect while Home restarts used to chime and flash an error on every retry (patch 119).
++            // The standing offline look and the sound module cover the outage; the error is only logged.
++            ESP_LOGW(TAG, "Network error (no chime, no face): %s", last_error_message_.c_str());
+         }
+ 
+         if (bits & MAIN_EVENT_NETWORK_CONNECTED) {

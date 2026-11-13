@@ -82,14 +82,15 @@ static void test_eyes_toggle_vision_on_a_tap(void)
     CHECK(still(82, 97, 2000) == MTC_ACTION_NONE);
 }
 
-static void test_mouth_and_forehead_need_a_hold(void)
+static void test_mouth_and_forehead_take_a_tap_or_a_hold(void)
 {
-    CHECK(still(160, 159, 80) == MTC_ACTION_NONE);                 /* a plain tap on the mouth */
-    CHECK(still(160, 159, MTC_TAP_MAX_MS) == MTC_ACTION_NONE);
+    CHECK(still(160, 159, 80) == MTC_ACTION_MUTE);                 /* a plain tap on the mouth */
+    CHECK(still(160, 159, MTC_TAP_MAX_MS) == MTC_ACTION_MUTE);
+    CHECK(still(160, 159, MTC_TAP_MAX_MS + 1) == MTC_ACTION_NONE); /* the dead band */
     CHECK(still(160, 159, MTC_HOLD_MS - 1) == MTC_ACTION_NONE);
     CHECK(still(160, 159, MTC_HOLD_MS) == MTC_ACTION_MUTE);
     CHECK(still(160, 159, 3000) == MTC_ACTION_MUTE);
-    CHECK(still(160, 90, 80) == MTC_ACTION_NONE);                  /* a plain tap between the eyes */
+    CHECK(still(160, 90, 80) == MTC_ACTION_QUIET);                 /* a plain tap between the eyes */
     CHECK(still(160, 90, MTC_HOLD_MS) == MTC_ACTION_QUIET);
     CHECK(still(120, 40, MTC_HOLD_MS) == MTC_ACTION_QUIET);        /* above the left eye */
     CHECK(still(60, 190, MTC_HOLD_MS) == MTC_ACTION_NONE);         /* the rest of the face toggles nothing */
@@ -161,7 +162,7 @@ int main(void)
     test_regions_tile_the_screen();
     test_reserved_edges();
     test_eyes_toggle_vision_on_a_tap();
-    test_mouth_and_forehead_need_a_hold();
+    test_mouth_and_forehead_take_a_tap_or_a_hold();
     test_a_stray_finger_is_a_drag();
     test_hold_acts_while_the_finger_is_down();
     test_only_the_rest_of_the_face_listens();
