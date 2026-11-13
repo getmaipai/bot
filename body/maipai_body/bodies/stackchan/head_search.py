@@ -39,11 +39,23 @@ CLOSE_STEP_S = 0.9  # one pose, move and pause: about one fresh frame each at 2 
 CLOSE_SPEED = 300  # a stiff spring: the 15 degree step settles well inside the pose
 SPEAKER_PITCH_DEG = 15.0  # the glance up when someone speaks and no face is in view
 
-# A failed look (no face found) is not repeated at once: the wait grows 1, 3, 10 minutes and
-# resets when a face is found. "speaker" and "dark" have one fixed wait each.
-PERSON_BACKOFF_S = (60.0, 3 * 60.0, 600.0)
+# --- How rare the AMBIENT looks are (reasons "person", "close", "dark") --------------------------
+# Owner, 2026-11-13: "I notice it looking around too much." Live log 2026-11-13 09:00 to 09:50: 16
+# looks in 50 minutes (one in 3) while the owner sat at the desk and was seen in most minutes.
+# Every number that decides whether an ambient look may START is in this block. A spoken request
+# ("ask", "ask_level") and the look after someone spoke ("speaker") are exempt from all of it.
+AMBIENT_REASONS = ("person", "close", "dark")
+AMBIENT_FACE_QUIET_S = 300.0  # no ambient look within this long of a face: the person is there
+AMBIENT_MOVE_QUIET_S = 120.0  # nor within this long of the head last moving for any reason
+AMBIENT_HOLD_S = 8.0  # the same no-face trigger must hold this long unbroken, not one look
+AMBIENT_PER_HOUR = 4  # at most this many ambient looks starting in any 60 minutes
+# After a look that found nobody the next ambient look waits 5, 15, then 30 minutes (a face
+# resets it). The same picture waits longer still (STILL_BACKOFF_S in presence_watch.py).
+PERSON_BACKOFF_S = (300.0, 900.0, 1800.0)
 SPEAKER_COOLDOWN_S = 15.0
-DARK_COOLDOWN_S = 600.0
+# The dark check: a flat picture and a sensor at its floor. At most once in 30 minutes, and
+# never while a face, a body or movement was seen within AMBIENT_FACE_QUIET_S.
+DARK_COOLDOWN_S = 1800.0
 
 
 # --- The big, fast sweep for a spoken "turn to me" / "find me" / "over here" (reasons "ask" and
@@ -141,6 +153,7 @@ class HeadSearch:
         self.started_at: float | None = None
         self._last_done: dict[str, float] = {}
         self._failures = 0  # person looks that found nobody in a row
+        self._ambient_starts: list[float] = []  # when the ambient looks of the last hour began
 
     @property
     def active(self) -> bool:
@@ -163,6 +176,10 @@ class HeadSearch:
         current = self._clock() if now is None else now
         if self.active:
             return False
+        if reason in AMBIENT_REASONS:
+            recent = [t for t in self._ambient_starts if current - t < 3600.0]
+            if len(recent) >= AMBIENT_PER_HOUR:
+                return False
         last = self._last_done.get(reason)
         return last is None or current - last >= self.wait_s(reason)
 
@@ -171,6 +188,9 @@ class HeadSearch:
         steps = STEPS.get(reason, ())
         if not steps or not self.may_start(reason, current):
             return False
+        if reason in AMBIENT_REASONS:
+            self._ambient_starts = [t for t in self._ambient_starts if current - t < 3600.0]
+            self._ambient_starts.append(current)
         self.reason = reason
         self._steps = steps
         self._index = -1
@@ -219,6 +239,11 @@ class HeadSearch:
 
 
 __all__ = [
+    "AMBIENT_FACE_QUIET_S",
+    "AMBIENT_HOLD_S",
+    "AMBIENT_MOVE_QUIET_S",
+    "AMBIENT_PER_HOUR",
+    "AMBIENT_REASONS",
     "ASKED_REASONS",
     "ASK_FAST_SPEED",
     "ASK_FAST_STEP_S",

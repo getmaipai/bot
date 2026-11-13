@@ -959,3 +959,31 @@ def test_stop_cancels_the_hub_turn(monkeypatch):
     loop.run_until_complete(bridge._run("session", "02:00:00:00:00:15", FakeCapture()))
     loop.close()
     assert cancelled == ["turn-7"]
+
+
+def test_a_listen_right_after_a_line_it_said_on_its_own_is_closed_not_a_follow_up():
+    """Live log 2026-11-13 09:53 and 09:42: the unit re-opens listening when any playback ends,
+    so an orientation joke was followed by a listen nobody asked for."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    server = FakeServer()
+    server._loop = loop
+    now = [100.0]
+    bridge = StackChanTurnBridge(
+        server,
+        Link(),
+        Offline(),
+        stt_factory=FakeStt,
+        turn_factory=FakeTurn,
+        tts_factory=FakeTts,
+        clock=lambda: now[0],
+    )
+    bridge._reaction_ended_at = 98.0  # a line it said on its own ended two seconds ago
+    loop.run_until_complete(bridge.listen("session-reaction", "device", "start"))
+    assert "session-reaction" not in bridge._tasks and server.idles == ["device"]
+    now[0] = 110.0  # a person speaking later is a normal listen
+    loop.run_until_complete(bridge.listen("session-reaction", "device", "start"))
+    assert "session-reaction" in bridge._tasks
+    bridge._tasks["session-reaction"].cancel()
+    loop.run_until_complete(asyncio.sleep(0))
+    loop.close()

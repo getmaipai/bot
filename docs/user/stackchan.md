@@ -26,15 +26,18 @@ You can ask it anything you would ask Home: questions, timers, the weather, remi
 
 ## What the lights and faces mean
 
+The ring is dark most of the time. It lights only when it needs you or when it is listening or taking a picture.
+
 | You see | It means |
 |---|---|
-| Blue ring, steady | It is listening to you |
-| Green ring | Sound is being sent to your Home to be understood |
-| Purple ring, slow breathing | It is thinking |
-| White ring | It is speaking |
-| Dim white ring | Awake and waiting |
-| Pink flashes | The camera took a picture |
-| Amber ring | Something needs attention, for example the Home computer is not reachable |
+| Blue ring, steady | It is your turn: it is listening to you |
+| Green ring | Your voice is being sent to your Home to be understood |
+| Pink flashes, then steady pink | The camera is taking a picture |
+| Cyan ring, slow pulse | It needs you: setup or pairing is waiting for a person |
+| Amber ring, one short pulse every 10 seconds | Look at the screen: Home is not reachable, something is wrong, or the battery is low (not shown at night) |
+| No ring | Everything else: waiting, thinking, speaking, charging, sleeping, night |
+
+Thinking and speaking show on the face and in the voice, never on the ring. While it charges, the small red light on the back is on and the screen shows the battery.
 
 The ring is never red. A calm face is the normal look. A smile or a wink shows when it is happy. A surprised face shows when it is shaken or lifted. A small heart shows only when you pet its head, say something kind to it, or show it something sweet.
 
@@ -45,6 +48,7 @@ The ring is never red. A calm face is the normal look. A smile or a wink shows w
 - **Tap the face** to start listening. Tap it again while it listens or talks to make it stop.
 - **Pet its head** and it reacts. The heart goes away after a few seconds.
 - **Shake it or lift it** and it makes a surprised face and says something short.
+- **Tap the top of its head three times, quickly,** and it does a little dance (see below). Petting or stroking does not count.
 - **Swipe up from the face** for quick settings: volume and brightness sliders.
 
 <!-- picture: the quick settings sliders on the screen -->
@@ -57,6 +61,7 @@ The ring is never red. A calm face is the normal look. A smile or a wink shows w
 | "Brightness to 50", "make it dimmer" | Changes the screen brightness |
 | "Look left", "look up a little", "look around", "look at me" | Moves its head |
 | "Nod", "shake your head" | Nods or shakes |
+| "Dance", "do a dance", "can you dance", "dance for me" | Does its little dance |
 | "Can you see me?" | Tells you if it sees a face right now |
 | "What are you looking at?" | Tells you why its head is where it is |
 | "Stop", "be quiet", "never mind", "that's enough" | Stops and goes idle |
@@ -64,6 +69,16 @@ The ring is never red. A calm face is the normal look. A smile or a wink shows w
 A stop only counts when the whole sentence is the stop word. "Stop the presses" and "she ran through a stop sign" are ordinary sentences and go to your Home as usual. While it is talking, say "Hi, StackChan" to interrupt it.
 
 Left and right are the robot's own left and right.
+
+## The little dance
+
+It lasts about 12 seconds: the head sways and turns, the face changes between happy, a wink and surprised, and the light ring shows gold, lime and mint colours. Ask by voice, tap its head three times quickly, or use the Dance button in Settings (the robot's page).
+
+- It ends at once if you touch it, speak to it, shake or tilt it, or take a picture with it. Then the face and the ring go back to normal.
+- It does not dance while its battery is at 20 percent or lower (it can while charging), while it is offline, or if you turned dancing off.
+- It rests for a minute between dances. The head-tap dance happens at most 10 times a day.
+- At night, if you ask, it dances with its head and face only: no lights, no sound. Three taps do nothing at night.
+- Settings: **Dance** (on by default) and **Dance light show** (on by default) are in the robot's settings.
 
 ## Day and night
 

@@ -302,3 +302,59 @@ def test_the_sensors_are_untrusted_while_tilted_and_for_thirty_seconds_after():
     assert h.reactions.sensors_untrusted()
     h.now += 2
     assert not h.reactions.sensors_untrusted()
+
+
+# The unit's IMU is in the head: live log 2026-11-13 09:53:06, a look-around to 22 degrees up read
+# "on_back" (axis +z, gx=1 gy=512 gz=855) and the unit joked about the ceiling.
+HEAD_UP_READING = {"axis": "+z", "gx": 1, "gy": 512, "gz": 855}
+UPRIGHT_READING = {"axis": "+y", "gx": 7, "gy": 819, "gz": 545}
+REAL_ON_BACK = {"axis": "+z", "gx": 3, "gy": 120, "gz": 980}
+
+
+class HeadHarness(Harness):
+    def __init__(self, *, pitch=0.0, moved_ago=None, **kw):
+        super().__init__(**kw)
+        self.pitch = pitch
+        self.moved_ago = moved_ago
+        self.reactions._head_pitch_deg = lambda: self.pitch
+        self.reactions._head_moved_ago = lambda: self.moved_ago
+
+
+def test_a_steep_head_tilt_never_reads_as_the_body_on_its_back():
+    from maipai_body.bodies.stackchan.orientation import compensated_axis
+
+    assert compensated_axis(HEAD_UP_READING, 60.0) == "+y"
+    assert compensated_axis(HEAD_UP_READING, 22.0) == "+y"
+    assert compensated_axis(HEAD_UP_READING, 0.0) == "+z"  # no tilt known: the unit's word stands
+    h = HeadHarness(pitch=60.0, moved_ago=None)
+    assert h.reactions.on_event(HEAD_UP_READING) is False
+    assert h.reactions.pose == "upright" and h.lines == [] and h.faces == []
+
+
+def test_a_real_on_back_reading_with_the_head_level_still_triggers():
+    h = HeadHarness(pitch=0.0, moved_ago=None)
+    assert h.reactions.on_event(REAL_ON_BACK) is True
+    assert h.reactions.pose == "on_back" and len(h.lines) == 1
+
+
+def test_changes_are_ignored_for_four_seconds_after_a_head_move_and_while_tilted_up():
+    h = HeadHarness(pitch=0.0, moved_ago=1.0)
+    assert h.reactions.on_event(REAL_ON_BACK) is False  # the head just moved
+    h.moved_ago = 5.0
+    h.pitch = 30.0
+    assert h.reactions.on_event(REAL_ON_BACK) is False  # still tilted up past 25
+    h.pitch = 0.0
+    assert h.reactions.on_event(REAL_ON_BACK) is True
+
+
+def test_no_orientation_line_within_ten_seconds_of_a_head_move():
+    h = HeadHarness(pitch=0.0, moved_ago=6.0)  # past the settle time, inside the line quiet time
+    assert h.reactions.on_event(REAL_ON_BACK) is True
+    assert h.lines == []  # the pose changed, the face follows, but nothing is said
+    h2 = HeadHarness(pitch=0.0, moved_ago=11.0)
+    assert h2.reactions.on_event(REAL_ON_BACK) is True and len(h2.lines) == 1
+
+
+def test_upright_reading_from_the_log_with_the_head_down_stays_upright():
+    h = HeadHarness(pitch=0.0)
+    assert h.reactions.on_event(UPRIGHT_READING) is False

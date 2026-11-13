@@ -207,14 +207,16 @@ def test_all_seven_pass_with_good_fakes() -> None:
         Palette.BLUE,
         Palette.GREEN,
         Palette.PINK,
-        Palette.GREEN,
+        Palette.CYAN,
+        Palette.AMBER,
     ]
     keys = [
         looks.LookKey.IDLE,
         looks.LookKey.LISTENING,
         looks.LookKey.LIVE,
         looks.LookKey.CAMERA,
-        looks.LookKey.CHARGING,
+        looks.LookKey.PAIRING,
+        looks.LookKey.ATTENTION,
     ]
     for row, look in zip(keys, looks_seen[:-1], strict=True):
         colour, weight, style = looks.LOOKS[row]

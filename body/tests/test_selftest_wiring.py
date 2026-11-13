@@ -70,7 +70,7 @@ def test_the_hooks_list_seven_checks_and_hold_the_ring_while_running():
     results = run(["led"])
     assert [r["name"] for r in results] == ["led"]
     assert results[0]["status"] == "pass"
-    assert len(light.looks) == 6  # five looks and the final dark
+    assert len(light.looks) == 7  # six looks and the final dark
     assert light.held is False
     try:
         run(["nope"])

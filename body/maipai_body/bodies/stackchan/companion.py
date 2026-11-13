@@ -44,6 +44,13 @@ DIAGNOSTIC_KINDS = frozenset(
         "playback",
         "wifi",
         "offline_tap",
+        "coredump",
+        "heal",
+        "wake_selftest",
+        # On-unit timers (firmware patch 091): id, what, label, late, how, dropped.
+        "timer_fired",
+        "timer_ended",
+        "timer_missed",
     }
 )
 EVENT_KINDS = (

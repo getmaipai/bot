@@ -35,7 +35,11 @@ from typing import Any
 
 from maipai_body.bodies.stackchan.companion import DIAGNOSTIC_KINDS
 from maipai_body.bodies.stackchan.head_search import (
+    AMBIENT_FACE_QUIET_S,
+    AMBIENT_HOLD_S,
+    AMBIENT_MOVE_QUIET_S,
     ASKED_REASONS,
+    DARK_COOLDOWN_S,
     FACE_REASONS,
     GLANCE_PITCH_DEG,
     MOVE_SPEED,
@@ -237,6 +241,8 @@ class StackChanBehavior:
         )
         # The unit's own volume and brightness sliders: (volume, brightness), either may be None.
         self.on_levels_changed: Callable[[int | None, int | None], None] | None = None
+        # Every diagnostic event (kind, extra), for the self-healing state (xiaozhi server).
+        self.on_unit_event: Callable[[str, dict], object] | None = None
         # Gets the kinds of the events read ("head_touch", "shake", ...); set by the service wiring.
         self.reaction: Callable[[list[str]], object] | None = None
         self.reaction_tick: Callable[[], object] | None = None
@@ -250,6 +256,18 @@ class StackChanBehavior:
         # Tells the unit the hub is reachable, so it does not sleep or power off for being idle.
         self.keep_awake_tick: Callable[[], object] | None = None
         self.pose_held: Callable[[], bool] = lambda: False
+        # The little dance (dance.py, dance_wiring.py): settings, whether one is running (the
+        # ambient moves, the face watchdog and the look-around stay out of it), the unit's head
+        # events (three taps start one, a touch ends one) and the hub's "dance" device command.
+        from maipai_body.bodies.stackchan.dance import DanceSettings
+
+        self.dance_settings = DanceSettings()
+        self.dance_active: Callable[[], bool] = lambda: False
+        self.dance_events: Callable[[list, float], object] | None = None
+        self.dance_command: Callable[[dict], dict | None] = lambda _payload: {
+            "dance": "refused",
+            "why": "the dance is not ready",
+        }
         self._last_event_poll = float("-inf")
         self._last_touch_wake = float("-inf")
         self._event_queue_drained = False
@@ -277,6 +295,10 @@ class StackChanBehavior:
         self._find_request: tuple[str, float] | None = None
         # Says one line on the robot's own initiative (the turn bridge's speak_reaction).
         self.announce: Callable[[str], object] | None = None
+        # On-unit timers (bodies/stackchan/timers.py): told the unit's timer events; None when off.
+        self.timers: Any = None
+        # Called with each settings frame's values (timers, announcements).
+        self.settings_listeners: list[Callable[[dict], None]] = []
         # Told whenever a face is seen (a held "turn left" ends then).
         self.on_face_found: Callable[[], object] | None = None
         self._search_detail_seen = False
@@ -296,7 +318,8 @@ class StackChanBehavior:
         self._own_move_at = float("-inf")
         # Looks for a face started by the picture differing from the room, nothing moving: their
         # own back-off (STILL_BACKOFF_S) and the picture the last failed one saw.
-        self._search_cause: str | None = None
+        self._search_start_thumb: Any = None  # the picture that started the running ambient look
+        self._ambient_since: float | None = None  # when the current no-face trigger began to hold
         self._still_failures = 0
         self._still_failed_at = float("-inf")
         self._still_thumb: Any = None
@@ -380,6 +403,8 @@ class StackChanBehavior:
 
     def render_primitive(self, primitive: str) -> bool:
         if self.night_active() or self.pose_held() or self._rest.stage != "awake":
+            return False
+        if self.dance_active():
             return False
         # Ambient moves (the idle settle, face following) go through the one head-motion gate.
         if not self.head_gate.allow(f"ambient:{primitive}", response=self._active.is_set()):
@@ -636,15 +661,17 @@ class StackChanBehavior:
 
     SEARCH_MOTION_FRESH_S = 5.0  # something moved this recently: someone seems to be there
     SEARCH_FACE_GONE_S = 5.0  # and no face was seen for this long: it is out of the picture
-    DARK_CONFIRMED_S = 600.0  # a confirmed dark holds this long before the robot looks again
+    DARK_CONFIRMED_S = DARK_COOLDOWN_S  # a confirmed dark holds this long before it looks again
     CAMERA_BLOCKED_S = 300.0  # detail while looking around a "dark" picture: something is in front
 
     def search_tick(self, now: float) -> None:
         """Drive a look around, or start one when the picture calls for it (presence loop)."""
-        from maipai_body.bodies.stackchan.presence_watch import PERSON_SHARE
-
         search = self._search
         in_turn = self._active.is_set()
+        if self.dance_active():
+            if search.active:
+                self._end_search(now, "a dance started")
+            return
         if not search.active and self._tracker_tick(now, in_turn):
             return
         if search.active:
@@ -714,6 +741,7 @@ class StackChanBehavior:
             or self.night_active()
             or self.watch_level() == "off"
         ):
+            self._ambient_since = None
             return
         from maipai_body.bodies.stackchan.vision_post import light_bucket
 
@@ -724,12 +752,7 @@ class StackChanBehavior:
         flat_verdict = light_bucket(None, self.lux(), flat=True) if flat else "n/a"
         no_face = face_age is None or face_age > self.SEARCH_FACE_GONE_S
         moved = motion_age is not None and motion_age <= self.SEARCH_MOTION_FRESH_S
-        different = (
-            look is not None
-            and not flat
-            and self._person_share >= PERSON_SHARE
-            and self._still_look_due(now, look[3] if len(look) > 3 else None)
-        )
+        thumb = look[3] if look is not None and len(look) > 3 else None
         if no_face and self._search_after_turn:
             self._search_after_turn = False
             box = (
@@ -743,34 +766,53 @@ class StackChanBehavior:
             elif search.start("speaker", now):
                 logger.info("StackChan looking for the person who spoke: no face was in view")
             return
-        # Person-like: the picture differs from the learned empty room, or moves, or is flat
-        # while the sensor says the room is lit (a body or an arm right against the lens), or
-        # the Look detector hints at a person below its threshold (measured 2026-11-12: a dark
-        # hoodie filling the frame scores 0.05 to 0.17, nothing a detector calls a person). The
-        # glance up and the small sweep look for the face; a person box or a face hands over to
-        # the tracker at once.
+        # Person-like: something moves with no face in view, or the picture is flat while the
+        # sensor says the room is lit (a body or an arm right against the lens), or the Look
+        # detector hints at a person below its threshold (measured 2026-11-12: a dark hoodie
+        # filling the frame scores 0.05 to 0.17). A picture that merely differs from the learned
+        # empty room starts nothing (2026-11-13: it started 16 looks in 50 minutes at the desk;
+        # it still lights the ring, `_note_sees`). An AMBIENT look needs all of: the same trigger
+        # held AMBIENT_HOLD_S unbroken, no face for AMBIENT_FACE_QUIET_S, no head move for
+        # AMBIENT_MOVE_QUIET_S, a picture unlike the one a failed look saw, and the hourly cap
+        # (HeadSearch.may_start). A person box or a face hands over to the tracker at once.
         hint = self._person_hint() >= PERSON_HINT_SCORE
         close = flat and flat_verdict is None  # a body right in front of the lens, lit room
-        if no_face and (different or moved or hint or close):
-            # Right in front of the lens the face is far above the picture: the steep climb.
-            reason = "close" if close else "person"
-            if search.start(reason, now):
-                self._search_cause = (
-                    "flat" if close else "moved" if moved else "different" if different else "hint"
-                )
-                logger.info(
-                    "StackChan looking for a face: %s, no face in the picture",
-                    "something is right against the lens in a lit room (climbing)"
-                    if close
-                    else f"the picture differs from the empty room in {self._person_share:.0%}"
-                    if different
-                    else f"the picture moved {motion_age:.0f} s ago"
-                    if moved
-                    else f"the detector hints at a person ({self._person_hint():.2f})",
-                )
+        triggered = no_face and (moved or hint or close)
+        if not triggered:
+            self._ambient_since = None
+        elif self._ambient_since is None:
+            self._ambient_since = now
+        calm = (face_age is None or face_age > AMBIENT_FACE_QUIET_S) and (
+            now - self._own_move_at > AMBIENT_MOVE_QUIET_S
+        )
+        if triggered:
+            held = now - (self._ambient_since or now) >= AMBIENT_HOLD_S
+            if calm and held and self._still_look_due(now, thumb):
+                # Right in front of the lens the face is far above the picture: the steep climb.
+                reason = "close" if close else "person"
+                if search.start(reason, now):
+                    self._ambient_since = None
+                    self._search_start_thumb = thumb
+                    logger.info(
+                        "StackChan looking for a face: %s, no face in the picture",
+                        "something is right against the lens in a lit room (climbing)"
+                        if close
+                        else f"the picture moved {motion_age:.0f} s ago"
+                        if moved
+                        else f"the detector hints at a person ({self._person_hint():.2f})",
+                    )
             return
         self._search_after_turn = False
-        if flat and flat_verdict == "dark" and not hint and not self.dark_confirmed(now):
+        # The dark check: nothing in view at all (no face, body or movement within the quiet
+        # time), so a dark picture can never send the head looking while someone is there.
+        if (
+            flat
+            and flat_verdict == "dark"
+            and not hint
+            and not self.dark_confirmed(now)
+            and calm
+            and now - self._last_person_seen > AMBIENT_FACE_QUIET_S
+        ):
             if search.start("dark", now):
                 self._search_detail_seen = False
                 logger.info(
@@ -1035,6 +1077,14 @@ class StackChanBehavior:
         """The head is being moved by the robot itself: the picture will move for a moment."""
         self._own_move_flag = True
 
+    def head_moved_ago(self) -> float | None:
+        """Seconds since the robot last moved its own head (None if it has not)."""
+        if self._own_move_flag:
+            return 0.0
+        if self._own_move_at == float("-inf"):
+            return None
+        return max(0.0, time.monotonic() - self._own_move_at)
+
     def _real_motion_age(self, now: float) -> float | None:
         """Seconds since something other than the robot's own head move stirred the picture."""
         from maipai_body.bodies.stackchan.presence_watch import OWN_MOVE_BLIND_S
@@ -1149,11 +1199,12 @@ class StackChanBehavior:
             if found:
                 self._still_failures = 0
                 self._still_thumb = None
-            elif self._search_cause == "different" and why == "done":
+            elif why == "done" and reason != "speaker":
+                # The picture that started the look is the one the next must differ from (the
+                # picture at the end is from the swept pose, never the room at rest).
                 self._still_failures += 1
                 self._still_failed_at = now
-                look = self._vision.latest_look(max_age_s=5.0) if self._vision is not None else None
-                self._still_thumb = look[3] if look is not None and len(look) > 3 else None
+                self._still_thumb = self._search_start_thumb
                 wait = max(
                     wait, STILL_BACKOFF_S[min(self._still_failures, len(STILL_BACKOFF_S)) - 1]
                 )
@@ -1162,7 +1213,6 @@ class StackChanBehavior:
                 why,
                 "" if found else f"; the next look waits {wait:.0f} s at least",
             )
-        self._search_cause = None
         if found:
             return  # following takes over from where the face is
         # Back to the resting pose: essential, so it never counts against the gate's cap.
@@ -1269,8 +1319,6 @@ class StackChanBehavior:
             motion_age = self._real_motion_age(now)
             if motion_age is not None and motion_age <= 1.0:
                 self._last_person_seen = now
-                self._still_failures = 0
-                self._still_thumb = None
             self._note_room(now, newest, motion_age)
             return False
         self._missed_looks = 0
@@ -1448,11 +1496,25 @@ class StackChanBehavior:
                 except Exception:
                     self._warn_limited("levels", "StackChan level sync failed")
         events = [e for e in events if getattr(e, "kind", None) != "level_changed"]
+        timer_rang = False
+        for event in events:
+            if str(getattr(event, "kind", "")).startswith("timer_"):
+                timer_rang = timer_rang or event.kind == "timer_fired"
+                if self.timers is not None:
+                    try:
+                        self.timers.on_event(event.kind, getattr(event, "extra", None))
+                    except Exception:
+                        self._warn_limited("timers", "StackChan timer event failed")
         for event in events:
             if getattr(event, "kind", None) in DIAGNOSTIC_KINDS:
                 extra = getattr(event, "extra", None) or {}
                 if self.unit_facts is not None:
                     self.unit_facts.observe(event.kind, extra)
+                if self.on_unit_event is not None:
+                    try:
+                        self.on_unit_event(event.kind, extra)
+                    except Exception:
+                        self._warn_limited("unit-event", "StackChan self-heal event hook failed")
                 if event.kind == "stop_word" and "cmd" in extra:
                     verdict = "accepted" if extra.get("accepted") else "rejected"
                     logger.info(
@@ -1485,6 +1547,12 @@ class StackChanBehavior:
                     "state_guard": "unit wake",
                     "wifi": "unit wifi",
                     "offline_tap": "unit offline",
+                    "coredump": "unit crash",
+                    "heal": "unit heal",
+                    "wake_selftest": "unit wake",
+                    "timer_fired": "unit timer",
+                    "timer_ended": "unit timer",
+                    "timer_missed": "unit timer",
                 }.get(event.kind, "unit touch")
                 logger.info("%s: %s %s", label, event.kind, detail)
         events = [e for e in events if getattr(e, "kind", None) not in DIAGNOSTIC_KINDS]
@@ -1503,11 +1571,23 @@ class StackChanBehavior:
                     if paused or not self._event_queue_drained
                     else "",
                 )
+        if timer_rang and asleep and now - self._last_touch_wake >= TOUCH_WAKE_COOLDOWN_S:
+            # A timer or alarm ringing is not old news and not a touch: the unit shows it, and the
+            # rest policy must not put the face back to sleep over it.
+            self._last_touch_wake = now
+            self._last_person_seen = now
+            logger.info("StackChan woke up for a timer")
+            return True
         if paused or not self._event_queue_drained:
             self._event_queue_drained = True
             return False
         if not events:
             return False
+        if self.dance_events is not None:
+            try:
+                self.dance_events(events, now)  # three taps start a dance, a touch ends one
+            except Exception:
+                self._warn_limited("dance", "StackChan dance touch handling failed")
         kinds = [_reaction_kind(event) for event in events]
         if self.reaction is not None:
             try:
@@ -1535,7 +1615,7 @@ class StackChanBehavior:
         With no turn active for ``FACE_QUIET_S`` and the rest policy awake, resend the idle face
         once if the last frame was not idle (or never arrived), then every ``FACE_REFRESH_S``.
         """
-        if self._active.is_set() or self.pose_held():
+        if self._active.is_set() or self.pose_held() or self.dance_active():
             self._face_quiet_since = None
             return False
         if self._face_quiet_since is None:
@@ -1604,7 +1684,11 @@ class StackChanBehavior:
 
 
 def _start_stackchan_night(
-    voice, behavior: StackChanBehavior, link: LinkLifecycle | None, stop_event: threading.Event
+    voice,
+    behavior: StackChanBehavior,
+    link: LinkLifecycle | None,
+    stop_event: threading.Event,
+    hub_handlers: dict[str, Callable[[dict], Any]] | None = None,
 ) -> NightController:
     """BOT-FACE-NIGHT-01: the face color and night rule on a StackChan.
 
@@ -1627,8 +1711,13 @@ def _start_stackchan_night(
             return _decode_jpeg(data)
 
     def leds(on: bool) -> None:
-        if not on:  # back on: the expression engine repaints the ring itself
-            voice.robot.robot.leds.many([{"index": i, "rgb": [0, 0, 0]} for i in range(12)])
+        """The night controller tells the one ring writer (the light service) the room is dark;
+        it never writes a pixel itself. The service may not exist yet at the first call, so the
+        state is kept on the behavior and handed over when the service starts."""
+        behavior.ring_dark_room = not on
+        setter = getattr(behavior, "set_ring_dark_room", None)
+        if setter is not None:
+            setter(not on)
 
     levels = OwnerLevels(_data_dir() / "owner_levels.json")
     levels.load()
@@ -1677,7 +1766,13 @@ def _start_stackchan_night(
             behavior.on_idle_level()
         if "robot.vision" in values and behavior.vision_poster is not None:
             behavior.vision_poster.set_mode(values.get("robot.vision"))
+        behavior.dance_settings.apply(values)
         night.apply_settings(values)
+        for listener in behavior.settings_listeners:
+            try:
+                listener(values)
+            except Exception:
+                logger.warning("a settings listener failed", exc_info=True)
 
     if link is not None:
         channel = CommandChannel(
@@ -1685,6 +1780,10 @@ def _start_stackchan_night(
             "",
             credentials=_command_credentials(link),
             settings_handler=apply_settings,
+            handlers={
+                "dance": lambda payload: behavior.dance_command(payload),
+                **(hub_handlers or {}),
+            },
             on_drop=link.channel_lost,
         )
         threading.Thread(
@@ -1694,6 +1793,76 @@ def _start_stackchan_night(
         target=night.run, args=(stop_event,), name="stackchan-night", daemon=True
     ).start()
     return night
+
+
+def _wire_timers_and_announcements(
+    voice, behavior: StackChanBehavior, stop_event: threading.Event
+) -> dict[str, Callable[[dict], Any]]:
+    """On-unit timers and hub announcements: the hub commands that drive them.
+
+    Returns the extra `device-command` handlers for the StackChan command channel. The unit keeps
+    and rings the timers itself (firmware patches 090 to 094); this only sets, lists and cancels
+    them, says the line, and counts what is active for the check-in."""
+    from maipai_body.bodies.stackchan.announce import Announcer
+    from maipai_body.bodies.stackchan.timers import TimerService
+
+    def say(text: str) -> bool:
+        return bool(behavior.announce is not None and behavior.announce(text))
+
+    announcer = Announcer(
+        show=lambda text: voice.robot.client.push_action(
+            "create_reminder", {"duration_seconds": 1, "message": text, "repeat": False}
+        ),
+        say=say,
+        night=lambda: bool(behavior.night_active()),
+        clock=time.monotonic,
+    )
+    timers = TimerService(
+        voice.robot.client._call,
+        say=say,
+        muted=lambda: announcer.muted,
+        night=lambda: bool(behavior.night_active()),
+        clock=time.monotonic,
+    )
+    behavior.timers = timers
+    behavior.settings_listeners += [timers.apply_settings, announcer.apply_settings]
+
+    def refresh(_device_id: str) -> None:
+        timers.forget()
+
+        def list_once() -> None:
+            try:
+                timers.list_timers()
+            except Exception:
+                logger.debug("the unit's timers could not be listed", exc_info=True)
+
+        threading.Timer(3.0, list_once).start()
+
+    voice.session_listeners.append(refresh)
+
+    def ticks() -> None:
+        while not stop_event.wait(1.0):
+            for tick in (timers.tick, announcer.tick):
+                try:
+                    tick()
+                except Exception:
+                    logger.warning("timer or announcement tick failed", exc_info=True)
+
+    threading.Thread(target=ticks, name="stackchan-timer-ticks", daemon=True).start()
+
+    def set_muted(muted: bool) -> Callable[[dict], dict]:
+        def handle(_payload: dict) -> dict:
+            announcer.muted = muted
+            return {"muted": muted}
+
+        return handle
+
+    return {
+        **timers.handlers(),
+        "announce": announcer.handle,
+        "mute": set_muted(True),
+        "unmute": set_muted(False),
+    }
 
 
 def _turn_sink(behavior, light):
@@ -1800,7 +1969,8 @@ async def _serve_stackchan_channels(
         behavior.vision_poster = VisionPoster(_hub_credentials_reader(link, ""))
         behavior.lux = lambda: getattr(voice.robot.client, "last_lux", None)
         _start_robot_checkin(voice, behavior, link, stop_event)
-    night = _start_stackchan_night(voice, behavior, link, stop_event)
+    timers = _wire_timers_and_announcements(voice, behavior, stop_event)
+    night = _start_stackchan_night(voice, behavior, link, stop_event, timers)
     behavior._rest_renderer._set_brightness = night._device.set_brightness
     behavior._rest_renderer._restore_brightness = night.effective_brightness
     behavior.on_levels_changed = night.set_levels_from_unit
@@ -1838,6 +2008,8 @@ async def _serve_stackchan_channels(
         on_battery=power.on_battery_status,
     )
     behavior._rest_renderer._set_ring_sleeping = light.set_sleeping
+    behavior.set_ring_dark_room = light.set_dark_room
+    light.set_dark_room(bool(getattr(behavior, "ring_dark_room", False)))
     from maipai_body.bodies.stackchan.estop_recovery import EstopRecovery
 
     def device_answers() -> bool:
@@ -1855,7 +2027,17 @@ async def _serve_stackchan_channels(
         daemon=True,
     ).start()
     voice.robot.robot._driver("camera").cue_sink = light.cue_camera
-    behavior.on_sees = lambda state: light.update(sees=state)
+    # Self-healing (design note stackchan-self-healing-2026-11-13): what the unit says about its
+    # restart guard, the wake engine test answers, and the ring's fault look while it holds.
+    voice.heal.on_hold = lambda hold: light.update(fault=hold)
+
+    def _heal_event(kind: str, extra: dict) -> None:
+        voice.heal.observe(kind, extra)
+        voice.wake_tester.on_event(kind, extra)
+
+    behavior.on_unit_event = _heal_event
+    avatar.unit_idle = lambda: not behavior._active.is_set()
+    avatar.request_restart = voice._request_unit_restart
     from maipai_body.bodies.stackchan.uplink_stats import UplinkStats
 
     uplink = UplinkStats()
@@ -1891,6 +2073,18 @@ async def _serve_stackchan_channels(
             face_yaw=behavior.face_yaw,
         )
         behavior.on_face_found = head_commander.face_found
+        from maipai_body.bodies.stackchan.dance_wiring import wire_dance
+        from maipai_body.bodies.stackchan.head_commands import CENTRE_PITCH, CENTRE_YAW, SPEED
+
+        wire_dance(
+            voice=voice,
+            behavior=behavior,
+            light=light,
+            night=night,
+            head_commander=head_commander,
+            level_head=lambda: _move_head(CENTRE_YAW, CENTRE_PITCH, SPEED),
+            device_connected=device_connected,
+        )
 
         bridge = StackChanTurnBridge(
             voice,
@@ -2723,6 +2917,8 @@ def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power:
         quiet=lambda: ("night mode is on" if night.night else "") or ("asleep" if asleep() else ""),
         busy=behavior.reaction_blocked,
         resting=lambda: behavior._rest.stage != "awake",
+        head_pitch_deg=lambda: behavior._tracker.pose[1],
+        head_moved_ago=behavior.head_moved_ago,
     )
     behavior.orientation = orientation
     night.sensors_blocked = orientation.sensors_untrusted
@@ -2789,6 +2985,7 @@ def _start_robot_checkin(voice: Any, behavior: Any, link: LinkLifecycle, stop_ev
             status=status,
             bot_version=_app_version(),
             now=time.time(),
+            timers_active=behavior.timers.active_count() if behavior.timers is not None else None,
         )
 
     reporter = RobotCheckin(

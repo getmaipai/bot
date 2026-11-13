@@ -72,7 +72,7 @@ def test_alert_fallback_uses_face_led_and_spoken_line():
     robot.lease.acquire("person", "test")
     robot.alerts.show(message="Door is open")
 
-    assert device.led_color != (0, 0, 0)
+    assert device.led_color == (0, 0, 0)  # no orange ring: the ring has one writer
     assert device.push_actions[-1] == ("speak", {"text": "Door is open"})
 
 
@@ -121,5 +121,5 @@ def test_alert_falls_back_when_device_does_not_advertise_notify():
 
     adapter.robot.alerts.show(message="Door is open")
 
-    assert device.led_color == (168, 36, 0)
+    assert device.led_color == (0, 0, 0)  # no orange ring: the ring has one writer
     assert device.push_actions[-1] == ("speak", {"text": "Door is open"})

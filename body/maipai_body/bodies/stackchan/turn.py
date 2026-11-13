@@ -55,6 +55,11 @@ POPUP_HOLD_S = 0.3
 # long to speak before the turn ends quietly (default 5; a quiet room must not keep it listening).
 FOLLOW_UP_S = 5.0
 FOLLOW_UP_AFTER_S = 2.0
+# The unit re-opens listening by itself when any playback ends. After a line the robot said on its
+# own (an orientation joke, a reaction) nobody was asked anything, so a listen that starts this
+# soon after the line is not a follow-up: it is closed at once (live log 2026-11-13 09:53 and
+# 09:42: "it said something and listened when I didn't say anything").
+REACTION_LISTEN_S = 4.0
 # The unit can end up listening without having told the host (no "listen start" arrives after a
 # reply, host log 2026-10-22: audio frames flow, nothing answers, until the unit's own guard resets
 # it). This many frames in a row, right after a turn, start the listen from the audio itself.
@@ -589,6 +594,7 @@ class StackChanTurnBridge:
         self.on_reply_mood = on_reply_mood
         self.on_turn_end = None
         self._reaction_speaking = False
+        self._reaction_ended_at = float("-inf")
         self._reaction_lock = threading.Lock()
         # The expression and light sinks make blocking device calls that wait on this very event
         # loop; run inline they froze it until each 5 s timeout (live log 2026-10-20: 5 s to start
@@ -722,6 +728,11 @@ class StackChanTurnBridge:
         if aec is not None:
             self._aec[session_id] = bool(aec)
         LOG.info("StackChan voice: listen %s (mode %s) for session %s", state, mode, session_id[:8])
+        if state == "start" and self._clock() - self._reaction_ended_at < REACTION_LISTEN_S:
+            LOG.info("StackChan voice: no follow-up listen after a line it said on its own")
+            self._quiet_idle.add(session_id)
+            await self._go_idle(device_id)
+            return
         if state == "detect":
             self._record_uplink(0, 0.0, detect=True)
         if state in {"start", "detect"}:
@@ -1076,8 +1087,10 @@ class StackChanTurnBridge:
                     if line:
                         await asyncio.to_thread(self._say, playback, base, cookie, line)
                         self._breaker.note_speech()
-                    if head_command.kind == "face":
-                        # "Turn to me": end the follow-up listening now. The camera sends no frames
+                    if head_command.kind in ("face", "dance"):
+                        # "Dance" ends the turn the same way: the dance starts once the turn is
+                        # over (never during one). "Turn to me": end the follow-up listening now.
+                        # The camera sends no frames
                         # while the unit listens or speaks, so the look for the face can only start
                         # (and see) once the unit is idle; it begins on the next presence tick.
                         LOG.info("StackChan voice: face request answered; going idle for the look")
@@ -1306,6 +1319,7 @@ class StackChanTurnBridge:
             self._say(playback, base, cookie, text)
         finally:
             self._reaction_speaking = False
+            self._reaction_ended_at = self._clock()
             self._notify(self.on_turn_end, None)
 
     def _offline_line(self, playback) -> None:

@@ -144,7 +144,7 @@ the encode alone is 83 ms, so 5 is the ceiling at 320x240. Not built here (a fir
 
 ## The vision indicator (owner request, 2026-11-12, mid-test)
 
-Three steady pink looks on the ring through the light service, behind `robot.indicator.sees` (off by default, so the idle ring stays dark
+(Removed 2026-11-13 by the owner: no pink "I see someone" glow; the tracker keeps working without a light.) Three steady pink looks on the ring through the light service, behind `robot.indicator.sees` (off by default, so the idle ring stays dark
 per the 2026-10-21 ruling): faint for a possible person (movement, a picture unlike the empty room, or a detector hint of 0.1 or more),
 medium for a person box, full for a face; the glow holds two seconds between looks. Steady, so it never reads as the flashing camera cue;
 the cues, the alarm, a fault, listening, thinking, speaking, held, muted, updating, pairing, connecting, offline and battery low win over

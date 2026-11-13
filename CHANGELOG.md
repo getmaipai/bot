@@ -7,6 +7,27 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+
+## [0.2.65] - 2026-11-13
+
+### Added
+- Self-healing (firmware patches 083 to 086, host watchdog, check-in): the unit's wake front end no longer waits on a missing echo reference (patch 083), it keeps a core dump of its last crash in flash and reports it at the next boot (patch 084), restarts itself when its audio stalls with a guard against restart loops (patch 085) and tests and rebuilds its wake engine in place (patch 086). The host watches a 120 second window of tool results and restarts the unit when answers stop; the hourly check-in carries the restart count, the hold state and the microphone level.
+- The StackChan little dance (host side, no firmware change): about 12 seconds of the firmware's happy, robot and happy dances with wink and surprised faces between and a gold, lime and mint light show on the ring. Started by "dance" (and "do a dance", "can you dance", "dance for me", "show me a dance", answered before the hub is asked; "dance" is no longer refused), by a hub `dance` device command, or by three quick taps on the head. Ends at once on a touch, wake word, shake, tilt, picture, low battery or offline. Settings `robot.dance.enabled` and `robot.dance.show_ring` (default on). Design: `docs/dev/stackchan-little-dance-2026-11-13.md`.
+- StackChan timers and alarms kept and rung by the unit itself (firmware patches 090 to 094, `bodies/stackchan/timers.py`): up to 8, a timer of up to 24 hours or an alarm at the next HH:MM, saved in the unit's own flash so they survive a reboot and ring with Home off; a cyan breathing ring, a card, a tone, ended by a touch, the stop word or after a minute; Home's voice commands `timer_set`, `alarm_set`, `timer_list`, `timer_cancel`, `timer_stop`, `timer_snooze`; the check-in reports `timers_active`. Needs a firmware build and a Home change (`docs/dev/stackchan-timers-and-announcements-2026-11-13.md`). Setting: `robot.timers.enabled`.
+- Hub announcements: Home's `announce` command shows a card and tone on the unit and says the line, refused when muted, in full quiet, or at night unless urgent (`bodies/stackchan/announce.py`).
+- The firmware strip (patches 095 to 099, `docs/dev/stackchan-firmware-strip-2026-11-13.md`): the assets partition grows to 0x5F0000 (the core dump partition moves to 0xFF0000), the Chinese font and emoji set, the vendor apps, Bluetooth and the JPEG decoder are gone, and the unit is Wi-Fi only with fewer built-in sounds. The partition table changes, so the first flash writes it before the rest.
+
+### Changed
+- StackChan lights follow the owner-approved ring standard (2026-11-13, `docs/dev/led-standard-2026-10-20.md`): the ring is dark unless it says something a person needs now. Five lit rows, five colours: green (your voice is leaving), pink (a picture), cyan (needs you), amber (look at the screen) and blue (your turn). Offline for 10 s, a fault and a low battery share one amber pulse every 10 s at brightness 0.3 (dark at night); a test parses the standard's table and fails when a `LookKey` or a look differs from it.
+- The ring has one writer, the light service: the camera adapter only raises the camera cue, the night controller and the rest renderer tell the service the room is dark or the robot asleep, and the orange notification fallback is gone. Asleep or at night the ring is dark (the capture cues excepted) and waking never relights it.
+
+### Fixed
+- The charging flap: a failed battery read (firmware patch 009 turns it into 0 percent, not charging) is now unknown and keeps the last state, and a charging or low-battery change counts only after two reads in a row agree.
+- Head moves stay inside the head's travel, ambient looking around is rare (quiet times, a hold after a face lock, an hourly cap), and a head tilt is no longer read as the body lying on its back.
+
+### Removed
+- The ring rows with no sender or no owner: sleep glow, charging breathe, thinking, speaking, connecting, error, offline double pulse, battery low pulse (merged into the one amber), alarm, held, muted, offer, updating, and the pink "I see someone" glow. The settings `robot.indicator.sleep_eyes`, `robot.indicator.alarm` ("Blink amber when I tip or fall", a light nothing ever sent) and `robot.indicator.sees` are no longer declared; stored values are ignored.
+
 ## [0.2.64] - 2026-11-12
 
 ### Added

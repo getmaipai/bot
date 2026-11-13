@@ -1,13 +1,21 @@
 """EYES-02: the one look table, and the only site of a colour or a level.
 
 Nothing else in ``indicator/`` names a palette member or a brightness
-number (a grep test holds that line). The palette has no red; the eyes
-never show an alarm in red, and the alarm blinks no faster than
-``ALARM_PERIOD_S``.
+number (a grep test holds that line). The palette has no red.
 
-The live cue (green: the voice is being sent to the hub) and the camera
-cue outrank everything, ignore the day, night and child levels, and never
-fall below their floors. ``robot.indicator.enabled`` does not reach them.
+The table is the ring standard approved by the owner on 2026-11-13
+(``docs/dev/led-standard-2026-10-20.md``, "The ring table"): the ring is
+dark unless it tells a person something they need right now. Five colours,
+one meaning each: green = your voice is leaving the robot, pink = a picture
+is being taken, cyan = I need a person, amber = look at the screen, blue =
+your turn. A test parses that table and fails when a ``LookKey`` or a look
+differs from it.
+
+The live cue (green) and the camera cue (pink) outrank everything, ignore
+the day, night and child levels, and never fall below their floors.
+``robot.indicator.enabled`` does not reach them. Asleep, the ring is dark
+except for those two. At night (quiet hours or a dark room) the amber
+attention pulse stays dark too.
 """
 
 from __future__ import annotations
@@ -29,8 +37,8 @@ LIVE_FLOOR = 0.5
 CAMERA_FLOOR = 0.5
 # A capture cue is shown at least this long, however briefly the capture lasted.
 CUE_HOLD_S = 0.5
-# One full blink of the alarm (bright then dim). Never faster than 1 Hz.
-ALARM_PERIOD_S = 1.0
+# The attention row shows only after its cause has lasted this long (a blip is not news).
+ATTENTION_AFTER_S = 10.0
 
 # The levels the settings keys scale and declare.
 DAY_LEVEL_DEFAULT = 0.6
@@ -46,67 +54,30 @@ LOWEST_NIGHT_FACTOR = 0.4
 class LookKey(StrEnum):
     LIVE = "live"
     CAMERA = "camera"
-    ALARM = "alarm"
-    ALARM_DIM = "alarm_dim"
-    HELD = "held"
-    MUTED = "muted"
-    IDLE = "idle"
-    LISTENING = "listening"
-    THINKING = "thinking"
-    SPEAKING = "speaking"
-    SLEEP = "sleep"
-    OFFER = "offer"
-    ERROR = "error"
-    CONNECTING = "connecting"
-    OFFLINE = "offline"
     PAIRING = "pairing"
-    CHARGING = "charging"
-    BATTERY_LOW = "battery_low"
-    UPDATING = "updating"
-    DANCING = "dancing"
-    # The vision indicator (owner request 2026-11-12): steady pink, faint for a possible person,
-    # medium for a person box, full for a face. Behind ``robot.indicator.sees``, off by default.
-    SEES_MAYBE = "sees_maybe"
-    SEES_PERSON = "sees_person"
-    SEES_FACE = "sees_face"
+    ATTENTION = "attention"
+    LISTENING = "listening"
+    # The one decorative show. The little dance (dance.py) paints its own light show; the light
+    # service raises ``dancing`` and stops painting while it runs.
+    DANCE = "dance"
+    IDLE = "idle"
 
 
-# row: (colour, weight, style). The weight is the share of the day or night level
-# the row uses; the cues and the alarm are not scaled by it (see ``resolve``).
+# row: (colour, weight, style). For the share rows (listening) the weight is the share of the
+# day or night level; the cues keep their floors; pairing and attention are fixed brightnesses.
 LOOKS: dict[LookKey, tuple[Palette, float, LookStyle]] = {
     LookKey.LIVE: (Palette.GREEN, 1.0, LookStyle.STEADY),
     LookKey.CAMERA: (Palette.PINK, 1.0, LookStyle.FLASH),
-    LookKey.ALARM: (Palette.AMBER, 1.0, LookStyle.STEADY),
-    LookKey.ALARM_DIM: (Palette.AMBER, 0.15, LookStyle.STEADY),
-    LookKey.HELD: (Palette.MAGENTA, 0.5, LookStyle.STEADY),
-    LookKey.MUTED: (Palette.AMBER, 0.4, LookStyle.STEADY),
-    # Idle, awake is dark (owner ruling 2026-10-21: no lights for idle); weight 0 resolves to None.
-    LookKey.IDLE: (Palette.WHITE, 0.0, LookStyle.STEADY),
-    LookKey.LISTENING: (Palette.BLUE, 1.0, LookStyle.STEADY),
-    LookKey.THINKING: (Palette.MAGENTA, 0.8, LookStyle.BREATHE),
-    LookKey.SPEAKING: (Palette.WHITE, 1.0, LookStyle.STEADY),
-    LookKey.SLEEP: (Palette.BLUE, 0.3, LookStyle.STEADY),
-    # OFFER-01: the robot has asked and listens locally for a yes or no. Not green: nothing
-    # is leaving for the hub. THERMAL-01/MOTOR-RECOVER-01: a real fault, steady amber (no red).
-    LookKey.OFFER: (Palette.BLUE, 0.6, LookStyle.STEADY),
-    LookKey.ERROR: (Palette.AMBER, 0.7, LookStyle.STEADY),
-    LookKey.CONNECTING: (Palette.BLUE, 0.5, LookStyle.PULSE),
-    LookKey.OFFLINE: (Palette.AMBER, 0.3, LookStyle.DOUBLE),
     LookKey.PAIRING: (Palette.CYAN, 0.6, LookStyle.PULSE),
-    LookKey.CHARGING: (Palette.GREEN, 0.3, LookStyle.BREATHE),
-    LookKey.BATTERY_LOW: (Palette.AMBER, 0.3, LookStyle.PULSE),
-    LookKey.UPDATING: (Palette.WHITE, 0.5, LookStyle.PULSE),
-    LookKey.DANCING: (Palette.WHITE, 0.35, LookStyle.STEADY),
-    # Steady, unlike the flashing camera cue, so the two pinks never read the same.
-    LookKey.SEES_MAYBE: (Palette.PINK, 0.25, LookStyle.STEADY),
-    LookKey.SEES_PERSON: (Palette.PINK, 0.55, LookStyle.STEADY),
-    LookKey.SEES_FACE: (Palette.PINK, 1.0, LookStyle.STEADY),
+    # ONE amber, "look at the screen": offline, a fault and a low battery share it.
+    LookKey.ATTENTION: (Palette.AMBER, 0.3, LookStyle.PULSE),
+    LookKey.LISTENING: (Palette.BLUE, 1.0, LookStyle.STEADY),
+    LookKey.DANCE: (Palette.MAGENTA, 0.5, LookStyle.STEADY),
+    # Dark: idle, thinking, speaking, charging, boot, ready, night, sleep. Weight 0 gives None.
+    LookKey.IDLE: (Palette.WHITE, 0.0, LookStyle.STEADY),
 }
-SEES_ROWS: dict[str, LookKey] = {
-    "maybe": LookKey.SEES_MAYBE,
-    "person": LookKey.SEES_PERSON,
-    "face": LookKey.SEES_FACE,
-}
+# Rows shown at their own brightness, not scaled by the day or night level.
+FIXED_ROWS = frozenset({LookKey.PAIRING, LookKey.ATTENTION})
 
 # The period each style runs at. UNMEASURED design defaults; a key named in
 # ``STYLE_PERIOD_S`` uses that value instead of its style's.
@@ -120,19 +91,8 @@ PERIOD_S: dict[LookStyle, float] = {
 }
 # Per-key periods that differ from their style's default.
 STYLE_PERIOD_S: dict[LookKey, float] = {
-    LookKey.CHARGING: 4.0,
-    LookKey.CONNECTING: 2.0,
-    LookKey.UPDATING: 1.0,
     LookKey.PAIRING: 2.0,
-    LookKey.OFFLINE: 10.0,
-    LookKey.BATTERY_LOW: 20.0,
-}
-
-_FUNNEL_ROWS = {
-    FunnelState.IDLE: LookKey.IDLE,
-    FunnelState.LISTENING: LookKey.LISTENING,
-    FunnelState.THINKING: LookKey.THINKING,
-    FunnelState.SPEAKING: LookKey.SPEAKING,
+    LookKey.ATTENTION: 10.0,
 }
 
 
@@ -146,20 +106,13 @@ class LookRequest:
     presence: Sequence[PresenceEntry] | None
     live: bool = False
     camera: bool = False
-    alarm: bool = False
-    alarm_on: bool = False
-    held: bool = False
-    muted: bool = False
-    offer: bool = False
     fault: bool = False
-    connecting: bool = False
     offline: bool = False
     pairing: bool = False
-    charging: bool = False
     battery_low: bool = False
-    updating: bool = False
     dancing: bool = False
-    sees: str | None = None  # "maybe", "person" or "face": what the camera sees right now
+    asleep: bool = False  # the rest renderer's asleep stage: dark but for the two capture cues
+    dark_room: bool = False  # the night controller's sensor night, the same as quiet hours
 
 
 def is_night(minute: int, start: int, end: int) -> bool:
@@ -178,11 +131,15 @@ def _lowest_night(presence: Sequence[PresenceEntry] | None) -> bool:
     return any(entry.kind != "adult" for entry in presence)
 
 
-def level(request: LookRequest) -> float:
+def is_night_now(request: LookRequest) -> bool:
     settings = request.settings
-    if not is_night(request.minute, settings.night_from, settings.night_to):
-        return settings.brightness
-    night = settings.night_brightness
+    return request.dark_room or is_night(request.minute, settings.night_from, settings.night_to)
+
+
+def level(request: LookRequest) -> float:
+    if not is_night_now(request):
+        return request.settings.brightness
+    night = request.settings.night_brightness
     return night * LOWEST_NIGHT_FACTOR if _lowest_night(request.presence) else night
 
 
@@ -213,50 +170,25 @@ def _cue(key: LookKey, floor: float, settings: IndicatorSettings) -> Look:
 
 def resolve_key(request: LookRequest) -> LookKey | None:
     """The winning table key, or ``None`` for dark. The single place the
-    priority order lives; ``resolve`` builds the look from it so the two
-    never disagree."""
-    settings = request.settings
+    priority order lives (live, camera, pairing, attention, listening, dance);
+    ``resolve`` builds the look from it so the two never disagree."""
     if request.live:
         return LookKey.LIVE
     if request.camera:
         return LookKey.CAMERA
-    if request.alarm and settings.alarm:
-        return LookKey.ALARM if request.alarm_on else LookKey.ALARM_DIM
-    if not settings.enabled:
+    if not request.settings.enabled or request.asleep:
         return None
-    if request.fault:
-        return LookKey.ERROR
-    if request.held:
-        return LookKey.HELD
-    if request.muted:
-        return LookKey.MUTED
-    if request.updating:
-        return LookKey.UPDATING
+    night = is_night_now(request)
     if request.pairing:
         return LookKey.PAIRING
-    if request.connecting:
-        return LookKey.CONNECTING
-    if request.offline:
-        return LookKey.OFFLINE
-    if request.battery_low:
-        return LookKey.BATTERY_LOW
-    if request.offer and request.funnel is FunnelState.IDLE:
-        return LookKey.OFFER
-    # The vision indicator is asked for on purpose, so it shows over the charging breathe and
-    # the night sleep row too; the cues, the alarm, a fault and the turn states still win.
-    if request.sees in SEES_ROWS and settings.sees and request.funnel is FunnelState.IDLE:
-        return SEES_ROWS[request.sees]
-    if request.charging and request.funnel is FunnelState.IDLE:
-        return LookKey.CHARGING
-    if request.funnel is FunnelState.IDLE and is_night(
-        request.minute, settings.night_from, settings.night_to
-    ):
-        if settings.sleep_eyes == "off":
-            return None
-        return LookKey.SLEEP
-    if request.dancing and request.funnel is FunnelState.IDLE:
-        return LookKey.DANCING
-    return _FUNNEL_ROWS[request.funnel]
+    if (request.offline or request.fault or request.battery_low) and not night:
+        return LookKey.ATTENTION
+    if request.funnel is FunnelState.LISTENING:
+        return LookKey.LISTENING
+    # Thinking and speaking are dark: the face and the voice carry them.
+    if request.dancing and request.funnel is FunnelState.IDLE and not night:
+        return LookKey.DANCE
+    return None
 
 
 def resolve(request: LookRequest) -> Look | None:
@@ -269,7 +201,6 @@ def resolve(request: LookRequest) -> Look | None:
         return _cue(LookKey.LIVE, LIVE_FLOOR, settings)
     if key is LookKey.CAMERA:
         return _cue(LookKey.CAMERA, CAMERA_FLOOR, settings)
-    if key in (LookKey.ALARM, LookKey.ALARM_DIM):
-        colour, weight, style = LOOKS[key]
-        return Look(colour=colour, brightness=weight, style=style)
+    if key in FIXED_ROWS:
+        return _row(key, LOOKS[key][1])
     return _row(key, LOOKS[key][1] * level(request))

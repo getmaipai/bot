@@ -10,8 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from maipai_body.hal.errors import BodyLost, EstopEngaged, NotSupported
-from maipai_body.hal.seam import BodyProfile, HeadPose, Look
-from maipai_body.indicator import looks
+from maipai_body.hal.seam import BodyProfile, HeadPose
 from maipai_body.robot import Robot, load_robot_api
 
 from .avatar_frames import start_camera_stream, stop_camera_stream
@@ -22,7 +21,6 @@ from .profile import (
     STACKCHAN_NOTIFY_ENABLED,
     STACKCHAN_PROFILE,
 )
-from .ring import camera_flash_frames, ring_rgb
 
 
 class StackChanDeviceClient(Protocol):
@@ -61,17 +59,6 @@ class StackChanDeviceClient(Protocol):
     def notify(self, audio_url: str) -> object: ...
 
     def device_supports(self, feature: str) -> bool: ...
-
-
-def _camera_look() -> Look:
-    """The camera cue from the one look table (pink, at least the 0.5 floor)."""
-    colour, weight, style = looks.LOOKS[looks.LookKey.CAMERA]
-    return Look(colour=colour, brightness=max(looks.CAMERA_FLOOR, weight), style=style)
-
-
-def _camera_rgb() -> tuple[int, int, int]:
-    """The steady camera colour for the whole ring, after the flash has played."""
-    return ring_rgb(_camera_look(), looks.period_s(looks.LookKey.CAMERA), 1.0)
 
 
 class _HeadAdapter:
@@ -190,8 +177,6 @@ class _LedAdapter:
                 capability="light_ring",
                 fix="Include all 12 light indexes.",
             )
-        if self.camera_indicator_active:
-            return self.client.set_led_color(*_camera_rgb())
         return self.client.set_led_colors(colors)
 
 
@@ -262,7 +247,7 @@ class _PushAdapter:
             return self.client.push_action(action, arguments)
         except BodyLost:
             if action == "show":
-                self.client.set_led_color(168, 36, 0)
+                # No ring write here: the ring has one writer (the light service).
                 return self.client.push_action("speak", {"text": arguments.get("message", "Alert")})
             if action in {"create_reminder", "stop_reminder"}:
                 self.queue.append((action, arguments))
@@ -395,18 +380,11 @@ class _CameraAdapter:
         self._light_off()
 
     def _light_on(self) -> None:
+        # The camera cue (pink, two quick flashes then steady) is the light service's to draw:
+        # this only raises the cue, so the ring has one writer and one table.
         driver = self.robot._driver("leds")
-        first = not driver.camera_indicator_active
         driver.camera_indicator_active = True
         self._cue(True)
-        if first:
-            # The light standard's camera cue: two quick flashes, then steady pink.
-            for rgb, seconds in camera_flash_frames(_camera_look()):
-                self.client.set_led_color(*rgb)
-                time.sleep(seconds)
-        self.robot.leds.many(
-            [{"index": index, "rgb": list(_camera_rgb())} for index in range(LED_COUNT)]
-        )
 
     def _cue(self, active: bool) -> None:
         if self.cue_sink is not None:
@@ -418,11 +396,8 @@ class _CameraAdapter:
     def _light_off(self) -> None:
         if not self.robot._driver("leds").camera_indicator_active:
             return  # no cue is up (a silent stream), so do not blank the ring
-        try:
-            self.robot.leds.many([{"index": index, "rgb": [0, 0, 0]} for index in range(LED_COUNT)])
-        finally:
-            self.robot._driver("leds").camera_indicator_active = False
-            self._cue(False)
+        self.robot._driver("leds").camera_indicator_active = False
+        self._cue(False)
 
 
 class _ExpressionDevice:

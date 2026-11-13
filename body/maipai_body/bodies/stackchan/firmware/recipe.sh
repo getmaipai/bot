@@ -200,6 +200,7 @@ PY
   fi
   # Put back the launcher assets the build pruned (patch 049's assets step) so the pinned tree is clean.
   git -C "$SRC" checkout -- firmware/main/assets/assets_bin
+  rm -f "$SRC/firmware/main/assets/assets_bin/wake_selftest.pcm"
   rm -f "$SRC/firmware/main/hal/maipai_version.h"
   if [[ -n "$(git -C "$SRC" status --porcelain)" ]]; then
     echo "Firmware recipe left changes in $SRC. Inspect this source tree before retrying." >&2
@@ -314,11 +315,27 @@ apply_repo_patch 079-dev-server-override.patch "$SRC"
 apply_repo_patch 079-dev-voice-url.patch "$FW/xiaozhi-esp32"
 apply_repo_patch 080-weak-runs-are-maybes.patch "$SRC"
 apply_repo_patch 081-imu-tap.patch "$SRC"
+apply_repo_patch 083-wake-no-echo-reference.patch "$SRC"
+apply_repo_patch 084-core-dump-report.patch "$SRC"
+apply_repo_patch 085-self-restart-guard.patch "$SRC"
+apply_repo_patch 086-wake-selftest-and-rebuild.patch "$SRC"
+apply_repo_patch 090-timers-core.patch "$SRC"
+apply_repo_patch 091-timers-device.patch "$SRC"
+apply_repo_patch 092-timer-tools.patch "$SRC"
+apply_repo_patch 093-timer-touch-stop.patch "$SRC"
+apply_repo_patch 094-timer-stop-word.patch "$FW/xiaozhi-esp32"
+# Firmware strip (2026-11-13), each step independent unless its patch header says otherwise.
+apply_repo_patch 095-grow-assets-partition.patch "$SRC"
+apply_repo_patch 096-drop-cjk-font-and-emoji.patch "$SRC"
+apply_repo_patch 097-remove-mooncake-apps.patch "$SRC"
+apply_repo_patch 098-bluetooth-off.patch "$SRC"
+apply_repo_patch 099-wifi-only-and-fewer-sounds.patch "$SRC"
+apply_repo_patch 099-no-jpeg-decoder.patch "$SRC"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"
 
-# Room in the 4 MB assets partition for the stop-word model (mn5q8_en, about 2.2 MB): drop the
+# Room in the assets partition (4 MB until patch 095, now 0x5F0000) for the stop-word model (mn5q8_en, about 2.2 MB): drop the
 # launcher icons and artwork of the Mooncake apps, which this firmware never starts (it boots
 # straight into the voice agent). A missing image is logged and drawn blank by assets::get_image,
 # never a crash. Kept: the Wi-Fi, battery, bell, home and indicator icons.
@@ -326,6 +343,8 @@ for asset in icon_ai_agent.bin icon_app_center.bin icon_controller.bin icon_danc
     icon_ezdata.bin icon_sentinel.bin icon_setup.bin setup_stackchan_front_view.bin app_center_bg.png; do
   rm -f "$FW/main/assets/assets_bin/$asset"
 done
+# The wake word clip the unit feeds into its own wake engine to test it (patch 086), packed into the assets.
+cp "$HERE/assets/wake_selftest.pcm" "$FW/main/assets/assets_bin/wake_selftest.pcm"
 
 cat > "$FW/sdkconfig.defaults.local" <<CFG
 CONFIG_STACKCHAN_SERVER_URL="$AVATAR_SERVER_URL"
@@ -333,6 +352,10 @@ CONFIG_OTA_URL=""
 CONFIG_STACKCHAN_NTP_SERVER=""
 CONFIG_STACKCHAN_XIAOZHI_OTA_CHECK=n
 CONFIG_SR_MN_EN_MULTINET5_SINGLE_RECOGNITION_QUANT8=y
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+CONFIG_BT_ENABLED=n
 CFG
 if [[ -n "$DEVICE_ID" ]]; then
   printf 'CONFIG_STACKCHAN_DEVICE_ID="%s"\n' "$DEVICE_ID" >> "$FW/sdkconfig.defaults.local"
@@ -387,6 +410,10 @@ else
   rm -f "$SDKCONFIG"
   (cd "$FW" && idf.py build)
 fi
+# The core dump goes to flash (patch 084): the unit reports its last panic at the next boot.
+grep -Fqx 'CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y' "$SDKCONFIG" || { echo "The core dump to flash is not enabled in sdkconfig. Check the Kconfig defaults and retry." >&2; exit 1; }
+# Bluetooth is off (patch 098): the controller must not come back through a stale default.
+grep -Fqx '# CONFIG_BT_ENABLED is not set' "$SDKCONFIG" || { echo "Bluetooth should be disabled (patch 098). Check CONFIG_BT_ENABLED in the recipe's local sdkconfig and retry." >&2; exit 1; }
 if [[ "$PERSISTENT_WEBSOCKET" == "n" ]]; then
   grep -Fqx '# CONFIG_STACKCHAN_PERSISTENT_WEBSOCKET is not set' "$SDKCONFIG" || { echo "Persistent websocket should be disabled by --no-persistent-websocket. Check sdkconfig defaults and retry." >&2; exit 1; }
 else
@@ -414,8 +441,8 @@ shasum -a 256 "$(command -v python3)" > "$OUT/python-runtime.sha256"
 python3 -m pip freeze | LC_ALL=C sort | shasum -a 256 > "$OUT/python-environment.sha256"
 cp "$image" "$OUT/stack-chan-maipai.bin"
 ASSETS_BYTES=$(wc -c < "$FW/build/generated_assets.bin")
-if (( ASSETS_BYTES > 4194304 )); then
-  echo "The assets image is $ASSETS_BYTES bytes and does not fit the 4 MB assets partition. Prune more launcher assets or drop the stop-word model." >&2
+if (( ASSETS_BYTES > 6225920 )); then
+  echo "The assets image is $ASSETS_BYTES bytes and does not fit the 6,225,920 byte (0x5F0000) assets partition of patch 095. Prune more assets or drop the stop-word model." >&2
   exit 1
 fi
 cp "$FW/build/generated_assets.bin" "$OUT/"

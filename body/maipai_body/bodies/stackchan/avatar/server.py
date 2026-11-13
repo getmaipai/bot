@@ -13,6 +13,7 @@ from typing import Any
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
+from maipai_body.bodies.stackchan.self_heal import CameraStallWatch
 from maipai_body.bodies.stackchan.ws_logging import listener_logger
 
 from ..xiaozhi.pairing import PairingStore
@@ -28,6 +29,7 @@ HELLO_TIMEOUT_S = 10.0
 MAX_HELLO_SIZE = 4096
 # Seconds between asks for the camera stream while no frame has arrived yet.
 CAMERA_START_RETRY_S = 5.0
+CAMERA_STALL_CHECK_S = 5.0
 # Seconds without a frame after which the camera counts as freshly started.
 CAMERA_GAP_RESET_S = 60.0
 
@@ -134,6 +136,12 @@ class AvatarServer:
         self.camera_frames_received = 0
         self.camera_bytes_received = 0
         self.last_popped_frame_at: float | None = None
+        # The stall ladder (self_heal.py): re-ask, reconnect this socket, then a unit restart.
+        # The app sets `unit_idle` (the unit streams nothing in a turn, by design) and
+        # `request_restart`.
+        self._stall = CameraStallWatch()
+        self.unit_idle: Any = lambda: True
+        self.request_restart: Any = None
 
     async def start(self, host: str = "127.0.0.1", port: int = 8766, **kwargs: Any) -> None:
         self._server = await serve(
@@ -185,6 +193,7 @@ class AvatarServer:
             asyncio.create_task(self._close_stale(stale))
         self._sessions[device_id] = websocket
         start_task: asyncio.Task[None] | None = None
+        stall_task: asyncio.Task[None] | None = None
         try:
             try:
                 hello = await asyncio.wait_for(websocket.recv(), HELLO_TIMEOUT_S)
@@ -207,6 +216,7 @@ class AvatarServer:
             start_task = asyncio.create_task(
                 self._start_camera_until_streaming(websocket, device_id)
             )
+            stall_task = asyncio.create_task(self._camera_stall_loop(websocket, device_id))
             async for message in websocket:
                 if not self.pairing.authorize(device_id, client_id, token):
                     await websocket.close(1008, "Pairing was revoked; reconnect after approval.")
@@ -233,6 +243,7 @@ class AvatarServer:
                     if last is None or now - last > CAMERA_GAP_RESET_S:
                         self._camera_first_frame_at[device_id] = now
                     self._camera_last_frame_at[device_id] = now
+                    self._stall.note_frame(now)
                     self._camera_frames[device_id] = (frame.payload, time.monotonic())
                     self.camera_frames_received += 1
                     self.camera_bytes_received += len(frame.payload)
@@ -254,6 +265,8 @@ class AvatarServer:
         finally:
             if start_task is not None:
                 start_task.cancel()
+            if stall_task is not None:
+                stall_task.cancel()
             self._camera_seen.discard(device_id)
             self._stream_since.pop(device_id, None)
             if self._sessions.get(device_id) is websocket:
@@ -297,6 +310,41 @@ class AvatarServer:
                 waiting_logged = True
                 LOG.info("StackChan avatar: not asking for the camera yet: local watching is off")
             await asyncio.sleep(CAMERA_START_RETRY_S)
+
+    async def _camera_stall_loop(self, websocket: ServerConnection, device_id: str) -> None:
+        """Every few seconds, climb the camera stall ladder if the stream went quiet."""
+        while True:
+            await asyncio.sleep(CAMERA_STALL_CHECK_S)
+            try:
+                await self._stall_step(websocket, device_id, time.monotonic())
+            except ConnectionClosed:
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                LOG.debug("StackChan camera stall check failed", exc_info=True)
+
+    async def _stall_step(self, websocket: Any, device_id: str, now: float) -> None:
+        """One look at the ladder (self_heal.CameraStallWatch): re-ask the stream, reconnect this
+        socket (the unit joins again in seconds and the connect-time ask restarts the stream),
+        then fall through to a restart request. Skipped while watching is off or in a turn."""
+        watching = callable(self.start_camera_on_connect) and bool(self.start_camera_on_connect())
+        idle = bool(self.unit_idle()) if callable(self.unit_idle) else True
+        action = self._stall.step(now, watching=watching, idle=idle)
+        if action == "reask":
+            LOG.info("StackChan self-heal: camera stream asked again (no frame for 60 s)")
+            await websocket.send(encode_frame(0x05))
+        elif action == "reconnect":
+            LOG.info(
+                "StackChan self-heal: camera avatar socket closed to reconnect (no frame again)"
+            )
+            await websocket.close(1012, "No camera frame for a while; reconnect.")
+        elif action == "restart":
+            LOG.warning(
+                "StackChan self-heal: camera still silent after a reconnect; restart requested"
+            )
+            if callable(self.request_restart):
+                await asyncio.to_thread(self.request_restart)
 
     async def wait_for_camera_frame(self, device_id: str) -> None:
         event = self._camera_events.setdefault(device_id, asyncio.Event())

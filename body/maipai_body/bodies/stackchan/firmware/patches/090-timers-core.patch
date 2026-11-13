@@ -1,0 +1,396 @@
+# Intent: the pure logic of on-unit timers and alarms (owner decision 2026-11-13: on-device timers, no Bluetooth): up to 8 active, a timer of 1 s to 24 h, an alarm at the next HH:MM of the local day, a saved form with a version byte, a count and a 16 bit check (anything unreadable or newer loads as empty), what happens when one is due while the unit was off (rings if at most 10 minutes late, else dropped and counted), and the ring (a one minute limit, an earcon every 8 s unless silent, a 2 s cyan breathe, a snooze of 5 minutes by default and 1 hour at most, allowed for 2 minutes after the ring). Header-only plain C99 with no ESP-IDF, no heap and no clock of its own, so tests/firmware/timers_core_test.c compiles it on the host. Patch 091 is the device side, 092 the tools, 093 the ways to stop a ring.
+# Upstream: new file hal/maipai_timers_core.h (MIT). Applies after 081 with --unidiff-zero.
+# Check after a flash: nothing visible by itself; the host test (body/tests/test_stackchan_timers_core.py) runs the C test.
+diff --git a/firmware/main/hal/maipai_timers_core.h b/firmware/main/hal/maipai_timers_core.h
+new file mode 100644
+index 0000000..63db75e
+--- /dev/null
++++ b/firmware/main/hal/maipai_timers_core.h
+@@ -0,0 +1,387 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * MaiPai on-device timers and alarms (patch 090): the pure logic, no ESP-IDF, no heap, no clock of
++ * its own. The caller passes the time in. Header-only plain C99 so a host compiler can test it.
++ *
++ * Times: `now` is Unix seconds from the RTC-backed system clock, or 0 when that clock was never
++ * set. `mono` is seconds since boot. A timer set while the clock is unknown runs on `mono` and
++ * does not survive a reboot (flag clock=0); everything else is kept as an absolute Unix time, so
++ * it survives a reboot and a Home outage.
++ */
++#ifndef MAIPAI_TIMERS_CORE_H
++#define MAIPAI_TIMERS_CORE_H
++
++#include <stdint.h>
++#include <string.h>
++
++#define MT_MAX_ACTIVE 8
++#define MT_MAX_TIMER_SECONDS 86400u
++#define MT_LABEL_MAX 24
++#define MT_BLOB_VERSION 1
++#define MT_MISSED_GRACE_S 600u    /* due while the unit was off: ring if at most this late */
++#define MT_RING_MAX_MS 60000u     /* a ring nobody answers ends by itself after one minute */
++#define MT_CHIME_FIRST_MS 0u
++#define MT_CHIME_EVERY_MS 8000u
++#define MT_SNOOZE_DEFAULT_S 300u
++#define MT_SNOOZE_MAX_S 3600u
++#define MT_SNOOZE_WINDOW_MS 120000u /* a snooze is allowed this long after the ring ends */
++#define MT_CLOCK_VALID_AFTER 1704067200u /* 2024-01-01: an earlier clock was never set */
++
++#define MT_KIND_TIMER 1
++#define MT_KIND_ALARM 2
++
++#define MT_OK 0
++#define MT_ERR_ARGUMENT -1
++#define MT_ERR_FULL -2
++#define MT_ERR_TOO_LONG -3
++#define MT_ERR_NO_CLOCK -4
++#define MT_ERR_NOT_FOUND -5
++
++typedef struct {
++    uint32_t id;       /* 0 = free slot */
++    uint8_t kind;      /* MT_KIND_* */
++    uint8_t clock;     /* 1: due is Unix seconds, 0: due is seconds since boot */
++    uint8_t silent;    /* ring without the earcon (the host passes it for mute) */
++    uint32_t due;
++    uint32_t set_at;   /* Unix seconds when set, 0 if the clock was unknown */
++    char label[MT_LABEL_MAX + 1];
++} mt_entry_t;
++
++typedef struct {
++    mt_entry_t e[MT_MAX_ACTIVE];
++    uint32_t next_id;
++    uint8_t changed; /* set by every change so the caller knows to save */
++} mt_state_t;
++
++typedef struct {
++    uint32_t id;
++    uint8_t kind;
++    uint8_t late;   /* 1: it came due while the unit was off */
++    uint8_t silent;
++    char label[MT_LABEL_MAX + 1];
++} mt_fired_t;
++
++typedef struct {
++    uint8_t active;
++    uint8_t silent;
++    uint8_t kind;
++    uint32_t id;
++    uint32_t extra;       /* more timers that came due while this one rings */
++    uint32_t start_ms;
++    uint32_t last_chime_ms;
++    uint8_t chimes;
++    char label[MT_LABEL_MAX + 1];
++    /* what a snooze may use after the ring ends */
++    uint32_t ended_ms;
++    uint8_t snooze_ok;
++    uint8_t snooze_kind;
++    char snooze_label[MT_LABEL_MAX + 1];
++} mt_ring_t;
++
++static inline int mt_clock_valid(uint32_t now) { return now >= MT_CLOCK_VALID_AFTER; }
++
++/* Keeps letters, digits, space and . , ' - only, so a label is safe inside JSON and on screen. */
++static inline void mt_copy_label(char* dst, const char* src)
++{
++    size_t n = 0;
++    if (src) {
++        for (; *src && n < MT_LABEL_MAX; src++) {
++            char c = *src;
++            int ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == ' ' ||
++                     c == '.' || c == ',' || c == '\'' || c == '-';
++            if (ok) dst[n++] = c;
++        }
++    }
++    dst[n] = 0;
++}
++
++static inline void mt_init(mt_state_t* st)
++{
++    memset(st, 0, sizeof(*st));
++    st->next_id = 1;
++}
++
++static inline int mt_count(const mt_state_t* st)
++{
++    int n = 0;
++    for (int i = 0; i < MT_MAX_ACTIVE; i++) n += st->e[i].id != 0;
++    return n;
++}
++
++static inline int mt_add_raw(mt_state_t* st, uint8_t kind, uint8_t clock, uint32_t due, uint32_t set_at,
++                             const char* label, uint8_t silent)
++{
++    for (int i = 0; i < MT_MAX_ACTIVE; i++) {
++        if (st->e[i].id == 0) {
++            mt_entry_t* e = &st->e[i];
++            memset(e, 0, sizeof(*e));
++            e->id = st->next_id++;
++            if (st->next_id == 0) st->next_id = 1;
++            e->kind = kind;
++            e->clock = clock;
++            e->silent = silent ? 1 : 0;
++            e->due = due;
++            e->set_at = set_at;
++            mt_copy_label(e->label, label);
++            st->changed = 1;
++            return (int)e->id;
++        }
++    }
++    return MT_ERR_FULL;
++}
++
++/* A timer of `seconds` (1 to 24 h). Returns the id, or a negative MT_ERR_*. */
++static inline int mt_add_timer(mt_state_t* st, uint32_t now, uint32_t mono, uint32_t seconds, const char* label,
++                               uint8_t silent)
++{
++    if (seconds == 0) return MT_ERR_ARGUMENT;
++    if (seconds > MT_MAX_TIMER_SECONDS) return MT_ERR_TOO_LONG;
++    if (mt_clock_valid(now)) return mt_add_raw(st, MT_KIND_TIMER, 1, now + seconds, now, label, silent);
++    return mt_add_raw(st, MT_KIND_TIMER, 0, mono + seconds, 0, label, silent);
++}
++
++/* An alarm at the next HH:MM of the local day. `sod` is the local seconds since midnight now; the
++ * caller reads it from the timezone, the core never does. Needs a valid clock. */
++static inline int mt_add_alarm(mt_state_t* st, uint32_t now, uint32_t sod, int hour, int minute,
++                               const char* label, uint8_t silent)
++{
++    if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || sod >= 86400u) return MT_ERR_ARGUMENT;
++    if (!mt_clock_valid(now)) return MT_ERR_NO_CLOCK;
++    uint32_t target = (uint32_t)hour * 3600u + (uint32_t)minute * 60u;
++    uint32_t delta = target > sod ? target - sod : target + 86400u - sod;
++    return mt_add_raw(st, MT_KIND_ALARM, 1, now + delta, now, label, silent);
++}
++
++static inline int mt_cancel(mt_state_t* st, uint32_t id)
++{
++    for (int i = 0; i < MT_MAX_ACTIVE; i++) {
++        if (st->e[i].id == id && id != 0) {
++            memset(&st->e[i], 0, sizeof(st->e[i]));
++            st->changed = 1;
++            return MT_OK;
++        }
++    }
++    return MT_ERR_NOT_FOUND;
++}
++
++static inline int mt_cancel_all(mt_state_t* st)
++{
++    int n = mt_count(st);
++    for (int i = 0; i < MT_MAX_ACTIVE; i++) memset(&st->e[i], 0, sizeof(st->e[i]));
++    if (n) st->changed = 1;
++    return n;
++}
++
++/* Seconds left on entry e, 0 when due. -1 if it cannot be told (clock timer and no clock). */
++static inline int64_t mt_remaining(const mt_entry_t* e, uint32_t now, uint32_t mono)
++{
++    uint32_t ref;
++    if (e->clock) {
++        if (!mt_clock_valid(now)) return -1;
++        ref = now;
++    } else {
++        ref = mono;
++    }
++    return e->due > ref ? (int64_t)(e->due - ref) : 0;
++}
++
++/* Removes every entry that is due and copies it to out (up to max). Returns the count copied.
++ * `late` is set for an entry more than a few seconds past due (the unit was off or the tick was
++ * stalled); an entry later than MT_MISSED_GRACE_S is dropped without ringing and counted in
++ * *dropped. */
++static inline int mt_tick(mt_state_t* st, uint32_t now, uint32_t mono, mt_fired_t* out, int max,
++                          int* dropped)
++{
++    int n = 0;
++    if (dropped) *dropped = 0;
++    for (int i = 0; i < MT_MAX_ACTIVE; i++) {
++        mt_entry_t* e = &st->e[i];
++        if (e->id == 0) continue;
++        uint32_t ref;
++        if (e->clock) {
++            if (!mt_clock_valid(now)) continue;
++            ref = now;
++        } else {
++            ref = mono;
++        }
++        if (ref < e->due) continue;
++        uint32_t over = ref - e->due;
++        if (over > MT_MISSED_GRACE_S) {
++            if (dropped) (*dropped)++;
++        } else if (n < max) {
++            out[n].id = e->id;
++            out[n].kind = e->kind;
++            out[n].late = over > 5;
++            out[n].silent = e->silent;
++            memcpy(out[n].label, e->label, sizeof(out[n].label));
++            n++;
++        } else {
++            continue; /* the caller's buffer is full: leave it for the next tick */
++        }
++        memset(e, 0, sizeof(*e));
++        st->changed = 1;
++    }
++    return n;
++}
++
++/* ---- the saved form: a 1 byte version, a count, the entries, a 16 bit check ---- */
++
++static inline uint16_t mt_crc16(const uint8_t* p, size_t n)
++{
++    uint16_t crc = 0xFFFF;
++    for (size_t i = 0; i < n; i++) {
++        crc ^= (uint16_t)p[i] << 8;
++        for (int b = 0; b < 8; b++) crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
++    }
++    return crc;
++}
++
++#define MT_REC_BYTES (4 + 1 + 1 + 4 + 4 + 1 + MT_LABEL_MAX)
++#define MT_BLOB_MAX (6 + MT_MAX_ACTIVE * MT_REC_BYTES + 2)
++
++static inline void mt_put32(uint8_t* p, uint32_t v)
++{
++    p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
++}
++static inline uint32_t mt_get32(const uint8_t* p)
++{
++    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
++}
++
++/* Entries on the boot clock are not saved (they cannot be placed after a reboot). Returns the length. */
++static inline size_t mt_save(const mt_state_t* st, uint8_t* buf, size_t size)
++{
++    if (size < MT_BLOB_MAX) return 0;
++    size_t o = 0;
++    buf[o++] = MT_BLOB_VERSION;
++    size_t count_at = o++;
++    uint8_t count = 0;
++    mt_put32(buf + o, st->next_id); o += 4;
++    for (int i = 0; i < MT_MAX_ACTIVE; i++) {
++        const mt_entry_t* e = &st->e[i];
++        if (e->id == 0 || !e->clock) continue;
++        mt_put32(buf + o, e->id); o += 4;
++        buf[o++] = e->kind;
++        buf[o++] = e->silent;
++        mt_put32(buf + o, e->due); o += 4;
++        mt_put32(buf + o, e->set_at); o += 4;
++        buf[o++] = (uint8_t)strlen(e->label);
++        memcpy(buf + o, e->label, MT_LABEL_MAX); o += MT_LABEL_MAX;
++        count++;
++    }
++    buf[count_at] = count;
++    uint16_t crc = mt_crc16(buf, o);
++    buf[o++] = (uint8_t)crc; buf[o++] = (uint8_t)(crc >> 8);
++    return o;
++}
++
++/* Loads a saved blob. Anything wrong (other version, bad length, bad check) loads nothing and
++ * returns a negative code, so a corrupt or newer blob never breaks the unit. */
++static inline int mt_load(mt_state_t* st, const uint8_t* buf, size_t len)
++{
++    mt_init(st);
++    if (len < 8) return MT_ERR_ARGUMENT;
++    if (buf[0] != MT_BLOB_VERSION) return MT_ERR_ARGUMENT;
++    uint8_t count = buf[1];
++    if (count > MT_MAX_ACTIVE || len != (size_t)(6 + count * MT_REC_BYTES + 2)) return MT_ERR_ARGUMENT;
++    uint16_t want = (uint16_t)(buf[len - 2] | (buf[len - 1] << 8));
++    if (mt_crc16(buf, len - 2) != want) return MT_ERR_ARGUMENT;
++    uint32_t next = mt_get32(buf + 2);
++    size_t o = 6;
++    for (int i = 0; i < count; i++) {
++        mt_entry_t* e = &st->e[i];
++        e->id = mt_get32(buf + o); o += 4;
++        e->kind = buf[o++];
++        e->silent = buf[o++];
++        e->due = mt_get32(buf + o); o += 4;
++        e->set_at = mt_get32(buf + o); o += 4;
++        uint8_t ll = buf[o++];
++        if (ll > MT_LABEL_MAX || e->id == 0 || (e->kind != MT_KIND_TIMER && e->kind != MT_KIND_ALARM)) {
++            mt_init(st);
++            return MT_ERR_ARGUMENT;
++        }
++        memcpy(e->label, buf + o, ll); e->label[ll] = 0; o += MT_LABEL_MAX;
++        e->clock = 1;
++    }
++    st->next_id = next ? next : 1;
++    return MT_OK;
++}
++
++/* ---- the ring: what happens when something comes due ---- */
++
++static inline void mt_ring_init(mt_ring_t* r) { memset(r, 0, sizeof(*r)); }
++
++/* Something came due. Returns 1 if this started a ring, 0 if it joined the ring already going. */
++static inline int mt_ring_start(mt_ring_t* r, const mt_fired_t* f, uint32_t now_ms)
++{
++    if (r->active) {
++        r->extra++;
++        if (!f->silent) r->silent = 0;
++        return 0;
++    }
++    r->active = 1;
++    r->silent = f->silent;
++    r->kind = f->kind;
++    r->id = f->id;
++    r->extra = 0;
++    r->start_ms = now_ms;
++    r->last_chime_ms = now_ms - MT_CHIME_EVERY_MS; /* the first chime is due at once */
++    r->chimes = 0;
++    memcpy(r->label, f->label, sizeof(r->label));
++    r->snooze_ok = 0;
++    return 1;
++}
++
++#define MT_POLL_NONE 0
++#define MT_POLL_CHIME 1
++#define MT_POLL_TIMEOUT 2
++
++/* Called often while ringing. Says whether to chime now or whether the ring has run out. */
++static inline int mt_ring_poll(mt_ring_t* r, uint32_t now_ms)
++{
++    if (!r->active) return MT_POLL_NONE;
++    if (now_ms - r->start_ms >= MT_RING_MAX_MS) return MT_POLL_TIMEOUT;
++    if (!r->silent && now_ms - r->last_chime_ms >= MT_CHIME_EVERY_MS) {
++        r->last_chime_ms = now_ms;
++        r->chimes++;
++        return MT_POLL_CHIME;
++    }
++    return MT_POLL_NONE;
++}
++
++/* Ends the ring; the label is kept for a snooze for a short while. Returns 1 if a ring ended. */
++static inline int mt_ring_end(mt_ring_t* r, uint32_t now_ms)
++{
++    if (!r->active) return 0;
++    r->active = 0;
++    r->ended_ms = now_ms;
++    r->snooze_ok = 1;
++    r->snooze_kind = r->kind;
++    memcpy(r->snooze_label, r->label, sizeof(r->snooze_label));
++    return 1;
++}
++
++/* A snooze: a new timer with the ended ring's label. Works while ringing (it ends the ring) or
++ * within MT_SNOOZE_WINDOW_MS after it ended. */
++static inline int mt_snooze(mt_state_t* st, mt_ring_t* r, uint32_t now, uint32_t mono, uint32_t now_ms,
++                            uint32_t seconds)
++{
++    if (seconds == 0) seconds = MT_SNOOZE_DEFAULT_S;
++    if (seconds > MT_SNOOZE_MAX_S) seconds = MT_SNOOZE_MAX_S;
++    if (r->active) mt_ring_end(r, now_ms);
++    if (!r->snooze_ok || now_ms - r->ended_ms > MT_SNOOZE_WINDOW_MS) return MT_ERR_NOT_FOUND;
++    r->snooze_ok = 0;
++    return mt_add_timer(st, now, mono, seconds, r->snooze_label, 0);
++}
++
++/* The ring's brightness, 0 or 255: the lights standard's pulse (docs/dev/led-standard-2026-10-20.md,
++ * the cyan row: short on, long off), on for the first 250 ms of every 2 s period, dark between. */
++static inline uint8_t mt_pulse_level(uint32_t ms_since_start)
++{
++    uint32_t phase = ms_since_start % 2000u;
++    /* 250 ms on, 1750 ms off */
++    return phase < 250u ? 255u : 0u;
++}
++
++#endif /* MAIPAI_TIMERS_CORE_H */

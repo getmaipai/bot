@@ -1,4 +1,4 @@
-"""EYES-02: the one look table (indicator/looks.py) and its rules."""
+"""EYES-02: the one look table, the standard it must equal, and its rules."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 
 from maipai_body.hal.seam import LookStyle, Palette
 from maipai_body.indicator import looks
-from maipai_body.indicator.looks import LookKey, LookRequest, resolve
+from maipai_body.indicator.looks import LookKey, LookRequest, resolve, resolve_key
 from maipai_body.indicator.settings import IndicatorSettings
 from maipai_body.presence.carry_reaction import PresenceEntry
 from maipai_body.presence.funnel import FunnelState
@@ -20,6 +20,7 @@ ADULT = PresenceEntry("adult")
 CHILD = PresenceEntry("child")
 TEEN = PresenceEntry("teen")
 UNKNOWN = PresenceEntry("unknown")
+STANDARD = Path(__file__).resolve().parents[2] / "docs" / "dev" / "led-standard-2026-10-20.md"
 NIGHT_MINUTE = 23 * 60
 DAY_MINUTE = 12 * 60
 
@@ -35,30 +36,65 @@ def _request(**kwargs) -> LookRequest:
     return LookRequest(**base)
 
 
-def test_floors_and_period_are_the_ordered_constants():
+def test_floors_are_the_ordered_constants():
     assert looks.LIVE_FLOOR == 0.5
     assert looks.CAMERA_FLOOR == 0.5
-    assert looks.ALARM_PERIOD_S >= 1.0
 
 
-def test_the_table_has_a_row_for_every_state_and_no_red():
-    assert {key.value for key in LookKey} >= {
-        "live",
-        "camera",
-        "alarm",
-        "held",
-        "muted",
-        "idle",
-        "listening",
-        "thinking",
-        "speaking",
-        "sleep",
-    }
+def _standard_rows() -> dict[str, list[str]]:
+    """The ring table of the standard doc: key -> its cells. The doc is the single source."""
+    text = STANDARD.read_text()
+    assert "approved by the owner 2026-11-13" in text
+    section = text.split("## The ring table", 1)[1].split("\n## ", 1)[0]
+    rows: dict[str, list[str]] = {}
+    for line in section.splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        match = re.fullmatch(r"`([a-z_]+)`", cells[0]) if cells and line.startswith("|") else None
+        if match:
+            rows[match.group(1)] = cells
+    return rows
+
+
+def _number(cell: str) -> float | None:
+    match = re.search(r"\d+(?:\.\d+)?", cell)
+    return float(match.group(0)) if match else None
+
+
+def test_no_look_key_exists_outside_the_standards_table():
+    rows = _standard_rows()
+    assert {key.value for key in LookKey} == set(rows), "looks.py and the standard doc differ"
+    assert list(rows) == [key.value for key in LookKey], "the doc lists the rows in priority order"
+
+
+def test_every_row_equals_the_standards_table():
+    for name, cells in _standard_rows().items():
+        key = LookKey(name)
+        colour, weight, style = looks.LOOKS[key]
+        _, _, doc_colour, doc_style, doc_period, doc_brightness, _ = cells[:7]
+        if key is LookKey.IDLE:
+            assert weight == 0.0
+            continue
+        assert colour.value == doc_colour, name
+        assert style.value == doc_style, name
+        assert looks.period_s(key) == (_number(doc_period) or 0.0), name
+        if key in looks.FIXED_ROWS:
+            assert weight == _number(doc_brightness), name
+        if key is LookKey.LIVE:
+            assert looks.LIVE_FLOOR == _number(doc_brightness)
+        if key is LookKey.CAMERA:
+            assert looks.CAMERA_FLOOR == _number(doc_brightness)
+
+
+def test_the_table_has_no_red_and_one_meaning_per_colour():
     for colour, weight, style in looks.LOOKS.values():
         assert colour in set(Palette)
         assert 0.0 <= weight <= 1.0
         assert style in set(LookStyle)
     assert "red" not in {colour.value for colour, _, _ in looks.LOOKS.values()}
+    lit = {key: row[0] for key, row in looks.LOOKS.items() if key is not LookKey.IDLE}
+    by_status = {k: c for k, c in lit.items() if k is not LookKey.DANCE}
+    assert len(set(by_status.values())) == len(by_status)
+    assert lit[LookKey.DANCE] not in set(by_status.values())
 
 
 @pytest.mark.parametrize("level", [0.0, 0.2, 1.0])
@@ -74,62 +110,91 @@ def test_live_and_camera_never_fall_below_their_floors(level, presence, minute):
     assert camera.brightness >= looks.CAMERA_FLOOR
 
 
-def test_live_outranks_camera_alarm_held_muted_and_the_funnel():
-    request = _request(
-        live=True,
-        camera=True,
-        alarm=True,
-        alarm_on=True,
-        held=True,
-        muted=True,
-        funnel=FunnelState.SPEAKING,
+EVERYTHING_ELSE = {
+    "pairing": True,
+    "offline": True,
+    "fault": True,
+    "battery_low": True,
+    "dancing": True,
+    "funnel": FunnelState.LISTENING,
+}
+
+
+def test_the_priority_order_is_live_camera_pairing_attention_listening_dance():
+    assert resolve_key(_request(live=True, camera=True, **EVERYTHING_ELSE)) is LookKey.LIVE
+    assert resolve_key(_request(camera=True, **EVERYTHING_ELSE)) is LookKey.CAMERA
+    assert resolve_key(_request(**EVERYTHING_ELSE)) is LookKey.PAIRING
+    rest = {k: v for k, v in EVERYTHING_ELSE.items() if k != "pairing"}
+    assert resolve_key(_request(**rest)) is LookKey.ATTENTION
+    rest = {k: v for k, v in rest.items() if k not in ("offline", "fault", "battery_low")}
+    assert resolve_key(_request(**rest)) is LookKey.LISTENING
+    assert resolve_key(_request(dancing=True)) is LookKey.DANCE
+    assert resolve_key(_request()) is None
+
+
+def test_the_privacy_cues_win_asleep_at_night_and_with_the_lights_off():
+    off = IndicatorSettings(enabled=False)
+    for extra in ({"asleep": True}, {"dark_room": True}, {"minute": NIGHT_MINUTE}):
+        assert resolve_key(_request(live=True, **extra)) is LookKey.LIVE
+        assert resolve_key(_request(camera=True, **extra)) is LookKey.CAMERA
+    assert resolve_key(_request(live=True, settings=off, asleep=True)) is LookKey.LIVE
+
+
+@pytest.mark.parametrize("state", [FunnelState.THINKING, FunnelState.SPEAKING, FunnelState.IDLE])
+def test_thinking_speaking_and_idle_are_dark(state):
+    assert resolve(_request(funnel=state)) is None
+    assert resolve(_request(funnel=state, minute=NIGHT_MINUTE)) is None
+
+
+def test_listening_is_blue_steady_at_the_level():
+    look = resolve(
+        _request(funnel=FunnelState.LISTENING, settings=IndicatorSettings(brightness=0.8))
     )
-    assert resolve(request).colour is Palette.GREEN
-    assert resolve(_request(camera=True, alarm=True, alarm_on=True)).colour is Palette.PINK
-    assert resolve(_request(alarm=True, alarm_on=True, held=True)).colour is Palette.AMBER
+    assert look.colour is Palette.BLUE and look.style is LookStyle.STEADY
+    assert look.brightness == pytest.approx(0.8)
 
 
-def test_alarm_needs_its_setting_and_blinks_between_two_levels():
-    off_setting = IndicatorSettings(alarm=False)
-    quiet = resolve(_request(alarm=True, alarm_on=True, settings=off_setting))
-    assert quiet is None or quiet.colour is not Palette.AMBER
-    on = resolve(_request(alarm=True, alarm_on=True))
-    dim = resolve(_request(alarm=True, alarm_on=False))
-    assert on.colour is dim.colour is Palette.AMBER
-    assert on.brightness > dim.brightness
+def test_removed_states_have_no_fact_and_no_key():
+    removed = {"alarm", "held", "muted", "offer", "sleep", "thinking", "speaking", "charging"}
+    removed |= {"connecting", "updating", "error", "offline", "battery_low", "alarm_dim"}
+    removed |= {"sees_maybe", "sees_person", "sees_face", "dancing"}
+    assert not removed & {key.value for key in LookKey}
+    fields = set(LookRequest.__dataclass_fields__)
+    assert not fields & {"charging", "connecting", "updating", "sees", "alarm", "held", "muted"}
+
+
+def test_the_one_amber_covers_offline_a_fault_and_a_low_battery():
+    looks_seen = [
+        resolve(_request(**{cause: True})) for cause in ("offline", "fault", "battery_low")
+    ]
+    assert looks_seen[0] == looks_seen[1] == looks_seen[2]
+    look = looks_seen[0]
+    assert look.colour is Palette.AMBER
+    assert look.style is LookStyle.PULSE
+    assert look.period_s == 10.0
+    assert look.brightness == pytest.approx(0.3)
 
 
 @pytest.mark.parametrize(
-    ("state", "key"),
-    [
-        (FunnelState.LISTENING, LookKey.LISTENING),
-        (FunnelState.THINKING, LookKey.THINKING),
-        (FunnelState.SPEAKING, LookKey.SPEAKING),
-    ],
+    "settings", [IndicatorSettings(brightness=0.2), IndicatorSettings(brightness=1.0)]
 )
-def test_each_funnel_state_shows_its_table_row(state, key):
-    look = resolve(_request(funnel=state))
-    assert look.colour is looks.LOOKS[key][0]
+def test_attention_and_pairing_are_fixed_brightness_not_scaled_by_the_level(settings):
+    assert resolve(_request(offline=True, settings=settings)).brightness == pytest.approx(0.3)
+    assert resolve(_request(pairing=True, settings=settings)).brightness == pytest.approx(0.6)
 
 
-def test_idle_awake_is_dark():
-    assert resolve(_request(funnel=FunnelState.IDLE)) is None
-
-
-def test_held_and_muted_rows_outrank_the_funnel_state():
-    assert (
-        resolve(_request(held=True, funnel=FunnelState.SPEAKING)).colour
-        is (looks.LOOKS[LookKey.HELD][0])
-    )
-    assert (
-        resolve(_request(muted=True, funnel=FunnelState.SPEAKING)).colour
-        is (looks.LOOKS[LookKey.MUTED][0])
-    )
+def test_attention_is_dark_at_night_and_asleep_pairing_is_dark_asleep():
+    assert resolve(_request(offline=True, minute=NIGHT_MINUTE)) is None
+    assert resolve(_request(battery_low=True, dark_room=True)) is None
+    assert resolve(_request(offline=True, asleep=True)) is None
+    assert resolve(_request(pairing=True, asleep=True)) is None
+    assert resolve(_request(pairing=True, minute=NIGHT_MINUTE)) is not None
 
 
 def test_a_disabled_indicator_shows_nothing_but_the_capture_cues():
     off = IndicatorSettings(enabled=False)
-    assert resolve(_request(settings=off, funnel=FunnelState.SPEAKING, held=True)) is None
+    for kwargs in ({"funnel": FunnelState.LISTENING}, {"offline": True}, {"pairing": True}):
+        assert resolve(_request(settings=off, **kwargs)) is None
     assert resolve(_request(settings=off, live=True)).colour is Palette.GREEN
     assert resolve(_request(settings=off, camera=True)).colour is Palette.PINK
 
@@ -151,24 +216,23 @@ def test_night_uses_the_night_level_and_a_child_lowers_it_further():
     assert day.brightness > night_adult.brightness > night_child.brightness > 0.0
 
 
+def test_a_dark_room_uses_the_night_level_like_quiet_hours():
+    night = resolve(_request(funnel=FunnelState.LISTENING, minute=NIGHT_MINUTE))
+    dark = resolve(_request(funnel=FunnelState.LISTENING, dark_room=True))
+    assert dark == night
+
+
 @pytest.mark.parametrize("presence", [[CHILD], [TEEN], [UNKNOWN], None])
 def test_a_child_teen_unknown_or_missing_presence_gets_the_lowest_night_level(presence):
-    adult = resolve(_request(funnel=FunnelState.THINKING, minute=NIGHT_MINUTE))
-    other = resolve(_request(funnel=FunnelState.THINKING, minute=NIGHT_MINUTE, presence=presence))
+    adult = resolve(_request(funnel=FunnelState.LISTENING, minute=NIGHT_MINUTE))
+    other = resolve(_request(funnel=FunnelState.LISTENING, minute=NIGHT_MINUTE, presence=presence))
     assert other.brightness < adult.brightness
 
 
 def test_nobody_present_is_not_unknown():
-    adult = resolve(_request(funnel=FunnelState.THINKING, minute=NIGHT_MINUTE, presence=[ADULT]))
-    empty = resolve(_request(funnel=FunnelState.THINKING, minute=NIGHT_MINUTE, presence=[]))
+    adult = resolve(_request(funnel=FunnelState.LISTENING, minute=NIGHT_MINUTE, presence=[ADULT]))
+    empty = resolve(_request(funnel=FunnelState.LISTENING, minute=NIGHT_MINUTE, presence=[]))
     assert empty.brightness == adult.brightness
-
-
-def test_sleep_eyes_governs_the_idle_night_look():
-    dim = resolve(_request(minute=NIGHT_MINUTE, settings=IndicatorSettings(sleep_eyes="dim")))
-    dark = resolve(_request(minute=NIGHT_MINUTE, settings=IndicatorSettings(sleep_eyes="off")))
-    assert dim is not None and dim.colour is looks.LOOKS[LookKey.SLEEP][0]
-    assert dark is None
 
 
 def test_night_window_wraps_midnight():
@@ -212,127 +276,12 @@ def test_no_module_outside_the_seam_and_the_client_names_a_palette_member():
     assert offenders == []
 
 
-def test_the_offer_look_shows_over_idle_and_below_held_and_muted():
-    offer = resolve(_request(offer=True))
-    assert offer is not None and offer.colour is Palette.BLUE
-    assert offer != resolve(_request(funnel=FunnelState.LISTENING))
-    assert resolve(_request(offer=True, muted=True)) == resolve(_request(muted=True))
-    assert resolve(_request(offer=True, held=True)) == resolve(_request(held=True))
-    # A turn in progress shows its own state, not the offer.
-    assert resolve(_request(offer=True, funnel=FunnelState.THINKING)) == resolve(
-        _request(funnel=FunnelState.THINKING)
-    )
-
-
-def test_the_error_look_is_amber_steady_and_outranks_held_and_muted_but_not_the_cues():
-    error = resolve(_request(fault=True, held=True, muted=True))
-    assert error is not None and error.colour is Palette.AMBER
-    assert error != resolve(_request(muted=True))
-    assert resolve(_request(fault=True, live=True)) == resolve(_request(live=True))
-    assert resolve(_request(fault=True, settings=IndicatorSettings(enabled=False))) is None
-
-
-@pytest.mark.parametrize(
-    ("kwargs", "key"),
-    [
-        ({"connecting": True}, LookKey.CONNECTING),
-        ({"offline": True}, LookKey.OFFLINE),
-        ({"pairing": True}, LookKey.PAIRING),
-        ({"charging": True}, LookKey.CHARGING),
-        ({"battery_low": True}, LookKey.BATTERY_LOW),
-        ({"updating": True}, LookKey.UPDATING),
-        ({"dancing": True}, LookKey.DANCING),
-    ],
-)
-def test_each_new_row_shows_its_table_entry(kwargs, key):
-    colour, weight, style = looks.LOOKS[key]
-    settings = IndicatorSettings(brightness=0.8)
-    look = resolve(_request(**kwargs, settings=settings))
-    assert look is not None
-    assert look.colour is colour
-    assert look.style is style
-    assert look.brightness == pytest.approx(weight * 0.8)
-
-
-def test_each_new_row_is_dark_when_the_level_is_zero():
-    off = IndicatorSettings(brightness=0.0, night_brightness=0.0)
-    for kwargs in (
-        {"connecting": True},
-        {"offline": True},
-        {"pairing": True},
-        {"charging": True},
-        {"battery_low": True},
-        {"updating": True},
-        {"dancing": True},
-    ):
-        assert resolve(_request(**kwargs, settings=off)) is None
-
-
-@pytest.mark.parametrize(
-    ("higher", "lower"),
-    [
-        ({"updating": True}, {"pairing": True}),
-        ({"pairing": True}, {"connecting": True}),
-        ({"connecting": True}, {"offline": True}),
-        ({"offline": True}, {"battery_low": True}),
-        ({"battery_low": True}, {"offer": True}),
-        ({"offer": True}, {"charging": True}),
-        ({"charging": True}, {"dancing": True}),
-        ({"fault": True}, {"updating": True}),
-        ({"held": True}, {"pairing": True}),
-        ({"muted": True}, {"connecting": True}),
-    ],
-)
-def test_the_new_rows_keep_their_priority_order(higher, lower):
-    merged = {**higher, **lower}
-    assert resolve(_request(**merged)).colour == resolve(_request(**higher)).colour
-
-
-def test_the_new_rows_outrank_the_funnel_but_the_idle_only_ones_do_not():
-    for kwargs in (
-        {"updating": True},
-        {"pairing": True},
-        {"connecting": True},
-        {"offline": True},
-        {"battery_low": True},
-    ):
-        assert resolve(_request(**kwargs, funnel=FunnelState.SPEAKING)) == resolve(
-            _request(**kwargs)
-        )
-    assert resolve(_request(charging=True, funnel=FunnelState.SPEAKING)) == resolve(
-        _request(funnel=FunnelState.SPEAKING)
-    )
-    assert resolve(_request(dancing=True, funnel=FunnelState.SPEAKING)) == resolve(
-        _request(funnel=FunnelState.SPEAKING)
-    )
-    # The cues and the alarm stay above every new row.
-    for kwargs in ({"live": True}, {"camera": True}, {"alarm": True, "alarm_on": True}):
-        assert resolve(_request(**kwargs, updating=True, pairing=True, dancing=True)) == resolve(
-            _request(**kwargs)
-        )
-
-
 def test_resolve_key_agrees_with_resolve_over_a_seeded_sweep():
-    flags = [
-        "live",
-        "camera",
-        "alarm",
-        "fault",
-        "held",
-        "muted",
-        "updating",
-        "pairing",
-        "connecting",
-        "offline",
-        "battery_low",
-        "offer",
-        "charging",
-        "dancing",
-    ]
+    flags = ["live", "camera", "fault", "pairing", "offline", "battery_low", "dancing", "asleep"]
     rng = random.Random(20)
     for _ in range(3000):
         kwargs = {flag: rng.random() < 0.5 for flag in flags}
-        kwargs["alarm_on"] = rng.random() < 0.5
+        kwargs["dark_room"] = rng.random() < 0.3
         kwargs["funnel"] = rng.choice(list(FunnelState))
         kwargs["minute"] = rng.choice([DAY_MINUTE, NIGHT_MINUTE])
         request = _request(**kwargs)
@@ -346,24 +295,11 @@ def test_resolve_key_agrees_with_resolve_over_a_seeded_sweep():
             assert look.style is looks.LOOKS[key][2]
 
 
-def test_the_periods_are_the_unmeasured_defaults():
-    assert looks.PERIOD_S[LookStyle.BREATHE] == 3.0
-    assert looks.PERIOD_S[LookStyle.PULSE] == 2.0
-    assert looks.PERIOD_S[LookStyle.FLASH] == 0.5
-    assert looks.PERIOD_S[LookStyle.BLINK] == 1.0
-    assert looks.PERIOD_S[LookStyle.STEADY] == 0.0
-
-
 def test_period_s_uses_the_override_then_the_style():
-    assert looks.period_s(LookKey.CHARGING) == 4.0
-    assert looks.period_s(LookKey.CONNECTING) == 2.0
-    assert looks.period_s(LookKey.UPDATING) == 1.0
     assert looks.period_s(LookKey.PAIRING) == 2.0
-    assert looks.period_s(LookKey.OFFLINE) == 10.0
-    assert looks.period_s(LookKey.BATTERY_LOW) == 20.0
-    assert looks.period_s(LookKey.THINKING) == 3.0
+    assert looks.period_s(LookKey.ATTENTION) == 10.0
     assert looks.period_s(LookKey.CAMERA) == 0.5
-    assert looks.period_s(LookKey.DANCING) == 0.0
+    assert looks.period_s(LookKey.LIVE) == 0.0
 
 
 def test_camera_is_pink_flash_at_its_floor_even_night_with_a_child():
@@ -375,27 +311,16 @@ def test_camera_is_pink_flash_at_its_floor_even_night_with_a_child():
     assert look.brightness >= looks.CAMERA_FLOOR
 
 
-def test_disabled_darkens_every_new_row_but_never_the_cues_or_the_alarm():
-    off = IndicatorSettings(enabled=False)
-    for kwargs in (
-        {"connecting": True},
-        {"offline": True},
-        {"pairing": True},
-        {"charging": True},
-        {"battery_low": True},
-        {"updating": True},
-        {"dancing": True},
-        {"fault": True},
-        {"held": True},
-        {"muted": True},
-    ):
-        assert resolve(_request(**kwargs, settings=off)) is None
-    assert resolve(_request(live=True, settings=off)) is not None
-    assert resolve(_request(camera=True, settings=off)) is not None
-    assert resolve(_request(alarm=True, alarm_on=True, settings=off)) is not None
-
-
-def test_offline_is_an_amber_double_pulse_every_ten_seconds():
-    look = resolve(_request(offline=True))
-    assert look is not None and look.colour is Palette.AMBER
-    assert look.style.value == "double" and look.period_s == 10.0
+def test_the_ring_has_one_writer_the_light_service():
+    """No ring write outside the service's own wiring: the night controller, app.py and the
+    camera and notification paths tell the service facts and never write a pixel."""
+    for relative in ("app.py", "presence/night.py"):
+        text = (PACKAGE / relative).read_text()
+        assert re.findall(r"leds\.many\(|\.set_led_colors?\(", text) == [], relative
+    adapter = (PACKAGE / "bodies" / "stackchan" / "adapter.py").read_text()
+    # The only ring calls left in the adapter are the LED part's own driver and the raw client
+    # pass-through; the camera driver and the alert path make none, and keep no second RGB.
+    assert adapter.count("client.set_led_colors(") == 1  # _LedAdapter.many, the part's driver
+    assert adapter.count("client.set_led_color(") == 1  # the raw client pass-through
+    assert "(168, 36, 0)" not in adapter and "_camera_rgb" not in adapter
+    assert "leds.many(" not in adapter.replace("leds.many with", "").replace("leds.many needs", "")

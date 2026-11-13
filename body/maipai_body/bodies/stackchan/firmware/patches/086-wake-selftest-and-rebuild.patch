@@ -1,0 +1,298 @@
+# Intent: a unit that cannot hear the wake word finds out and repairs itself (owner report 2026-11-13, "stackchan is not listening to me ... It should be self healing"; design note docs/dev/stackchan-self-healing-2026-11-13.md, rung (c)). "Speech heard for N minutes and no detection" proves nothing (nobody may have said the word), and playing the wake word through the unit's own speaker is what the echo canceller is built to remove. What does prove the engine is an injection test. (1) The host's "system wake_selftest" command, accepted only while the unit is idle and the wake word is armed, feeds a clip of the wake word (wake_selftest.pcm, 16 kHz mono 16-bit, packed into the assets image by recipe.sh from firmware/assets/) into the wake front end digitally, as channel M with silence on R, in place of the microphone for the clip and one more second. A WAKENET_DETECTED during it is counted as a hit and NOT passed to the application (no state change, no tone, no turn). The result is a "wake_selftest" event: result=hit or miss (hits, ms) or skipped (busy, stopped). It proves the model, the front end and WakeNet, not the microphone. (2) "system wake_rebuild" makes the front end again in place (AFE destroy and create from the same configuration, on the detection task between two fetches, about 400 ms): it resets the echo canceller and WakeNet's state, which is the cure under the echo-canceller theory of the deafness; a "wake_selftest" event with result=rebuilt confirms it. The host decides the ladder: test 60 s after each turn and hourly while idle, a miss rebuilds and retests, a second miss restarts through the guard of patch 085. (3) The microphone gets its own number: wake_stats gains mic_rms_max (the loudest echo-cancelled chunk's RMS in the minute; a microphone that hears people reads far above a dead one), selftest_ok, selftest_miss and rebuilds (totals since boot).
+# Upstream: m5stack/xiaozhi-esp32 main/audio/wake_words/afe_wake_word.cc and .h, main/application.cc, firmware/main/hal/device_events.h (MIT). Applies after 085 with --unidiff-zero.
+# Check after a flash: unit idle, the host logs "unit wake: wake_selftest result=hit hits=1 ms=2900" within seconds of the host's test; no "unit wake: wake" event and no tone from it; "system wake_rebuild" gives "result=rebuilt ms=~400" and the next test still hits; wake_stats shows mic_rms_max in the hundreds with people talking and near zero in a silent room; a test while the unit speaks gives result=skipped why=busy.
+diff --git a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
+index b45d209..0bf8063 100644
+--- a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
++++ b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
+@@ -11,6 +11,8 @@
+ #include <atomic>
+ #include <sstream>
+ #include <hal/device_events.h>
++#include "assets.h"
++#include <cstring>
+ 
+ #define DETECTION_RUNNING_EVENT 1
+ 
+@@ -25,6 +27,30 @@ static std::atomic<uint32_t> s_vad_speech{0};
+ static std::atomic<uint32_t> s_last_fetch_ms{0};
+ static EventGroupHandle_t s_wake_event_group = nullptr;
+ 
++// Patch 086. The loudest microphone chunk (RMS of the echo-cancelled mono output) in the last minute,
++// the wake engine self-test, and the rebuild request.
++//
++// Self-test: a short clip of the wake word is fed into the wake front end digitally, as channel M
++// with silence on R, in place of the microphone (Feed), for the clip and one more second. A
++// WAKENET_DETECTED while it runs is counted as a hit and is NOT passed on (no state change, no tone).
++// It proves the model, the front end and WakeNet; it does not prove the microphone, which has its
++// own number (mic_rms_max). 0 off, 1 injecting, 2 waiting for the last detection to arrive.
++static std::atomic<uint32_t> s_mic_rms_max{0};
++static std::atomic<int> s_selftest{0};
++static std::atomic<uint32_t> s_selftest_hits{0};
++static std::atomic<uint32_t> s_selftest_ok{0};
++static std::atomic<uint32_t> s_selftest_miss{0};
++static std::atomic<uint32_t> s_rebuilds{0};
++static std::atomic<int64_t> s_selftest_started_us{0};
++static std::atomic<int64_t> s_selftest_deadline_us{0};
++static std::atomic<bool> s_rebuild_request{false};
++static size_t s_inject_pos = 0;
++static int16_t* s_clip = nullptr;
++static size_t s_clip_len = 0;
++static AfeWakeWord* s_instance = nullptr;
++constexpr size_t kSelftestTailSamples = 16000;      // one second of silence after the clip
++constexpr int64_t kSelftestSettleUs = 600 * 1000;   // the last chunks reach WakeNet after the feed ends
++
+ // Barge-in measurement: how loud the echo-cancelled microphone is while the robot speaks, and how
+ // often the voice detector fires then. Set from the application's state change, reported once a
+ // minute by device_events_barge_stats. Compare a minute with nobody talking over a reply against a
+@@ -78,10 +104,12 @@ void device_events_wake_stats(char* out, size_t size)
+     const bool armed      = s_wake_event_group != nullptr && (xEventGroupGetBits(s_wake_event_group) & DETECTION_RUNNING_EVENT);
+     snprintf(out, size,
+              "\"armed\":%d,\"fetches\":%u,\"fetch_errors\":%u,\"detections\":%u,\"vad_speech\":%u,"
+-             "\"ms_since_fetch\":%d",
++             "\"ms_since_fetch\":%d,\"mic_rms_max\":%u,\"selftest_ok\":%u,\"selftest_miss\":%u,\"rebuilds\":%u",
+              armed ? 1 : 0, static_cast<unsigned>(s_fetches.exchange(0)),
+              static_cast<unsigned>(s_fetch_errors.exchange(0)), static_cast<unsigned>(s_detections.exchange(0)),
+-             static_cast<unsigned>(s_vad_speech.exchange(0)), last == 0 ? -1 : static_cast<int>(now_ms - last));
++             static_cast<unsigned>(s_vad_speech.exchange(0)), last == 0 ? -1 : static_cast<int>(now_ms - last),
++             static_cast<unsigned>(s_mic_rms_max.exchange(0)), static_cast<unsigned>(s_selftest_ok.load()),
++             static_cast<unsigned>(s_selftest_miss.load()), static_cast<unsigned>(s_rebuilds.load()));
+ }
+ 
+ AfeWakeWord::AfeWakeWord()
+@@ -91,6 +119,7 @@ AfeWakeWord::AfeWakeWord()
+ 
+     event_group_ = xEventGroupCreate();
+     s_wake_event_group = event_group_;
++    s_instance = this;
+ }
+ 
+ AfeWakeWord::~AfeWakeWord() {
+@@ -153,6 +182,7 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
+         input_format.push_back('N');
+     }
+     afe_config_t* afe_config = afe_config_init(input_format.c_str(), models_, AFE_TYPE_SR, AFE_MODE_HIGH_PERF);
++    afe_config_ = afe_config;
+     afe_config->aec_init = false;
+     afe_config->aec_mode = AEC_MODE_SR_HIGH_PERF;
+     afe_config->afe_perferred_core = 1;
+@@ -339,6 +369,9 @@ void AfeWakeWord::Start() {
+ 
+ void AfeWakeWord::Stop() {
+     xEventGroupClearBits(event_group_, DETECTION_RUNNING_EVENT);
++    if (s_selftest.exchange(0) != 0) {
++        device_events_push_diag("wake_selftest", "\"result\":\"skipped\",\"why\":\"stopped\"");
++    }
+ 
+     std::lock_guard<std::mutex> lock(input_buffer_mutex_);
+     if (afe_data_ != nullptr) {
+@@ -357,7 +390,21 @@ void AfeWakeWord::Feed(const std::vector<int16_t>& data) {
+     if (!(xEventGroupGetBits(event_group_) & DETECTION_RUNNING_EVENT)) {
+         return;
+     }
+-    input_buffer_.insert(input_buffer_.end(), data.begin(), data.end());
++    if (s_selftest.load() == 1 && s_clip != nullptr) {
++        // The self-test: the clip as channel M, silence on every other channel, in place of the microphone.
++        const size_t channels = codec_->input_channels();
++        std::vector<int16_t> injected(data.size(), 0);
++        for (size_t i = 0; i + channels <= data.size() && s_selftest.load() == 1; i += channels) {
++            injected[i] = s_inject_pos < s_clip_len ? s_clip[s_inject_pos] : 0;
++            if (++s_inject_pos >= s_clip_len + kSelftestTailSamples) {
++                s_selftest_deadline_us = esp_timer_get_time() + kSelftestSettleUs;
++                s_selftest.store(2);
++            }
++        }
++        input_buffer_.insert(input_buffer_.end(), injected.begin(), injected.end());
++    } else {
++        input_buffer_.insert(input_buffer_.end(), data.begin(), data.end());
++    }
+     size_t chunk_size = afe_iface_->get_feed_chunksize(afe_data_) * codec_->input_channels();
+     while (input_buffer_.size() >= chunk_size) {
+         afe_iface_->feed(afe_data_, input_buffer_.data());
+@@ -386,12 +433,44 @@ void AfeWakeWord::AudioDetectionTask() {
+             s_fetch_errors++;
+             continue;;
+         }
++        if (s_rebuild_request.exchange(false)) {
++            RebuildEngine();  // the front end was just rebuilt (patch 086): fetch from the new one
++            continue;
++        }
+         s_fetches++;
+         if (res->vad_state == VAD_SPEECH) {
+             s_vad_speech++;  // chunks the front end heard as speech: does it hear the person over the reply?
+         }
+         s_last_fetch_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+ 
++        const int selftest = s_selftest.load();
++        if (selftest == 0) {
++            // The microphone's own level (patch 086), apart from the wake model: the loudest chunk's RMS
++            // this minute. A microphone that hears people reads far above a dead one.
++            const int16_t* pcm = res->data;
++            const size_t n = res->data_size / sizeof(int16_t);
++            if (n > 0) {
++                uint64_t sum = 0;
++                for (size_t i = 0; i < n; i++) {
++                    sum += static_cast<int64_t>(pcm[i]) * pcm[i];
++                }
++                const uint32_t rms = static_cast<uint32_t>(std::sqrt(static_cast<double>(sum) / n));
++                uint32_t prev = s_mic_rms_max.load();
++                while (rms > prev && !s_mic_rms_max.compare_exchange_weak(prev, rms)) {
++                }
++            }
++        } else if (selftest == 2 && esp_timer_get_time() >= s_selftest_deadline_us.load()) {
++            const uint32_t hits = s_selftest_hits.load();
++            const int ms = static_cast<int>((esp_timer_get_time() - s_selftest_started_us.load()) / 1000);
++            s_selftest.store(0);
++            (hits > 0 ? s_selftest_ok : s_selftest_miss)++;
++            char extra[64];
++            snprintf(extra, sizeof(extra), "\"result\":\"%s\",\"hits\":%u,\"ms\":%d", hits > 0 ? "hit" : "miss",
++                     static_cast<unsigned>(hits), ms);
++            ESP_LOGI(TAG, "Wake self-test: %s", extra);
++            device_events_push_diag("wake_selftest", extra);
++        }
++
+         if (g_barge_speaking.load()) {
+             barge_step(res->data, res->data_size / sizeof(int16_t), res->vad_state == VAD_SPEECH);
+         }
+@@ -410,7 +489,9 @@ void AfeWakeWord::AudioDetectionTask() {
+         }
+         stop_was_armed_ = stop_armed;
+ 
+-        if (res->wakeup_state == WAKENET_DETECTED) {
++        if (res->wakeup_state == WAKENET_DETECTED && s_selftest.load() != 0) {
++            s_selftest_hits++;  // the self-test's own clip: counted, never passed on (no turn, no tone)
++        } else if (res->wakeup_state == WAKENET_DETECTED) {
+             s_detections++;
+             Stop();
+             last_detected_wake_word_ = wake_words_[res->wakenet_model_index - 1];
+@@ -422,6 +503,75 @@ void AfeWakeWord::AudioDetectionTask() {
+     }
+ }
+ 
++bool AfeWakeWord::IsRunning() const {
++    return (xEventGroupGetBits(event_group_) & DETECTION_RUNNING_EVENT) != 0;
++}
++
++void AfeWakeWord::RequestRebuild() {
++    s_rebuild_request.store(true);
++}
++
++// Builds the front end again from the same configuration, on the detection task between two fetches
++// (nothing else uses the old one then). It resets the echo canceller and WakeNet's state, and takes
++// about 400 ms; the audio input task waits on the same lock meanwhile.
++void AfeWakeWord::RebuildEngine() {
++    if (afe_config_ == nullptr) {
++        return;
++    }
++    const int64_t start = esp_timer_get_time();
++    {
++        std::lock_guard<std::mutex> lock(input_buffer_mutex_);
++        afe_iface_->destroy(afe_data_);
++        afe_data_ = afe_iface_->create_from_config(afe_config_);
++        input_buffer_.clear();
++    }
++    s_rebuilds++;
++    char extra[48];
++    snprintf(extra, sizeof(extra), "\"result\":\"rebuilt\",\"ms\":%d", static_cast<int>((esp_timer_get_time() - start) / 1000));
++    ESP_LOGW(TAG, "Wake engine rebuilt: %s", extra);
++    device_events_push_diag("wake_selftest", extra);
++}
++
++// Called from the application's system command (application.cc), on the websocket task. True when the
++// test started: the wake word is armed (the unit is idle) and the clip is in the assets.
++bool maipai_wake_selftest_start() {
++    if (s_instance == nullptr || !s_instance->IsRunning()) {
++        return false;
++    }
++    if (s_selftest.load() != 0) {
++        if (esp_timer_get_time() - s_selftest_started_us.load() < 10 * 1000000LL) {
++            return false;
++        }
++        s_selftest.store(0);  // a test that never ended (the feed stopped): start over
++    }
++    if (s_clip == nullptr) {
++        void* ptr = nullptr;
++        size_t size = 0;
++        if (!Assets::GetInstance().GetAssetData("wake_selftest.pcm", ptr, size) || size < 3200) {
++            ESP_LOGW(TAG, "Wake self-test clip is not in the assets");
++            return false;
++        }
++        auto* copy = static_cast<int16_t*>(heap_caps_malloc(size & ~static_cast<size_t>(1), MALLOC_CAP_SPIRAM));
++        if (copy == nullptr) {
++            return false;
++        }
++        memcpy(copy, ptr, size & ~static_cast<size_t>(1));
++        s_clip_len = size / 2;
++        s_clip = copy;
++    }
++    s_selftest_hits.store(0);
++    s_inject_pos = 0;
++    s_selftest_started_us.store(esp_timer_get_time());
++    s_selftest.store(1);
++    return true;
++}
++
++void maipai_wake_rebuild() {
++    if (s_instance != nullptr) {
++        s_instance->RequestRebuild();
++    }
++}
++
+ void AfeWakeWord::StoreWakeWordData(const int16_t* data, size_t samples) {
+     // store audio data to wake_word_pcm_
+     wake_word_pcm_.emplace_back(std::vector<int16_t>(data, data + samples));
+diff --git a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.h b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.h
+index b4d0534..32f2e62 100644
+--- a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.h
++++ b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.h
+@@ -40,10 +40,17 @@ public:
+     void OnStopWord(std::function<void()> callback) { stop_word_callback_ = std::move(callback); }
+     void SetStopWordArmed(bool armed);
+ 
++    // Wake engine self-test and rebuild (patch 086): the detection task is running (armed), and the
++    // front end is built again in place on the detection task's next chunk.
++    bool IsRunning() const;
++    void RequestRebuild();
++
+ private:
+     srmodel_list_t *models_ = nullptr;
+     const esp_afe_sr_iface_t* afe_iface_ = nullptr;
+     esp_afe_sr_data_t* afe_data_ = nullptr;
++    afe_config_t* afe_config_ = nullptr;
++    void RebuildEngine();
+     char* wakenet_model_ = NULL;
+     std::vector<std::string> wake_words_;
+     EventGroupHandle_t event_group_;
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index 2d36f67..50a3dfe 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -690,6 +690,14 @@ void Application::InitializeProtocol() {
+                     // through the self-restart guard (three an hour) after 300 ms, so this log line
+                     // and the host's ack leave first.
+                     maipai_heal_restart("host", 300);
++                } else if (strcmp(command->valuestring, "wake_selftest") == 0) {
++                    // The wake engine self-test (patch 086): idle units only; the result comes back as a
++                    // "wake_selftest" event (hit, miss or skipped).
++                    if (GetDeviceState() != kDeviceStateIdle || !maipai_wake_selftest_start()) {
++                        device_events_push_diag("wake_selftest", "\"result\":\"skipped\",\"why\":\"busy\"");
++                    }
++                } else if (strcmp(command->valuestring, "wake_rebuild") == 0) {
++                    maipai_wake_rebuild();
+                 } else if (strcmp(command->valuestring, "idle") == 0) {
+                     // The host ends a silent follow-up: leave Listening or Speaking and go idle.
+                     // Idle disables voice processing and re-arms the wake word.
+diff --git a/firmware/main/hal/device_events.h b/firmware/main/hal/device_events.h
+index eb0faf7..480ad13 100644
+--- a/firmware/main/hal/device_events.h
++++ b/firmware/main/hal/device_events.h
+@@ -33,3 +33,9 @@ void device_events_touch_stats(char* out, size_t size);
+ void maipai_heal_restart(const char* why, uint32_t delay_ms);
+ void maipai_heal_status(int* count, bool* hold);
+ void maipai_heal_take_reason(char* out, size_t size);
++
++// The wake engine self-test and rebuild (patch 086, afe_wake_word.cc): the test feeds a clip of the wake
++// word into the wake front end digitally and reports a "wake_selftest" event; it starts only while the
++// wake word is armed. The rebuild makes the front end again in place (resets the echo canceller).
++bool maipai_wake_selftest_start();
++void maipai_wake_rebuild();

@@ -91,6 +91,13 @@ class StackChanRingIndicator:
         self._pulse_until = self._clock() + PULSE_S
         self._send(PULSE_RGB)
 
+    def forget(self) -> None:
+        """Drop the look and the last colour without writing: something else drew on the ring
+        (the dance's light show), so the next look must be written even if it equals the old."""
+        self._look = None
+        self._pulse_until = None
+        self._last = None
+
     def off(self) -> None:
         self._look = None
         self._pulse_until = None

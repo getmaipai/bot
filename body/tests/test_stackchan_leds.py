@@ -43,22 +43,23 @@ def test_leds_many_preserves_validation_error_shapes():
         robot.leds.many(invalid)
 
 
-def test_per_led_update_cannot_hide_camera_indicator_during_capture():
-    class DuringCapture(FakeStackChanDeviceClient):
-        adapter = None
+def test_a_photo_writes_no_pixel_itself_and_raises_the_cue_before_the_capture():
+    """The ring has one writer, the light service; the adapter only raises the cue, and does it
+    before the capture (a privacy rule), so the service has already lit the ring."""
+    order: list[str] = []
 
+    class DuringCapture(FakeStackChanDeviceClient):
         def take_photo(self):
-            assert self.led_color == (168, 42, 92)
-            self.adapter.robot.leds.many(_updates([(0, 0, 0)] * LED_COUNT))
-            assert self.led_color == (168, 42, 92)
-            assert self.led_colors == ((168, 42, 92),) * LED_COUNT
+            order.append("capture")
+            assert not [call for call in self.calls if "led" in call.name]
             return b"jpeg"
 
     device = DuringCapture()
     adapter = StackChanRobotAdapter(device)
     adapter.robot.lease.acquire("person", "camera-test")
-    device.adapter = adapter
+    adapter.robot._driver("camera").cue_sink = lambda active: order.append(f"cue {active}")
     import asyncio
 
     assert asyncio.run(adapter.take_photo()) == b"jpeg"
-    assert device.led_colors == ((168, 42, 92),) * LED_COUNT
+    assert order == ["cue True", "capture", "cue False"]
+    assert device.led_colors == ((0, 0, 0),) * LED_COUNT

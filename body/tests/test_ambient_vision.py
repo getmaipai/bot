@@ -31,15 +31,17 @@ def _camera_driver(device):
     return robot, robot._driver("camera")
 
 
-def test_visible_frame_still_lights_the_ring():
+def test_visible_frame_raises_the_camera_cue_for_the_light_service():
     device = SilentFake()
     device.photo = b"jpeg"
     _, camera = _camera_driver(device)
+    cues: list[bool] = []
+    camera.cue_sink = cues.append
 
     assert camera.command("frame") == b"jpeg"
 
-    led_calls = [call for call in device.calls if "set_led" in call.name]
-    assert len(led_calls) >= 2
+    assert cues == [True, False]  # the light service draws the pink; the adapter writes no pixel
+    assert not [call for call in device.calls if "set_led" in call.name]
     take = [call for call in device.calls if call.name == "camera.take_photo"]
     assert len(take) == 1
 

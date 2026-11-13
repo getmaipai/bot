@@ -14,6 +14,7 @@ from maipai_body.app import StackChanBehavior
 from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
 from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
 from maipai_body.bodies.stackchan.head_search import (
+    AMBIENT_HOLD_S,
     ASK_FAST_STEP_S,
     ASK_LEVEL_STEPS,
     ASK_PAN_DEG,
@@ -128,6 +129,12 @@ def _behavior(vision):
     return behavior, device
 
 
+def _arm(behavior, start):
+    """The trigger has held since AMBIENT_HOLD_S before ``start``: an ambient look may begin at it
+    (one look is never enough, 2026-11-13)."""
+    behavior.search_tick(start - AMBIENT_HOLD_S)
+
+
 def _head_calls(device):
     return [c.arguments for c in device.calls if c.name == "self.robot.set_head_angles"]
 
@@ -142,17 +149,34 @@ def _run_person_look(behavior, device, start):
     return _head_calls(device)
 
 
-def test_a_picture_that_differs_from_the_empty_room_starts_the_look_without_any_movement(caplog):
+def test_a_picture_that_only_differs_from_the_empty_room_starts_no_look_at_all():
+    """Live log 2026-11-13 09:00 to 09:50: "differs from the empty room in 60 to 83%" started 16
+    looks while the owner sat at the desk. The difference alone is not a reason to look."""
     room = np.full((12, 16), 120.0, dtype=np.float32)
     body = room.copy()
     body[:, :10] = 40.0  # a torso over most of the picture, perfectly still
     vision = _Vision(detected=False, motion_age=None, thumb=room)
+    behavior, _device = _behavior(vision)
+    try:
+        behavior._baseline.learn(room, 0.0)
+        vision.thumb = body
+        behavior.watch_for_faces(100.0)
+        behavior.watch_for_faces(100.6)
+        assert behavior._person_share >= PERSON_SHARE
+        for i in range(60):
+            behavior.search_tick(100.2 + i * 5.0)
+        assert not behavior._search.active
+        assert behavior._sees == "maybe"  # the ring still says something may be there
+    finally:
+        behavior.close()
+
+
+def test_a_look_started_by_movement_runs_its_poses_slowly_and_waits_after_a_miss(caplog):
+    room = np.full((12, 16), 120.0, dtype=np.float32)
+    vision = _Vision(detected=False, motion_age=1.0, thumb=room)
     behavior, device = _behavior(vision)
     try:
-        behavior._baseline.learn(room, 0.0)  # the empty room, learned earlier
-        vision.thumb = body
-        behavior.watch_for_faces(100.0)  # measures how the picture differs from the room
-        assert behavior._person_share >= PERSON_SHARE
+        _arm(behavior, 100.2)
         with caplog.at_level(logging.INFO, logger="maipai_body.app"):
             calls = _run_person_look(behavior, device, 100.2)
         looked = calls[-5:]
@@ -165,10 +189,9 @@ def test_a_picture_that_differs_from_the_empty_room_starts_the_look_without_any_
         assert looked[-1]["pitch"] == round(CENTRE_PITCH_DEG)  # back to rest, slowly
         assert all(c["speed"] == MOVE_SPEED for c in looked)
         lines = [r.getMessage() for r in caplog.records]
-        assert any("differs from the empty room" in line for line in lines)
+        assert any("the picture moved" in line for line in lines)
         assert any("looking around (person): yaw -25, pitch 22" in line for line in lines)
-        # Started by the picture alone, with nothing moving: the harder back-off (3 minutes).
-        assert any("next look waits 180 s" in line for line in lines)
+        assert any("next look waits 900 s" in line for line in lines)  # same scene: 15 minutes
         behavior.search_tick(110.0)  # not again inside the back-off
         assert not behavior._search.active
     finally:
@@ -208,6 +231,7 @@ def test_the_look_stops_the_moment_a_face_is_seen_and_following_takes_over():
     vision = _Vision(detected=False, motion_age=1.0)
     behavior, device = _behavior(vision)
     try:
+        _arm(behavior, 100.0)
         behavior.search_tick(100.0)
         behavior.search_tick(100.0)
         assert behavior._search.active
@@ -227,6 +251,7 @@ def test_a_touch_stops_the_look():
     vision = _Vision(detected=False, motion_age=1.0)
     behavior, device = _behavior(vision)
     try:
+        _arm(behavior, 100.0)
         behavior.search_tick(100.0)
         assert behavior._search.active
         touch = SimpleNamespace(kind="head_touch", extra={"strong": 1})
@@ -254,6 +279,7 @@ def test_no_look_while_resting_at_night_or_mid_reply_and_a_reply_ends_one():
         behavior.search_tick(100.0)
         assert not behavior._search.active
         behavior._active.clear()
+        _arm(behavior, 100.0)
         behavior.search_tick(100.0)
         assert behavior._search.active
         behavior._active.set()
@@ -272,6 +298,7 @@ def test_the_look_moves_even_when_idle_wandering_must_stay_still():
         behavior.idle_still = lambda: True  # charging, or idle level still
         behavior.idle_still_reason = lambda: "charging"
         before = len(_head_calls(device))
+        _arm(behavior, 100.0)
         behavior.search_tick(100.0)
         behavior.search_tick(100.0)
         assert behavior._search.active and len(_head_calls(device)) == before + 1
@@ -284,6 +311,7 @@ def test_a_refused_head_gate_ends_the_look_without_moving():
     behavior, device = _behavior(vision)
     try:
         behavior.head_gate.allow = lambda source, **kw: bool(kw.get("essential"))
+        _arm(behavior, 100.0)
         behavior.search_tick(100.0)
         before = len(_head_calls(device))
         behavior.search_tick(100.0)
@@ -390,6 +418,7 @@ def test_a_flat_picture_in_a_lit_room_is_person_like(caplog):
     behavior.lux = lambda: 10.0
     try:
         with caplog.at_level(logging.INFO, logger="maipai_body.app"):
+            _arm(behavior, 100.0)
             behavior.search_tick(100.0)
         assert behavior._search.reason == "close"  # the steep climb: the face is far above
         assert any("right against the lens" in r.getMessage() for r in caplog.records)
@@ -471,39 +500,39 @@ def test_the_robots_own_head_move_is_not_a_person_and_starts_no_look():
         behavior.close()
 
 
-def test_a_look_started_by_the_picture_alone_backs_off_3_10_30_minutes_and_stops_while_unchanged(
-    caplog,
-):
+def test_a_look_that_found_nobody_backs_off_and_stops_while_the_scene_is_unchanged(caplog):
     room = np.full((12, 16), 120.0, dtype=np.float32)
     body = room.copy()
     body[:, :10] = 40.0
-    vision = _Vision(detected=False, motion_age=None, thumb=body)
+    vision = _Vision(detected=False, motion_age=1.0, thumb=body)
     behavior, device = _behavior(vision)
     try:
-        behavior._baseline.learn(room, 0.0)
-        behavior.watch_for_faces(100.0)
+        _arm(behavior, 100.2)
         with caplog.at_level(logging.INFO, logger="maipai_body.app"):
-            _run_person_look(behavior, device, 100.2)  # found nobody: wait 3 minutes
-            behavior.search_tick(100.2 + 200.0)  # the same still picture: no look, ever
-            assert not behavior._search.active
-            behavior.search_tick(100.2 + 2000.0)
-            assert not behavior._search.active
-            chair = body.copy()
-            chair[:, 10:] = 200.0  # the picture changed: one more look
-            vision.thumb = chair
-            behavior.watch_for_faces(2101.0)
-            _run_person_look(behavior, device, 2101.2)  # found nobody: wait 10 minutes
+            _run_person_look(behavior, device, 100.2)  # found nobody
             failed_at = behavior._still_failed_at
-            vision.thumb = body
-            behavior.watch_for_faces(failed_at + 400.0)
+            chair = body.copy()
+            chair[:, 10:] = 200.0  # a changed picture
+            vision.thumb = chair
+            _arm(behavior, failed_at + 400.0)
             behavior.search_tick(failed_at + 400.0)
-            assert not behavior._search.active  # changed, but inside the 10 minutes
-            behavior.watch_for_faces(failed_at + 601.0)
-            behavior.search_tick(failed_at + 601.2)
-            assert behavior._search.active  # changed and past the wait
+            assert not behavior._search.active  # changed, but inside the 15 minutes
+            vision.thumb = body  # past the wait, but the very picture that failed
+            behavior.search_tick(failed_at + 1000.0)
+            behavior.search_tick(failed_at + 1010.0)
+            assert not behavior._search.active  # the scene did not change: no look
+            vision.thumb = chair
+            behavior.search_tick(failed_at + 2000.0)
+            _run_person_look(behavior, device, failed_at + 2010.0)  # changed and past the wait
+            failed_at = behavior._still_failed_at
+            assert behavior._still_failures == 2
+            vision.thumb = body
+            behavior.search_tick(failed_at + 1000.0)
+            behavior.search_tick(failed_at + 1010.0)
+            assert not behavior._search.active  # the second miss waits 30 minutes
         lines = [r.getMessage() for r in caplog.records]
-        assert any("next look waits 180 s" in line for line in lines)
-        assert any("next look waits 600 s" in line for line in lines)
+        assert any("next look waits 900 s" in line for line in lines)
+        assert any("next look waits 1800 s" in line for line in lines)
     finally:
         behavior.close()
 

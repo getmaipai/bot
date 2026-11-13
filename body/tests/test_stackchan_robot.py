@@ -198,36 +198,34 @@ def test_stackchan_estop_safe_stop_uses_supported_head_hold_verb():
     assert device.cancelled_motion_batches >= 1
 
 
-def test_camera_photo_and_stream_indicator_turn_on_and_off_on_success_and_failure():
+def test_camera_photo_and_stream_raise_and_lower_the_cue_and_never_write_the_ring():
     from maipai_body.bodies.stackchan.avatar_frames import AvatarCommand, decode_frame
 
     device = FakeStackChanDeviceClient()
     device.photo = b"\xff\xd8sample"
     robot = StackChanRobotAdapter(device).robot
+    cues: list[bool] = []
+    robot._driver("camera").cue_sink = cues.append
     assert robot.camera.frame() == device.photo
-    assert [call.arguments for call in device.calls if call.name == "self.robot.set_led_color"][
-        -1
-    ] == {
-        "red": 168,
-        "green": 42,
-        "blue": 92,
-    }
-    assert device.led_colors == ((168, 42, 92),) * 12
+    assert cues == [True, False]
     robot.camera.stream()
     assert decode_frame(device.avatar_frames[-1]).command == AvatarCommand.START_CAMERA_STREAM
-    assert device.led_color == (168, 42, 92)
+    assert cues == [True, False, True]
     robot.camera.stream(enabled=False)
     assert decode_frame(device.avatar_frames[-1]).payload == b"\x00"
-    assert device.led_colors == ((168, 42, 92),) * 12
+    assert cues[-1] is False
 
     robot.camera.stream()
     robot._driver("camera").disconnected()
-    assert device.led_colors == ((168, 42, 92),) * 12
+    assert cues[-1] is False
 
     device.connected = False
     with pytest.raises(BodyLost):
         robot.camera.frame()
-    assert device.led_colors == ((168, 42, 92),) * 12
+    assert cues[-1] is False
+    # The one ring writer is the light service: the adapter wrote no pixel of its own.
+    assert not [call for call in device.calls if "led" in call.name]
+    assert device.led_colors == ((0, 0, 0),) * 12
 
 
 def test_camera_stream_is_refused_while_estopped():

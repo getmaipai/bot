@@ -25,6 +25,7 @@ from maipai_body.bodies.stackchan.avatar_frames import (
     decode_frame,
     unit_camera_frame,
 )
+from maipai_body.bodies.stackchan.self_heal import SelfHealState, WakeSelfTest
 from maipai_body.bodies.stackchan.ws_logging import listener_logger
 from maipai_body.hal.errors import BodyLost, EstopEngaged, NotSupported, OutOfEnvelope
 
@@ -339,6 +340,16 @@ class XiaozhiServer:
         self.session_listeners: list[Callable[[str], None]] = []
         # Warns, and later restarts the unit, when it stays connected but stops answering tools.
         self.watchdog = DeviceWatchdog(reboot=self._request_unit_restart)
+        # What the unit reports of its own restart guard and microphone, and the wake engine
+        # self-test schedule (design note stackchan-self-healing-2026-11-13).
+        self.heal = SelfHealState()
+        self._turns_running = 0
+        self.wake_tester = WakeSelfTest(
+            self.heal,
+            is_idle=lambda: not self._speaking and self._turns_running == 0,
+            is_connected=lambda: bool(self._sessions),
+        )
+        self._heal_task: asyncio.Task[None] | None = None
         self.selftest_checks: Callable[[], list[dict[str, str]]] | None = None
         self.selftest_runner: Callable[[list[str] | None], list[dict[str, object]]] | None = None
         self.advertised_vision_url = advertised_vision_url
@@ -372,6 +383,7 @@ class XiaozhiServer:
         ssl: ssl.SSLContext | None = None,
     ) -> None:
         self._loop = asyncio.get_running_loop()
+        self._heal_task = asyncio.create_task(self._heal_loop())
         self._server = await serve(
             self.handle,
             host,
@@ -399,6 +411,9 @@ class XiaozhiServer:
                 self.vision_port = int(sockets[0].getsockname()[1])
 
     async def close(self) -> None:
+        if self._heal_task is not None:
+            self._heal_task.cancel()
+            self._heal_task = None
         for device_id in tuple(self._camera_streaming):
             await self._stop_camera(device_id)
         if self._vision_runner is not None:
@@ -712,9 +727,32 @@ class XiaozhiServer:
             )
         return None
 
+    async def _heal_loop(self) -> None:
+        """Run the wake engine self-test schedule: its commands go to the unit as system frames."""
+        while True:
+            await asyncio.sleep(2.0)
+            try:
+                for command in self.wake_tester.tick():
+                    if command == "reboot" and self.heal.hold:
+                        continue  # the unit holds: three self-restarts this hour already
+                    await self.send_system(command)
+            except asyncio.CancelledError:
+                raise
+            except ConnectionError:
+                pass  # no unit now; the test stays due
+            except Exception:
+                LOG.debug("StackChan self-heal tick failed", exc_info=True)
+
     def _request_unit_restart(self) -> None:
-        """Ask the connected unit to restart itself (called from a tool-call thread)."""
+        """Ask the connected unit to restart itself (called from a tool-call thread). The unit
+        refuses a fourth restart in an hour and says so (heal_hold); the host then stops asking."""
         if self._loop is None:
+            return
+        if self.heal.hold:
+            LOG.info(
+                "StackChan self-heal: not asking for a restart, the unit holds (three "
+                "self-restarts this hour already)"
+            )
             return
         asyncio.run_coroutine_threadsafe(self.send_system("reboot"), self._loop).result(timeout=5)
 
@@ -927,16 +965,21 @@ class XiaozhiServer:
             parameters = inspect.signature(handler).parameters
         except (TypeError, ValueError):
             parameters = {}
-        if "mode" in parameters and "aec" in parameters:
-            await handler(
-                session_id,
-                device_id,
-                state,
-                mode=mode if isinstance(mode, str) else "auto",
-                aec=aec if isinstance(aec, bool) else None,
-            )
-        else:
-            await handler(session_id, device_id, state)
+        self._turns_running += 1
+        try:
+            if "mode" in parameters and "aec" in parameters:
+                await handler(
+                    session_id,
+                    device_id,
+                    state,
+                    mode=mode if isinstance(mode, str) else "auto",
+                    aec=aec if isinstance(aec, bool) else None,
+                )
+            else:
+                await handler(session_id, device_id, state)
+        finally:
+            self._turns_running -= 1
+            self.wake_tester.note_turn_end()
 
     async def send_expression_frame(self, frame: bytes) -> None:
         expression = getattr(frame, "expression", None)

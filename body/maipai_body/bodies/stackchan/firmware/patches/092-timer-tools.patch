@@ -1,0 +1,84 @@
+# Intent: the MCP tools the host uses to drive the on-unit timers (patch 091): self.timer.set(seconds 1..86400, label, silent), self.timer.alarm(hour, minute, label, silent), self.timer.list, self.timer.cancel(id, 0 = all), self.timer.stop (end a ring now) and self.timer.snooze(seconds, default 300, at most 3600). Each answers a JSON string with ok and an id or an error word (full, too_long, no_clock, not_found, bad_argument). The upstream self.robot.create_reminder tools stay as they are (RAM only, no reboot survival); the host uses the self.timer family. The host finds support by the tool being in tools/list, so an older firmware needs no flag.
+# Upstream: firmware/main/hal/hal_mcp.cpp (MIT). Applies after 091 with --unidiff-zero.
+# Check after a flash: self.timer.set 15 answers {ok:true,id:1}; self.timer.list shows it with left counting down; self.timer.cancel 1 then list is empty; set 90000 answers too_long; nine sets answer full on the ninth; self.timer.alarm for a minute from now rings at the minute.
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index 866dc11..ca90aa0 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -18,6 +18,8 @@
+ #include <mutex>
+ #include "board/hal_bridge.h"
+ #include "device_events.h"
++#include "maipai_timers.h"
++#include "maipai_timers_core.h"
+ #include <string>
+ 
+ using namespace stackchan;
+@@ -457,6 +459,67 @@ void Hal::xiaozhi_mcp_init()
+                            return true;
+                        });
+ 
++    // On-unit timers and alarms (patch 092). The schedule is kept by the unit (patch 091), so it
++    // works with the host down and survives a reboot. Every tool answers a JSON string.
++    mclog::tagInfo(_tag, "add timer tools");
++    auto timer_reply = [](int id) -> std::string {
++        if (id > 0) {
++            return fmt::format(R"({{"ok":true,"id":{}}})", id);
++        }
++        const char* why = id == MT_ERR_FULL       ? "full"
++                          : id == MT_ERR_TOO_LONG ? "too_long"
++                          : id == MT_ERR_NO_CLOCK ? "no_clock"
++                          : id == MT_ERR_NOT_FOUND ? "not_found"
++                                                   : "bad_argument";
++        return fmt::format(R"({{"ok":false,"error":"{}"}})", why);
++    };
++    mcp_server.AddTool("self.timer.set",
++                       "Start a timer that the robot keeps and rings itself, even with no network. At most 8 active "
++                       "and at most 24 hours (86400 seconds). Label is a few words to show. Silent rings with no sound.",
++                       PropertyList({Property("seconds", kPropertyTypeInteger, 1, 86400),
++                                     Property("label", kPropertyTypeString, std::string("")),
++                                     Property("silent", kPropertyTypeBoolean, false)}),
++                       [timer_reply](const PropertyList& properties) -> ReturnValue {
++                           auto label = properties["label"].value<std::string>();
++                           return timer_reply(maipai_timers_add_timer(properties["seconds"].value<int>(), label.c_str(),
++                                                                      properties["silent"].value<bool>()));
++                       });
++    mcp_server.AddTool("self.timer.alarm",
++                       "Set an alarm for the next HH:MM of the robot's local day (24 hour clock). Kept and rung by the "
++                       "robot itself. Needs the robot's clock to be set.",
++                       PropertyList({Property("hour", kPropertyTypeInteger, 0, 23),
++                                     Property("minute", kPropertyTypeInteger, 0, 59),
++                                     Property("label", kPropertyTypeString, std::string("")),
++                                     Property("silent", kPropertyTypeBoolean, false)}),
++                       [timer_reply](const PropertyList& properties) -> ReturnValue {
++                           auto label = properties["label"].value<std::string>();
++                           return timer_reply(maipai_timers_add_alarm(properties["hour"].value<int>(),
++                                                                      properties["minute"].value<int>(), label.c_str(),
++                                                                      properties["silent"].value<bool>()));
++                       });
++    mcp_server.AddTool("self.timer.list", "List the active timers and alarms with the seconds left on each.",
++                       std::vector<Property>{}, [](const PropertyList&) -> ReturnValue {
++                           return maipai_timers_list_json();
++                       });
++    mcp_server.AddTool("self.timer.cancel", "Cancel a timer or alarm by id. Id 0 cancels all of them.",
++                       PropertyList({Property("id", kPropertyTypeInteger, 0, 1000000)}),
++                       [](const PropertyList& properties) -> ReturnValue {
++                           return std::string(maipai_timers_cancel(properties["id"].value<int>())
++                                                  ? R"({"ok":true})"
++                                                  : R"({"ok":false,"error":"not_found"})");
++                       });
++    mcp_server.AddTool("self.timer.stop", "Stop a timer or alarm that is ringing now.", std::vector<Property>{},
++                       [](const PropertyList&) -> ReturnValue {
++                           return std::string(maipai_timers_dismiss("host") ? R"({"ok":true})" : R"({"ok":false,"error":"not_ringing"})");
++                       });
++    mcp_server.AddTool("self.timer.snooze",
++                       "Ring again later: starts a new timer with the last ring's label. Works while it rings and for "
++                       "two minutes after. Seconds default to 300, at most 3600.",
++                       PropertyList({Property("seconds", kPropertyTypeInteger, 300, 1, 3600)}),
++                       [timer_reply](const PropertyList& properties) -> ReturnValue {
++                           return timer_reply(maipai_timers_snooze(properties["seconds"].value<int>()));
++                       });
++
+     mclog::tagInfo(_tag, "add robot.dance tool");
+     mcp_server.AddTool("self.robot.dance",
+                        "Play one of the robot's built-in dances once, then return to normal. Names: happy, robot, panic, look_around.",

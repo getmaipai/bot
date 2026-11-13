@@ -440,3 +440,29 @@ def test_losing_a_follow_brings_the_head_back_to_level_and_the_hint_wait_is_capp
         if action.kind == "return":
             break
     assert action.kind == "return" and now - 10.0 <= WAIT_HINT_MAX_S + GIVE_UP_S + 2
+
+
+def test_a_follow_with_the_target_stuck_at_the_picture_edge_never_commands_past_the_head_stops():
+    """Live log 2026-11-13 09:05: the face sat at x 0.93 while each follow move added 25 degrees to
+    the last commanded yaw: 102, 127 ... 252. The head stops at 128; the sum must stop with it."""
+    from maipai_body.bodies.stackchan.profile import HEAD_YAW_LIMIT_DEG
+
+    tracker = PersonTracker(clock=lambda: 0.0)
+    observe(tracker, 1.0, [], face_age=0.1, face_xy=(0.95, 0.5))
+    yaws = []
+    now = 1.0
+    for _ in range(60):
+        now += 4.0
+        action = observe(tracker, now, [], face_age=0.1, face_xy=(0.95, 0.5))
+        if action.kind == "move":
+            yaws.append(action.move.yaw_deg)
+        assert abs(tracker.pose[0]) <= HEAD_YAW_LIMIT_DEG
+    assert yaws and max(yaws) == HEAD_YAW_LIMIT_DEG * FOLLOW_YAW_SIGN
+    assert all(abs(y) <= HEAD_YAW_LIMIT_DEG for y in yaws)
+    # A pose another part of the robot reports past the stops is clamped too (the next move is
+    # relative to where the head can be).
+    tracker.note_pose(252.0, 0.0)
+    assert tracker.pose[0] == HEAD_YAW_LIMIT_DEG
+    # Pegged at the stop, the target is still at the edge: no further move is commanded.
+    now += 4.0
+    assert observe(tracker, now, [], face_age=0.1, face_xy=(0.95, 0.5)).kind == "none"

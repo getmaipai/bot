@@ -21,3 +21,13 @@ def night_mode(values: object) -> bool:
         return True
     value = values.get(NIGHT_MODE_KEY, True)
     return value if isinstance(value, bool) else True
+
+
+# On-unit timers and alarms (StackChan firmware patches 090 to 094): off stops new ones being set;
+# what the unit already holds still rings. Home's registry default is on.
+TIMERS_ENABLED_KEY = "robot.timers.enabled"
+# Hub announcements ("say this"): off refuses them; muted and quiet are read only if Home
+# sends them.
+ANNOUNCE_ENABLED_KEY = "robot.announce.enabled"
+MUTED_KEY = "robot.muted"
+QUIET_KEY = "robot.quiet"

@@ -1,12 +1,16 @@
 """The StackChan light wiring: poll the link, the device and the battery.
 
-docs/dev/led-standard-2026-10-20.md wiring step 2. ``LightPoller`` reads the
-facts the ring may show (is the robot not at the hub yet, is the hub
-unreachable, is the battery charging or low) and writes the changed ones
-into the ``StackChanLightService``; the battery is read at most once per
-``battery_every_s`` and a failing or invalid read keeps the last good
-values. ``start_stackchan_light`` binds the service and a poller to the
-adapter's 12-pixel ring as two daemon threads.
+docs/dev/led-standard-2026-10-20.md ("The ring table"). ``LightPoller`` reads the
+facts the ring may show (is the hub unreachable for 10 s, is the battery low)
+and writes the changed ones into the ``StackChanLightService``; the battery is
+read at most once per ``battery_every_s``. A failing or invalid read is
+"unknown" and keeps the last good values (firmware patch 009 turns a failed
+register read into "not charging" and 0 percent), and a change in the charging
+or low state counts only after two reads in a row agree, so one bad read never
+flaps anything. Charging itself is not a ring fact (the red light at the back
+shows it); it only reaches the power rule through ``on_battery``.
+``start_stackchan_light`` binds the service and a poller to the adapter's 12-pixel
+ring as two daemon threads.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from typing import TYPE_CHECKING
 
 from maipai_body.bodies.stackchan.light_service import StackChanLightService
 from maipai_body.bodies.stackchan.ring_indicator import StackChanRingIndicator
+from maipai_body.indicator import looks
 
 if TYPE_CHECKING:
     from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
@@ -31,6 +36,32 @@ LED_COUNT = 12
 # reachable" (see maipai_body.link.state_machine.LinkPhase).
 UNREACHABLE_PHASES = frozenset({"reconnecting", "sleeping"})
 FAILURE_WARN_S = 60.0
+# A battery state change counts after this many reads in a row agree on it.
+CONFIRM_READS = 2
+
+
+class _Confirmed:
+    """A boolean that changes only after ``CONFIRM_READS`` equal reads in a row.
+
+    The first read is taken as it is (there is nothing to flap from yet)."""
+
+    def __init__(self) -> None:
+        self.value: bool | None = None
+        self._pending: bool | None = None
+        self._count = 0
+
+    def read(self, observed: bool) -> bool:
+        if self.value is None:
+            self.value = observed
+            return observed
+        if observed == self.value:
+            self._pending, self._count = None, 0
+            return self.value
+        self._count = self._count + 1 if observed == self._pending else 1
+        self._pending = observed
+        if self._count >= CONFIRM_READS:
+            self.value, self._pending, self._count = observed, None, 0
+        return self.value
 
 
 class LightPoller:
@@ -39,9 +70,11 @@ class LightPoller:
     ``poll()`` reads the facts and calls ``service.update`` once with only
     the fields that changed; the first poll also refreshes the service so
     the ring shows the current facts at once. The battery is read at most
-    once per ``battery_every_s`` on the injected clock; a read that raises
-    or returns an invalid payload (missing or non-int percent, non-bool
+    once per ``battery_every_s`` on the injected clock; a read that raises,
+    returns an invalid payload (missing or non-int percent, non-bool
+    charging) or looks like the firmware's failed-read zero (0 percent, not
     charging) keeps the previous values and warns at most once a minute.
+    Offline shows after the link has been unreachable ``offline_after_s``.
     """
 
     def __init__(
@@ -55,6 +88,7 @@ class LightPoller:
         battery_every_s: float = 60.0,
         low_percent: int = 15,
         on_battery: Callable[[bool], object] | None = None,
+        offline_after_s: float = looks.ATTENTION_AFTER_S,
     ) -> None:
         self._service = service
         self._on_battery = on_battery
@@ -64,17 +98,24 @@ class LightPoller:
         self._clock = clock
         self._battery_every_s = battery_every_s
         self._low_percent = low_percent
-        self._charging = False
-        self._battery_low = False
+        self._offline_after_s = offline_after_s
+        self._offline_since: float | None = None
+        self._charging = _Confirmed()
+        self._low = _Confirmed()
         self._last_battery_read: float | None = None
         self._last_failure_warn = float("-inf")
         self._first_poll = True
 
     def poll(self) -> None:
         connected = self._device_connected()
-        connecting = not connected
-        offline = connected and self._link_phase() in UNREACHABLE_PHASES
         now = self._clock()
+        if connected and self._link_phase() in UNREACHABLE_PHASES:
+            if self._offline_since is None:
+                self._offline_since = now
+            offline = now - self._offline_since >= self._offline_after_s
+        else:
+            self._offline_since = None
+            offline = False
         if (
             self._last_battery_read is None
             or now - self._last_battery_read >= self._battery_every_s
@@ -83,14 +124,11 @@ class LightPoller:
             self._read_battery()
         facts = self._service.facts
         changes: dict[str, bool] = {}
-        if facts.connecting != connecting:
-            changes["connecting"] = connecting
         if facts.offline != offline:
             changes["offline"] = offline
-        if facts.charging != self._charging:
-            changes["charging"] = self._charging
-        if facts.battery_low != self._battery_low:
-            changes["battery_low"] = self._battery_low
+        battery_low = bool(self._low.value)
+        if facts.battery_low != battery_low:
+            changes["battery_low"] = battery_low
         if changes:
             self._service.update(**changes)
         if self._first_poll:
@@ -120,12 +158,13 @@ class LightPoller:
             isinstance(percent, int)
             and not isinstance(percent, bool)
             and isinstance(charging, bool)
+            and not (percent == 0 and not charging)
         ):
-            self._charging = charging
-            self._battery_low = percent < self._low_percent and not charging
+            confirmed_charging = self._charging.read(charging)
+            self._low.read(percent < self._low_percent and not charging)
             if self._on_battery is not None:
                 try:
-                    self._on_battery(charging)
+                    self._on_battery(confirmed_charging)
                 except Exception:  # a power rule must never stop the light poll
                     logger.warning("power callback failed", exc_info=True)
             return

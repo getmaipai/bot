@@ -1,0 +1,26 @@
+# Intent: the stop word ends a ringing timer or alarm (patches 091 to 093). The stop-word callback in the xiaozhi application (patch 049) first asks maipai_timers_request_dismiss and, when a ring was going, ends it and does nothing else; otherwise it aborts speech as before. The timer code arms the stop word when a ring starts (SetStopWordArmed(true), best effort: it needs the model and some free internal RAM) and disarms it when the ring ends. UNVERIFIED on the unit: patch 049 armed it only while speaking, so whether the model hears 'stop' in the standby state is the first thing to test.
+# Upstream: main/application.cc of the xiaozhi-esp32 repo (BSD, 78/xiaozhi-esp32). Applies after 093 to the xiaozhi-esp32 checkout with --unidiff-zero.
+# Check after a flash: ring a timer and say 'stop' from a metre away: the ring ends and the log says 'Stop word heard while a timer rings'; if it does not, check the log for 'Stop word not armed' (low internal RAM); the touch always works.
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -13,6 +13,7 @@
+ #include <cstring>
+ #include <cstdio>
+ #include <hal/device_events.h>
++#include <hal/maipai_timers.h>
+ #include <hal/board/hal_bridge.h>
+ #include <esp_timer.h>
+ #include <esp_log.h>
+@@ -96,6 +97,11 @@ void Application::Initialize() {
+     // tells the host to end the turn, and nothing is said.
+     audio_service_.SetStopWordCallback([this]() {
+         Schedule([this]() {
++            // A ringing timer or alarm takes the word first (patch 093): it ends the ring, nothing else.
++            if (maipai_timers_request_dismiss("stop")) {
++                ESP_LOGI(TAG, "Stop word heard while a timer rings: ending the ring");
++                return;
++            }
+             ESP_LOGI(TAG, "Stop word heard while speaking: aborting");
+             AbortSpeaking(kAbortReasonNone);
+         });

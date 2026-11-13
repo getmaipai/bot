@@ -45,6 +45,7 @@ def test_payload_always_has_every_key_and_nulls_for_unknowns():
     assert payload["last_seen"] == "1970-01-01T00:00:00+00:00"
     assert payload["firmware_version"] is None and payload["ip"] is None
     assert payload["board"] == "m5stack-stack-chan"
+    assert payload["timers_active"] is None  # not asked yet
 
 
 def test_payload_reports_a_connected_unit():
@@ -123,3 +124,43 @@ def test_payload_carries_the_orientation_pose():
         )["orientation"]
         is None
     )
+
+
+def test_payload_says_how_often_the_unit_restarted_itself_and_whether_it_holds():
+    facts = UnitFacts()
+    facts.observe("wake_stats", {"heal_n": 3, "heal_hold": 1, "mic_rms_max": 420, "state": 3})
+    payload = build_payload(
+        device_id="aa:bb:cc:dd:ee:ff",
+        address=None,
+        connected_since=None,
+        facts=facts.snapshot(),
+        status=None,
+        bot_version=None,
+        now=0.0,
+    )
+    assert payload["self_restarts"] == 3 and payload["heal_hold"] is True
+    assert payload["mic_level"] == 420
+    empty = build_payload(
+        device_id=None,
+        address=None,
+        connected_since=None,
+        facts={},
+        status=None,
+        bot_version=None,
+        now=0.0,
+    )
+    assert empty["self_restarts"] is None and empty["heal_hold"] is None
+
+
+def test_payload_carries_the_number_of_timers_the_unit_holds():
+    payload = build_payload(
+        device_id="dev",
+        address=None,
+        connected_since=None,
+        facts={},
+        status=None,
+        bot_version=None,
+        now=0,
+        timers_active=3,
+    )
+    assert payload["timers_active"] == 3

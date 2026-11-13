@@ -9,7 +9,6 @@ from __future__ import annotations
 from maipai_body.bodies.stackchan.profile import LED_CHANNEL_MAX
 from maipai_body.bodies.stackchan.ring import (
     RING_RGB,
-    camera_flash_frames,
     ring_rgb,
     style_factor,
 )
@@ -84,13 +83,11 @@ def test_off_and_none_are_dark():
     assert ring_rgb(off, 0.0, 0.0) == (0, 0, 0)
 
 
-def test_camera_flash_frames_are_on_off_on():
+def test_the_camera_flash_is_two_flashes_then_steady_from_the_one_style_clock():
     look = Look(colour=Palette.PINK, brightness=1.0, style=LookStyle.FLASH)
-    assert camera_flash_frames(look) == [
-        ((168, 42, 92), 0.1),
-        ((0, 0, 0), 0.1),
-        ((168, 42, 92), 0.1),
-    ]
+    on, off = (168, 42, 92), (0, 0, 0)
+    times = (0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 2.0)
+    assert [ring_rgb(look, 0.5, t) for t in times] == [on, on, off, off, on, on, off, off, on, on]
 
 
 def test_every_look_key_renders_to_a_triple():

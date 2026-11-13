@@ -7,6 +7,7 @@ translate the pose into the unit's face, screen rotation and motion controls.
 from __future__ import annotations
 
 import logging
+import math
 import random
 import time
 from collections import deque
@@ -47,6 +48,13 @@ ROTATION_REFRESH_S = 60.0
 # After the unit is upright again its light sensor and camera may still be settling: they are
 # ignored for this long (night mode must not start from a sensor that was just covered).
 SENSOR_SETTLE_S = 30.0
+# The unit's accelerometer is in the HEAD: tilting the head up turns the whole gravity vector, so a
+# steep look up read as "on its back" (live log 2026-11-13 09:53:06 and 09:42:49: a look-around to
+# 22 degrees up, axis +z, a joke about the ceiling, then a listen nobody asked for). Every number
+# that guards against it is here.
+HEAD_SETTLE_S = 4.0  # an orientation CHANGE within this long of a head move of our own is ignored
+HEAD_PITCH_LIMIT_DEG = 25.0  # and while the head is tilted up more than this (up from level)
+HEAD_LINE_QUIET_S = 10.0  # no orientation line within this long of a head move of our own
 
 LINE_POOLS = {
     "left_side": (
@@ -130,6 +138,22 @@ def pose_for_axis(axis: str | None) -> str | None:
     return AXIS_POSES.get(axis) if isinstance(axis, str) else None
 
 
+def compensated_axis(extra: Mapping[str, object], head_pitch_deg: float) -> str | None:
+    """The body's gravity axis with the head's tilt taken out: the sensor sits in the head, so a
+    head tilted up by ``head_pitch_deg`` turns the (y, z) pull by that angle toward +z. With no
+    readings, or a head at level, the unit's own axis stands."""
+    axis = extra.get("axis")
+    readings = [extra.get(key) for key in ("gx", "gy", "gz")]
+    if abs(head_pitch_deg) < 1.0 or not all(isinstance(r, (int, float)) for r in readings):
+        return axis if isinstance(axis, str) else None
+    gx, gy, gz = (float(r) for r in readings)  # type: ignore[arg-type]
+    angle = math.atan2(gz, gy) - math.radians(head_pitch_deg)
+    length = math.hypot(gy, gz)
+    comp = {"x": gx, "y": length * math.cos(angle), "z": length * math.sin(angle)}
+    name = max(comp, key=lambda k: abs(comp[k]))
+    return ("+" if comp[name] >= 0 else "-") + name
+
+
 class OrientationReactions:
     """Decides what the robot shows and says; the callables do it."""
 
@@ -145,7 +169,11 @@ class OrientationReactions:
         resting: Callable[[], bool] = lambda: False,
         clock: Callable[[], float] = time.monotonic,
         rng: random.Random | None = None,
+        head_pitch_deg: Callable[[], float] = lambda: 0.0,
+        head_moved_ago: Callable[[], float | None] = lambda: None,
     ) -> None:
+        self._head_pitch_deg = head_pitch_deg
+        self._head_moved_ago = head_moved_ago
         self._face = face
         self._say = say
         self._rotate = rotate
@@ -175,11 +203,21 @@ class OrientationReactions:
 
     def on_event(self, extra: Mapping[str, object]) -> bool:
         """Apply a changed orientation and return whether the pose changed."""
-        axis = extra.get("axis")
-        if not isinstance(axis, str):
+        if not isinstance(extra.get("axis"), str):
             return False
+        pitch = self._head_pitch_deg()
+        moved_ago = self._head_moved_ago()
+        axis = compensated_axis(extra, pitch)
         pose = pose_for_axis(axis)
         if pose is None or pose == self._pose:
+            return False
+        if pitch > HEAD_PITCH_LIMIT_DEG or (moved_ago is not None and moved_ago < HEAD_SETTLE_S):
+            logger.info(
+                "StackChan orientation change to %s ignored: the head moved or is tilted up %.0f "
+                "degrees (the sensor is in the head)",
+                pose,
+                pitch,
+            )
             return False
 
         self._pose = pose
@@ -202,6 +240,10 @@ class OrientationReactions:
             return
         if self._busy():
             logger.info("StackChan orientation line skipped: a conversation is on")
+            return
+        moved_ago = self._head_moved_ago()
+        if moved_ago is not None and moved_ago < HEAD_LINE_QUIET_S:
+            logger.info("StackChan orientation line skipped: the head moved under 10 seconds ago")
             return
         now = self._clock()
         if self._last_spoken_at > float("-inf") and now - self._last_spoken_at < POSE_CHANGE_GAP_S:

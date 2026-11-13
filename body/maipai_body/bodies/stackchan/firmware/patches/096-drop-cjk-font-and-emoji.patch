@@ -1,0 +1,98 @@
+diff --git a/firmware/main/CMakeLists.txt b/firmware/main/CMakeLists.txt
+index 22cfebb..443916c 100644
+--- a/firmware/main/CMakeLists.txt
++++ b/firmware/main/CMakeLists.txt
+@@ -117,7 +117,6 @@ if(CONFIG_BOARD_TYPE_M5STACK_STACK_CHAN)
+     set(BOARD_TYPE "m5stack-stack-chan")
+     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
+     set(BUILTIN_ICON_FONT font_awesome_20_4)
+-    set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+ endif()
+ 
+ if(MANUFACTURER)
+@@ -407,15 +406,9 @@ function(build_default_assets_bin)
+         "--output" "${GENERATED_ASSETS_BIN}"
+     )
+     
+-    # Add builtin text font if defined
+-    if(BUILTIN_TEXT_FONT)
+-        list(APPEND BUILD_ARGS "--builtin_text_font" "${BUILTIN_TEXT_FONT}")
+-    endif()
+-    
+-    # Add default emoji collection if defined
+-    if(DEFAULT_EMOJI_COLLECTION)
+-        list(APPEND BUILD_ARGS "--emoji_collection" "${DEFAULT_EMOJI_COLLECTION}")
+-    endif()
++    # MaiPai strip (patch 096): no Chinese text font (font_puhui_common, 1.24 MB) and no emoji pictures in
++    # the assets image. The theme keeps the compiled-in BUILTIN_TEXT_FONT (font_puhui_basic_20_4) and the
++    # avatar draws its own faces, so neither file is read. BUILTIN_TEXT_FONT stays a compile definition.
+     
+     # Add default assets extra files if defined
+     if(DEFAULT_ASSETS_EXTRA_FILES)
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index 1d6663a..2c90814 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -778,7 +778,7 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
+         avatar.setEmotion(Emotion::Sad);
+     } else if (strcmp(emotion, "sleepy") == 0) {
+         avatar.setEmotion(Emotion::Sleepy);
+-        avatar.setSpeech("Zzz…");
++        avatar.setSpeech("Zzz...");  // ASCII: the built-in font has no ellipsis (patch 096)
+         is_sleeping_ = true;
+         // avatar.mouth().setWeight(10);
+ 
+@@ -833,6 +833,41 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
+     }
+ }
+ 
++// The compiled-in text font (font_puhui_basic_20_4) covers ASCII, Latin-1 and Latin Extended, but not the
++// typographic punctuation a language model writes. Map those to ASCII so they never draw as blanks
++// (patch 096). Anything else without a glyph is skipped by LVGL (no placeholder glyph).
++static std::string ascii_punctuation(const char* text)
++{
++    std::string out;
++    if (text == nullptr) {
++        return out;
++    }
++    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(text); *p != 0;) {
++        if (p[0] == 0xE2 && p[1] == 0x80) {
++            const char* mapped = nullptr;
++            switch (p[2]) {
++                case 0x98: case 0x99: case 0x9A: mapped = "'"; break;      // U+2018 to U+201A
++                case 0x9C: case 0x9D: case 0x9E: mapped = "\""; break;     // U+201C to U+201E
++                case 0x90: case 0x91: case 0x92: case 0x93: case 0x94: case 0x95: mapped = "-"; break;  // hyphens, dashes
++                case 0xA2: mapped = "*"; break;                              // U+2022 bullet
++                case 0xA6: mapped = "..."; break;                            // U+2026 ellipsis
++                default: break;
++            }
++            if (mapped != nullptr) {
++                out += mapped;
++                p += 3;
++                continue;
++            }
++        } else if (p[0] == 0xC2 && p[1] == 0xA0) {  // U+00A0 no-break space
++            out += ' ';
++            p += 2;
++            continue;
++        }
++        out += static_cast<char>(*p++);
++    }
++    return out;
++}
++
+ void StackChanAvatarDisplay::SetChatMessage(const char* role, const char* content)
+ {
+     if (!setup_ui_called_) {
+@@ -849,9 +884,9 @@ void StackChanAvatarDisplay::SetChatMessage(const char* role, const char* conten
+     DisplayLockGuard lock(this);
+ 
+     if (strcmp(role, "system") == 0) {
+-        stackchan.avatar().setSpeech(content);
++        stackchan.avatar().setSpeech(ascii_punctuation(content));
+     } else if (strcmp(role, "assistant") == 0) {
+-        stackchan.avatar().setSpeech(content);
++        stackchan.avatar().setSpeech(ascii_punctuation(content));
+     }
+ }
+ 

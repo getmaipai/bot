@@ -1,52 +1,52 @@
-# Light standard for every MaiPai robot (2026-10-20)
+# Light standard for every MaiPai robot (2026-10-20, rewritten 2026-11-13)
 
-One meaning per colour and style, on every body. A person who learns it on one robot reads any other. The look table in
-`body/maipai_body/indicator/looks.py` is the single source (EYES-02: "the only site of a colour or a level"); this note says what the
-table means, extends it, and says how each body shows it. Status: DRAFT, pending architect review (new design note).
+Status: approved by the owner 2026-11-13. This note supersedes the 2026-10-20 table (20 rows, 7 colours); the history is in git. The
+audit and plan behind it: `docs/dev/stackchan-lights-audit-and-plan-2026-11-13.md`.
+
+One meaning per colour and style, on every body. A person who learns it on one robot reads any other. The ring table below is the
+single source: `body/maipai_body/indicator/looks.py` carries the same rows ("the only site of a colour or a level") and a test parses
+the table here and fails when a `LookKey`, a colour, a style, a period or a fixed brightness differs from it.
 
 ## Principles
 
-1. **Light tells the truth about the senses.** Whenever sound leaves the robot for the hub, or a picture is taken that the person is
-   meant to know about, a cue is lit that no setting, night level or child level can dim below its floor.
-2. **Quiet by default.** Local wake-word listening is not a cue: nothing leaves the robot, so the robot shows its ordinary idle look.
-   Light is for state changes a person needs, not decoration.
-3. **No red, ever.** A red light on a face that watches a child reads as alarm (`Palette`, closed set: white, green, blue, amber,
-   cyan, magenta, pink, off; pink is a hue near 330 degrees, a bright pink-white, never red). A fault is steady amber.
-4. **One table.** No body, renderer or feature names a colour or a brightness. It asks `resolve()` for a look; each body only
-   translates a look into its own hardware. A grep test holds that line, and extends to every body renderer (see Compliance).
-5. **Night is dimmer, never silent about privacy.** Night and child levels scale ordinary rows; the live and camera cues keep a 0.5 floor.
+1. **Dark by default.** The ring lights only when it tells a person something they need right now and may not see on the screen. The face
+   shows feelings and doings (thinking, speaking, charging, boot, ready, sleep); the ring never shows expression.
+2. **Light tells the truth about the senses.** Whenever sound leaves the robot for the hub, or a picture is taken that the person is
+   meant to know about, a cue is lit that no setting, night level or child level can dim below its floor, and that wins over everything.
+3. **No red, ever.** The palette is closed: white, green, blue, amber, cyan, magenta, pink, off; pink is a hue near 330 degrees, never red.
+4. **One table, one writer.** No body, renderer or feature names a colour or a brightness. It asks `resolve()` for a look; each body only
+   translates a look into its own hardware. On StackChan the light service is the only ring writer (the camera adapter, the night
+   controller and the rest renderer tell it facts); a test holds that line.
+5. **Five colours, one meaning each:** green = your voice is leaving the robot; pink = a picture is being taken; cyan = I need a person;
+   amber = look at the screen; blue = your turn. White is not a status colour.
 
-## What each state shows
+## The ring table
 
-| State (what is true) | Colour | Style | Brightness | Notes |
-|---|---|---|---|---|
-| Live: audio is being sent to the hub | green | steady | at least 0.5, ignores night and child levels | the only "recording" signal; wake-word scoring is local and is NOT live |
-| Camera: a visible capture or stream | pink | `flash`: two quick flashes at capture start, then steady for the capture | at least 0.5, ignores night and child levels | Jesse 2026-10-20: distinct from every other colour, like a shutter flash. Replaces StackChan's red ring and the bot's cyan. Still photo, video stream and live view all use it |
-| Silent ambient capture | none | none | none | the ONLY exception: opt-in `robot.ambient_vision` (default off), owner decision 2026-10-20; see below |
-| Alarm or timer ringing | amber | blink, one cycle per second at most | bright then dim | `robot.indicator.alarm` can turn the light off, the sound is separate |
-| Fault (thermal, motor, hardware) | amber | steady | 0.7 of the day level | never red |
-| Microphone muted (software mute) | amber | steady | 0.4 of the day level | labelled "software mute" in settings; a physical cut would be a separate row |
-| Held or carried | magenta | steady | 0.5 of the day level | MOVE-CARRY-01 |
-| Offer: the robot asked and listens locally for yes or no | blue | steady | 0.6 of the day level | not green: nothing leaves the robot |
-| Listening to the person (turn open, local) | blue | steady | day level | |
-| Thinking | magenta | slow breathe, 3 s | 0.8 of the day level | NEW style |
-| Speaking | white | steady | day level | |
-| Idle, awake | dark | | | owner ruling 2026-10-21: no lights for idle; the ring lights only for a real state |
-| Sleep or night idle | blue | steady, very dim, or off (`sleep_eyes`) | 0.3 of the night level | |
-| **NEW** Connecting to Wi-Fi or the hub | blue | slow pulse, 2 s | 0.5 | after power on or a Wi-Fi switch; ends in idle or offline |
-| **NEW** Offline (hub not reachable, robot still works) | amber | two short pulses every 10 s | 0.3 | local mode; never alarming |
-| **NEW** Pairing or setup waiting for a person | cyan | slow pulse, 2 s | 0.6 | cyan is now free of the camera, so it means 'look at me, I need you' |
-| **NEW** Charging | green | slow breathe, 4 s, only while on the dock | 0.3 | dark when full; never mistaken for live, because live is steady and at least 0.5 |
-| **NEW** Battery low (under 15 percent, not charging) | amber | one pulse every 20 s | 0.3 | spoken line is separate |
-| **NEW** Updating firmware | white | fast pulse, 1 s | 0.5 | robot does not move or listen while updating |
-| **NEW** Dancing | white | steady | 0.35 | no colour show; the face and head carry the dance, the light stays quiet |
-| Off (`robot.indicator.enabled` false) | dark | | | never reaches live, camera or alarm |
+Priority, highest first; two rows never blend, the higher wins whole. A row not listed here does not exist: no sleep glow, no charging
+ring (the charger's red light at the back and the screen's battery glyph show it), no thinking or speaking ring, no pink "I see
+someone" glow, no alarm, held, muted, offer, connecting, updating or error rows.
 
-Priority, highest first: live, camera, alarm, fault, held, muted, offer, then the connection and power rows, then the funnel
-(thinking, speaking, listening), then idle or sleep. Two cues never blend: the higher row wins whole.
+| Key | Pri | Colour | Style | Period | Brightness | Shown when |
+|---|---|---|---|---|---|---|
+| `live` | 1 | green | steady | - | floor 0.5, ignores every setting and level | the whole time audio streams to Home, held 0.5 s after |
+| `camera` | 2 | pink | flash | 0.5 s | floor 0.5, ignores every setting and level | a picture is taken that the person should know about: two quick flashes, then steady for the capture |
+| `pairing` | 3 | cyan | pulse | 2 s | 0.6 | setup or pairing waits for a person |
+| `attention` | 4 | amber | pulse | 10 s | 0.3 | look at the screen: Home unreachable for 10 s, a fault, or battery under 15 percent and not charging; one short pulse every 10 s; dark at night |
+| `listening` | 5 | blue | steady | - | day or night level | from the wake word or tap until the turn closes |
+| `dance` | 6 | magenta | steady | - | 0.5 of the level | the one decorative show; the `dancing` fact is raised while the little dance (`dance.py`) paints its own gold, lime and mint show on the ring; dark at night |
+| `idle` | 7 | dark | - | - | 0 | everything else: idle, thinking, speaking, charging, boot, ready, night, sleep, screen sleep, power off |
 
-Style names are a closed set: `steady`, `breathe` (slow, sine), `pulse` (short on, long off), `blink` (alarm only), `flash` (two quick flashes, camera only). Periods are
-UNMEASURED design defaults and stay in the look table.
+Rules that are not rows:
+
+- **Asleep (the rest renderer's asleep stage):** dark but for `live` and `camera`. Waking re-resolves the table; it never relights a glow.
+- **Night (quiet hours or the sensor's dark room):** `listening` shows at the night level (lower still for a child, a teen, an unknown
+  person or no presence information); `attention` and `dance` stay dark; the two cues keep their floors.
+- **`robot.indicator.enabled` off:** dark, but never `live` or `camera`.
+- **Charging read:** a failed battery read is unknown, never "not charging"; a charging or low-battery change counts after two reads
+  in a row agree.
+
+Style names are a closed set: `steady`, `breathe`, `pulse` (short on, long off), `blink`, `double`, `flash` (two quick flashes, camera
+only). Periods are UNMEASURED design defaults and stay in the look table.
 
 ## The silent-capture exception
 
@@ -61,71 +61,23 @@ can always tell the mode without a flash on every capture.
 | Body | Hardware | How it shows a look |
 |---|---|---|
 | Reachy Mini | two-colour eyes (the Eyes part) | direct: `Look(colour, brightness)`; styles by animating brightness at the Eyes driver |
-| StackChan | 12-pixel RGB ring, whole-ring colour calls (`set_led_color`, `set_led_colors`), channel max 168 | every pixel the look's colour at `brightness x 168`; styles are driven by the host timer (no firmware change); the face carries expression, the ring carries state, they never share a job |
+| StackChan | 12-pixel RGB ring, whole-ring colour calls (`set_led_color`, `set_led_colors`), channel max 168 | every pixel the look's colour at `brightness x 168`; styles are driven by the host timer; the face carries expression, the ring carries state, they never share a job |
 | Pi build and future builds | light ring or dial, chest LCD | the look goes to the ring or dial; pictures and text go through the display router (`robot/display.py`), never to a light |
 
-The ring must not show expression colours. StackChan's expression map currently sets per-primitive LED triples
-(`BodyAction.led`); those are retired in favour of the look table, so the ring means one thing.
-
-## Defects this note finds (fixed in the same change)
-
-- StackChan lights the whole ring RED for the camera (`_CameraAdapter._light_on`, `_LedAdapter` camera branch). Red is outside the
-  palette. Fix: pink with the `flash` style, from `resolve()`, with the 0.5 floor. Reachy's camera look moves from cyan to pink too.
-- StackChan has no live (green) cue while audio streams to the hub; Reachy does. Fix: the StackChan service reports the live fact to the director.
-- StackChan expression LED triples bypass the look table. Fix: remove, render through `resolve()`.
-
-## Compliance and tests
-
-- A grep test: no colour name, RGB triple or brightness literal in any body adapter or renderer outside the look table and the
-  palette-to-RGB map of that body (one map per body, in the profile).
-- A body conformance test: for every `LookKey`, the body renderer produces output; live and camera are never below the floor and are
-  never produced by a setting.
-- A StackChan test: camera capture asks for pink; the emergency stop, quiet hours and `robot.indicator.enabled=false` never change it.
-- An inventory test as today: every capture site goes through the tap that raises the cue; the one silent site is the named exception.
-
-## Decided by Jesse 2026-10-20
-
-Camera is pink with a flash style (distinct from all other colours). Wake-word listening shows nothing special. Charging is a slow green
-breathe while docked and low battery is an amber pulse. Other proposed rows and all periods are defaults he can change.
-EOF
-
-## Status 2026-10-20
-
-Built: the look table rows, styles and periods (`indicator/looks.py`), pink in the palette, `Look.style` and `Look.period_s`, the StackChan ring
-renderer (`bodies/stackchan/ring.py`), the camera cue as two pink flashes then steady pink, expression no longer touching the ring,
-and `StackChanRingIndicator` (`bodies/stackchan/ring_indicator.py`), an `Indicator` the existing director can drive.
-
-Not built yet, in order: (1) wire the director and `StackChanRingIndicator` into the StackChan service, with a 50 ms `tick()` thread, so
-the live (green), connection, offline, charging and low battery rows reach the ring; this needs a "voice is going to the hub" fact from
-the xiaozhi uplink and the battery and connection facts from the device client; (2) the light flags for pairing, updating and dancing in
-the callers; (3) the Reachy Eyes protocol gaining a pink word; (4) the grep and conformance tests extended to every future body; (5) the
-architect review of this note. Silent ambient capture remains the one cue-less capture.
-
-## Wiring status 2026-10-20 (later)
-
-Wired on StackChan: `StackChanLightService` and `LightPoller` (`light_service.py`, `light_wiring.py`) start with the StackChan channels in
-`app.py`. The camera cue reaches the service from the camera adapter (`cue_sink`), the live (green) cue from the turn bridge around the
-hub speech stream (`live_sink`), and connecting, offline, charging and low battery are polled once a second (battery once a minute). Pairing,
-updating and dancing flags have no caller yet. Nothing here has run on a unit.
-
-## Cue sequences on StackChan (owner request 2026-10-20)
+## Cue sequences on StackChan
 
 | Moment | Screen | Ring | Sound | Owner |
 |---|---|---|---|---|
-| Power on, joining Wi-Fi | plain "Connecting to Wi-Fi..." text, no face | blue slow pulse | none | firmware (patch 033, planned): the host is not connected yet |
-| Wi-Fi needs a person (setup) | the setup instructions | cyan slow pulse | none | firmware (patch 033, planned) |
-| Wi-Fi joined, opening the hub session | plain "Connecting to Home..." text, no face | blue slow pulse | none | firmware (patch 033, planned) |
-| Ready (hub session open) | the face appears | settles to dark (idle) | one short soft chime (the firmware's success sound) | face and chime: firmware; ring: host (the `connecting` fact clears when the device session opens) |
-| Wake word heard or a tap opens a turn | head lifts and the face brightens (`perk`) | blue steady | the firmware's rising pop-up tone | host: ring and `perk`; tone: firmware (already plays) |
+| Power on, joining Wi-Fi, connecting to Home | text cover, no face | dark (firmware change in a later wave: today the firmware still blinks blue) | none | firmware |
+| Wi-Fi needs a person (setup) | the setup instructions | cyan pulse | none | firmware |
+| Ready (hub session open) | the face appears | dark | one short soft chime (the firmware's success sound) | face and chime: firmware |
+| Wake word heard or a tap opens a turn | head lifts and the face brightens (`perk`) | blue steady | the firmware's rising pop-up tone | host: ring and `perk`; tone: firmware |
 | Audio streaming to the hub | listening face | green steady (the live cue outranks blue and is held 0.5 s) | none | host |
-| Thinking | `neutral` face (round eyes, soft smile), head attends | magenta slow breathe | none | host |
-| Speaking | speaking face | white steady | the reply | host |
-| Turn over | settle | dark (idle) | none | host |
-| Hub unreachable after ready | face stays | amber double pulse, two short pulses every 10 s | none | host |
-
-Notes: the firmware has no wide-eyed emotion (its six are neutral, happy, angry, sad, doubt, sleepy), so "it heard you" is the head lift
-with the brighter face, not wider eyes; wide eyes would need a face skin change in the firmware (patch 033 can add one). Wake-word
-scoring alone shows nothing; the detected wake word is a state change to listening and does show. `double` joined the closed style set.
+| Thinking, speaking, turn over | the face | dark | the reply | host |
+| Hub unreachable for 10 s, a fault, low battery | the screen says which | amber pulse every 10 s (not at night) | none | host (firmware while its socket is down, later wave) |
+| Charging | the battery glyph | dark (the red light at the back is the charger's own) | none | hardware |
+| A picture is taken | the face stays | pink two flashes then steady | none | host, through the light service |
+| Asleep, night, screen sleep, power off | sleeping face or screen off | dark | none | host and firmware |
 
 ## Faces as drawn on the unit (owner request 2026-10-20)
 

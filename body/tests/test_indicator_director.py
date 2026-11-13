@@ -54,7 +54,9 @@ def test_the_funnel_view_drives_the_table_row():
     director.on_view(FunnelView(shown=FunnelState.LISTENING))
     assert _colour(eyes) is looks.LOOKS[looks.LookKey.LISTENING][0]
     director.on_view(FunnelView(shown=FunnelState.THINKING))
-    assert _colour(eyes) is looks.LOOKS[looks.LookKey.THINKING][0]
+    assert _colour(eyes) is None  # thinking and speaking are dark: the face carries them
+    director.on_view(FunnelView(shown=FunnelState.SPEAKING))
+    assert _colour(eyes) is None
     director.on_view(FunnelView(shown=FunnelState.IDLE))
     assert _colour(eyes) is None  # idle, awake is dark
 
@@ -68,7 +70,7 @@ def test_an_unchanged_look_is_not_resent():
 
 def test_live_capture_outranks_everything_and_is_green():
     director, eyes, _, _ = _director()
-    director.on_view(FunnelView(shown=FunnelState.SPEAKING, muted=True, held=True, alarm=True))
+    director.on_view(FunnelView(shown=FunnelState.LISTENING, fault=True, muted=True, held=True))
     director.on_capture(CaptureFacts(mic_live=True, camera_tracking=True, camera_read_at=None))
     assert _colour(eyes) is Palette.GREEN
     assert eyes.current_look.brightness >= looks.LIVE_FLOOR
@@ -107,41 +109,21 @@ def test_a_camera_frame_read_shows_the_camera_cue_for_the_hold():
     assert _colour(eyes) is not Palette.PINK
 
 
-def test_the_alarm_blinks_amber_no_faster_than_the_alarm_period():
-    director, eyes, clock, _ = _director()
-    director.on_view(FunnelView(shown=FunnelState.IDLE, alarm=True))
-    for _ in range(100):
-        clock.now += 0.1
-        director.tick()
-    on_level = looks.resolve(
-        looks.LookRequest(
-            funnel=FunnelState.IDLE,
-            minute=DAY,
-            settings=IndicatorSettings(),
-            presence=None,
-            alarm=True,
-            alarm_on=True,
-        )
-    ).brightness
-    bright = [
-        c.t_s
-        for c in eyes.commands
-        if c.kind == "set_look" and c.look.colour is Palette.AMBER and c.look.brightness == on_level
-    ]
-    assert len(bright) >= 8
-    gaps = [b - a for a, b in zip(bright, bright[1:], strict=False)]
-    assert min(gaps) >= 1.0 - 1e-6, "the order: an alarm period of at least 1 s"
+def test_a_fault_is_the_one_amber_pulse_every_ten_seconds():
+    director, eyes, _, _ = _director()
+    director.on_view(FunnelView(shown=FunnelState.IDLE, fault=True))
+    assert eyes.current_look.colour is Palette.AMBER
+    assert eyes.current_look.period_s == 10.0
+    director.on_view(FunnelView(shown=FunnelState.IDLE, fault=False))
+    assert _colour(eyes) is None
 
 
-def test_the_alarm_stops_when_it_clears():
-    director, eyes, clock, _ = _director()
-    director.on_view(FunnelView(shown=FunnelState.IDLE, alarm=True))
-    director.on_view(FunnelView(shown=FunnelState.IDLE, alarm=False))
-    assert _colour(eyes) is None  # back to idle, which is dark
-    sent = len(eyes.commands)
-    clock.now += 5.0
-    director.tick()
-    assert len(eyes.commands) == sent
+def test_the_removed_alarm_held_muted_and_offer_facts_show_nothing():
+    director, eyes, _, _ = _director()
+    director.on_view(
+        FunnelView(shown=FunnelState.IDLE, alarm=True, held=True, muted=True, offer=True)
+    )
+    assert _colour(eyes) is None
 
 
 def test_night_with_a_child_is_dimmer_than_night_with_an_adult():
@@ -153,15 +135,15 @@ def test_night_with_a_child_is_dimmer_than_night_with_an_adult():
     assert eyes.current_look.brightness < adult
 
 
-def test_the_quiet_night_idle_look_follows_sleep_eyes():
-    director, eyes, _, _ = _director(minute=NIGHT, settings=IndicatorSettings(sleep_eyes="off"))
+def test_the_night_idle_ring_is_dark():
+    director, eyes, _, _ = _director(minute=NIGHT)
     director.on_view(FunnelView(shown=FunnelState.IDLE))
     assert eyes.current_look is None
 
 
 def test_an_absent_device_never_raises():
     director, eyes, clock, _ = _director(connected=False)
-    director.on_view(FunnelView(shown=FunnelState.SPEAKING, alarm=True))
+    director.on_view(FunnelView(shown=FunnelState.LISTENING, fault=True))
     director.on_capture(CaptureFacts(mic_live=True, camera_tracking=False, camera_read_at=None))
     clock.now += 2.0
     director.tick()
@@ -188,7 +170,7 @@ def test_close_turns_the_eyes_off():
 
 def test_the_director_only_ever_pulses_blink_or_ack():
     director, eyes, clock, _ = _director()
-    director.on_view(FunnelView(shown=FunnelState.SPEAKING, alarm=True, held=True))
+    director.on_view(FunnelView(shown=FunnelState.LISTENING, fault=True))
     clock.now += 3.0
     director.tick()
     assert {c.pulse for c in eyes.commands if c.kind == "pulse"} <= {"blink", "ack"}

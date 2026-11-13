@@ -253,18 +253,19 @@ class MultiSentenceReplyTests(VoiceEndToEnd):
 class UnansweredToolCallsTests(VoiceEndToEnd):
     hub_options = {"stt_min_blocks": 2}
 
-    async def test_unanswered_tool_calls_start_the_watchdog_and_an_answer_clears_it(self):
+    async def test_unanswered_tool_calls_enter_the_watchdog_window_and_an_answer_is_noted(self):
         self.device.drop_tool_replies = frozenset({"self.robot.get_head_angles"})
         with self.assertRaises(TimeoutError):
             await asyncio.to_thread(
                 self.service.call_device_tool, "self.robot.get_head_angles", {}, timeout=0.4
             )
-        self.assertIsNotNone(self.service.watchdog._failing_since)
+        self.assertEqual([ok for _, ok in self.service.watchdog._outcomes], [False])
         self.device.drop_tool_replies = frozenset()
         await asyncio.to_thread(
             self.service.call_device_tool, "self.robot.get_head_angles", {}, timeout=2.0
         )
-        self.assertIsNone(self.service.watchdog._failing_since)
+        self.assertEqual([ok for _, ok in self.service.watchdog._outcomes], [False, True])
+        self.assertIsNotNone(self.service.watchdog._last_answer_at)
         self.assertIsNotNone(self.service.watchdog._last_message_at)
 
 

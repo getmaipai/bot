@@ -10,6 +10,7 @@ import os
 import signal
 import threading
 import time
+import types
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -149,6 +150,11 @@ def test_orientation_wiring_reasserts_pose_after_reconnect_without_resetting_it(
         def reaction_blocked(self):
             return False
 
+        def head_moved_ago(self):
+            return None
+
+        _tracker = types.SimpleNamespace(pose=(0.0, 0.0))  # the head pose the orientation reads
+
         def show_face(self, expression, while_listening=True):
             return None
 
@@ -195,6 +201,11 @@ def _wired_behavior(call):
 
         def reaction_blocked(self):
             return False
+
+        def head_moved_ago(self):
+            return None
+
+        _tracker = types.SimpleNamespace(pose=(0.0, 0.0))  # the head pose the orientation reads
 
         def show_face(self, expression, while_listening=True):
             return None

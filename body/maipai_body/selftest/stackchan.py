@@ -33,7 +33,8 @@ _LED_KEYS = (
     looks.LookKey.LISTENING,
     looks.LookKey.LIVE,
     looks.LookKey.CAMERA,
-    looks.LookKey.CHARGING,
+    looks.LookKey.PAIRING,
+    looks.LookKey.ATTENTION,
 )
 
 
@@ -81,8 +82,8 @@ def stackchan_checks(ctx: StackChanSelfTestContext) -> list[Check]:
         writer(None)
         return (
             Status.PASS,
-            "Showed 5 looks: idle, listening, live, camera, charging. "
-            "Watch the ring: white, blue, green, pink, green breathing.",
+            "Showed 6 looks: idle, listening, live, camera, needs you, look at the screen. "
+            "Watch the ring: white, blue, green, pink, cyan pulsing, amber pulsing.",
             "",
         )
 

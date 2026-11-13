@@ -1,0 +1,426 @@
+# Intent: the device side of on-unit timers and alarms (owner decision 2026-11-13: on-device timers, no Bluetooth, hub down must still work). The schedule is kept in the unit's own flash in a new NVS namespace, mp_timers, key v1 (never the websocket namespace, which holds the pairing token and Wi-Fi); it is read at startXiaozhi and written on every change. The 20 ms stackchan task ticks it every 200 ms against the RTC-backed system clock (hal_rtc.cpp syncs the PCF8563 into the system clock at boot, and the host's server_time sets it first), so a timer fires with no host and after a reboot; an alarm turns HH:MM into the next local occurrence with the unit's timezone. When one is due: a happy face with the reminder card showing its label (the card the upstream reminders use), the ring pulses cyan 0 91 101 (the lights standard's pairing row: cyan at 0.6, a short pulse every 2 s), the existing notification earcon plays at once and every 8 s unless the timer was set silent, the screen is kept awake, the stop word is armed (best effort), and the host gets a timer_fired event (id, what = timer or alarm, label, late; not 'kind', which is the event's own field). The ring ends by itself after one minute (event timer_ended how=timeout); a touch, the stop word or the host end it sooner (patch 093) and the ring goes dark. A timer that came due while the unit was off rings if at most 10 minutes late, else it is dropped and reported as timer_missed. A timer set while the clock was never set runs on boot time and does not survive a reboot. New public device_events_push(kind, extra) is the non-diagnostic event path (the diag path drops events when a minute's budget is used).
+# Upstream: new files hal/maipai_timers.h, hal/maipai_timers.cc; hal/hal.cpp, hal/hal_mcp.cpp, hal/device_events.h (MIT). Applies after 090 with --unidiff-zero.
+# Check after a flash: boot log has 'MAIPAI-TIMERS: loaded 0 timer(s)'; with patch 092, set a 20 s timer, reboot the unit inside the 20 s, and at 20 s from the set the face smiles with the card, the ring pulses cyan, the notification tone plays every 8 s; a touch on the screen ends it and the ring goes dark; leave one alone and it ends at 60 s on its own; kill Wi-Fi and the hub before the 20 s and it still rings.
+diff --git a/firmware/main/hal/device_events.h b/firmware/main/hal/device_events.h
+index 736c5e9..d36ed1d 100644
+--- a/firmware/main/hal/device_events.h
++++ b/firmware/main/hal/device_events.h
+@@ -10,6 +10,10 @@
+ // a real touch or shake event out.
+ void device_events_push_diag(const char* kind, const char* extra);
+ 
++// A real event for the host (patch 091), not a diagnostic: it is not rate limited and is dropped only
++// when the queue of 16 is full (the oldest goes). kind must be a string literal; extra as above.
++void device_events_push(const char* kind, const char* extra);
++
+ // Fills out with the wake word detection task's counters since the last call, as JSON members
+ // (armed, fetches, fetch_errors, detections, ms_since_fetch), and clears them. Patch 059.
+ void device_events_wake_stats(char* out, size_t size);
+diff --git a/firmware/main/hal/hal.cpp b/firmware/main/hal/hal.cpp
+index 81121de..69d6c01 100644
+--- a/firmware/main/hal/hal.cpp
++++ b/firmware/main/hal/hal.cpp
+@@ -152,6 +152,7 @@ void Hal::updateHeapStatusLog()
+ #include <stackchan/stackchan.h>
+ #include <apps/common/common.h>
+ #include <assets/assets.h>
++#include "maipai_timers.h"
+ 
+ void Hal::xiaozhi_board_init()
+ {
+@@ -168,6 +169,7 @@ static void _stackchan_update_task(void* param)
+         vTaskDelay(pdMS_TO_TICKS(20));
+ 
+         tools::update_reminders();
++        maipai_timers_tick();  // on-unit timers and alarms (patch 091)
+ 
+         LvglLockGuard lock;
+ 
+@@ -214,6 +216,9 @@ void Hal::startXiaozhi()
+         hal_bridge::app_play_sound(OGG_NEW_NOTIFICATION);
+     });
+ 
++    // The saved timers and alarms (patch 091) come back before the update task ticks them.
++    maipai_timers_init();
++
+     // Start stackchan update task
+     xTaskCreatePinnedToCore(_stackchan_update_task, "stackchan", 4096, NULL, 3, NULL, 1);
+ 
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index 4315f0e..866dc11 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -167,6 +167,11 @@ void device_events_push_diag(const char* kind, const char* extra)
+     push_diag_event(kind, extra);
+ }
+ 
++void device_events_push(const char* kind, const char* extra)
++{
++    push_event(kind, extra != nullptr ? extra : "");
++}
++
+ #include <atomic>
+ #include <cstdio>
+ extern std::atomic<uint32_t> g_head_touch_strong;
+diff --git a/firmware/main/hal/maipai_timers.cc b/firmware/main/hal/maipai_timers.cc
+new file mode 100644
+index 0000000..70a1388
+--- /dev/null
++++ b/firmware/main/hal/maipai_timers.cc
+@@ -0,0 +1,323 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * On-unit timers and alarms, the device side (patch 091). See maipai_timers.h.
++ */
++#include "maipai_timers.h"
++#include "maipai_timers_core.h"
++#include "hal.h"
++#include "device_events.h"
++#include "board/hal_bridge.h"
++#include <apps/common/common.h>
++#include <assets/assets.h>
++#include <stackchan/stackchan.h>
++#include <application.h>
++#include <esp_log.h>
++#include <esp_timer.h>
++#include <nvs.h>
++#include <nvs_flash.h>
++#include <atomic>
++#include <mutex>
++#include <ctime>
++#include <cstdio>
++
++static const char* TAG = "MAIPAI-TIMERS";
++static const char* kNamespace = "mp_timers";  // our own: never the websocket namespace (pairing token, Wi-Fi)
++static const char* kKey       = "v1";
++
++namespace {
++std::mutex s_mutex;
++mt_state_t s_state;
++mt_ring_t s_ring;
++bool s_loaded         = false;
++uint32_t s_last_tick_ms = 0;
++uint32_t s_last_pulse_ms = 0;
++int s_card_id         = -1;  // the avatar decorator showing the timer card
++// Set by a touch or the stop word from another task or the display thread; the tick acts on it, so
++// nothing here ever takes the timer lock while holding the display lock.
++std::atomic<const char*> s_dismiss_request{nullptr};
++std::atomic<bool> s_ringing{false};
++
++uint32_t mono_s()
++{
++    return static_cast<uint32_t>(esp_timer_get_time() / 1000000);
++}
++uint32_t mono_ms()
++{
++    return static_cast<uint32_t>(esp_timer_get_time() / 1000);
++}
++uint32_t wall_s()
++{
++    time_t t = time(nullptr);
++    return t > 0 ? static_cast<uint32_t>(t) : 0;
++}
++uint32_t seconds_of_day()
++{
++    time_t t = time(nullptr);
++    struct tm tm_local = {};
++    localtime_r(&t, &tm_local);
++    return static_cast<uint32_t>(tm_local.tm_hour * 3600 + tm_local.tm_min * 60 + tm_local.tm_sec);
++}
++
++void save_locked()
++{
++    uint8_t buf[MT_BLOB_MAX];
++    size_t n = mt_save(&s_state, buf, sizeof(buf));
++    nvs_handle_t h;
++    if (n == 0 || nvs_open(kNamespace, NVS_READWRITE, &h) != ESP_OK) {
++        ESP_LOGW(TAG, "could not save the timers");
++        return;
++    }
++    if (nvs_set_blob(h, kKey, buf, n) != ESP_OK || nvs_commit(h) != ESP_OK) {
++        ESP_LOGW(TAG, "could not write the timers");
++    }
++    nvs_close(h);
++    s_state.changed = 0;
++}
++
++void set_ring_colour(uint8_t level)
++{
++    // The standard's cyan (0, 91, 101) at the pulse level; the ring is 12 pixels.
++    const uint8_t g = static_cast<uint8_t>((91u * level) / 255u);
++    const uint8_t b = static_cast<uint8_t>((101u * level) / 255u);
++    for (int i = 0; i < 12; i++) {
++        GetHAL().setRgbColor(i, 0, g, b);
++    }
++    GetHAL().refreshRgb();
++}
++
++void push_ended(uint32_t id, const char* how)
++{
++    char extra[96];
++    snprintf(extra, sizeof(extra), "\"id\":%u,\"how\":\"%s\"", static_cast<unsigned>(id), how);
++    device_events_push("timer_ended", extra);
++}
++
++void end_ring_locked(const char* how)
++{
++    const uint32_t id = s_ring.id;
++    if (!mt_ring_end(&s_ring, mono_ms())) {
++        return;
++    }
++    s_ringing = false;
++    ESP_LOGI(TAG, "ring ended by %s", how);
++    {
++        LvglLockGuard lock;
++        if (s_card_id >= 0) {
++            GetStackChan().avatar().removeDecorator(s_card_id);
++            s_card_id = -1;
++        }
++        GetStackChan().avatar().setEmotion(stackchan::avatar::Emotion::Neutral);
++    }
++    set_ring_colour(0);
++    Application::GetInstance().GetAudioService().SetStopWordArmed(false);
++    push_ended(id, how);
++}
++
++void start_ring_locked(const mt_fired_t& f)
++{
++    char extra[128];
++    snprintf(extra, sizeof(extra), "\"id\":%u,\"what\":\"%s\",\"label\":\"%s\",\"late\":%d",
++             static_cast<unsigned>(f.id), f.kind == MT_KIND_ALARM ? "alarm" : "timer", f.label, f.late ? 1 : 0);
++    device_events_push("timer_fired", extra);
++    if (!mt_ring_start(&s_ring, &f, mono_ms())) {
++        return;  // already ringing: the extra one is counted
++    }
++    s_ringing = true;
++    ESP_LOGI(TAG, "ring: %s %u \"%s\"", f.kind == MT_KIND_ALARM ? "alarm" : "timer", static_cast<unsigned>(f.id),
++             f.label);
++    hal_bridge::power_keep_awake();
++    std::string text = f.label[0] ? f.label : (f.kind == MT_KIND_ALARM ? "Alarm" : "Time is up");
++    {
++        LvglLockGuard lock;
++        auto& avatar = GetStackChan().avatar();
++        avatar.setEmotion(stackchan::avatar::Emotion::Happy);
++        s_card_id = avatar.addDecorator(std::make_unique<view::ReminderView>(lv_screen_active(), text));
++    }
++    // "stop" ends the ring (patch 093). Arming is best effort: it needs the stop-word model and
++    // some free internal RAM, and a touch always works.
++    Application::GetInstance().GetAudioService().SetStopWordArmed(true);
++    s_last_pulse_ms = 0;
++}
++}  // namespace
++
++void maipai_timers_init()
++{
++    std::lock_guard<std::mutex> lock(s_mutex);
++    mt_init(&s_state);
++    mt_ring_init(&s_ring);
++    nvs_handle_t h;
++    if (nvs_open(kNamespace, NVS_READONLY, &h) == ESP_OK) {
++        uint8_t buf[MT_BLOB_MAX];
++        size_t n = sizeof(buf);
++        if (nvs_get_blob(h, kKey, buf, &n) == ESP_OK) {
++            if (mt_load(&s_state, buf, n) != MT_OK) {
++                ESP_LOGW(TAG, "saved timers unreadable (%u bytes): starting empty", static_cast<unsigned>(n));
++            }
++        }
++        nvs_close(h);
++    }
++    s_loaded = true;
++    ESP_LOGI(TAG, "loaded %d timer(s)", mt_count(&s_state));
++}
++
++void maipai_timers_tick()
++{
++    const uint32_t ms = mono_ms();
++    if (ms - s_last_tick_ms < 200) {
++        return;
++    }
++    s_last_tick_ms = ms;
++    std::lock_guard<std::mutex> lock(s_mutex);
++    if (!s_loaded) {
++        return;
++    }
++    if (!s_ring.active) {
++        s_dismiss_request = nullptr;
++    }
++    mt_fired_t fired[MT_MAX_ACTIVE];
++    int dropped = 0;
++    const int n = mt_tick(&s_state, wall_s(), mono_s(), fired, MT_MAX_ACTIVE, &dropped);
++    if (dropped > 0) {
++        char extra[32];
++        snprintf(extra, sizeof(extra), "\"dropped\":%d", dropped);
++        device_events_push("timer_missed", extra);
++    }
++    for (int i = 0; i < n; i++) {
++        start_ring_locked(fired[i]);
++    }
++    if (s_state.changed) {
++        save_locked();
++    }
++    if (!s_ring.active) {
++        return;
++    }
++    if (const char* how = s_dismiss_request.exchange(nullptr)) {
++        end_ring_locked(how);
++        return;
++    }
++    const int poll = mt_ring_poll(&s_ring, ms);
++    if (poll == MT_POLL_TIMEOUT) {
++        end_ring_locked("timeout");
++        return;
++    }
++    if (poll == MT_POLL_CHIME) {
++        hal_bridge::power_keep_awake();
++        hal_bridge::app_play_sound(OGG_NEW_NOTIFICATION);
++    }
++    if (ms - s_last_pulse_ms >= 200) {
++        s_last_pulse_ms = ms;
++        set_ring_colour(mt_pulse_level(ms - s_ring.start_ms));
++    }
++}
++
++int maipai_timers_add_timer(int seconds, const char* label, bool silent)
++{
++    std::lock_guard<std::mutex> lock(s_mutex);
++    if (seconds <= 0) {
++        return MT_ERR_ARGUMENT;
++    }
++    const int id = mt_add_timer(&s_state, wall_s(), mono_s(), static_cast<uint32_t>(seconds), label, silent);
++    if (s_state.changed) {
++        save_locked();
++    }
++    return id;
++}
++
++int maipai_timers_add_alarm(int hour, int minute, const char* label, bool silent)
++{
++    std::lock_guard<std::mutex> lock(s_mutex);
++    const int id = mt_add_alarm(&s_state, wall_s(), seconds_of_day(), hour, minute, label, silent);
++    if (s_state.changed) {
++        save_locked();
++    }
++    return id;
++}
++
++int maipai_timers_snooze(int seconds)
++{
++    std::lock_guard<std::mutex> lock(s_mutex);
++    const bool was_ringing = s_ring.active;
++    const uint32_t id      = s_ring.id;
++    const int result       = mt_snooze(&s_state, &s_ring, wall_s(), mono_s(), mono_ms(),
++                                       seconds > 0 ? static_cast<uint32_t>(seconds) : 0);
++    if (was_ringing) {
++        // mt_snooze ended the ring; put the screen and ring back the way end_ring_locked does.
++        LvglLockGuard lock2;
++        if (s_card_id >= 0) {
++            GetStackChan().avatar().removeDecorator(s_card_id);
++            s_card_id = -1;
++        }
++        GetStackChan().avatar().setEmotion(stackchan::avatar::Emotion::Neutral);
++        set_ring_colour(0);
++        Application::GetInstance().GetAudioService().SetStopWordArmed(false);
++        s_ringing = false;
++        push_ended(id, "snooze");
++    }
++    if (s_state.changed) {
++        save_locked();
++    }
++    return result;
++}
++
++bool maipai_timers_cancel(int id)
++{
++    std::lock_guard<std::mutex> lock(s_mutex);
++    bool ok = false;
++    if (id == 0) {
++        ok = mt_cancel_all(&s_state) > 0;
++    } else {
++        ok = mt_cancel(&s_state, static_cast<uint32_t>(id)) == MT_OK;
++    }
++    if (s_state.changed) {
++        save_locked();
++    }
++    return ok;
++}
++
++std::string maipai_timers_list_json()
++{
++    std::lock_guard<std::mutex> lock(s_mutex);
++    const uint32_t now = wall_s();
++    const uint32_t mono = mono_s();
++    std::string out = std::string("{\"clock\":") + (mt_clock_valid(now) ? "true" : "false") +
++                      ",\"ringing\":" + (s_ring.active ? "true" : "false") + ",\"timers\":[";
++    bool first = true;
++    for (int i = 0; i < MT_MAX_ACTIVE; i++) {
++        const mt_entry_t& e = s_state.e[i];
++        if (e.id == 0) {
++            continue;
++        }
++        char row[128];
++        snprintf(row, sizeof(row), "%s{\"id\":%u,\"kind\":\"%s\",\"left\":%lld,\"label\":\"%s\"}", first ? "" : ",",
++                 static_cast<unsigned>(e.id), e.kind == MT_KIND_ALARM ? "alarm" : "timer",
++                 static_cast<long long>(mt_remaining(&e, now, mono)), e.label);
++        out += row;
++        first = false;
++    }
++    return out + "]}";
++}
++
++bool maipai_timers_ringing()
++{
++    return s_ringing.load();
++}
++
++bool maipai_timers_request_dismiss(const char* how)
++{
++    if (!s_ringing.load()) {
++        return false;
++    }
++    s_dismiss_request = how;
++    return true;
++}
++
++bool maipai_timers_dismiss(const char* how)
++{
++    std::lock_guard<std::mutex> lock(s_mutex);
++    if (!s_ring.active) {
++        return false;
++    }
++    end_ring_locked(how);
++    return true;
++}
+diff --git a/firmware/main/hal/maipai_timers.h b/firmware/main/hal/maipai_timers.h
+new file mode 100644
+index 0000000..fa99175
+--- /dev/null
++++ b/firmware/main/hal/maipai_timers.h
+@@ -0,0 +1,27 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * On-unit timers and alarms (patches 090 to 093). The schedule lives in the unit's own flash (NVS
++ * namespace "mp_timers", never the websocket namespace) and runs off the RTC-backed clock, so it
++ * fires with no host and survives a reboot. Logic: maipai_timers_core.h.
++ */
++#pragma once
++#include <string>
++
++// Loads the saved schedule; call once after NVS and the RTC are up.
++void maipai_timers_init();
++// Call often (the 20 ms stackchan task): fires what is due and runs the ring.
++void maipai_timers_tick();
++// Each returns the id (> 0) or a negative MT_ERR_* code.
++int maipai_timers_add_timer(int seconds, const char* label, bool silent);
++int maipai_timers_add_alarm(int hour, int minute, const char* label, bool silent);
++int maipai_timers_snooze(int seconds);
++bool maipai_timers_cancel(int id);  // id 0 cancels all
++// JSON: {"clock":true,"ringing":false,"timers":[{"id":1,"kind":"timer","left":42,"label":"tea"}]}
++std::string maipai_timers_list_json();
++bool maipai_timers_ringing();
++// Ends a ring from the host's tool task. Returns true if one was going.
++bool maipai_timers_dismiss(const char* how);
++// Ends a ring from a touch, the stop word or any other task, without taking a lock: `how` must be a
++// string literal. Returns true if a ring was going; the tick ends it within 200 ms.
++bool maipai_timers_request_dismiss(const char* how);

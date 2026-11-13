@@ -28,6 +28,8 @@ from maipai_body.bodies.stackchan.profile import (
     FOLLOW_PITCH_SPAN_DEG,
     FOLLOW_YAW_SIGN,
     FOLLOW_YAW_SPAN_DEG,
+    HEAD_PITCH_UP_LIMIT_DEG,
+    HEAD_YAW_LIMIT_DEG,
 )
 
 # A box below this score never moves the head: the Stack's own naming threshold. Measured on the
@@ -173,6 +175,15 @@ def yaw_error_deg(box: PersonBox) -> float:
     return (box.centre_x - 0.5) * FOLLOW_YAW_SPAN_DEG * FOLLOW_YAW_SIGN
 
 
+def clamp_pose(yaw_deg: float, pitch_deg: float) -> tuple[float, float]:
+    """A pose inside the head's travel (the profile's limits): every commanded pose goes through
+    this, so the remembered pose is where the head can be and never a sum past its stops."""
+    return (
+        max(-float(HEAD_YAW_LIMIT_DEG), min(float(HEAD_YAW_LIMIT_DEG), yaw_deg)),
+        max(0.0, min(float(HEAD_PITCH_UP_LIMIT_DEG), pitch_deg)),
+    )
+
+
 def move_duration_s(degrees: float) -> float:
     return MOVE_BASE_S + MOVE_S_PER_DEG * abs(degrees)
 
@@ -229,7 +240,7 @@ class PersonTracker:
     def note_pose(self, yaw_deg: float, pitch_deg: float) -> None:
         """The head was moved by someone else (a search pose, the turn toward a speaker, the
         return to rest): remember where it points, so the next move is relative to the truth."""
-        self.pose = (float(yaw_deg), float(pitch_deg))
+        self.pose = clamp_pose(float(yaw_deg), float(pitch_deg))
 
     def may_start(self, now: float) -> bool:
         """Not already busy, the back-off after a miss is over, and under the attempt cap."""
@@ -541,8 +552,13 @@ class PersonTracker:
                     error_x * FOLLOW_YAW_SPAN_DEG * FOLLOW_YAW_SIGN * FOLLOW_GAIN,
                 ),
             )
-            yaw += step
-            move = True
+            # Rebased on the last commanded pose and held inside the travel: a target stuck at
+            # the picture's edge while the head sits at its stop moves nothing (2026-11-13 09:05
+            # the sum went 102, 127 ... 252 degrees).
+            new_yaw = clamp_pose(yaw + step, pitch)[0]
+            if abs(new_yaw - yaw) >= 1.0:
+                yaw = new_yaw
+                move = True
         if face_fresh and abs(error_y) > FOLLOW_PITCH_DEAD_ZONE:
             pitch = max(
                 0.0,
@@ -597,6 +613,7 @@ class PersonTracker:
     # -- outcomes ---------------------------------------------------------------------------------
 
     def _move(self, now: float, yaw: float, pitch: float, speed: int, why: str) -> Action:
+        yaw, pitch = clamp_pose(yaw, pitch)
         degrees = max(abs(yaw - self.pose[0]), abs(pitch - self.pose[1]))
         duration = move_duration_s(degrees)
         self.pose = (yaw, pitch)
@@ -672,5 +689,6 @@ __all__ = [
     "PersonBox",
     "PersonTracker",
     "choose_person",
+    "clamp_pose",
     "yaw_error_deg",
 ]

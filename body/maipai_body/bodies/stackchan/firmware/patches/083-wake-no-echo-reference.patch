@@ -1,0 +1,20 @@
+# Intent: the wake word stopped hearing the owner after hours of room sound (owner report 2026-11-13, "stackchan is not listening to me"; design note docs/dev/stackchan-self-healing-2026-11-13.md). The wake front end (AFE, input format "MR", echo canceller on) used MIC2 as its echo reference, but on this board MIC2 is a second microphone 2 cm from the first, not the speaker loopback. An echo canceller adapts to whatever its reference hears: fed a microphone, it learns the transfer between the two microphones from room sound and then cancels the person's voice from MIC1 too, so the voice detector still fires on the residue while the wake model gets a hollowed-out word (detections=0 with vad_speech in the thousands). The wake front end now runs with the echo canceller off and the second channel declared unused ("MN"): no reference at all, which is what the unit effectively had, minus the self-cancellation. The better cure, a real reference from MIC3 (the AW88298 loopback on AEC_P/N) by opening the ES7210 four-slot TDM frame with slots 0 and 2, was built and tried on the unit (2026-11-13) and rejected: esp_codec_dev shares one format between the input and the output side of the I2S port, so opening the 4-slot input reconfigures the speaker side as 4 slots of 32 bits too; depending on which side opened first at boot the shared clock was left wrong and the input starved (about 18 chunks a minute instead of 1,875, mic level 0) on three of five boots. It needs the I2S setup done on the RX channel alone (after a normal 2-slot open) and a measured check of the loopback channel before it is tried again.
+# Upstream: m5stack/xiaozhi-esp32 main/audio/wake_words/afe_wake_word.cc (MIT). Applies after 081 with --unidiff-zero.
+# Check after a flash: the serial console shows "AFE Pipeline: [input] -> |VAD(WebRTC)| -> |WakeNet(...)|" without AEC at boot and "Input PCM Config: total 2 channels(1 microphone, 0 playback)"; fetches stay near 1,875 a minute; say "Hi, StackChan" at 1 m: "unit wake: wake" and a turn starts; talk in the room for ten minutes, then say it again: it still hears.
+diff --git a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
+index 139208b..b45d209 100644
+--- a/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
++++ b/firmware/xiaozhi-esp32/main/audio/wake_words/afe_wake_word.cc
+@@ -150,10 +150,10 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
+         input_format.push_back('M');
+     }
+     for (int i = 0; i < ref_num; i++) {
+-        input_format.push_back('R');
++        input_format.push_back('N');
+     }
+     afe_config_t* afe_config = afe_config_init(input_format.c_str(), models_, AFE_TYPE_SR, AFE_MODE_HIGH_PERF);
+-    afe_config->aec_init = codec_->input_reference();
++    afe_config->aec_init = false;
+     afe_config->aec_mode = AEC_MODE_SR_HIGH_PERF;
+     afe_config->afe_perferred_core = 1;
+     afe_config->afe_perferred_priority = 1;

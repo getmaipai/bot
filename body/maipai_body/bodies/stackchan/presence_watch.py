@@ -192,12 +192,11 @@ BASELINE_LEARN_EVERY_S = 20.0
 BASELINE_BLEND = 0.1  # how much of a new quiet picture goes into the learned room each time
 BASELINE_QUIET_S = 120.0  # no face and no movement for this long before the room is learned
 BASELINE_SAVE_EVERY_S = 300.0  # the learned room is kept on disk, so a restart starts from it
-# A look for a face started by the picture differing from the room, with nothing moving, backs
-# off harder than one started by movement: 3, 10, 30 minutes (live log 2026-11-12: the room
-# learned with the owner in it made the genuinely empty room "a person" every 3 minutes and kept
-# the unit awake), and does not run again at all while the picture has not changed since the
-# look that found nobody.
-STILL_BACKOFF_S = (3 * 60.0, 600.0, 1800.0)
+# An ambient look for a face that found nobody does not run again while the picture is the one
+# that was in front of it when it started (changed by under STILL_CHANGE_SHARE), and not for
+# 15, 30, 60 minutes at all (live log 2026-11-12: the room learned with the owner in it made the
+# genuinely empty room "a person" every 3 minutes and kept the unit awake).
+STILL_BACKOFF_S = (900.0, 1800.0, 3600.0)
 STILL_CHANGE_SHARE = 0.10  # the picture must differ this much from the one that failed
 # The unit's own head moves make the picture move; motion this soon after one is its own.
 OWN_MOVE_BLIND_S = 3.0

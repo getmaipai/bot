@@ -1,4 +1,4 @@
-"""EYES-02: the seven robot-only settings keys."""
+"""EYES-02: the three robot-only settings keys the lights honour."""
 
 from __future__ import annotations
 
@@ -20,6 +20,10 @@ EXPECTED_KEYS = {
     "robot.indicator.enabled",
     "robot.indicator.brightness",
     "robot.indicator.night_brightness",
+}
+# Removed by the owner's 2026-11-13 light standard: no sleep glow, no alarm light nothing ever
+# sent, no pink "I see someone" glow.
+REMOVED_KEYS = {
     "robot.indicator.sleep_eyes",
     "robot.indicator.alarm",
     "robot.indicator.sees",
@@ -38,11 +42,17 @@ ALLOWED_FIELDS = {
 }
 
 
-def test_exactly_the_six_keys():
+def test_exactly_the_three_keys_and_none_of_the_removed_ones():
     declared = eyes_settings_declaration("eyes")
     assert {entry["key"] for entry in declared} == EXPECTED_KEYS
-    assert len(declared) == 6
+    assert len(declared) == 3
     assert set(INDICATOR_KEYS) == EXPECTED_KEYS
+    assert not REMOVED_KEYS & {e["key"] for e in settings_declaration()}
+
+
+def test_no_label_promises_a_light_nothing_sends():
+    text = " ".join(entry["label"] for entry in eyes_settings_declaration("eyes")).lower()
+    assert "tip" not in text and "fall" not in text and "pink" not in text
 
 
 @pytest.mark.parametrize(("capability", "body"), [("eyes", "reachy"), ("light_ring", "build")])
@@ -63,14 +73,6 @@ def test_keys_share_the_robot_device_page_of_the_existing_robot_only_key():
     assert {entry["key"] for entry in declared} >= EXPECTED_KEYS
 
 
-def test_sleep_eyes_declares_its_options_in_range():
-    entry = next(e for e in eyes_settings_declaration("eyes") if e["key"].endswith("sleep_eyes"))
-    assert entry["type"] == "select"
-    assert entry["range"] == ["off", "dim"]
-    assert "options" not in entry
-    assert entry["default"] in entry["range"]
-
-
 def test_defaults_parse_back_to_the_settings_dataclass_defaults():
     defaults = {e["key"]: e["default"] for e in eyes_settings_declaration("eyes")}
     assert parse_settings(defaults) == IndicatorSettings()
@@ -81,7 +83,9 @@ def test_out_of_range_or_malformed_values_fall_back_to_the_default():
         "robot.indicator.brightness": 9,
         "robot.indicator.night_brightness": "bright",
         "household.quiet_hours.from": "25:99",
-        "robot.indicator.sleep_eyes": "strobe",
+        "robot.indicator.sleep_eyes": "strobe",  # removed key: ignored
+        "robot.indicator.sees": True,
+        "robot.indicator.alarm": False,
         "robot.indicator.enabled": "yes",
     }
     assert parse_settings(bad) == IndicatorSettings()

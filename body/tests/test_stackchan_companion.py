@@ -75,6 +75,12 @@ def test_dances_and_event_kinds_export_the_supported_sets():
             "playback",
             "wifi",
             "offline_tap",
+            "coredump",
+            "heal",
+            "wake_selftest",
+            "timer_fired",
+            "timer_ended",
+            "timer_missed",
         }
     )
 
@@ -429,3 +435,25 @@ def test_diagnostic_events_keep_their_small_fields():
     down, ignored, shake = companion.poll_events()
     assert down.extra == {"x": 12, "y": 34} and ignored.extra == {"why": "boot"}
     assert shake.extra is None
+
+
+def test_the_crash_report_from_the_last_boot_keeps_its_fields():
+    companion = StackChanCompanion(
+        lambda name, args: [
+            {
+                "kind": "coredump",
+                "at_ms": 9,
+                "task": "audio_input",
+                "cause": 28,
+                "pc": "0x4200abcd",
+                "bt": "4200abcd 4200abce",
+            },
+        ]
+    )
+    (dump,) = companion.poll_events()
+    assert dump.extra == {
+        "task": "audio_input",
+        "cause": 28,
+        "pc": "0x4200abcd",
+        "bt": "4200abcd 4200abce",
+    }

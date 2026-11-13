@@ -88,19 +88,3 @@ def ring_rgb(look: Look | None, period_s: float, t_s: float) -> tuple[int, int, 
             blue,
         )
     )
-
-
-def camera_flash_frames(look: Look) -> list[tuple[tuple[int, int, int], float]]:
-    """The camera cue's start sequence as (rgb, seconds) frames.
-
-    On 0.1 s, off 0.1 s, on 0.1 s; the steady colour that follows is held by
-    the caller. Uses the look's colour and brightness (its floor already
-    applied by the caller).
-    """
-    red, green, blue = RING_RGB[look.colour]
-    on = (
-        _clamp(LED_CHANNEL_MAX * red * look.brightness),
-        _clamp(LED_CHANNEL_MAX * green * look.brightness),
-        _clamp(LED_CHANNEL_MAX * blue * look.brightness),
-    )
-    return [(on, 0.1), ((0, 0, 0), 0.1), (on, 0.1)]

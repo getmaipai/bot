@@ -1,0 +1,88 @@
+diff --git a/firmware/main/CMakeLists.txt b/firmware/main/CMakeLists.txt
+index 443916c..d5a5222 100644
+--- a/firmware/main/CMakeLists.txt
++++ b/firmware/main/CMakeLists.txt
+@@ -15,6 +15,10 @@ file(GLOB_RECURSE STACK_CHAN_SOURCES
+     "stackchan/*.cc"
+     "stackchan/*.cpp"
+ )
++# MaiPai strip (patch 097): the vendor Mooncake apps and the hal files that only they use are not built.
++# Kept: apps/common (status bar, toast, reminder), which the voice agent shows.
++list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "/apps/(app_[a-z_]+|common/home_indicator)/")
++list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "/hal/hal_(ezdata|account|espnow|app_center)\\.cpp$")
+ set(STACK_CHAN_INCLUDE_DIRS 
+     "."
+ )
+diff --git a/firmware/main/hal/hal.cpp b/firmware/main/hal/hal.cpp
+index 81121de..d9e2ec5 100644
+--- a/firmware/main/hal/hal.cpp
++++ b/firmware/main/hal/hal.cpp
+@@ -184,12 +184,10 @@ static void _stackchan_update_task(void* param)
+         if (!is_setup_done) {
+             // Setup when xiaozhi ready
+             GetHAL().startSntp();
+-            view::create_home_indicator([]() { GetHAL().requestWarmReboot(0); }, 0x81DBBD, 0x134233);
+             view::create_status_bar(0x81DBBD, 0x134233);
+             is_setup_done = true;
+         }
+ 
+-        view::update_home_indicator();
+         view::update_status_bar();
+     }
+ }
+diff --git a/firmware/main/main.cpp b/firmware/main/main.cpp
+index 3f11ed6..940f45d 100644
+--- a/firmware/main/main.cpp
++++ b/firmware/main/main.cpp
+@@ -6,11 +6,8 @@
+ #include <smooth_ui_toolkit.hpp>
+ #include <uitk/short_namespace.hpp>
+ #include <mooncake_log.h>
+-#include <mooncake.h>
+-#include <apps/apps.h>
+ #include <hal/hal.h>
+ 
+-using namespace mooncake;
+ using namespace smooth_ui_toolkit;
+ 
+ extern "C" void app_main(void)
+@@ -26,37 +23,8 @@ extern "C" void app_main(void)
+     ui_hal::on_delay([](uint32_t ms) { GetHAL().delay(ms); });
+     ui_hal::on_get_tick([]() { return GetHAL().millis(); });
+ 
+-    const bool skip_mooncake =
+-        GetHAL().getXiaozhiConfig().startAiAgentOnBoot && GetHAL().getWarmRebootTarget() < 0;
+-
+-    if (!skip_mooncake) {
+-        // Install apps
+-        GetMooncake().installApp(std::make_unique<AppLauncher>());
+-        GetMooncake().installApp(std::make_unique<AppAiAgent>());
+-        GetMooncake().installApp(std::make_unique<AppAvatar>());
+-        GetMooncake().installApp(std::make_unique<AppEspnowControl>());
+-        GetMooncake().installApp(std::make_unique<AppAppCenter>());
+-        GetMooncake().installApp(std::make_unique<AppEzdata>());
+-        GetMooncake().installApp(std::make_unique<AppDance>());
+-        GetMooncake().installApp(std::make_unique<AppSetup>());
+-
+-        // Main loop
+-        while (1) {
+-            GetHAL().feedTheDog();
+-            GetHAL().updateHeapStatusLog();
+-
+-            GetMooncake().update();
+-
+-            if (GetHAL().isXiaozhiStartRequested()) {
+-                break;
+-            }
+-        }
+-
+-        // Uninstall all apps and destroy mooncake
+-        GetMooncake().uninstallAllApps();
+-        DestroyMooncake();
+-    }
+-
++    // MaiPai strip (patch 097): the vendor Mooncake apps (launcher, setup, app center, controller, dance,
++    // ezdata, avatar phone call) are not built; the unit always boots straight into the voice agent.
+     // Start xiaozhi, never returns
+     GetHAL().startXiaozhi();
+ }

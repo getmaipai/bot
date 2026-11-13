@@ -96,30 +96,54 @@ def _warnings(caplog: pytest.LogCaptureFixture) -> list[Any]:
     return [record for record in caplog.records if record.name == LOGGER]
 
 
-def test_a_robot_that_has_not_reached_the_hub_reads_as_connecting():
+def test_a_robot_that_has_not_reached_the_hub_shows_nothing_on_the_ring():
     service, ring, clock = _service()
     _poller(service, clock=clock, connected=False).poll()
-    assert service.facts.connecting is True
     assert service.facts.offline is False
-    assert ring.current is not None
-    assert ring.current.colour is Palette.BLUE
+    assert ring.current is None  # boot and connecting are dark; the screen says it
 
 
 @pytest.mark.parametrize("phase", ["reconnecting", "sleeping"])
-def test_a_connected_robot_with_an_unreachable_hub_reads_as_offline(phase: str):
+def test_a_connected_robot_with_an_unreachable_hub_reads_as_offline_after_ten_seconds(phase: str):
     service, ring, clock = _service()
-    _poller(service, clock=clock, phase=phase).poll()
-    assert service.facts.connecting is False
+    poller = _poller(service, clock=clock, phase=phase)
+    poller.poll()
+    assert service.facts.offline is False  # a blip is not news
+    clock.now += 9.0
+    poller.poll()
+    assert service.facts.offline is False
+    clock.now += 1.0
+    poller.poll()
     assert service.facts.offline is True
     assert ring.current is not None
     assert ring.current.colour is Palette.AMBER
 
 
+def test_a_link_that_comes_back_inside_ten_seconds_never_shows_offline():
+    service, ring, clock = _service()
+    phase = {"now": "reconnecting"}
+    poller = LightPoller(
+        service,
+        link_phase=lambda: phase["now"],
+        device_connected=lambda: True,
+        battery=lambda: {"percent": 80, "charging": False},
+        clock=clock,
+    )
+    poller.poll()
+    clock.now += 8.0
+    phase["now"] = "connected"
+    poller.poll()
+    phase["now"] = "reconnecting"
+    clock.now += 8.0
+    poller.poll()  # the timer restarted when the link dropped again
+    assert service.facts.offline is False
+    assert ring.current is None
+
+
 @pytest.mark.parametrize("phase", ["connected", None])
-def test_a_connected_robot_with_a_reachable_hub_sets_neither(phase: str | None):
+def test_a_connected_robot_with_a_reachable_hub_is_not_offline(phase: str | None):
     service, _, clock = _service()
     _poller(service, clock=clock, phase=phase).poll()
-    assert service.facts.connecting is False
     assert service.facts.offline is False
 
 
@@ -142,20 +166,17 @@ def test_the_battery_is_read_at_most_once_per_window():
 
 
 @pytest.mark.parametrize(
-    ("payload", "low", "charging"),
+    ("payload", "low"),
     [
-        ({"percent": 14, "charging": False}, True, False),
-        ({"percent": 14, "charging": True}, False, True),
-        ({"percent": 80, "charging": False}, False, False),
+        ({"percent": 14, "charging": False}, True),
+        ({"percent": 14, "charging": True}, False),
+        ({"percent": 80, "charging": False}, False),
     ],
 )
-def test_battery_low_is_below_the_threshold_and_not_charging(
-    payload: dict[str, object], low: bool, charging: bool
-):
+def test_battery_low_is_below_the_threshold_and_not_charging(payload: dict[str, object], low: bool):
     service, _, clock = _service()
     _poller(service, clock=clock, battery=lambda: payload).poll()
     assert service.facts.battery_low is low
-    assert service.facts.charging is charging
 
 
 def test_a_battery_failure_keeps_the_last_values_and_warns_once(caplog: pytest.LogCaptureFixture):
@@ -174,7 +195,6 @@ def test_a_battery_failure_keeps_the_last_values_and_warns_once(caplog: pytest.L
     clock.now += 60.0
     poller.poll()
     assert service.facts.battery_low is True
-    assert service.facts.charging is False
     warnings = _warnings(caplog)
     assert len(warnings) == 1
     assert "battery" in warnings[0].message
@@ -209,7 +229,6 @@ def test_an_invalid_battery_payload_is_a_failure(
 ):
     service, _, clock = _service()
     _poller(service, clock=clock, battery=lambda: payload).poll()
-    assert service.facts.charging is False
     assert service.facts.battery_low is False
     assert _warnings(caplog)
 
@@ -221,17 +240,79 @@ def test_an_invalid_battery_payload_keeps_the_last_values():
     def battery() -> object:
         calls.append(1)
         if len(calls) == 1:
-            return {"percent": 10, "charging": True}
+            return {"percent": 10, "charging": False}
         return {"percent": None, "charging": False}
 
     poller = _poller(service, clock=clock, battery=battery)
     poller.poll()
-    assert service.facts.charging is True
-    assert service.facts.battery_low is False
+    assert service.facts.battery_low is True
     clock.now += 60.0
     poller.poll()
-    assert service.facts.charging is True
-    assert service.facts.battery_low is False
+    assert service.facts.battery_low is True
+
+
+def _replay(reads: list[object], *, on_battery=None):
+    """Poll the reads one a minute; return what battery_low did after each."""
+    service, _, clock = _service()
+    feed = iter(reads)
+    poller = _poller(service, clock=clock, battery=lambda: next(feed), on_battery=on_battery)
+    seen: list[bool] = []
+    for _ in reads:
+        poller.poll()
+        seen.append(service.facts.battery_low)
+        clock.now += 60.0
+    return seen
+
+
+def test_the_live_log_flap_charging_idle_charging_changes_nothing():
+    """Hub log 2026-11-13: 09:03 charging, 09:07 idle, 09:08 charging, 09:09 idle. The unit sat on
+    USB the whole time; the firmware turned a failed register read into charging=false (patch
+    009), which flipped the charging state and the low-battery flag every minute."""
+    told: list[bool] = []
+    reads = [
+        {"percent": 14, "charging": True},  # 09:03
+        {"percent": 0, "charging": False},  # 09:07, the failed read: 0 percent, not charging
+        {"percent": 14, "charging": True},  # 09:08
+        {"percent": 14, "charging": False},  # 09:09, a lone false
+        {"percent": 14, "charging": True},  # 09:10
+    ]
+    seen = _replay(reads, on_battery=told.append)
+    assert seen == [False] * 5  # 14 percent but charging: never battery low, never a flap
+    assert told == [True, True, True, True]  # the failed read told the power rule nothing
+
+
+def test_a_lone_not_charging_read_does_not_raise_battery_low():
+    reads = [
+        {"percent": 12, "charging": True},
+        {"percent": 12, "charging": False},  # one bad read
+        {"percent": 12, "charging": True},
+    ]
+    assert _replay(reads) == [False, False, False]
+
+
+def test_a_real_unplug_counts_after_two_reads_in_a_row():
+    told: list[bool] = []
+    reads = [
+        {"percent": 12, "charging": True},
+        {"percent": 12, "charging": False},
+        {"percent": 12, "charging": False},
+        {"percent": 12, "charging": False},
+    ]
+    seen = _replay(reads, on_battery=told.append)
+    assert told == [True, True, False, False]
+    assert seen == [False, False, True, True]
+
+
+def test_a_real_plug_in_clears_battery_low_after_two_reads():
+    reads = [{"percent": 10, "charging": False}] * 2 + [{"percent": 10, "charging": True}] * 3
+    assert _replay(reads) == [True, True, True, False, False]
+
+
+def test_the_failed_read_zero_is_unknown_not_a_dead_battery():
+    assert _replay([{"percent": 0, "charging": False}, {"percent": 80, "charging": False}]) == [
+        False,
+        False,
+    ]
 
 
 def test_run_polls_and_stops_on_the_event():
@@ -388,3 +469,42 @@ def test_the_camera_adapter_tells_the_light_service_when_the_cue_goes_up_and_dow
     robot._driver("camera").cue_sink = cues.append
     assert robot.camera.frame() == device.photo
     assert cues == [True, False]
+
+
+def test_a_photo_is_taken_only_while_the_service_shows_the_pink_camera_cue():
+    """The privacy chain end to end: the adapter raises the cue, the light service (the one ring
+    writer) lights the ring pink at no less than the camera floor, and only then does the capture
+    start; afterwards the cue is held at least CUE_HOLD_S and then the ring is dark."""
+    from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
+    from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
+    from maipai_body.bodies.stackchan.ring import ring_rgb
+    from maipai_body.bodies.stackchan.ring_indicator import StackChanRingIndicator
+    from maipai_body.indicator import looks
+
+    seen: list[tuple[int, int, int]] = []
+
+    class Guarded(FakeStackChanDeviceClient):
+        def take_photo(self):
+            seen.append(self.led_color)
+            return super().take_photo()
+
+    device = Guarded()
+    device.photo = b"\xff\xd8sample"
+    robot = StackChanRobotAdapter(device).robot
+    clock = Clock()
+    indicator = StackChanRingIndicator(
+        lambda rgb: robot.leds.many([{"index": i, "rgb": list(rgb)} for i in range(12)]),
+        clock=clock,
+    )
+    service = StackChanLightService(indicator, minute=lambda: DAY, clock=clock)
+    robot._driver("camera").cue_sink = service.cue_camera
+    assert robot.camera.frame() == device.photo
+    colour, _, style = looks.LOOKS[looks.LookKey.CAMERA]
+    expected = Look(colour=colour, brightness=0.6, style=style, period_s=0.5)
+    assert seen == [ring_rgb(expected, 0.5, 0.0)]  # pink, lit before the capture began
+    assert seen[0][0] > seen[0][2] > seen[0][1]  # pink: red over blue over green, never dark
+    assert seen[0][0] >= round(168 * looks.CAMERA_FLOOR)
+    clock.now += looks.CUE_HOLD_S
+    service.tick()
+    assert device.led_color == (0, 0, 0)
+    assert not [c for c in device.calls if c.name == "self.robot.set_led_color"]  # one writer

@@ -1,13 +1,13 @@
 """EYES-02: the director.
 
-It subscribes to the presence funnel's ``FunnelView`` (the shown state, the
-mute, held and alarm facts) and to ``LiveCaptureTap``'s ``CaptureFacts``, and
-to nothing else: no turn client, no playback, no face tracking (an AST test
-holds that line). Each change re-resolves one look from ``looks.py`` and
-sends it only if it differs from what the eyes already show.
+It subscribes to the presence funnel's ``FunnelView`` (the shown state and
+the fault fact; the mute, held, offer and alarm facts no longer reach a light) and to
+``LiveCaptureTap``'s ``CaptureFacts``, and to nothing else: no turn client, no playback,
+no face tracking (an AST test holds that line). Each change re-resolves one look from
+``looks.py`` and sends it only if it differs from what the eyes already show.
 
-A capture cue is held for at least ``CUE_HOLD_S`` once raised. The alarm
-blinks at ``ALARM_PERIOD_S``. A timer, or ``tick()`` in tests, lands both.
+A capture cue is held for at least ``CUE_HOLD_S`` once raised. A timer, or
+``tick()`` in tests, lands the hold's end.
 The indicator never raises ``BodyLost``; a device that fails anyway is
 logged and never breaks the funnel's own threads.
 """
@@ -87,7 +87,6 @@ class EyesDirector:
         self._view = FunnelView(shown=FunnelState.IDLE)
         self._live = _Hold()
         self._camera = _Hold()
-        self._alarm_since: float | None = None
         self._applied: Look | None = None
         self._applied_known = False
         self._timer: threading.Timer | None = None
@@ -112,7 +111,7 @@ class EyesDirector:
         self._apply()
 
     def tick(self) -> None:
-        """Re-resolve now (hold ends, alarm phase, night edge)."""
+        """Re-resolve now (hold ends, night edge)."""
         self._apply()
 
     refresh = tick
@@ -130,22 +129,12 @@ class EyesDirector:
 
     # -- output ---------------------------------------------------------
 
-    def _alarm_on(self, now: float) -> bool:
-        if self._alarm_since is None:
-            return True
-        half = looks.ALARM_PERIOD_S / 2
-        return int((now - self._alarm_since) / half) % 2 == 0
-
     def _apply(self) -> None:
         with self._lock:
             if self._closed:
                 return
             now = self._clock()
             view = self._view
-            if view.alarm and self._alarm_since is None:
-                self._alarm_since = now
-            elif not view.alarm:
-                self._alarm_since = None
             request = looks.LookRequest(
                 funnel=view.shown,
                 minute=self._local_minutes(),
@@ -153,11 +142,6 @@ class EyesDirector:
                 presence=self._presence(),
                 live=self._live.on(now),
                 camera=self._camera.on(now),
-                alarm=view.alarm,
-                alarm_on=self._alarm_on(now),
-                held=view.held,
-                muted=view.muted,
-                offer=view.offer,
                 fault=view.fault,
             )
             look = looks.resolve(request)
@@ -186,10 +170,6 @@ class EyesDirector:
             due = hold.due_in(now)
             if due is not None:
                 waits.append(due)
-        if self._alarm_since is not None:
-            half = looks.ALARM_PERIOD_S / 2
-            elapsed = now - self._alarm_since
-            waits.append(half - (elapsed % half))
         timer = threading.Timer(max(min(waits), 0.001), self._apply)
         timer.daemon = True
         self._timer = timer

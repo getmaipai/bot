@@ -1,0 +1,272 @@
+# Intent: the unit gets itself out of a freeze, and can never reboot-loop (owner approval 2026-11-13, "implement everything we discussed and planned"; design note docs/dev/stackchan-self-healing-2026-11-13.md, rung (b) and guard (f)). Host log 2026-11-12 23:40: tool calls timed out for three minutes while others still answered, and nothing restarted it, for two reasons the host fix (a 120 s sliding window) alone cannot cure. (1) The "system reboot" command was run through Schedule(), on the main loop, so a stuck main loop could never run it: it now runs off the receiving task, through the guard, after 300 ms so the log line and the host's ack leave first. (2) The stall watch (patch 069) only recorded a stalled main loop and, since patch 074, never restarted: after 30 s of no clock tick (the 8 s record stays as the early warning) it now asks for a self-restart. This reverses the owner's 2026-10-23 "no reboot on every stall", which was about the 10 s OpenAudioChannel wait patch 075 removed; a 30 s stall today is a real freeze. THE GUARD (main/hal/heal_guard.cpp): every self-chosen restart (host request, 30 s stall, a deaf wake engine after patch 086's rebuild) goes through maipai_heal_restart, at most 3 an hour counted in NVS (heal_n the count, heal_s the window clock in the unit's running seconds, since no clock survives a restart); the fourth is refused, logged, reported as a "heal" event (action=refused) and as heal_hold=1 in the boot and wake_stats events until the hour ends. The restart runs on its own task with an internal 4 KB stack (a flash write from the motion sensor task, whose stack is in PSRAM, aborts the unit: patch 074). Panics are not chosen, never counted here and never held back (crash_resets counts them). The boot event gains heal_n, heal_hold and heal_why (host, stall or deaf: why the last restart was chosen, empty after a power-on or a panic); wake_stats gains heal_n and heal_hold; a restart or refusal sends a "heal" event with action, why and n.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_imu.cpp, hal_head_touch.cpp, device_events.h, xiaozhi-esp32/main/application.cc (MIT); main/hal/heal_guard.cpp is new (the CMake glob picks it up). Applies after 084 with --unidiff-zero.
+# Check after a flash: "unit heal: heal action=restart why=host n=1" then a boot with "heal_why=host heal_n=1"; the fourth request within an hour logs "restart refused" and wake_stats says heal_hold=1; a main loop held for 30 s (not reachable on demand) logs "main loop stalled for 30 s: asking for a self-restart" and the next boot says heal_why=stall; a normal boot says heal_n=0 heal_hold=0 heal_why=.
+diff --git a/firmware/main/hal/heal_guard.cpp b/firmware/main/hal/heal_guard.cpp
+new file mode 100644
+index 0000000..1676472
+--- /dev/null
++++ b/firmware/main/hal/heal_guard.cpp
+@@ -0,0 +1,141 @@
++/*
++ * SPDX-License-Identifier: MIT
++ */
++// The self-restart guard (patch 085). Every restart the unit chooses for itself (the host asked, the
++// main loop stalled for 30 s, a failed wake-word self-test twice in a row) goes through
++// maipai_heal_restart. At most kMaxPerHour of them an hour: the next is refused, logged and
++// reported as heal_hold=1, so a fault that survives a restart can never become a reboot loop.
++// Panics are not chosen and are not counted here (crash_resets counts them).
++//
++// The hour is counted in the unit's own running time, because the unit has no clock that survives a
++// restart: NVS holds how many restarts the window has seen (heal_n) and how many seconds the window
++// has run as of the last of them (heal_s); at boot kBootGapS is added for the restart itself. A
++// power loss does not reset the count, so the window only ends after an hour of running.
++#include "device_events.h"
++
++#include <esp_log.h>
++#include <esp_system.h>
++#include <esp_timer.h>
++#include <freertos/FreeRTOS.h>
++#include <freertos/task.h>
++#include <settings.h>
++
++#include <cstdio>
++#include <cstring>
++#include <memory>
++#include <mutex>
++
++namespace {
++constexpr int kMaxPerHour = 3;
++constexpr int kWindowS    = 3600;
++constexpr int kBootGapS   = 10;  // what a restart itself costs, added to the window clock at boot
++
++std::mutex s_mutex;
++bool s_loaded   = false;
++int s_count     = 0;  // restarts in the current window
++int s_window_s  = 0;  // window clock at boot
++
++struct Request {
++    char why[16];
++    uint32_t delay_ms;
++};
++
++void load_locked()
++{
++    if (s_loaded) {
++        return;
++    }
++    s_loaded = true;
++    Settings settings("maipai", false);
++    s_count    = settings.GetInt("heal_n", 0);
++    s_window_s = settings.GetInt("heal_s", 0) + kBootGapS;
++}
++
++int elapsed_locked()
++{
++    return s_window_s + static_cast<int>(esp_timer_get_time() / 1000000);
++}
++
++// A window that has run an hour starts over.
++void expire_locked()
++{
++    if (s_count > 0 && elapsed_locked() >= kWindowS) {
++        s_count    = 0;
++        s_window_s = -static_cast<int>(esp_timer_get_time() / 1000000);
++    }
++}
++
++void restart_task(void* arg)
++{
++    std::unique_ptr<Request> request(static_cast<Request*>(arg));
++    vTaskDelay(pdMS_TO_TICKS(request->delay_ms));
++    int count = 0;
++    bool allowed;
++    {
++        std::lock_guard<std::mutex> lock(s_mutex);
++        load_locked();
++        expire_locked();
++        allowed = s_count < kMaxPerHour;
++        count   = s_count;
++    }
++    char extra[80];
++    if (!allowed) {
++        ESP_LOGW("HealGuard", "restart refused (%s): %d self-restarts this hour already", request->why, count);
++        snprintf(extra, sizeof(extra), "\"action\":\"refused\",\"why\":\"%s\",\"n\":%d", request->why, count);
++        device_events_push_diag("heal", extra);
++        vTaskDelete(nullptr);
++        return;
++    }
++    ESP_LOGW("HealGuard", "restarting (%s): self-restart %d of %d this hour", request->why, count + 1, kMaxPerHour);
++    snprintf(extra, sizeof(extra), "\"action\":\"restart\",\"why\":\"%s\",\"n\":%d", request->why, count + 1);
++    device_events_push_diag("heal", extra);
++    vTaskDelay(pdMS_TO_TICKS(300));  // the log line and the event leave first
++    {
++        std::lock_guard<std::mutex> lock(s_mutex);
++        Settings settings("maipai", true);
++        settings.SetInt("heal_n", s_count + 1);
++        settings.SetInt("heal_s", elapsed_locked());
++        settings.SetString("heal_why", request->why);
++    }
++    esp_restart();
++}
++}  // namespace
++
++void maipai_heal_restart(const char* why, uint32_t delay_ms)
++{
++    // A short task with an internal 4 KB stack: the caller may be a task whose stack is in PSRAM (the
++    // motion sensor task is), and a flash write from such a task aborts the unit (patch 074).
++    auto* request = new Request{};
++    snprintf(request->why, sizeof(request->why), "%s", why != nullptr ? why : "?");
++    request->delay_ms = delay_ms;
++    if (xTaskCreate(restart_task, "heal_restart", 4096, request, 5, nullptr) != pdPASS) {
++        ESP_LOGW("HealGuard", "could not start the restart task (%s)", request->why);
++        delete request;
++    }
++}
++
++void maipai_heal_status(int* count, bool* hold)
++{
++    std::lock_guard<std::mutex> lock(s_mutex);
++    load_locked();
++    expire_locked();
++    if (count != nullptr) {
++        *count = s_count;
++    }
++    if (hold != nullptr) {
++        *hold = s_count >= kMaxPerHour;
++    }
++}
++
++// The reason the last restart was chosen ("host", "stall", "deaf"), read once at boot; empty when
++// the last restart was a power-on or a panic.
++void maipai_heal_take_reason(char* out, size_t size)
++{
++    out[0] = '\0';
++    Settings settings("maipai", true);
++    std::string why = settings.GetString("heal_why", "");
++    if (!why.empty()) {
++        snprintf(out, size, "%s", why.c_str());
++        settings.EraseKey("heal_why");
++    }
++}
+diff --git a/firmware/main/hal/device_events.h b/firmware/main/hal/device_events.h
+index 736c5e9..eb0faf7 100644
+--- a/firmware/main/hal/device_events.h
++++ b/firmware/main/hal/device_events.h
+@@ -3,6 +3,7 @@
+  */
+ #pragma once
+ #include <cstddef>
++#include <cstdint>
+ 
+ // A low-rate diagnostic event for the host (patch 046): kind must be a string literal, extra is
+ // JSON object members without braces, for example "\"x\":12,\"y\":34", or empty. At most 20 a
+@@ -22,3 +23,13 @@ void device_events_barge_stats(char* out, size_t size);
+ void device_events_touch_note_poll(bool ok);
+ void device_events_touch_note_read();
+ void device_events_touch_stats(char* out, size_t size);
++
++// The self-restart guard (patch 085, main/hal/heal_guard.cpp). A restart the unit chooses for itself
++// asks here with a short reason ("host", "stall", "deaf"): after delay_ms it is counted in NVS and
++// carried out, unless three have already happened this hour, in which case it is refused, logged and
++// reported (heal_hold). Safe to call from any task, including one with a PSRAM stack. Panics are not
++// counted and never held back. Status: restarts counted in this hour's window, and whether the next
++// request would be refused. take_reason reads (once) why the last restart was chosen.
++void maipai_heal_restart(const char* why, uint32_t delay_ms);
++void maipai_heal_status(int* count, bool* hold);
++void maipai_heal_take_reason(char* out, size_t size);
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index 79b97cb..2d36f67 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -685,10 +685,11 @@ void Application::InitializeProtocol() {
+             if (cJSON_IsString(command)) {
+                 ESP_LOGI(TAG, "System command: %s", command->valuestring);
+                 if (strcmp(command->valuestring, "reboot") == 0) {
+-                    // Do a reboot if user requests a OTA update
+-                    Schedule([this]() {
+-                        Reboot();
+-                    });
++                    // The host's restart request (patch 085) runs off this task, not through Schedule():
++                    // when the main loop is what is stuck, a scheduled restart never runs. It goes
++                    // through the self-restart guard (three an hour) after 300 ms, so this log line
++                    // and the host's ack leave first.
++                    maipai_heal_restart("host", 300);
+                 } else if (strcmp(command->valuestring, "idle") == 0) {
+                     // The host ends a silent follow-up: leave Listening or Speaking and go idle.
+                     // Idle disables voice processing and re-arms the wake word.
+diff --git a/firmware/main/hal/hal_imu.cpp b/firmware/main/hal/hal_imu.cpp
+index 7075277..4a01f57 100644
+--- a/firmware/main/hal/hal_imu.cpp
++++ b/firmware/main/hal/hal_imu.cpp
+@@ -212,6 +212,7 @@ static void _imu_task(void* param)
+     uint32_t last_alive = 0;
+     int stuck_loops     = 0;
+     bool stall_dumped   = false;
++    bool stall_restarted = false;
+ 
+     // Fast sampling: the sensor is read every 10 ms (its own rate is 100 Hz); the shake, orientation
+     // and stall checks keep their 100 ms rhythm by running on every tenth sample.
+@@ -350,9 +351,18 @@ static void _imu_task(void* param)
+                 last_alive   = alive;
+                 stuck_loops  = 0;
+                 stall_dumped = false;
++                stall_restarted = false;
+             } else if (alive > 0 && ++stuck_loops >= 80 && !stall_dumped) {
+                 stall_dumped = true;
+                 _dump_stall();
++            } else if (alive > 0 && stuck_loops >= 300 && !stall_restarted) {
++                // A main loop that has not ticked for 30 s is a real freeze (patch 085): restart through
++                // the guard (three an hour), after the 8 s record above has been saved. The earlier
++                // ruling (2026-10-23) against restarting on every stall was about the 10 s wait on
++                // opening the audio channel, which patch 075 removed.
++                stall_restarted = true;
++                mclog::tagInfo(_tag, "main loop stalled for 30 s: asking for a self-restart");
++                maipai_heal_restart("stall", 0);
+             }
+         }
+         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index b4bda71..876eac3 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -386,12 +386,15 @@ static void _head_touch_update_task(void* param)
+             // 0 unknown, 1 starting, 2 wifi configuring, 3 idle, 4 connecting, 5 listening,
+             // 6 speaking, 7 upgrading, ...), so a unit that cannot be woken can be told apart from
+             // one that is.
+-            char wake[160];
++            char wake[256];
+             int used_wake = 0;
+-            device_events_wake_stats(wake, sizeof(wake) - 24);
++            device_events_wake_stats(wake, sizeof(wake) - 64);
+             used_wake = static_cast<int>(strlen(wake));
+-            snprintf(wake + used_wake, sizeof(wake) - used_wake, ",\"state\":%d",
+-                     static_cast<int>(Application::GetInstance().GetDeviceState()));
++            int heal_n     = 0;
++            bool heal_hold = false;
++            maipai_heal_status(&heal_n, &heal_hold);
++            snprintf(wake + used_wake, sizeof(wake) - used_wake, ",\"state\":%d,\"heal_n\":%d,\"heal_hold\":%d",
++                     static_cast<int>(Application::GetInstance().GetDeviceState()), heal_n, heal_hold ? 1 : 0);
+             device_events_push_diag("wake_stats", wake);
+ 
+             // Does the touch reach the unit while it speaks? Polls and failures of the controller,
+@@ -437,9 +440,17 @@ void Hal::head_touch_init()
+             stalled.EraseKey("stall");
+         }
+     }
+-    char reason[320];
+-    snprintf(reason, sizeof(reason), "\"reason\":%d,\"crash_resets\":%d,\"stall\":\"%s\"", why, crash_resets,
+-             stall.c_str());
++    // The self-restart guard (patch 085): restarts this hour, whether the next would be refused, and why
++    // the last restart was chosen ("host", "stall", "deaf"; empty after a power-on or a panic).
++    int heal_n     = 0;
++    bool heal_hold = false;
++    char heal_why[16];
++    maipai_heal_status(&heal_n, &heal_hold);
++    maipai_heal_take_reason(heal_why, sizeof(heal_why));
++    char reason[400];
++    snprintf(reason, sizeof(reason),
++             "\"reason\":%d,\"crash_resets\":%d,\"stall\":\"%s\",\"heal_n\":%d,\"heal_hold\":%d,\"heal_why\":\"%s\"", why,
++             crash_resets, stall.c_str(), heal_n, heal_hold ? 1 : 0, heal_why);
+     mclog::tagInfo(_tag, "boot: {}", reason);
+     device_events_push_diag("boot", reason);
+ 

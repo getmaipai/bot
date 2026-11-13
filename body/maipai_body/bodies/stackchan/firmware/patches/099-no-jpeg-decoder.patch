@@ -1,0 +1,72 @@
+diff --git a/firmware/main/CMakeLists.txt b/firmware/main/CMakeLists.txt
+index 1785069..1d677d0 100644
+--- a/firmware/main/CMakeLists.txt
++++ b/firmware/main/CMakeLists.txt
+@@ -24,6 +24,8 @@ list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "/hal/(hal_ble\\.cpp$|utils/bleprph
+ set(STACK_CHAN_INCLUDE_DIRS 
+     "."
+ )
++# MaiPai strip (patch 099-no-jpeg-decoder): the JPEG decoder wrapper is not built (nothing sends the unit JPEG frames).
++list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "/hal/utils/jpeg_to_image/")
+ list(APPEND STACK_CHAN_SOURCES main.cpp)
+ 
+ # Define source files
+@@ -69,6 +71,8 @@ set(SOURCES "audio/audio_codec.cc"
+ 
+ # Transform relative paths to absolute paths from xiaozhi-esp32/main
+ list(TRANSFORM SOURCES PREPEND "${XIAOZHI_MAIN_DIR}/")
++# MaiPai strip (patch 099-no-jpeg-decoder): the xiaozhi JPEG decoder (esp_jpeg_dec, about 18 KB of internal RAM code) is not built; the encoder stays.
++list(FILTER SOURCES EXCLUDE REGEX "/display/lvgl_display/jpg/jpeg_to_image\\.c$")
+ 
+ set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols")
+ # Transform include dirs to absolute paths from xiaozhi-esp32/main
+diff --git a/firmware/main/hal/hal_ws_avatar.cpp b/firmware/main/hal/hal_ws_avatar.cpp
+index 2f22bd5..affc62c 100644
+--- a/firmware/main/hal/hal_ws_avatar.cpp
++++ b/firmware/main/hal/hal_ws_avatar.cpp
+@@ -26,7 +26,6 @@
+ #include <display.h>
+ #include <lvgl_image.h>
+ #include <wifi_manager.h>
+-#include "utils/jpeg_to_image/jpeg_decoder.h"
+ #include "utils/secret_logic/secret_logic.h"
+ #include "device_events.h"
+ #include <freertos/FreeRTOS.h>
+@@ -374,35 +373,8 @@ public:
+                     break;
+                 }
+                 case DataType::Jpeg: {
+-                    // Protocol: [Type(1)] [Length(4)] [Payload]
+-                    if (msg.data.size() >= 5) {
+-                        ESP_LOGI(_tag.c_str(), "Jpeg Frame Received, size: %d", (int)(msg.data.size() - 5));
+-
+-                        static int64_t _time_count = 0;
+-                        static int64_t _interval   = 0;
+-                        _time_count                = esp_timer_get_time();
+-
+-                        size_t jpeg_len    = msg.data.size() - 5;
+-                        uint8_t* jpeg_data = (uint8_t*)heap_caps_malloc(jpeg_len, MALLOC_CAP_8BIT);
+-                        if (jpeg_data) {
+-                            memcpy(jpeg_data, msg.data.data() + 5, jpeg_len);
+-
+-                            auto image = jpeg_dec::decode_to_lvgl(jpeg_data, jpeg_len);
+-                            if (image) {
+-                                // ESP_LOGI(_tag.c_str(), "Done");
+-
+-                                _interval = esp_timer_get_time() - _time_count;
+-                                mclog::info("jpeg decode time: {} ms", _interval / 1000);
+-
+-                                GetHAL().onWsVideoFrame.emit(image);
+-                            } else {
+-                                ESP_LOGE(_tag.c_str(), "Failed to decode JPEG");
+-                            }
+-                            heap_caps_free(jpeg_data);
+-                        } else {
+-                            ESP_LOGE(_tag.c_str(), "Failed to allocate memory for JPEG");
+-                        }
+-                    }
++                    // Phone-call video frames are not shown on this unit and the MaiPai host never sends them
++                    // (it only receives camera frames, type 0x02, from the unit); the JPEG decoder is not built (patch 099-no-jpeg-decoder).
+                     break;
+                 }
+                 case DataType::DanceSequence: {

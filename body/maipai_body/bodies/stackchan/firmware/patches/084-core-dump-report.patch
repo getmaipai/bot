@@ -1,0 +1,57 @@
+# Intent: know why the unit panics (host log 2026-11-13: boot reason 4, a panic, four times in 15 hours, with no message or backtrace, because core dumps were off in the build: CONFIG_ESP_COREDUMP_ENABLE_TO_NONE). recipe.sh now turns the core dump to flash on (CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH, ELF format, CRC32 checksum) into the 64 KB "coredump" partition that exists and was unused (found by its type, not its address: 0xE00000 in the stock table, 0xFF0000 once patch 095 grows the assets partition). At boot the unit checks the partition: when a dump from the last crash is there it sends one "coredump" diagnostic event with the crashing task, the exception cause, the exception address, the faulting address and up to 16 backtrace addresses (no memory contents, nothing personal; the host log is the only place they go), then erases the dump so one crash is reported once; "present" alone means a dump exists but its summary could not be read. The host maps the addresses with the build's ELF file.
+# Upstream: m5stack/StackChan firmware/main/hal/hal_head_touch.cpp, firmware/main/CMakeLists.txt (MIT). Applies after 083 with --unidiff-zero. The Kconfig options are in recipe.sh's sdkconfig.defaults.local block.
+# Check after a flash: the next panic is followed, after the restart, by "unit boot: coredump task=... cause=... pc=0x... bt=..." in the host log; a boot after a normal restart sends no coredump event; the build's sdkconfig has CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y.
+diff --git a/firmware/main/hal/hal_head_touch.cpp b/firmware/main/hal/hal_head_touch.cpp
+index ff26cd0..b4bda71 100644
+--- a/firmware/main/hal/hal_head_touch.cpp
++++ b/firmware/main/hal/hal_head_touch.cpp
+@@ -27,6 +27,7 @@ extern std::atomic<uint32_t> g_avatar_binary, g_avatar_last_type, g_cam_paused;
+ #include <freertos/FreeRTOS.h>
+ #include <freertos/task.h>
+ #include <esp_timer.h>
++#include <esp_core_dump.h>
+ 
+ static const std::string_view _tag = "HAL-HeadTouch";
+ 
+@@ -442,6 +443,29 @@ void Hal::head_touch_init()
+     mclog::tagInfo(_tag, "boot: {}", reason);
+     device_events_push_diag("boot", reason);
+ 
++    // A panic left a core dump in the flash partition (patch 084): report what the crash was (task,
++    // cause, address, backtrace addresses; no memory contents leave the unit) and erase it, so one
++    // crash is reported once. "present" alone means a dump exists but its summary could not be read.
++    if (esp_core_dump_image_check() == ESP_OK) {
++        static esp_core_dump_summary_t summary;
++        char dump[300];
++        if (esp_core_dump_get_summary(&summary) == ESP_OK) {
++            int at = snprintf(dump, sizeof(dump), "\"task\":\"%.15s\",\"cause\":%u,\"pc\":\"0x%08x\",\"vaddr\":\"0x%08x\",\"bt\":\"",
++                              summary.exc_task, static_cast<unsigned>(summary.ex_info.exc_cause),
++                              static_cast<unsigned>(summary.exc_pc), static_cast<unsigned>(summary.ex_info.exc_vaddr));
++            for (uint32_t i = 0; i < summary.exc_bt_info.depth && i < 16 && at < static_cast<int>(sizeof(dump)) - 24; i++) {
++                at += snprintf(dump + at, sizeof(dump) - at, "%s%08x", i ? " " : "",
++                               static_cast<unsigned>(summary.exc_bt_info.bt[i]));
++            }
++            snprintf(dump + at, sizeof(dump) - at, "\"");
++        } else {
++            snprintf(dump, sizeof(dump), "\"present\":1");
++        }
++        mclog::tagInfo(_tag, "core dump from the last crash: {}", dump);
++        device_events_push_diag("coredump", dump);
++        esp_core_dump_image_erase();
++    }
++
+     auto i2c_bus = hal_bridge::board_get_i2c_bus();
+ 
+     si12t_config_t si12t_cfg = {
+diff --git a/firmware/main/CMakeLists.txt b/firmware/main/CMakeLists.txt
+index 22cfebb..a66f907 100644
+--- a/firmware/main/CMakeLists.txt
++++ b/firmware/main/CMakeLists.txt
+@@ -295,6 +295,7 @@ idf_component_register(SRCS ${SOURCES}
+                     WHOLE_ARCHIVE
+                     PRIV_REQUIRES
+                         esp_pm
++                        espcoredump
+                         esp_psram
+                         esp_netif
+                         esp_driver_gpio

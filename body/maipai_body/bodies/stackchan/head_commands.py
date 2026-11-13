@@ -26,8 +26,12 @@ said"):
   ``STEP_PAUSE_S`` between them (no 5 second return in between), says one short line for all of
   it, and then returns to centre after the last step (or holds when the last is a "turn").
 
-A request that clearly asks for movement but is not one of these ("spin", "walk", "dance") gets
+A request that clearly asks for movement but is not one of these ("spin", "walk", "jump") gets
 one fixed reply instead of reaching the hub, whose model answers "I can't".
+
+"Dance" (and "do a dance", "can you dance", "dance for me", "show me a dance") is a request for the
+little dance (dance.py), answered here before the hub is asked: ``HeadCommander.run`` hands it to
+the dance runner, which has its own gates (night, battery, caps) and says its own line.
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from maipai_body.bodies.stackchan.dance import is_dance_request
 from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG
 
 logger = logging.getLogger("maipai_body.bodies.stackchan.head_commands")
@@ -124,15 +129,15 @@ _STAY = re.compile(r"\b(stay|hold still|stay there|stay like that|freeze|keep lo
 _ASKS_TO_SEE = re.compile(r"\b(tell|describe|what|read|see|show|who)\b")
 _UNSUPPORTED = re.compile(
     r"\b(spin|rotate|twirl|look over there|"
-    r"walk|come here|go there|follow me|jump|wave|dance|move forward|move back|move closer)\b"
+    r"walk|come here|go there|follow me|jump|wave|move forward|move back|move closer)\b"
 )
 
 
 @dataclass(frozen=True)
 class HeadCommand:
     # "look", "centre", "around", "nod", "shake", "stay", "cannot", "face" (point at the person),
-    # "away" (look away from the person), "turnaround" (as far to the side as it goes) or
-    # "sequence" (several of the others, in order)
+    # "away" (look away from the person), "turnaround" (as far to the side as it goes), "dance"
+    # (the little dance, dance.py) or "sequence" (several of the others, in order)
     kind: str
     direction: str | None = None  # left, right, up or down (for "look")
     amount: str = "normal"  # little, normal or far
@@ -195,6 +200,8 @@ def parse_head_command(text: str) -> HeadCommand | None:
     one sentence are a "sequence" (up to ``MAX_SEQUENCE_WORDS`` words)."""
     spoken = _normalise(text)
     words = spoken.split()
+    if words and len(words) <= 6 and is_dance_request(spoken):
+        return HeadCommand("dance")  # "do a dance" and "show me a dance" are not questions
     if not words or len(words) > MAX_SEQUENCE_WORDS or _QUESTION.match(spoken):
         return None
     # "look down and tell me what you see" asks about the picture, not for a move.
@@ -326,8 +333,12 @@ class HeadCommander:
         on_done: Callable[[HeadCommand], object] | None = None,
         find_face: Callable[[bool], str] | None = None,
         face_yaw: Callable[[], float | None] = lambda: None,
+        dance: Callable[[], str] | None = None,
     ) -> None:
         self._move = move
+        # dance() asks the dance runner for the little dance and answers the line to say; the
+        # runner has its own gates, so the head-command ones below do not apply to it.
+        self.dance = dance
         self._blocked = blocked
         self._hold_pose = hold_pose
         self._clock = clock
@@ -350,6 +361,8 @@ class HeadCommander:
         """Do the command; returns the line to say ("" for nothing)."""
         if command.kind == "cannot":
             return CAN_DO
+        if command.kind == "dance":
+            return self.dance() if self.dance is not None else CAN_DO
         if command.kind == "stay":
             self._cancel_return()
             return ""

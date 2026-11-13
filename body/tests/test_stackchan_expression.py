@@ -92,17 +92,25 @@ def test_expression_engine_selects_stackchan_renderer_and_estop_discards_motion(
         engine.close()
 
 
-def test_camera_photo_requires_indicator_first_and_clears_it_on_capture_error():
+def test_camera_photo_raises_the_cue_first_and_lowers_it_on_capture_error():
+    events: list[str] = []
+
     class GuardedCamera(FakeStackChanDeviceClient):
         def take_photo(self):
-            assert self.led_color == (168, 42, 92), "camera capture began without its indicator"
+            assert events == ["cue up"], "camera capture began without its cue"
+            events.append("capture")
             return super().take_photo()
 
     device = GuardedCamera()
     adapter = StackChanRobotAdapter(device)
+    adapter.robot._driver("camera").cue_sink = lambda active: events.append(
+        "cue up" if active else "cue down"
+    )
     device.photo = b"jpeg"
     assert asyncio.run(adapter.take_photo()) == b"jpeg"
-    assert device.led_colors == ((168, 42, 92),) * 12
+    assert events == ["cue up", "capture", "cue down"]
+
+    events.clear()
 
     class FailingCamera(GuardedCamera):
         def take_photo(self):
@@ -110,9 +118,10 @@ def test_camera_photo_requires_indicator_first_and_clears_it_on_capture_error():
             raise RuntimeError("capture failed")
 
     failing = StackChanRobotAdapter(FailingCamera())
+    failing.robot._driver("camera").cue_sink = adapter.robot._driver("camera").cue_sink
     with pytest.raises(RuntimeError, match="capture failed"):
         asyncio.run(failing.take_photo())
-    assert failing.client.led_colors == ((168, 42, 92),) * 12
+    assert events == ["cue up", "capture", "cue down"]
 
 
 def test_thinking_and_attention_faces_never_read_as_doubt_or_sadness():

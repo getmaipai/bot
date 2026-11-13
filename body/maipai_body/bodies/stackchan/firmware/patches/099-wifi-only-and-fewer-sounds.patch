@@ -1,0 +1,17 @@
+diff --git a/firmware/main/CMakeLists.txt b/firmware/main/CMakeLists.txt
+index d298ed3..1785069 100644
+--- a/firmware/main/CMakeLists.txt
++++ b/firmware/main/CMakeLists.txt
+@@ -294,6 +294,12 @@ if(CONFIG_IDF_TARGET_ESP32S3)
+     list(APPEND SOURCES "${XIAOZHI_MAIN_DIR}/boards/common/esp32_camera.cc")
+ endif()
+ 
++# MaiPai strip (patch 099): StackChan is Wi-Fi only, so the 4G modem boards (esp-ml307, NT26, dual network)
++# and the USB RNDIS board are not built, and the activation-code sounds (digits 0 to 9, activation.ogg; the
++# activation flow is off and its call sites are commented out) are not embedded. The other xiaozhi sounds stay.
++list(FILTER SOURCES EXCLUDE REGEX "/boards/common/(ml307_board|nt26_board|dual_network_board|rndis_board)\\.cc$")
++list(FILTER LANG_SOUNDS EXCLUDE REGEX "/([0-9]|activation)\\.ogg$")
++
+ idf_component_register(SRCS ${SOURCES}
+                     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
+                     INCLUDE_DIRS ${INCLUDE_DIRS}

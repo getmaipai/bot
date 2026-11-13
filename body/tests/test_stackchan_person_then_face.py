@@ -14,6 +14,7 @@ import numpy as np
 from maipai_body.app import StackChanBehavior
 from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
 from maipai_body.bodies.stackchan.fake import FakeStackChanDeviceClient
+from maipai_body.bodies.stackchan.head_search import AMBIENT_HOLD_S
 from maipai_body.bodies.stackchan.person_tracker import AIM_SPEED, AIM_TILT_STEP_DEG, PersonBox
 from maipai_body.bodies.stackchan.profile import CENTRE_PITCH_DEG, FOLLOW_YAW_SIGN
 from maipai_body.bodies.stackchan.sight import PERSON_NO_FACE, SightAnswers
@@ -146,6 +147,7 @@ def test_a_weak_person_hint_starts_the_glance_up_look_and_a_box_hands_over(caplo
     seen = []
     try:
         with caplog.at_level(logging.INFO, logger="maipai_body.app"):
+            behavior.search_tick(100.0 - AMBIENT_HOLD_S)  # the hint has held for a while
             _tick(behavior, vision, 100.0)
             assert behavior._search.active and behavior._search.reason == "person"
             assert any(
@@ -176,6 +178,7 @@ def test_a_flat_dark_picture_with_a_person_hint_is_not_called_a_dark_room():
     behavior, device = _behavior(vision)
     behavior.lux = lambda: 4.0
     try:
+        behavior.search_tick(100.0 - AMBIENT_HOLD_S)
         _tick(behavior, vision, 100.0)
         assert behavior._search.reason in ("person", "close")  # a look for the face, no dark check
     finally:

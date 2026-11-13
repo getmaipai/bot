@@ -1,0 +1,13 @@
+diff --git a/firmware/main/CMakeLists.txt b/firmware/main/CMakeLists.txt
+index d5a5222..d298ed3 100644
+--- a/firmware/main/CMakeLists.txt
++++ b/firmware/main/CMakeLists.txt
+@@ -19,6 +19,8 @@ file(GLOB_RECURSE STACK_CHAN_SOURCES
+ # Kept: apps/common (status bar, toast, reminder), which the voice agent shows.
+ list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "/apps/(app_[a-z_]+|common/home_indicator)/")
+ list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "/hal/hal_(ezdata|account|espnow|app_center)\\.cpp$")
++# MaiPai strip (patch 098): Bluetooth is off (CONFIG_BT_ENABLED=n in the recipe), so the BLE server and its helpers go.
++list(FILTER STACK_CHAN_SOURCES EXCLUDE REGEX "/hal/(hal_ble\\.cpp$|utils/bleprph/)")
+ set(STACK_CHAN_INCLUDE_DIRS 
+     "."
+ )

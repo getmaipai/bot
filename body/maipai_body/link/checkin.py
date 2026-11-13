@@ -25,6 +25,8 @@ _KEPT: dict[str, tuple[str, ...]] = {
     "boot": ("reason", "crash_resets"),
     "heap_stats": ("int_free", "int_min", "psram_free"),
     "fw": ("version", "rssi"),
+    # The unit restart guard (restarts this hour, 1 while it refuses more) and microphone level.
+    "wake_stats": ("heal_n", "heal_hold", "mic_rms_max"),
 }
 
 
@@ -68,6 +70,7 @@ def build_payload(
     status: Mapping[str, Any] | None,
     bot_version: str | None,
     now: float,
+    timers_active: int | None = None,
 ) -> dict[str, Any]:
     """The check-in body. Every key is always present; unknown values are null."""
     battery = (status or {}).get("battery")
@@ -95,9 +98,14 @@ def build_payload(
         "psram_free": facts.get("psram_free"),
         "boot_reason": facts.get("boot_reason"),
         "crash_resets": facts.get("boot_crash_resets"),
+        "self_restarts": facts.get("heal_n"),
+        "heal_hold": bool(facts["heal_hold"]) if "heal_hold" in facts else None,
+        "mic_level": facts.get("mic_rms_max"),
         "battery_level": battery.get("level") if isinstance(battery.get("level"), int) else None,
         "orientation": orientation,
         "charging": battery.get("charging") if isinstance(battery.get("charging"), bool) else None,
+        # Timers and alarms the unit is holding (null until it has been asked).
+        "timers_active": timers_active if isinstance(timers_active, int) else None,
     }
 
 

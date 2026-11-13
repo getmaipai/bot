@@ -1,0 +1,33 @@
+# Intent: a ringing timer or alarm (patches 091, 092) ends on a touch: a press on the face (the screen) or a press on the head strip calls maipai_timers_request_dismiss, which is lock free (these run on the display and head tasks) and is acted on by the timer tick within 200 ms, ending the ring, dropping the card, blanking the ring and sending timer_ended with how=touch or how=head. The same press still reaches the rest of the touch code.
+# Upstream: firmware/main/hal/board/stackchan_display.cc, firmware/main/hal/hal_mcp.cpp (MIT). Applies after 092 with --unidiff-zero.
+# Check after a flash: while a timer rings, a touch on the screen or on the head ends it within a fifth of a second and the ring goes dark; with nothing ringing a touch behaves as before.
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -24,6 +24,7 @@
+ #include <assets/lang_config.h>
+ #include <hal/hal.h>
+ #include <hal/device_events.h>
++#include <hal/maipai_timers.h>
+ 
+ using namespace stackchan;
+ using namespace stackchan::avatar;
+@@ -414,6 +415,7 @@ void StackChanAvatarDisplay::OnTouchDiag(lv_event_t* event)
+             ESP_LOGI(TAG, "face: pressed (boot_done=%d, panel_open=%d)", self != nullptr && self->boot_done_,
+                      self != nullptr && self->quick_panel_ != nullptr);
+             device_events_push_diag("face_pressed", "");
++            maipai_timers_request_dismiss("touch");  // a ringing timer ends on a touch (patch 093)
+             break;
+         }
+         case LV_EVENT_CLICKED:
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -206,6 +206,7 @@ void Hal::xiaozhi_mcp_init()
+                          static_cast<int>(g_head_touch_tap_jolt_x100.load()),
+                          static_cast<int>(g_head_touch_tap_gap_ms.load()));
+                 push_event("head_touch", extra);
++                maipai_timers_request_dismiss("head");  // a ringing timer ends on a head touch (patch 093)
+             } else if (gesture == HeadPetGesture::SwipeForward) {
+                 push_event("head_swipe_forward", strength);
+             } else if (gesture == HeadPetGesture::SwipeBackward) {

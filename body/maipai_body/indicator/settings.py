@@ -1,4 +1,4 @@
-"""EYES-02: the five robot-only settings keys the eyes honour.
+"""EYES-02: the three robot-only settings keys the lights honour.
 
 Robot-only: declared on the ``hello``, no spec record, no ``keys.json``
 entry. Every key carries the schema-required ``label`` and ``lives_in``
@@ -15,8 +15,10 @@ it when ``MAIPAI_SPEC_SETTINGS_KEY_SCHEMA`` points at the file).
 Night is the household's quiet hours: ``household.quiet_hours.from`` and ``.to``
 from the registry (honoured by ``bot`` since spec-v0.1.151), delivered in the
 settings frame. The temporary robot-only ``night_from`` and ``night_to`` keys are
-retired. Six keys are declared here: the five eye keys and the vision indicator
-(``robot.indicator.sees``, off by default: the idle ring stays dark unless asked).
+retired. Three keys are declared here: on or off, the day level and the night level.
+The owner's 2026-11-13 light standard removed ``robot.indicator.sleep_eyes`` (no sleep glow),
+``robot.indicator.alarm`` (nothing ever sent that light) and ``robot.indicator.sees`` (no pink
+"I see someone" glow); a stored value for them is ignored.
 """
 
 from __future__ import annotations
@@ -33,16 +35,12 @@ ROBOT_DEVICE_PAGE = "Devices, this robot"
 _LIVES_IN = f"{ROBOT_DEVICE_PAGE}, Lights"
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
-SLEEP_EYES_OPTIONS = ["off", "dim"]
 
 KEY_ENABLED = "robot.indicator.enabled"
 KEY_BRIGHTNESS = "robot.indicator.brightness"
 KEY_NIGHT_BRIGHTNESS = "robot.indicator.night_brightness"
 KEY_QUIET_FROM = QUIET_FROM_KEY
 KEY_QUIET_TO = QUIET_TO_KEY
-KEY_SLEEP_EYES = "robot.indicator.sleep_eyes"
-KEY_ALARM = "robot.indicator.alarm"
-KEY_SEES = "robot.indicator.sees"
 
 
 @dataclass(frozen=True)
@@ -52,9 +50,6 @@ class IndicatorSettings:
     night_brightness: float = looks.NIGHT_LEVEL_DEFAULT
     night_from: int = 21 * 60  # minute of the local day
     night_to: int = 7 * 60
-    sleep_eyes: str = "dim"
-    alarm: bool = True
-    sees: bool = False  # the pink "I see someone" glow; off by default (owner 2026-10-21)
 
 
 def _time_text(minute: int) -> str:
@@ -77,9 +72,6 @@ def parse_settings(values: Mapping[str, object]) -> IndicatorSettings:
     value is the default, never an error."""
     d = IndicatorSettings()
     enabled = values.get(KEY_ENABLED, d.enabled)
-    alarm = values.get(KEY_ALARM, d.alarm)
-    sees = values.get(KEY_SEES, d.sees)
-    sleep = values.get(KEY_SLEEP_EYES, d.sleep_eyes)
     return IndicatorSettings(
         enabled=enabled if isinstance(enabled, bool) else d.enabled,
         brightness=_parse_level(values.get(KEY_BRIGHTNESS), looks.DAY_LEVEL_RANGE, d.brightness),
@@ -88,9 +80,6 @@ def parse_settings(values: Mapping[str, object]) -> IndicatorSettings:
         ),
         night_from=_parse_time(values.get(KEY_QUIET_FROM), d.night_from),
         night_to=_parse_time(values.get(KEY_QUIET_TO), d.night_to),
-        sleep_eyes=sleep if sleep in SLEEP_EYES_OPTIONS else d.sleep_eyes,
-        alarm=alarm if isinstance(alarm, bool) else d.alarm,
-        sees=sees if isinstance(sees, bool) else d.sees,
     )
 
 
@@ -105,34 +94,20 @@ def _spec(key: str, type_: str, default: Any, label: str, range_: Any = None) ->
 def _specs() -> list[dict[str, Any]]:
     d = IndicatorSettings()
     return [
-        _spec(KEY_ENABLED, "boolean", d.enabled, "Show what I am doing with my eyes"),
+        _spec(KEY_ENABLED, "boolean", d.enabled, "Light up when I am listening or need you"),
         _spec(
             KEY_BRIGHTNESS,
             "number",
             d.brightness,
-            "Eye brightness by day",
+            "Light brightness by day",
             list(looks.DAY_LEVEL_RANGE),
         ),
         _spec(
             KEY_NIGHT_BRIGHTNESS,
             "number",
             d.night_brightness,
-            "Eye brightness at night",
+            "Light brightness at night",
             list(looks.NIGHT_LEVEL_RANGE),
-        ),
-        _spec(
-            KEY_SLEEP_EYES,
-            "select",
-            d.sleep_eyes,
-            "My eyes at night when idle",
-            list(SLEEP_EYES_OPTIONS),
-        ),
-        _spec(KEY_ALARM, "boolean", d.alarm, "Blink amber when I tip or fall"),
-        _spec(
-            KEY_SEES,
-            "boolean",
-            d.sees,
-            "Glow pink when I see someone (faint: maybe, medium: a person, full: a face)",
         ),
     ]
 

@@ -1,8 +1,11 @@
 """The StackChan light service: facts in, one ring look out.
 
-docs/dev/led-standard-2026-10-20.md wiring step 1. The service owns the
-facts the ring may show (the funnel's shown state, the live and camera
-cues, the connection and power rows), re-resolves one look from the one
+docs/dev/led-standard-2026-10-20.md ("The ring table", approved by the owner
+2026-11-13). The service is the ONLY writer of the ring: the camera adapter,
+the night controller and the rest renderer tell it facts and never write a
+pixel. It owns the facts the ring may show (the funnel's shown state, the
+live and camera cues, the needs-you and look-at-the-screen rows, asleep and
+the dark room), re-resolves one look from the one
 table (``indicator/looks.py``, the only site of a colour or a level) on
 every change and every ``refresh_s`` (so a night window edge is crossed
 on time), and sends it to the ``StackChanRingIndicator``, which drives
@@ -42,24 +45,19 @@ def _local_minute() -> int:
 @dataclass(frozen=True)
 class LightFacts:
     """Everything the ring decides from. All cues default to off and
-    the funnel to idle, so a fresh service shows the idle look."""
+    the funnel to idle, so a fresh service shows the dark idle ring.
+    Charging is not a ring fact: the red light at the back and the
+    screen's battery glyph show it."""
 
     live: bool = False
     camera: bool = False
-    alarm: bool = False
-    alarm_on: bool = False
-    held: bool = False
-    muted: bool = False
-    offer: bool = False
     fault: bool = False
-    connecting: bool = False
     offline: bool = False
     pairing: bool = False
-    charging: bool = False
     battery_low: bool = False
-    updating: bool = False
     dancing: bool = False
-    sees: str | None = None  # "maybe", "person", "face" or None: the vision indicator
+    asleep: bool = False
+    dark_room: bool = False
     funnel: FunnelState = FunnelState.IDLE
 
 
@@ -84,7 +82,7 @@ class StackChanLightService:
     ) -> None:
         self._indicator = indicator
         self._suspended = False
-        self._sleeping = False
+        self._taken = False  # the dance's light show owns the ring
         self._last_key: looks.LookKey | None = None
         self._settings = settings
         self._presence = presence
@@ -119,6 +117,20 @@ class StackChanLightService:
             self._suspended = False
             self._apply()
 
+    def take_ring(self) -> None:
+        """The dance row (``LookKey.DANCE``, the standard's ``dancing`` fact): the dance's light
+        show paints the ring itself (dance.py), so the service raises the fact and stops painting;
+        the cue holds and the other facts keep updating, and ``give_ring_back`` repaints."""
+        self._taken = True
+        self._facts = replace(self._facts, dancing=True)
+
+    def give_ring_back(self) -> None:
+        """The light show is over: dark, then the ring's one look from the current facts."""
+        self._taken = False
+        self._facts = replace(self._facts, dancing=False)
+        self._indicator.forget()
+        self._apply()
+
     def show(self, look) -> None:
         """Show one look (or dark) directly; for use inside ``suspended()`` only."""
         if look is None:
@@ -127,18 +139,21 @@ class StackChanLightService:
             self._indicator.set_look(look)
 
     def set_sleeping(self, sleeping: bool) -> None:
-        """Darken the ring while asleep, then restore its currently resolved look."""
-        if self._sleeping == sleeping:
-            return
-        self._sleeping = sleeping
-        if sleeping:
-            self._indicator.off()
-        else:
-            self._apply()
+        """The rest renderer's asleep stage: the ring is dark but for the capture cues. Waking
+        re-resolves the table, which is dark unless a row applies; it never restores a glow."""
+        if self._facts.asleep != sleeping:
+            self.update(asleep=sleeping)
+
+    def set_dark_room(self, dark: bool) -> None:
+        """The night controller's sensor night: the same rules as quiet hours."""
+        if self._facts.dark_room != dark:
+            self.update(dark_room=dark)
 
     def tick(self) -> None:
         """Advance the ring's style clock and let a finished cue hold end."""
         self._release_due_cues()
+        if self._taken:
+            return
         self._indicator.tick()
 
     def cue_live(self, active: bool) -> None:
@@ -191,10 +206,7 @@ class StackChanLightService:
             self.cue_camera(False)
 
     def _apply(self) -> None:
-        if self._sleeping:
-            self._indicator.off()
-            return
-        if self._suspended:
+        if self._suspended or self._taken:
             return
         facts = self._facts
         request = looks.LookRequest(
@@ -204,20 +216,13 @@ class StackChanLightService:
             presence=self._presence(),
             live=facts.live,
             camera=facts.camera,
-            alarm=facts.alarm,
-            alarm_on=facts.alarm_on,
-            held=facts.held,
-            muted=facts.muted,
-            offer=facts.offer,
             fault=facts.fault,
-            connecting=facts.connecting,
             offline=facts.offline,
             pairing=facts.pairing,
-            charging=facts.charging,
             battery_low=facts.battery_low,
-            updating=facts.updating,
             dancing=facts.dancing,
-            sees=facts.sees,
+            asleep=facts.asleep,
+            dark_room=facts.dark_room,
         )
         look = looks.resolve(request)
         key = looks.resolve_key(request)
