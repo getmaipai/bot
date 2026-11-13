@@ -242,6 +242,9 @@ class StackChanAudioPlayback(AudioPlayback):
         self._encoder = self._new_encoder()
         self._samples = np.zeros(0, dtype=np.float32)
         self._frames: list[bytes] = []
+        # Every packet of this reply as encoded (the last replies are kept in memory for
+        # "say that again"; see repeat.py). Empty for a replay.
+        self._recorded: list[bytes] = []
         self._lock = threading.RLock()
         self._sentence_start = True
         self._clock, self._sleep, self._async_sleep = clock, sleeper, async_sleep
@@ -308,8 +311,18 @@ class StackChanAudioPlayback(AudioPlayback):
                 layout="mono",
             )
             frame.sample_rate = 24000
-            self._frames.extend(bytes(packet) for packet in self._encoder.encode(frame))
+            self._add_packets_locked(self._encoder.encode(frame))
         self._kick_locked()
+
+    def _add_packets_locked(self, packets) -> None:
+        made = [bytes(packet) for packet in packets]
+        self._frames.extend(made)
+        self._recorded.extend(made)
+
+    def recorded_frames(self) -> list[bytes]:
+        """The Opus packets of everything encoded for this reply, as sent to the unit."""
+        with self._lock:
+            return list(self._recorded)
 
     def _cancelled(self) -> bool:
         return self._aborted.is_set() or (
@@ -483,8 +496,8 @@ class StackChanAudioPlayback(AudioPlayback):
                 layout="mono",
             )
             frame.sample_rate = 24000
-            self._frames.extend(bytes(packet) for packet in self._encoder.encode(frame))
-        self._frames.extend(bytes(packet) for packet in self._encoder.encode(None))
+            self._add_packets_locked(self._encoder.encode(frame))
+        self._add_packets_locked(self._encoder.encode(None))
         self._samples = np.zeros(0, dtype=np.float32)
         self._encoder = self._new_encoder()
 
@@ -502,6 +515,16 @@ class StackChanAudioPlayback(AudioPlayback):
     def stop_playing(self) -> None:
         with self._lock:
             self._flush_sentence_locked()
+        self._finish_and_wait()
+
+    def replay_frames(self, frames) -> None:
+        """Send already encoded packets again, paced like a reply (nothing is recorded again)."""
+        with self._lock:
+            self._frames.extend(frames)
+        self._finish_and_wait()
+
+    def _finish_and_wait(self) -> None:
+        with self._lock:
             self._finished = True
             if self._sender_future is None and self._frames and not self._cancelled():
                 # A short sentence: fewer frames than the lead, so nothing has been sent yet.
@@ -568,6 +591,7 @@ class StackChanTurnBridge:
         head_control=None,
         gaze_control=None,
         sight_control=None,
+        repeat_control=None,
         on_user_words=None,
         on_reply_mood=None,
         clock=time.monotonic,
@@ -587,6 +611,8 @@ class StackChanTurnBridge:
         self.gaze_control = gaze_control
         # "Can you see me?": answered from what the host knows, never "I can't see".
         self.sight_control = sight_control
+        # "Say that again", "what did I miss": answered here from memory (repeat.py), no hub call.
+        self.repeat_control = repeat_control
         # (kind) -> True when Home described a fresh picture for this question; set by the app.
         self.vision_ask: Callable[[str], bool] | None = None
         # Kind words and loving replies earn the heart (reactions.py); both may be None.
@@ -1045,6 +1071,10 @@ class StackChanTurnBridge:
             if outcome == "failed":
                 await asyncio.to_thread(self._speak_plain_error, playback, base, cookie)
                 return
+            if self.repeat_control is not None and await self._answer_repeat(
+                result, session_id, playback, base, cookie
+            ):
+                return
             if self.brightness_control is not None:
                 from maipai_body.bodies.stackchan import brightness as bright
 
@@ -1213,6 +1243,7 @@ class StackChanTurnBridge:
                         "sentence was synthesized",
                         self._clock() - finish_started,
                     )
+                self._keep_for_repeat(session_id, reply, playback, result)
                 await asyncio.to_thread(playback.end)
                 self._states[session_id] = "listening"
                 self._speech_ended[session_id] = self._clock()
@@ -1261,6 +1292,71 @@ class StackChanTurnBridge:
                 frames,
                 size,
             )
+
+    def _speaker_person(self, result) -> str | None:
+        evidence = self._speaker_evidence(result)
+        person = evidence.get("person") if evidence else None
+        return person if isinstance(person, str) else None
+
+    def _keep_for_repeat(self, session_id: str, reply: str, playback, result) -> None:
+        """Remember this reply (text and the frames sent) for "say that again"; memory only."""
+        control = self.repeat_control
+        frames = getattr(playback, "recorded_frames", None)
+        if control is None or not control.enabled or not callable(frames):
+            return
+        try:
+            control.record(session_id, reply, frames(), self._speaker_person(result))
+        except Exception:
+            LOG.warning("StackChan voice: could not keep the reply for repeat", exc_info=True)
+
+    async def _answer_repeat(self, result, session_id: str, playback, base, cookie) -> bool:
+        """True when "say that again" or "what did I miss" was answered here, without the hub."""
+        control = self.repeat_control
+        command = control.parse(result.text or "")
+        if command is None:
+            return False
+        answer = control.answer(command, session_id, self._speaker_person(result))
+        if answer is None:
+            return False
+        LOG.info(
+            "StackChan voice: repeat command %s answered on the robot (%s)",
+            command.kind,
+            answer.kind,
+        )
+        if answer.kind == "say":
+            await asyncio.to_thread(self._say, playback, base, cookie, answer.line)
+            if answer.clear_missed:
+                control.missed.clear()
+            self._breaker.note_speech()
+        elif answer.kind == "replay":
+            await self._replay(session_id, playback, answer)
+        return True
+
+    async def _replay(self, session_id: str, playback, answer) -> None:
+        from maipai_body.bodies.stackchan.volume import VolumeCommand
+
+        restore = None
+        if answer.louder and self.volume_control is not None:
+            before, after = await asyncio.to_thread(self.volume_control.apply, VolumeCommand("up"))
+            restore = before if after != before else None
+        playback.on_first_audio = lambda: self._emit_expression("speaking")
+        self._states[session_id] = "speaking"
+        self._speaking_since[session_id] = self._clock()
+        try:
+            await asyncio.to_thread(playback.replay_frames, list(answer.frames))
+            await asyncio.to_thread(playback.end)
+        finally:
+            if restore is not None:
+                try:
+                    await asyncio.to_thread(
+                        self.volume_control.apply, VolumeCommand("set", restore)
+                    )
+                except Exception:
+                    LOG.warning("StackChan voice: could not put the volume back", exc_info=True)
+        self._states[session_id] = "listening"
+        self._speech_ended[session_id] = self._clock()
+        self._breaker.note_speech()
+        LOG.info("StackChan voice: last reply replayed (%d packets)", len(answer.frames))
 
     def _notify(self, hook, value) -> None:
         """Call an optional hook; a hook can never break the voice path."""

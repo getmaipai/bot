@@ -195,6 +195,7 @@ LOST_AFTER_LOOKS = 4  # two seconds without the face it was following: it was lo
 TOUCH_POLL_S = 0.5  # asleep too: at 5 s a tap or shake took up to 5 s to wake the unit
 EVENT_POLL_S = 0.5  # touch, swipe and shake events are read this often while the robot is awake
 TOUCH_WAKE_COOLDOWN_S = 30.0
+IN_VIEW_S = 120.0  # a face seen this recently counts as someone being there to hear a line
 KEEP_AWAKE_S = 60.0  # how often the unit is told the hub is reachable (firmware patch 074)
 FACE_REFRESH_S = 30.0
 
@@ -304,6 +305,10 @@ class StackChanBehavior:
         self.announce: Callable[[str], object] | None = None
         # On-unit timers (bodies/stackchan/timers.py): told the unit's timer events; None when off.
         self.timers: Any = None
+        # What the robot could not tell the person in time ("what did I miss"; repeat.py) and
+        # whether a hard mute or full quiet is on; set where the announcements are wired.
+        self.missed_log: Any = None
+        self.speech_muted: Callable[[], bool] = lambda: False
         # Called with each settings frame's values (timers, announcements).
         self.settings_listeners: list[Callable[[dict], None]] = []
         # Told whenever a face is seen (a held "turn left" ends then).
@@ -1827,7 +1832,21 @@ def _wire_timers_and_announcements(
     def say(text: str) -> bool:
         return bool(behavior.announce is not None and behavior.announce(text))
 
+    from maipai_body.bodies.stackchan.repeat import MissedLog
+
+    missed_log = MissedLog()
+    behavior.missed_log = missed_log
+
+    def in_view() -> bool | None:
+        # Unknown (None) when the camera is off: then nobody can be said to be absent.
+        if behavior.watch_level() == "off":
+            return None
+        age = behavior.face_age()
+        return age is not None and age <= IN_VIEW_S
+
     announcer = Announcer(
+        missed=missed_log.note,
+        in_view=in_view,
         show=lambda text: voice.robot.client.push_action(
             "create_reminder", {"duration_seconds": 1, "message": text, "repeat": False}
         ),
@@ -1841,7 +1860,9 @@ def _wire_timers_and_announcements(
         muted=lambda: announcer.muted,
         night=lambda: bool(behavior.night_active()),
         clock=time.monotonic,
+        missed=missed_log.note,
     )
+    behavior.speech_muted = lambda: announcer.muted or announcer.quiet
     behavior.timers = timers
     behavior.settings_listeners += [timers.apply_settings, announcer.apply_settings]
 
@@ -2113,10 +2134,18 @@ async def _serve_stackchan_channels(
             speed=SPEED,
         )
 
+        from maipai_body.bodies.stackchan.repeat import RepeatControl
+
+        repeat_control = RepeatControl(
+            missed=behavior.missed_log, muted=lambda: bool(behavior.speech_muted())
+        )
+        behavior.settings_listeners.append(repeat_control.apply_settings)
+
         bridge = StackChanTurnBridge(
             voice,
             link,
             offline,
+            repeat_control=repeat_control,
             cache_dir=_default_models_cache_dir(),
             # The current /api/stt/stream contract has no speaker field.
             # This adapter consumes that field when the hub adds it; absent
@@ -2946,6 +2975,7 @@ def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power:
         resting=lambda: behavior._rest.stage != "awake",
         head_pitch_deg=lambda: behavior._tracker.pose[1],
         head_moved_ago=behavior.head_moved_ago,
+        missed=behavior.missed_log.note if behavior.missed_log is not None else None,
     )
     behavior.orientation = orientation
     night.sensors_blocked = orientation.sensors_untrusted

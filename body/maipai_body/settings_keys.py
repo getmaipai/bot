@@ -31,3 +31,7 @@ TIMERS_ENABLED_KEY = "robot.timers.enabled"
 ANNOUNCE_ENABLED_KEY = "robot.announce.enabled"
 MUTED_KEY = "robot.muted"
 QUIET_KEY = "robot.quiet"
+# "Say that again", "what did you say", "what did I miss": answered on the robot from the last few
+# replies and a small log of what it could not tell the person; off sends them to the hub like any
+# other question (and keeps nothing). Home's registry default is on.
+REPEAT_ENABLED_KEY = "robot.repeat.enabled"

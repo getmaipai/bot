@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -60,7 +61,13 @@ class Announcer:
         say: Callable[[str], bool],
         night: Callable[[], bool] = lambda: False,
         clock: Callable[[], float],
+        missed: Callable[[str, str, float], object] = lambda _kind, _text, _at: None,
+        in_view: Callable[[], bool | None] = lambda: None,
     ) -> None:
+        # ``missed(kind, text, at)`` is the "what did I miss" hook (repeat.py); ``in_view`` is True
+        # or False when the robot knows whether anyone is in front of it, None when it does not.
+        self._missed = missed
+        self._in_view = in_view
         self._show = show
         self._say = say
         self._night = night
@@ -105,6 +112,8 @@ class Announcer:
         urgent = payload.get("urgent") is True
         why = self.refusal(urgent)
         if why is not None:
+            if why in {"muted", "quiet", "night"}:
+                self._tell_missed(text)
             return {"status": "refused", "reason": why}
         try:
             self._show(text)
@@ -130,6 +139,7 @@ class Announcer:
         if self._clock() > until:
             with self._lock:
                 self._pending = None
+            self._tell_missed(text)  # the moment passed and it was never said
             return
         try:
             said = self._say(text)
@@ -140,3 +150,15 @@ class Announcer:
             with self._lock:
                 if self._pending == pending:
                     self._pending = None
+            try:
+                nobody = self._in_view() is False
+            except Exception:
+                nobody = False
+            if nobody:
+                self._tell_missed(text)  # said aloud, but nobody was there to hear it
+
+    def _tell_missed(self, text: str) -> None:
+        try:
+            self._missed("announcement", text, time.time())
+        except Exception:
+            logger.warning("the missed list could not be updated", exc_info=True)

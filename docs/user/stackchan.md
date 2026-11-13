@@ -64,6 +64,9 @@ The ring is never red. A calm face is the normal look. A smile or a wink shows w
 | "Can you see me?" | Tells you if it sees a face right now |
 | "What are you looking at?" | Tells you why its head is where it is |
 | "Stop", "be quiet", "never mind", "that's enough" | Stops and goes idle |
+| "Say that again", "what did you say", "repeat that", "come again", "pardon" | Plays its last answer again, word for word |
+| "Say that louder" | Plays its last answer again, one volume step louder for that play |
+| "What did I miss?", "Did I miss anything?" | Tells you what it could not say in time, then forgets it |
 
 A stop only counts when the whole sentence is the stop word. "Stop the presses" and "she ran through a stop sign" are ordinary sentences and go to your Home as usual. While it is talking, say "Hi, StackChan" to interrupt it.
 
@@ -87,6 +90,12 @@ With **Dance to music** on in the robot's settings, StackChan listens for clear 
 - It does nothing at night, while asleep, while it listens or talks, or in quiet mode. It waits at least 10 minutes between dances, at most 3 an hour and 10 a day.
 - On battery it dances at 40 percent or more, only nods from 20 to 39 percent, and does nothing under 20 percent. Plugged in, the battery level does not matter.
 - Talk and TV usually do not count, but a TV theme tune sometimes does. If it nods at the wrong things, set the sensitivity to low.
+
+### Repeating and what you missed
+
+The robot keeps its last five answers, as sound, in its memory only. Nothing is saved to a disk and everything is gone when it restarts. "Say that again" plays the last answer exactly as it was said; it does not ask Home, so it also works when Home is away. Only short asks count: "what did you say about dinner yesterday" goes to Home like any other question. A second "say that again" plays the same answer again. If it has not said anything yet, it says so. It plays back only what it said in the same connection, and it will not play an answer it gave to a different person it recognizes. "Slower" plays the same sound; it does not say it again more slowly.
+
+When a timer, alarm or announcement comes while it is muted, in quiet hours or full quiet, or while nobody is in front of it, the robot keeps a short note for 24 hours (the last 20, in memory only). Ask "what did I miss" and it reads them in one sentence ("While you were away: dinner is ready at 6:02 and your timer finished at 6:10."), then clears them. While muted it stays silent and keeps the notes. Turn this off with the setting "Repeat and missed" (robot.repeat.enabled); the questions then go to Home and nothing is kept.
 
 ## Day and night
 

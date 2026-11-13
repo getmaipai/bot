@@ -23,6 +23,7 @@ import json
 import logging
 import re
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -82,6 +83,8 @@ def _parse(result: object) -> dict[str, Any]:
 class _Pending:
     text: str
     until: float
+    what: str = "timer"
+    label: str = ""
 
 
 class TimerService:
@@ -100,7 +103,9 @@ class TimerService:
         muted: Callable[[], bool] = lambda: False,
         night: Callable[[], bool] = lambda: False,
         clock: Callable[[], float],
+        missed: Callable[[str, str, float], object] = lambda _kind, _text, _at: None,
     ) -> None:
+        self._missed = missed  # the "what did I miss" hook (repeat.py)
         self._call = call
         self._say = say
         self._muted = muted
@@ -241,8 +246,10 @@ class TimerService:
                     self._active.pop(timer_id, None)
                 if timer_id is not None and not self._muted() and not self._night():
                     self._pending[timer_id] = _Pending(
-                        done_line(what, label), self._clock() + SPEAK_FOR_S
+                        done_line(what, label), self._clock() + SPEAK_FOR_S, what, label
                     )
+                elif timer_id is not None:
+                    self._tell_missed(what, label)
         elif kind == "timer_ended":
             with self._lock:
                 if timer_id is not None:
@@ -254,6 +261,17 @@ class TimerService:
                 "unit timers: %s came due while it was off and were dropped", extra.get("dropped")
             )
 
+    def _tell_missed(self, what: str, label: str) -> None:
+        """It rang and the person was not told: muted, quiet hours, or no chance to say it."""
+        if what == "alarm":
+            text = f"your {label} alarm went off" if label else "your alarm went off"
+        else:
+            text = f"your {label} timer finished" if label else "your timer finished"
+        try:
+            self._missed(what, text, time.time())
+        except Exception:
+            logger.warning("the missed list could not be updated", exc_info=True)
+
     def tick(self) -> None:
         """Say a pending line when the robot is free; call about once a second."""
         if self._say is None:
@@ -262,7 +280,8 @@ class TimerService:
         with self._lock:
             ready = [(i, p) for i, p in self._pending.items() if p.until > now]
             for timer_id in [i for i, p in self._pending.items() if p.until <= now]:
-                del self._pending[timer_id]
+                gone = self._pending.pop(timer_id)
+                self._tell_missed(gone.what, gone.label)  # rang while a turn was on; never said
         for timer_id, pending in ready[:1]:  # one line at a time
             try:
                 said = self._say(pending.text)

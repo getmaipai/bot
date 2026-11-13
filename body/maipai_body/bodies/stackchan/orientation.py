@@ -171,9 +171,11 @@ class OrientationReactions:
         rng: random.Random | None = None,
         head_pitch_deg: Callable[[], float] = lambda: 0.0,
         head_moved_ago: Callable[[], float | None] = lambda: None,
+        missed: Callable[[str, str, float], object] | None = None,
     ) -> None:
         self._head_pitch_deg = head_pitch_deg
         self._head_moved_ago = head_moved_ago
+        self._missed = missed  # the "what did I miss" hook (repeat.py)
         self._face = face
         self._say = say
         self._rotate = rotate
@@ -237,6 +239,12 @@ class OrientationReactions:
         if quiet:
             why = quiet if isinstance(quiet, str) else "quiet"
             logger.info("StackChan orientation line skipped: %s", why)
+            if why == "night mode is on" and pose != "upright" and self._missed is not None:
+                text = "I was turned upside down" if pose == "upside_down" else "I was tipped over"
+                try:
+                    self._missed("orientation", text, time.time())
+                except Exception:
+                    logger.warning("the missed list could not be updated", exc_info=True)
             return
         if self._busy():
             logger.info("StackChan orientation line skipped: a conversation is on")
