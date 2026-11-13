@@ -427,16 +427,16 @@ index 0000000..ae66ff0
 +}
 +
 +/* Which toggle (if any) a kind of touch starts in a region: the eyes toggle on a tap; the mouth and
-+ * the forehead take a tap or a hold (owner 2026-11-13: tapping must work). */
++ * the forehead take a tap too, and only a tap (owner 2026-11-13: "change them to tap instead of hold"). */
 +static inline mtc_action_t mtc_action_for(mtc_region_t region, mtc_kind_t kind)
 +{
 +    if (kind == MTC_KIND_TAP && (region == MTC_REGION_EYE_LEFT || region == MTC_REGION_EYE_RIGHT)) {
 +        return MTC_ACTION_VISION;
 +    }
-+    if ((kind == MTC_KIND_HOLD || kind == MTC_KIND_TAP) && region == MTC_REGION_MOUTH) {
++    if (kind == MTC_KIND_TAP && region == MTC_REGION_MOUTH) {
 +        return MTC_ACTION_MUTE;
 +    }
-+    if ((kind == MTC_KIND_HOLD || kind == MTC_KIND_TAP) && region == MTC_REGION_FOREHEAD) {
++    if (kind == MTC_KIND_TAP && region == MTC_REGION_FOREHEAD) {
 +        return MTC_ACTION_QUIET;
 +    }
 +    return MTC_ACTION_NONE;

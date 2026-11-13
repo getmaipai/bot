@@ -30,11 +30,11 @@ Plain C, tested on the host. The regions tile the screen with no overlap:
 | Region | Box (x, y) | Acts on |
 |---|---|---|
 | Edge margins | x under 20 or from 300, y under 28 or from 220 | nothing, ever. Swipes start here. |
-| Forehead, above the eyes | x 20 to 299, y 28 to 55 | tap or hold 0.5 s: full quiet |
-| Forehead, between the eyes | x 112 to 207, y 56 to 119 | tap or hold 0.5 s: full quiet |
+| Forehead, above the eyes | x 20 to 299, y 28 to 55 | tap: full quiet |
+| Forehead, between the eyes | x 112 to 207, y 56 to 119 | tap: full quiet |
 | Left eye | x 20 to 111, y 56 to 149 | tap: vision off or on |
 | Right eye | x 208 to 299, y 56 to 149 | tap: vision off or on |
-| Mouth | x 112 to 207, y 120 to 219 | tap or hold 0.5 s: mute or unmute |
+| Mouth | x 112 to 207, y 120 to 219 | tap: mute or unmute |
 | The rest (cheeks) | everything else | a tap starts a listen, as today |
 
 The eyes are drawn at x 56 to 108 and 212 to 264, the mouth at y 130 to 190, so each target is bigger than what it toggles.
@@ -45,7 +45,7 @@ a slow tap is never a hold. A touch that begins in an edge margin is never a tog
 more than 10 px is a drag and toggles nothing, even if it comes back to where it began.
 
 **Tap or hold (decided):** the eyes toggle on a plain tap. A wrong tap there costs only the camera, and the half-lidded eyes show
-it. Mute and full quiet work on a tap or the 0.5 s hold (changed 2026-11-13 after the owner tapped and nothing happened; the edge margins still keep the quick-settings drags clear).
+it. Mute and full quiet work on a tap (owner 2026-11-13: "change them to tap instead of hold"); a hold does nothing. The edge margins still keep the quick-settings drags clear.
 a mute that nobody notices stops the robot hearing. A hold acts while the finger is still down, so the change shows at once.
 
 The toggle regions and the margins never start a listen. The unit also refuses to start any listen while muted or in full quiet

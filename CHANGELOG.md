@@ -10,7 +10,7 @@ checklist (`docs/dev.md`).
 ## [0.2.72] - 2026-11-13
 
 ### Fixed
-- StackChan firmware patch 119: no error chime and no error face on every failed reconnect while Home restarts (the repeated melody). Patch 105: a tap on the mouth or the forehead toggles mute and full quiet (it needed a 0.5 s hold, so taps did nothing); the hold still works.
+- StackChan firmware patch 119: no error chime and no error face on every failed reconnect while Home restarts (the repeated melody). Patch 105: a tap on the mouth or the forehead toggles mute and full quiet, and only a tap (it needed a 0.5 s hold; owner: "change them to tap instead of hold"). The avatar frames carry `size: 0` for both eyes, so a size left over from an earlier frame can no longer leave one eye bigger.
 
 ## [0.2.71] - 2026-11-13
 

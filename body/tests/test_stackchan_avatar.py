@@ -48,8 +48,8 @@ class StackChanAvatarTests(unittest.IsolatedAsyncioTestCase):
             frame = decode_frame(await peer.recv_frame())
             self.assertEqual(frame.kind, 0x03)
             payload = json.loads(frame.payload)
-            self.assertEqual(payload["leftEye"], {"weight": 72, "rotation": 1550})
-            self.assertEqual(payload["rightEye"], {"weight": 72, "rotation": -1550})
+            self.assertEqual(payload["leftEye"], {"weight": 72, "rotation": 1550, "size": 0})
+            self.assertEqual(payload["rightEye"], {"weight": 72, "rotation": -1550, "size": 0})
             self.assertIn("mouth", payload)
         finally:
             await peer.close()

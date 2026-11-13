@@ -92,11 +92,15 @@ def control_avatar(expression: str, *, eyes: bool = True, mouth: bool = True) ->
         raise ValueError(f"unsupported StackChan expression {expression!r}") from exc
     weight = _EYE_WEIGHTS[emotion]
     rotation = _EYE_ROTATIONS[emotion]
-    eye = {"weight": weight, "rotation": rotation}
+    # "size": 0 every time: a size left over from a hidden-eye frame (-100) or an animation must
+    # never stay on one eye (owner 2026-11-13: the right eye was bigger than the left).
+    eye = {"weight": weight, "rotation": rotation, "size": 0}
     mouth_feature = {"weight": 35} if mouth else {"weight": 0}
     payload = {
         "leftEye": eye if eyes else {"size": -100},
-        "rightEye": {"weight": weight, "rotation": -rotation} if eyes else {"size": -100},
+        "rightEye": {"weight": weight, "rotation": -rotation, "size": 0}
+        if eyes
+        else {"size": -100},
         "mouth": mouth_feature,
     }
     frame = ExpressionFrame(
