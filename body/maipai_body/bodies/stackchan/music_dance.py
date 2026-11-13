@@ -50,7 +50,6 @@ toward no cap.
 from __future__ import annotations
 
 import logging
-import random
 import threading
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -261,7 +260,7 @@ _BUILD_AND_DANCE: tuple[tuple[float, str, str], ...] = (
     # the build-up: the firmware's happy sway twice, a wink between, a held beat
     (0.0, "face", "happy"),
     (0.0, "dance", "happy"),
-    (HAPPY_S, "face", "wink"),
+    (HAPPY_S, "face", "happy"),
     (HAPPY_S + GAP_FACE_S, "dance", "happy"),
     (2 * HAPPY_S + GAP_FACE_S, "face", "happy"),
     # the dance: stiff turns and sways with the faces of the little dance
@@ -269,7 +268,7 @@ _BUILD_AND_DANCE: tuple[tuple[float, str, str], ...] = (
     (BUILD_S + ROBOT_S, "face", "surprised"),
     (BUILD_S + ROBOT_S + GAP_FACE_S, "face", "happy"),
     (BUILD_S + ROBOT_S + GAP_FACE_S, "dance", "happy"),
-    (BUILD_S + ROBOT_S + GAP_FACE_S + HAPPY_S, "face", "wink"),
+    (BUILD_S + ROBOT_S + GAP_FACE_S + HAPPY_S, "face", "happy"),
     (BUILD_S + ROBOT_S + 2 * GAP_FACE_S + HAPPY_S, "dance", "robot"),
     (BUILD_S + 2 * ROBOT_S + 2 * GAP_FACE_S + HAPPY_S, "face", "happy"),
     (BUILD_S + 2 * ROBOT_S + 2 * GAP_FACE_S + HAPPY_S, "dance", "happy"),  # cut at the cap
@@ -335,7 +334,7 @@ class MusicDance:
         self._hooks = hooks
         self.settings = settings
         self._spawn = spawn or self._thread
-        self._choose_face = choose_face or (lambda: "wink" if random.random() < 0.3 else "happy")
+        self._choose_face = choose_face or (lambda: "happy")
         self._timing = timing
         self._normal_timing = timing
         self._lock = threading.RLock()

@@ -657,7 +657,7 @@ def test_the_auto_plan_plays_a_build_up_then_the_dance_then_levels_the_head():
     assert [d for _, d in dances][:2] == ["happy", "happy"]
     assert dances[2][1] == "robot" and dances[2][0] == pytest.approx(M.BUILD_S, abs=0.3)
     faces = [a for _, n, a in world.log if n == "face"]
-    assert faces[-1] == ("neutral",) and ("surprised",) in faces and ("wink",) in faces
+    assert faces[-1] == ("neutral",) and ("surprised",) in faces and ("wink",) not in faces
     assert "level" in [n for _, n, _ in world.log] and "stop_dance" in [n for _, n, _ in world.log]
     assert world.t - 100.0 == pytest.approx(M.TOTAL_S, abs=0.5)
     assert M.TOTAL_S - M.BUILD_S == 20.0

@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.78] - 2026-11-13
+
+### Fixed
+- The music dance no longer stops after one round: the dance runner refused any dance under a minute after the last one, which refused every next round of a cycle ("it dances for a little bit then stops"); the music dance spaces its own rounds, so the runner skips its one-minute wait for it (voice and hub asks still wait). The music dance and its nod use the happy face only: the wink face has one eye shut, which looked like one eye bigger than the other.
+
 ## [0.2.77] - 2026-11-13
 
 ### Fixed

@@ -363,7 +363,9 @@ class DanceRunner:
                 return ("the battery level is unknown", LINE_NOT_NOW)
             if situation.battery_percent <= MIN_BATTERY_PERCENT:
                 return (f"battery {situation.battery_percent}% and not charging", LINE_NOT_NOW)
-        if now - self._last_end < MIN_GAP_S:
+        if (
+            trigger != "auto" and now - self._last_end < MIN_GAP_S
+        ):  # the music dance spaces its own rounds
             return ("the last dance was under a minute ago", LINE_NOT_NOW)
         return None
 

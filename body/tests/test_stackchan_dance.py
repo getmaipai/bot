@@ -378,6 +378,19 @@ def test_one_minute_between_dances():
     assert runner.request("hub").started
 
 
+def test_the_music_dance_rounds_are_not_held_to_the_one_minute():
+    world = World()
+    runner = world.build()
+    runner._last_end = (
+        world.t - 1.0
+    )  # a round just ended (the music controller spaces its own rounds)
+    assert runner.request("auto").started
+    other = World()
+    held = other.build()
+    held._last_end = other.t - 1.0
+    assert not held.request("hub").started  # a spoken or hub ask still waits the minute
+
+
 def test_a_dance_that_never_started_does_not_cost_the_minute():
     world = World(in_turn=True)
     runner = world.build()
