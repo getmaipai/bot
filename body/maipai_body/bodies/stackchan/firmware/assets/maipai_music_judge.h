@@ -14,7 +14,7 @@
 #define MMJ_DETECT_MS 4000U
 #define MMJ_GAP_MS 2500U
 #define MMJ_NOD_TO_DANCE_MS 20000U
-#define MMJ_END_SILENCE_MS 9000U
+#define MMJ_END_SILENCE_MS 4500U
 #define MMJ_MIN_GAP_MS 120000U
 #define MMJ_SESSION_GAP_MS 60000U
 #define MMJ_BREAK_MS 90000U
@@ -85,6 +85,8 @@ typedef enum { MMJ_ACTION_NONE, MMJ_ACTION_NOD, MMJ_ACTION_DANCE, MMJ_ACTION_BRE
 typedef struct {
     uint32_t run_start, last_music, nod_at, block_at, break_at, last_end, block_ms;
     uint8_t state; /* 0 idle, 1 nod and watch, 2 dancing, 3 paused (no music), 4 slow mood */
+    uint8_t resume_state; /* the state to go back to after a pause: 2 or 4 */
+    uint32_t paused_at;
     uint8_t has_music, has_end;
 } mmj_session_t;
 
@@ -94,6 +96,8 @@ static inline void mmj_session_init(mmj_session_t *s) {
     s->run_start = s->last_music = s->nod_at = s->block_at = s->break_at = s->last_end = 0;
     s->block_ms = MMJ_BLOCK_BATTERY_MS;
     s->state = s->has_music = s->has_end = 0;
+    s->resume_state = 2;
+    s->paused_at = 0;
 }
 /* Call once per second with this second's verdict. */
 static inline mmj_action_t mmj_session_step(mmj_session_t *s, uint32_t now_ms, int music) {
@@ -121,7 +125,7 @@ static inline mmj_action_t mmj_session_step(mmj_session_t *s, uint32_t now_ms, i
         return MMJ_ACTION_NONE;
     case 2: /* dancing */
         if (silence >= MMJ_SESSION_GAP_MS) { s->state = 0; s->last_end = now_ms; s->has_end = 1; return MMJ_ACTION_END; }
-        if (silence >= MMJ_END_SILENCE_MS) { s->state = 3; return MMJ_ACTION_PAUSE; }
+        if (silence >= MMJ_END_SILENCE_MS) { s->resume_state = 2; s->paused_at = now_ms; s->state = 3; return MMJ_ACTION_PAUSE; }
         if (mmj_elapsed(now_ms, s->block_at) >= s->block_ms) {
             s->state = 4; s->break_at = now_ms;
             return MMJ_ACTION_BREAK;
@@ -129,7 +133,7 @@ static inline mmj_action_t mmj_session_step(mmj_session_t *s, uint32_t now_ms, i
         return MMJ_ACTION_NONE;
     case 4: /* the slow mood */
         if (silence >= MMJ_SESSION_GAP_MS) { s->state = 0; s->last_end = now_ms; s->has_end = 1; return MMJ_ACTION_END; }
-        if (silence >= MMJ_END_SILENCE_MS) { s->state = 3; return MMJ_ACTION_PAUSE; }
+        if (silence >= MMJ_END_SILENCE_MS) { s->resume_state = 4; s->paused_at = now_ms; s->state = 3; return MMJ_ACTION_PAUSE; }
         if (music && mmj_elapsed(now_ms, s->break_at) >= MMJ_BREAK_MS) {
             s->state = 2; s->block_at = now_ms;
             return MMJ_ACTION_DANCE;
@@ -137,8 +141,13 @@ static inline mmj_action_t mmj_session_step(mmj_session_t *s, uint32_t now_ms, i
         return MMJ_ACTION_NONE;
     default: /* 3: paused, no music */
         if (silence >= MMJ_SESSION_GAP_MS) { s->state = 0; s->last_end = now_ms; s->has_end = 1; return MMJ_ACTION_END; }
-        if (music) {
-            s->state = 2; s->block_at = now_ms;
+        if (music) { /* right back to the mood it was in: the block timers move on by the pause */
+            uint32_t gap = mmj_elapsed(now_ms, s->paused_at);
+            if (s->resume_state == 4) {
+                s->state = 4; s->break_at += gap;
+                return MMJ_ACTION_BREAK; /* the slow mood */
+            }
+            s->state = 2; s->block_at += gap;
             return MMJ_ACTION_DANCE;
         }
         return MMJ_ACTION_NONE;

@@ -258,13 +258,13 @@ def test_the_music_stopping_before_the_build_up_ends_the_session():
     assert world.ctl.state == "spent"
 
 
-def test_the_dance_ends_on_nine_seconds_of_silence():
+def test_the_dance_pauses_after_four_and_a_half_seconds_of_silence():
     world = World()
     world.play(MUSIC, 26)
     assert world.dancing
-    world.play(None, 8)
+    world.play(None, 4)
     assert world.names("stop_dance") == []
-    world.play(None, 1)  # nine seconds since the last clear second
+    world.play(None, 1)  # four and a half seconds since the last clear second
     assert [a for _, n, a in world.calls if n == "stop_dance"] == ["music ended"]
     world.second(None)
     assert world.ctl.state == "break"  # the round ended; the session waits for the music to return
@@ -1046,3 +1046,32 @@ def test_a_pause_by_the_forehead_stops_the_dance_and_nothing_restarts_it():
     n = len(world.names("request_dance"))
     world.play(MUSIC, 60)
     assert len(world.names("request_dance")) == n
+
+
+def test_after_a_pause_it_goes_right_back_to_the_mood_it_was_in():
+    # fast: a dance round was running
+    fast = World(charging=True)
+    _song(fast, 40)
+    assert fast.ctl.plan in ("full", "dance")
+    fast.play(None, 6)  # no music: paused
+    assert fast.ctl.state == "break" and not fast.dancing
+    before = len(fast.names("request_dance"))
+    fast.second(MUSIC)  # the music picks up
+    assert len(fast.names("request_dance")) == before + 1
+    assert fast.ctl.state == "show" and fast.ctl.plan == "dance"
+    # slow: the slow mood was running
+    slow = World(charging=True)
+    _song(slow, 350)  # past the 5 minute block into the slow mood
+    assert slow.ctl.state == "calm"
+    slow.play(None, 6)
+    assert slow.ctl.state == "break"
+    slow.second(MUSIC)
+    assert slow.ctl.state == "calm" and slow.ctl.plan == "calm" and slow.dancing
+    # medium: paused during the build-up of a slow start
+    medium = World(charging=True)
+    medium.play(MUSIC, 25)  # the nod, the wait, the dance request (full plan) at about 25 s
+    assert medium.ctl.plan == "full" and medium.ctl.state == "show"
+    medium.play(None, 6)  # the music stops during the build-up: the runner is stopped, then paused
+    assert medium.ctl.state == "break"
+    medium.second(MUSIC)
+    assert medium.ctl.state == "show" and medium.ctl.plan == "full"

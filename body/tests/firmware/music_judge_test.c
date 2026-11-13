@@ -31,11 +31,16 @@ int main(int argc, char **argv) {
         CHECK(mmj_session_step(&s, 5000, 1) == MMJ_ACTION_NOD);
         CHECK(mmj_session_step(&s, 25000, 1) == MMJ_ACTION_DANCE);
         /* the music dips: the dance pauses after 9 s (no music, no dance), the session survives */
-        CHECK(mmj_session_step(&s, 33999, 0) == MMJ_ACTION_NONE);
-        CHECK(mmj_session_step(&s, 34000, 0) == MMJ_ACTION_PAUSE);
+        CHECK(mmj_session_step(&s, 29499, 0) == MMJ_ACTION_NONE);
+        CHECK(mmj_session_step(&s, 29500, 0) == MMJ_ACTION_PAUSE);
+        /* the music picks up again: right back to the dance */
+        CHECK(mmj_session_step(&s, 31000, 1) == MMJ_ACTION_DANCE);
+        /* and a dip again, then no music for a minute: the session is over */
+        CHECK(mmj_session_step(&s, 35499, 0) == MMJ_ACTION_NONE);
+        CHECK(mmj_session_step(&s, 35500, 0) == MMJ_ACTION_PAUSE);
         /* no music for a minute: the session is over */
-        CHECK(mmj_session_step(&s, 84999, 0) == MMJ_ACTION_NONE);
-        CHECK(mmj_session_step(&s, 85000, 0) == MMJ_ACTION_END);
+        CHECK(mmj_session_step(&s, 90999, 0) == MMJ_ACTION_NONE);
+        CHECK(mmj_session_step(&s, 91000, 0) == MMJ_ACTION_END);
         /* a 40 minute song, a second at a time: cycles with breaks, never ends */
         mmj_session_init(&s); mmj_session_set_block_ms(&s, MMJ_BLOCK_USB_MS);
         for (t = 1000; t <= 40U * 60U * 1000U; t += 1000) {

@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.80] - 2026-11-13
+
+### Changed
+- No music for 4.5 s (was 9 s) pauses the dance, and clear music takes it right back to the mood it was in: the fast dance, the medium build-up or the slow mood, with the block timers moved on by the pause (owner: "cut that 9 seconds in half and if the music picks up then go right back to the mood you were in"). The unit's own offline dance does the same (patch 127).
+
 ## [0.2.79] - 2026-11-13
 
 ### Fixed

@@ -220,7 +220,9 @@ class Timing:
     detect_s: float = 4.0  # clear music this long starts the nod
     gap_s: float = 2.5  # one missed or doubtful second between music seconds is forgiven
     nod_to_build_s: float = 20.0  # from the nod's start to the build-up
-    end_silence_s: float = 9.0  # no clear music this long ends a running dance
+    end_silence_s: float = (
+        4.5  # no clear music this long pauses a running dance (it resumes at once)
+    )
     rearm_quiet_s: float = 10.0  # quiet this long before another session can begin
     session_gap_s: float = 60.0  # a song change: gaps under this keep the music session going
     break_s: float = 90.0  # the slow mood between dance blocks: a gentle sway, not a stop
@@ -343,6 +345,9 @@ class MusicDance:
         self.state = "idle"  # idle | nod | watch | show | break | spent
         self.plan = "full"  # the next dance request: "full" (build-up and dance), "dance" or "calm"
         self._calm_at = float("-inf")
+        self._round_at = float("-inf")
+        self._resume: tuple[str, str] | None = None  # (state, mood) to go back to after a pause
+        self._paused_at = float("-inf")
         self._cycle = 0
         self._talk: deque[bool] = deque(maxlen=TALKER_WINDOWS)
         self._notes_at = float("-inf")
@@ -563,9 +568,7 @@ class MusicDance:
         elif self._session_test or self._session_over(now):
             self._dance_over(now)
         elif self._music_gone(now):
-            logger.info("StackChan music: cycle %d (paused: the music dipped)", self._cycle)
-            self._break_at = now
-            self._set_state("break", "no music for a moment: not dancing")
+            self._pause(now, "show")
         elif now - self._block_start >= self._block_s():
             why, nod_only = self._gate(now, for_nod=False)
             if why is not None and not nod_only:
@@ -580,19 +583,39 @@ class MusicDance:
             if why is not None or nod_only:
                 self._dance_over(now)
                 return
-            self.plan = "dance"
-            started, refused = self._hooks.request_dance()
+            started, refused = self._request("dance", now)
             if not started:
                 self._dance_over(now)
                 return
             logger.info("StackChan music: cycle %d (dance round, music still going)", self._cycle)
 
+    def _request(self, plan: str, now: float) -> tuple[bool, str]:
+        self.plan = plan
+        self._round_at = now
+        return self._hooks.request_dance()
+
     def _calm_round(self, now: float) -> None:
         """A gentle sway round: the slow mood keeps dancing, only slowly and without the show."""
-        self.plan = "calm"
-        started, refused = self._hooks.request_dance()
+        started, refused = self._request("calm", now)
         if not started:
             logger.info("StackChan music: no slow mood round (%s)", refused or "refused")
+
+    def _pause(self, now: float, from_state: str) -> None:
+        """No music for a moment: stop dancing, but remember the mood (slow, medium for the
+        build-up, fast) to go right back to when clear music returns."""
+        if from_state == "calm":
+            mood = "calm"
+        elif self.plan == "full" and now - self._round_at < BUILD_S:
+            mood = "full"  # still in the build-up: the medium mood
+        else:
+            mood = "dance"
+        self._resume = (from_state, mood)
+        self._paused_at = now
+        self._break_at = now
+        logger.info(
+            "StackChan music: cycle %d (paused: no music; will resume %s)", self._cycle, mood
+        )
+        self._set_state("break", "no music for a moment: not dancing")
 
     def _calm(self, now: float, positive: MusicFeat | None) -> None:
         """The slow mood: the sway goes on for the break time, then the slow start again. It only
@@ -605,8 +628,7 @@ class MusicDance:
         elif self._music_gone(now):
             if running:
                 self._hooks.stop_dance("music dipped")
-            self._break_at = now
-            self._set_state("break", "no music for a moment: not dancing")
+            self._pause(now, "calm")
         elif now - self._calm_at >= self._timing.break_s and positive is not None:
             if running:
                 self._hooks.stop_dance("the next dance block")
@@ -622,7 +644,32 @@ class MusicDance:
         if self._check_interrupt(now) or self._session_over(now):
             self._dance_over(now)
         elif positive is not None:
+            self._resume_mood(now)
+
+    def _resume_mood(self, now: float) -> None:
+        """Clear music is back: right back to the mood it was in (slow, medium or fast), with the
+        block timers moved on by the pause so the block keeps its length."""
+        if self._resume is None:
             self._try_dance(now, new_cycle=True)
+            return
+        state, mood = self._resume
+        why, nod_only = self._gate(now, for_nod=False)
+        if why is not None or nod_only:
+            self._try_dance(now, new_cycle=True)
+            return
+        gap = now - self._paused_at
+        started, refused = self._request(mood, now)
+        if not started:
+            self._try_dance(now, new_cycle=True)
+            return
+        self._block_start += gap
+        self._calm_at += gap
+        logger.info(
+            "StackChan music: back to the %s mood",
+            {"calm": "slow", "full": "medium"}.get(mood, "fast"),
+        )
+        self._resume = None
+        self._set_state(state, f"clear music again: back to the {mood} mood")
 
     def _gate(self, now: float, *, for_nod: bool) -> tuple[str | None, bool]:
         """(reason it may not, True when only the nod is allowed)."""
@@ -689,8 +736,7 @@ class MusicDance:
                 return
             self._set_state("spent", f"no dance: {why}")
             return
-        self.plan = "full"  # every cycle starts with the build-up (the slow start)
-        started, refused = self._hooks.request_dance()
+        started, refused = self._request("full", now)  # every cycle starts with the build-up
         if not started:
             self._set_state("spent", f"no dance: {refused or 'the dance runner refused'}")
             return
