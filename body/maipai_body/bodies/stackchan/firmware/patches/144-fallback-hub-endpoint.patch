@@ -1,0 +1,406 @@
+# Intent: a fallback hub endpoint for both channels so the robot works away from home without any public address (owner 2026-11-14: Jesse takes the robot to a friend's house). The voice and avatar channels try the saved home address as today; when it cannot be reached (two failed attempts, or a plain TCP probe that gets no answer in 2 s: the stock socket connect has no timeout) they try ws://<STACKCHAN_FALLBACK_HUB_HOST>:<the same port> with the same saved pairing token (nothing is written to NVS), then retry the home address about once a minute (and probe it while connected on the fallback) so the unit returns home by itself. The default fallback host is 192.168.2.1, the fixed address macOS Internet Sharing gives the laptop on its own Wi-Fi, where a small relay forwards the two ports over Tailscale to the hub. The list is open for a third (public wss) entry: one more row in main/hal/maipai_fallback.cc and one more state in the two connect loops. No Offline label while a fallback attempt succeeds (the label counts from the last connected moment).
+# Check after a flash: on the home network the serial log shows no fallback; with the home address unreachable and a relay on the fallback host the log says "Home address failed twice: trying the fallback endpoint" then "Hub reached through the fallback endpoint"; back on the home network it says "Home address answers again: going back" within about a minute.
+diff --git a/firmware/main/Kconfig.projbuild b/firmware/main/Kconfig.projbuild
+diff --git a/firmware/main/Kconfig.projbuild b/firmware/main/Kconfig.projbuild
+index ba0b843..e3685b4 100644
+--- a/firmware/main/Kconfig.projbuild
++++ b/firmware/main/Kconfig.projbuild
+@@ -47,6 +47,15 @@ config STACKCHAN_XIAOZHI_OTA_CHECK
+     help
+         Enable third-party OTA checks. Keep disabled when websocket settings are provisioned in NVS.
+ 
++config STACKCHAN_FALLBACK_HUB_HOST
++    string "Fallback hub host (away from home)"
++    default "192.168.2.1"
++    help
++        When the saved home address of the hub cannot be reached, the voice and avatar channels try this host
++        on the same ports with the same saved pairing token, then return home by themselves (retried about
++        once a minute). The default is the fixed address macOS Internet Sharing gives the laptop on its own
++        Wi-Fi, where a small relay forwards the two ports to the hub. Empty turns the fallback off.
++
+ config STACKCHAN_DEV_VOICE_URL
+     string "Development override: voice websocket URL"
+     default ""
+diff --git a/firmware/main/hal/hal_ws_avatar.cpp b/firmware/main/hal/hal_ws_avatar.cpp
+index e7a05e5..86e15ea 100644
+--- a/firmware/main/hal/hal_ws_avatar.cpp
++++ b/firmware/main/hal/hal_ws_avatar.cpp
+@@ -7,6 +7,7 @@
+ #include <stackchan/stackchan.h>
+ #include "board/hal_bridge.h"
+ #include "maipai_privacy.h"
++#include "maipai_fallback.h"
+ #include <mooncake.h>
+ #include <mooncake_log.h>
+ #include <board.h>
+@@ -89,6 +90,13 @@ public:
+             base = "wss://" + base.substr(8);
+         }
+         _url = fmt::format("{}/stackChan/ws?deviceType=StackChan", base);
++        {
++            // The fallback endpoint (patch 144): the same ports on the fallback host (the laptop's own Wi-Fi).
++            const std::string fb = maipai_fallback_avatar_base(base);
++            if (!fb.empty()) {
++                _fallback_url = fmt::format("{}/stackChan/ws?deviceType=StackChan", fb);
++            }
++        }
+ 
+         connect();
+ 
+@@ -186,9 +194,52 @@ public:
+ 
+         // ESP_LOGI(_tag.c_str(), "Connecting to %s...", _url.c_str());
+         // GetHAL().onWsLog.emit(CommonLogLevel::Info, "Connecting to server...");
+-        if (!_websocket->Connect(_url.c_str())) {
+-            ESP_LOGE(_tag.c_str(), "Failed to connect");
++        // Which address this attempt uses (patch 144): the home address first; after two failures the fallback;
++        // while on the fallback, the home address again about once a minute, so the unit returns home by itself.
++        std::string url = _url;
++        bool using_fallback = false;
++        _trying_home        = false;
++        if (_on_fallback && !_fallback_url.empty()) {
++            if (GetHAL().millis() - _last_home_try_ms >= 60000) {
++                _trying_home       = true;
++                _last_home_try_ms  = GetHAL().millis();
++            } else {
++                url            = _fallback_url;
++                using_fallback = true;
++            }
++        }
++        bool connected = false;
++        bool probed_out = false;
++        if (!using_fallback && !_fallback_url.empty() && (_home_fails > 0 || _on_fallback)) {
++            // The stock connect has no timeout: ask the home address first, for two seconds at most.
++            std::string host, path;
++            int port = 0;
++            if (maipai_url_parts(_url, &host, &port, &path) && !maipai_probe_tcp(host, port, 2000)) {
++                probed_out = true;
++            }
++        }
++        if (!probed_out) {
++            connected = _websocket->Connect(url.c_str());
++        }
++        if (!connected) {
++            ESP_LOGE(_tag.c_str(), "Failed to connect%s", probed_out ? " (home address gave no answer)" : "");
+             GetHAL().onWsLog.emit(CommonLogLevel::Error, "Connect to server Failed");
++            if (!_fallback_url.empty()) {
++                if (using_fallback) {
++                    _last_home_try_ms = 0;  // the fallback failed too: the next attempt tries home
++                } else if (!_trying_home && ++_home_fails >= 2) {
++                    _on_fallback      = true;
++                    _last_home_try_ms = GetHAL().millis();
++                    ESP_LOGW(_tag.c_str(), "Home address failed twice: trying the fallback endpoint");
++                }
++            }
++        } else if (!_fallback_url.empty()) {
++            if (using_fallback) {
++                ESP_LOGI(_tag.c_str(), "Connected through the fallback endpoint");
++            } else {
++                _on_fallback = false;
++                _home_fails  = 0;
++            }
+         }
+         _last_reconnect_attempt = GetHAL().millis();
+     }
+@@ -471,6 +522,11 @@ public:
+ private:
+     std::unique_ptr<WebSocket> _websocket;
+     std::string _url;
++    std::string _fallback_url;  // patch 144: the same path on the fallback host and the same port; empty = none
++    bool _on_fallback            = false;
++    bool _trying_home            = false;
++    int _home_fails              = 0;
++    uint32_t _last_home_try_ms   = 0;
+     uint32_t _last_reconnect_attempt = 0;
+     uint32_t _last_capture_time      = 0;
+     uint32_t _last_heartbeat_time    = 0;
+diff --git a/firmware/main/hal/maipai_fallback.cc b/firmware/main/hal/maipai_fallback.cc
+new file mode 100644
+index 0000000..4eff331
+--- /dev/null
++++ b/firmware/main/hal/maipai_fallback.cc
+@@ -0,0 +1,115 @@
++/*
++ * SPDX-License-Identifier: MIT
++ */
++#include "maipai_fallback.h"
++
++#include <esp_log.h>
++#include <esp_timer.h>
++#include <fcntl.h>
++#include <lwip/inet.h>
++#include <lwip/netdb.h>
++#include <lwip/sockets.h>
++#include <cstdlib>
++#include <cstring>
++#include <sdkconfig.h>
++
++static const char* TAG = "MAIPAI-FALLBACK";
++
++bool maipai_url_parts(const std::string& url, std::string* host, int* port, std::string* path)
++{
++    const size_t scheme = url.find("://");
++    if (scheme == std::string::npos) {
++        return false;
++    }
++    const std::string rest = url.substr(scheme + 3);
++    const size_t slash = rest.find('/');
++    const std::string hostport = slash == std::string::npos ? rest : rest.substr(0, slash);
++    if (hostport.empty()) {
++        return false;
++    }
++    std::string h = hostport;
++    int p = url.compare(0, 3, "wss") == 0 ? 443 : 80;
++    const size_t colon = hostport.rfind(':');
++    if (colon != std::string::npos) {
++        h = hostport.substr(0, colon);
++        p = std::atoi(hostport.c_str() + colon + 1);
++    }
++    if (h.empty() || p <= 0 || p > 65535) {
++        return false;
++    }
++    if (host != nullptr) {
++        *host = h;
++    }
++    if (port != nullptr) {
++        *port = p;
++    }
++    if (path != nullptr) {
++        *path = slash == std::string::npos ? std::string() : rest.substr(slash);
++    }
++    return true;
++}
++
++bool maipai_probe_tcp(const std::string& host, int port, int timeout_ms)
++{
++    struct sockaddr_in addr;
++    memset(&addr, 0, sizeof(addr));
++    addr.sin_family = AF_INET;
++    addr.sin_port   = htons(static_cast<uint16_t>(port));
++    if (inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {
++        return true;  // not an address literal (a name): do not guess, let the real connect decide
++    }
++    const int fd = socket(AF_INET, SOCK_STREAM, 0);
++    if (fd < 0) {
++        return true;
++    }
++    const int flags = fcntl(fd, F_GETFL, 0);
++    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
++    bool ok = false;
++    const int rc = connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
++    if (rc == 0) {
++        ok = true;
++    } else if (errno == EINPROGRESS) {
++        fd_set wset;
++        FD_ZERO(&wset);
++        FD_SET(fd, &wset);
++        struct timeval tv;
++        tv.tv_sec  = timeout_ms / 1000;
++        tv.tv_usec = (timeout_ms % 1000) * 1000;
++        if (select(fd + 1, nullptr, &wset, nullptr, &tv) > 0) {
++            int err = 0;
++            socklen_t len = sizeof(err);
++            ok = getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) == 0 && err == 0;
++        }
++    }
++    close(fd);
++    if (!ok) {
++        ESP_LOGI(TAG, "probe %s:%d: no answer within %d ms", host.c_str(), port, timeout_ms);
++    }
++    return ok;
++}
++
++std::string maipai_fallback_voice_url(const std::string& saved_url)
++{
++    if (CONFIG_STACKCHAN_FALLBACK_HUB_HOST[0] == '\0') {
++        return std::string();
++    }
++    std::string host, path;
++    int port = 0;
++    if (!maipai_url_parts(saved_url, &host, &port, &path)) {
++        return std::string();
++    }
++    return std::string("ws://") + CONFIG_STACKCHAN_FALLBACK_HUB_HOST + ":" + std::to_string(port) + path;
++}
++
++std::string maipai_fallback_avatar_base(const std::string& saved_base)
++{
++    if (CONFIG_STACKCHAN_FALLBACK_HUB_HOST[0] == '\0') {
++        return std::string();
++    }
++    std::string host, path;
++    int port = 0;
++    if (!maipai_url_parts(saved_base, &host, &port, &path)) {
++        return std::string();
++    }
++    return std::string("ws://") + CONFIG_STACKCHAN_FALLBACK_HUB_HOST + ":" + std::to_string(port);
++}
+diff --git a/firmware/main/hal/maipai_fallback.h b/firmware/main/hal/maipai_fallback.h
+new file mode 100644
+index 0000000..4671c12
+--- /dev/null
++++ b/firmware/main/hal/maipai_fallback.h
+@@ -0,0 +1,30 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * The fallback hub endpoint (patch 144): when the saved home address cannot be reached (the unit is away from
++ * home), the voice and avatar channels try a fixed second address with the same saved pairing token, then go
++ * back to the home address on their own. The first fallback is the laptop's own Wi-Fi (macOS Internet Sharing,
++ * a fixed 192.168.2.1) running a small relay to the hub. The list is open: a third entry (a public wss
++ * endpoint) is one more row in maipai_fallback_voice_url / maipai_fallback_avatar_base.
++ */
++#pragma once
++#include <string>
++
++// "ws://192.168.1.5:8765/path?q" -> host "192.168.1.5", port 8765, path "/path?q". False if it does not parse.
++bool maipai_url_parts(const std::string& url, std::string* host, int* port, std::string* path);
++
++// True when a TCP connection to host:port is accepted within timeout_ms (a plain non-blocking connect that is
++// closed at once). The stock socket connect has no timeout, so an unreachable home address would hold the
++// reconnect loop for a minute or more: this is the "a few seconds without answer" check.
++bool maipai_probe_tcp(const std::string& host, int port, int timeout_ms);
++
++// The voice URL to try after the home address failed: ws://<fallback host>:<the port of the saved url><path of
++// the saved url>. The fallback uses the same ports as the home address (the laptop relay listens on them), so a
++// port change on the hub needs no new firmware. Empty when no fallback host is configured or the saved url does
++// not parse.
++std::string maipai_fallback_voice_url(const std::string& saved_url);
++
++// The avatar base URL to try after the home address failed: ws://<fallback host>:<the port of the saved avatar
++// base>. `saved_base` is the base the avatar channel holds (http://host:port or ws://host:port). Empty when no
++// fallback host is configured or it does not parse.
++std::string maipai_fallback_avatar_base(const std::string& saved_base);
+diff --git a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+index fed768f..27ee3aa 100644
+--- a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
++++ b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+@@ -15,12 +15,32 @@
+ #include <hal/device_events.h>
+ #include <hal/board/hal_bridge.h>
+ #include <hal/maipai_sounds.h>
++#include <hal/maipai_fallback.h>
+ #include <esp_timer.h>
+ #include <esp_wifi.h>
+ #include <cstdio>
+ 
+ #define TAG "WS"
+ 
++// The fallback endpoint (patch 144): the reconnect task sets this before each attempt; ConnectAudioChannel
++// then swaps the host of the saved URL for the fallback host (same port, same path, same saved token).
++static bool g_voice_use_fallback = false;
++
++// True when the saved home address answers a plain TCP connect within two seconds (the stock connect has no
++// timeout, so an unreachable home address would hold the reconnect loop for a minute or more).
++static bool HomeAddressAnswers(std::string* host_out = nullptr, int* port_out = nullptr) {
++    Settings settings("websocket", false);
++    std::string url = settings.GetString("url");
++    std::string host, path;
++    int port = 0;
++    if (!maipai_url_parts(url, &host, &port, &path)) {
++        return true;  // cannot tell: let the real connect decide
++    }
++    if (host_out != nullptr) *host_out = host;
++    if (port_out != nullptr) *port_out = port;
++    return maipai_probe_tcp(host, port, 2000);
++}
++
+ WebsocketProtocol::WebsocketProtocol() {
+     event_group_handle_ = xEventGroupCreate();
+ }
+@@ -175,6 +195,13 @@ bool WebsocketProtocol::ConnectAudioChannel() {
+         token = CONFIG_STACKCHAN_DEV_TOKEN;
+     }
+ #endif
++    if (g_voice_use_fallback) {
++        const std::string fallback = maipai_fallback_voice_url(url);
++        if (!fallback.empty()) {
++            ESP_LOGI(TAG, "Home address not answering: using the fallback endpoint");
++            url = fallback;
++        }
++    }
+     int version = settings.GetInt("version");
+     if (version != 0) {
+         version_ = version;
+@@ -345,6 +372,14 @@ void WebsocketProtocol::ReconnectTask(void* arg) {
+     maipai_sounds_link_event(MAIPAI_LINK_DOWN);  // booting: not connected until the first socket opens
+     bool connecting_shown = false;
+     bool refused_shown = false;
++    // The fallback endpoint (patch 144): home first; after two failures the fallback host; while on it, the home
++    // address once a minute (and a quick probe while connected), so the unit returns home by itself.
++    constexpr int64_t kHomeRetryUs = 60LL * 1000 * 1000;
++    const bool fallback_configured = maipai_fallback_voice_url("ws://192.0.2.1:1/x").empty() ? false : true;
++    bool on_fallback = false;
++    bool trying_home = false;
++    int home_fails = 0;
++    int64_t last_home_try_us = 0;
+     constexpr int64_t kConnectingStripAfterUs = 3LL * 1000 * 1000;  // reconnects are constant: a blip shows nothing
+ 
+     while (!(xEventGroupGetBits(self->event_group_handle_) & WEBSOCKET_PROTOCOL_STOP_EVENT)) {
+@@ -354,7 +389,41 @@ void WebsocketProtocol::ReconnectTask(void* arg) {
+         // The radio stays awake while the hub is not reached (hal_bridge::set_hub_link(false) makes the
+         // board hold Wi-Fi power save at NONE): in modem sleep the mesh AP did not deliver the SYN-ACK.
+         hal_bridge::set_hub_link(false);
+-        if (self->ConnectAudioChannel()) {
++        trying_home = false;
++        g_voice_use_fallback = false;
++        if (fallback_configured && on_fallback) {
++            if (esp_timer_get_time() - last_home_try_us >= kHomeRetryUs) {
++                trying_home = true;
++                last_home_try_us = esp_timer_get_time();
++            } else {
++                g_voice_use_fallback = true;
++            }
++        }
++        bool connected_now;
++        if (fallback_configured && !g_voice_use_fallback && (home_fails > 0 || on_fallback) && !HomeAddressAnswers()) {
++            self->last_connect_error_ = -2;  // the home address gave no answer in two seconds
++            connected_now = false;
++        } else {
++            connected_now = self->ConnectAudioChannel();
++        }
++        if (fallback_configured) {
++            if (connected_now) {
++                if (g_voice_use_fallback) {
++                    ESP_LOGI(TAG, "Hub reached through the fallback endpoint");
++                } else {
++                    on_fallback = false;
++                    home_fails = 0;
++                }
++            } else if (g_voice_use_fallback) {
++                last_home_try_us = 0;  // the fallback failed too: the next attempt tries home
++            } else if (!trying_home && ++home_fails >= 2) {
++                on_fallback = true;
++                last_home_try_us = esp_timer_get_time();
++                ESP_LOGW(TAG, "Home address failed twice: trying the fallback endpoint");
++                push_link_event("ws_fallback", static_cast<unsigned>(home_fails), 0, 0, 0);
++            }
++        }
++        if (connected_now) {
+             const unsigned took_ms = static_cast<unsigned>((esp_timer_get_time() - started_us) / 1000);
+             attempt = 0;
+             hal_bridge::set_hub_link(true);
+@@ -379,6 +448,23 @@ void WebsocketProtocol::ReconnectTask(void* arg) {
+                 if (bits & (WEBSOCKET_PROTOCOL_DISCONNECTED_EVENT | WEBSOCKET_PROTOCOL_STOP_EVENT)) {
+                     break;
+                 }
++                if (fallback_configured && on_fallback) {
++                    static int64_t last_probe_us = 0;
++                    const int64_t now_us = esp_timer_get_time();
++                    if (now_us - last_probe_us >= kHomeRetryUs) {
++                        last_probe_us = now_us;
++                        if (HomeAddressAnswers()) {
++                            ESP_LOGI(TAG, "Home address answers again: going back");
++                            push_link_event("ws_home_back", 0, 0, 0, 0);
++                            on_fallback = false;
++                            home_fails = 0;
++                            auto ws = self->GetWebSocket();
++                            if (ws != nullptr) {
++                                ws->Close();
++                            }
++                        }
++                    }
++                }
+                 constexpr int kSilentLinkS = 60;
+                 const auto silent_s = std::chrono::duration_cast<std::chrono::seconds>(
+                     std::chrono::steady_clock::now() - self->last_incoming_time_).count();

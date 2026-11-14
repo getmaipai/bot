@@ -1,0 +1,15 @@
+# Intent: the word "Offline" in the upper left shows after 45 s without the hub, not 10 s (owner 2026-11-14: the hub installs and restarts every few minutes and each restart flashed the word). The 3 s "connecting" strip, the 3 minute offline earcon rule and the refusal state are unchanged.
+# Check after a flash: restart the hub and watch the screen: no "Offline" for a restart under 45 s; a longer outage still shows it.
+diff --git a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+index f6f3186..fed768f 100644
+--- a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
++++ b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+@@ -335,7 +335,7 @@ void WebsocketProtocol::ReconnectTask(void* arg) {
+     constexpr uint32_t kInitialDelayMs = 1000;
+     constexpr uint32_t kMaximumDelayMs = 30000;
+     constexpr uint32_t kStableConnectionMs = 30000;
+-    constexpr int64_t kOfflineIndicatorAfterUs = 10LL * 1000 * 1000;  // a blip is not an outage
++    constexpr int64_t kOfflineIndicatorAfterUs = 45LL * 1000 * 1000;  // a hub restart is not an outage (the hub installs often); owner 2026-11-14
+     uint32_t delay_ms = kInitialDelayMs;
+     unsigned attempt = 0;
+     int64_t down_since_us = esp_timer_get_time();

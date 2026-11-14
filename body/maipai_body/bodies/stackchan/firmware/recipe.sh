@@ -367,6 +367,10 @@ apply_repo_patch 131-bob-first.patch "$SRC"
 apply_repo_patch 132-expressive-faces.patch "$SRC"
 apply_repo_patch 133-wireless-update.patch "$SRC"
 apply_repo_patch 140-song-title-bar.patch "$SRC"
+apply_repo_patch 141-power-reading-and-sound-gate.patch "$SRC"
+apply_repo_patch 142-stock-tones-gated.patch "$SRC"
+apply_repo_patch 143-offline-label-after-45-s.patch "$SRC"
+apply_repo_patch 144-fallback-hub-endpoint.patch "$SRC"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"

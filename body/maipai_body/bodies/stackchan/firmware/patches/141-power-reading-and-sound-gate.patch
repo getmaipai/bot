@@ -1,0 +1,322 @@
+# Intent: stop the robot's repeating plug-in/unplug beeps and make every cue attributable (owner 2026-11-14: "it never did that before"). A Fable review found patch 117's 1 s power poll fed the sounds from IsExternalPowerConnected(), upstream power-save code (battery current direction != discharging) that flips with the servo load on battery and with a weak USB supply, so the unit played plug_in and unplug pairs about once or twice a minute, idle and dancing. The sounds now use the AXP2101 VBUS-good bit (status 1, register 0x00, bit 5) OR charging, a change must hold 10 s (20 s for "cable pulled out"), a per-cue minimum gap in the unit's gate refuses a repeat (plug_in 30 s, low_battery 10 min, shutter 1.5 s, ...), the host is told which cue played and what asked for it (device event "sound_played"), and once a minute it hears the charger reading and the flap count (diag event "power_poll").
+# Check after a flash: the log shows `sound played: <name> (<src>)` for every cue; the host log shows `sound_played` events; on a cable with a weak supply or on battery no plug_in/unplug repeats; core test: body/tests/firmware/sounds_core_test.c (flap and gap cases).
+diff --git a/firmware/main/hal/board/stackchan.cc b/firmware/main/hal/board/stackchan.cc
+index 8035f7d..388bad4 100644
+--- a/firmware/main/hal/board/stackchan.cc
++++ b/firmware/main/hal/board/stackchan.cc
+@@ -191,6 +191,16 @@ public:
+         return true;
+     }
+ 
++    // The AXP2101 "VBUS good" bit (PMU status 1, register 0x00, bit 5; XPowersLib isVbusGood): true while the
++    // cable supplies power, whatever the battery does. IsExternalPowerConnected() below reads the battery
++    // current direction instead, which flips with the load (owner report 2026-11-14: unplug and plug-in
++    // sounds every minute or two, idle and dancing); the sounds use this one.
++    bool IsVbusGood()
++    {
++        const uint8_t status1 = ReadReg(0x00);
++        return (status1 & 0x20) != 0;
++    }
++
+     bool IsExternalPowerConnected()
+     {
+         const uint8_t power_status      = ReadReg(0x01);
+@@ -393,7 +403,7 @@ private:
+ 
+         UpdatePowerSaveEnabled(pmic_->IsExternalPowerConnected(), pmic_->IsDischarging());
+         // The charger cues (plug in, full, unplug; patch 117): one confirmed change per three agreeing polls.
+-        maipai_sounds_power_poll(pmic_->IsExternalPowerConnected(), pmic_->IsCharging());
++        maipai_sounds_power_poll(pmic_->IsVbusGood() || pmic_->IsCharging(), pmic_->IsCharging());
+     }
+ 
+     // Holding the power key. At about 1 s the PMIC flags a long press; at about 4 s it cuts power with no warning.
+diff --git a/firmware/main/hal/maipai_sounds.cc b/firmware/main/hal/maipai_sounds.cc
+index 1a6614a..979d626 100644
+--- a/firmware/main/hal/maipai_sounds.cc
++++ b/firmware/main/hal/maipai_sounds.cc
+@@ -56,6 +56,9 @@ uint32_t s_plays_ok      = 0;
+ uint32_t s_plays_refused = 0;
+ uint32_t s_clips_played  = 0;
+ uint32_t s_clips_missing = 0;
++uint32_t s_last_play_ms[MS_SND_COUNT] = {0};  // when each cue last played (0 = never): the per-cue minimum gap
++uint32_t s_last_event_ms = 0;                 // the last sound_played event sent (rate cap)
++uint32_t s_events_dropped = 0;
+ 
+ uint32_t mono_ms()
+ {
+@@ -157,7 +160,32 @@ bool muted(const ms_policy_t& p)
+     return p.muted != 0 || maipai_mute_active();
+ }
+ 
+-bool play_gated(int snd, bool urgent, bool bypass, const char** why)
++// Tells the host which cue just played and what asked for it, so a beep can always be traced from the host log
++// (device event "sound_played"). At most one event a second; the rest are counted, not sent.
++void note_played(int snd, const char* src)
++{
++    const uint32_t now = mono_ms();
++    ESP_LOGI(TAG, "sound played: %s (%s)", MS_SOUND_NAMES[snd], src != nullptr ? src : "?");
++    bool send = false;
++    {
++        std::lock_guard<std::mutex> lock(s_mutex);
++        s_last_play_ms[snd] = now == 0 ? 1 : now;
++        if (s_last_event_ms == 0 || now - s_last_event_ms >= 1000) {
++            s_last_event_ms = now == 0 ? 1 : now;
++            send            = true;
++        } else {
++            s_events_dropped++;
++        }
++    }
++    if (send) {
++        char extra[96];
++        snprintf(extra, sizeof(extra), "\"name\":\"%s\",\"src\":\"%s\"", MS_SOUND_NAMES[snd],
++                 src != nullptr ? src : "?");
++        device_events_push("sound_played", extra);
++    }
++}
++
++bool play_gated(int snd, bool urgent, bool bypass, const char** why, const char* src = nullptr)
+ {
+     ms_policy_t policy;
+     bool night = false;
+@@ -165,6 +193,22 @@ bool play_gated(int snd, bool urgent, bool bypass, const char** why)
+     if (maipai_mute_active()) {
+         policy.muted = 1;
+     }
++    if (!bypass && snd >= 0 && snd < MS_SND_COUNT) {
++        bool gap_ok;
++        {
++            std::lock_guard<std::mutex> lock(s_mutex);
++            gap_ok = ms_gap_ok(s_last_play_ms[snd], mono_ms(), snd) != 0;
++            if (!gap_ok) {
++                s_plays_refused++;
++            }
++        }
++        if (!gap_ok) {
++            if (why != nullptr) {
++                *why = "rate_limited";
++            }
++            return false;
++        }
++    }
+     ms_reason_t reason = ms_decide(&policy, snd, urgent, night, bypass);
+     if (reason != MS_OK) {
+         std::lock_guard<std::mutex> lock(s_mutex);
+@@ -182,8 +226,11 @@ bool play_gated(int snd, bool urgent, bool bypass, const char** why)
+         return false;
+     }
+     Application::GetInstance().PlaySound(data);
+-    std::lock_guard<std::mutex> lock(s_mutex);
+-    s_plays_ok++;
++    {
++        std::lock_guard<std::mutex> lock(s_mutex);
++        s_plays_ok++;
++    }
++    note_played(snd, src);
+     return true;
+ }
+ 
+@@ -205,7 +252,7 @@ void play_back(bool chime, bool clip)
+ {
+     const uint32_t now = mono_ms();
+     if (chime) {
+-        play_gated(MS_SND_SUCCESS, false, false, nullptr);
++        play_gated(MS_SND_SUCCESS, false, false, nullptr, "link_back");
+     }
+     if (!clip) {
+         return;
+@@ -229,9 +276,9 @@ void play_back(bool chime, bool clip)
+ 
+ // Cues raised from another task (the 1 s power poll runs on the esp_timer task, the link events on the
+ // websocket reconnect task, the tick on the 4 KB stackchan task) are played from the main task.
+-void schedule_play(int snd, bool urgent)
++void schedule_play(int snd, bool urgent, const char* src)
+ {
+-    Application::GetInstance().Schedule([snd, urgent]() { play_gated(snd, urgent, false, nullptr); });
++    Application::GetInstance().Schedule([snd, urgent, src]() { play_gated(snd, urgent, false, nullptr, src); });
+ }
+ 
+ }  // namespace
+@@ -262,7 +309,17 @@ bool maipai_sound_play(const char* name, bool urgent, bool bypass, const char**
+         }
+         return false;
+     }
+-    return play_gated(snd, urgent, bypass, why);
++    return play_gated(snd, urgent, bypass, why, bypass ? "sound_test" : "host_tool");
++}
++
++bool maipai_sound_play_src(const char* name, const char* src)
++{
++    int snd = ms_sound_from_name(name);
++    if (snd < 0) {
++        return false;
++    }
++    const char* why = nullptr;
++    return play_gated(snd, false, false, &why, src);
+ }
+ 
+ void maipai_sounds_power_poll(bool external_power, bool charging)
+@@ -274,11 +331,22 @@ void maipai_sounds_power_poll(bool external_power, bool charging)
+         started = true;
+     }
+     switch (ms_power_update(&power, external_power ? 1 : 0, charging ? 1 : 0)) {
+-        case MS_PWR_PLUG: schedule_play(MS_SND_PLUG_IN, false); break;
+-        case MS_PWR_UNPLUG: schedule_play(MS_SND_UNPLUG, false); break;
+-        case MS_PWR_FULL: schedule_play(MS_SND_CHARGED, false); break;
++        case MS_PWR_PLUG: schedule_play(MS_SND_PLUG_IN, false, "power_poll"); break;
++        case MS_PWR_UNPLUG: schedule_play(MS_SND_UNPLUG, false, "power_poll"); break;
++        case MS_PWR_FULL: schedule_play(MS_SND_CHARGED, false, "power_poll"); break;
+         default: break;
+     }
++    // Once a minute the host hears what the charger reading looks like (the flap count is how often a change
++    // held for 3 s or more went back), so a weak supply or a flapping bit shows in its log without a flash.
++    static uint32_t last_report_ms = 0;
++    const uint32_t now             = mono_ms();
++    if (last_report_ms == 0 || now - last_report_ms >= 60000) {
++        last_report_ms = now == 0 ? 1 : now;
++        char extra[96];
++        snprintf(extra, sizeof(extra), "\"vbus\":%d,\"charging\":%d,\"ext\":%d,\"flaps\":%u",
++                 external_power ? 1 : 0, charging ? 1 : 0, power.ext, static_cast<unsigned>(power.flaps));
++        device_events_push_diag("power_poll", extra);
++    }
+ }
+ 
+ void maipai_sounds_link_event(int event)
+@@ -300,7 +368,7 @@ void maipai_sounds_link_event(int event)
+                 std::lock_guard<std::mutex> lock(s_mutex);
+                 ms_link_mark_offline(&s_link);
+             }
+-            schedule_play(MS_SND_OFFLINE, false);
++            schedule_play(MS_SND_OFFLINE, false, "link_offline");
+             return;
+         }
+         case MAIPAI_LINK_UP: {
+@@ -322,7 +390,7 @@ void maipai_sounds_link_event(int event)
+ void maipai_sounds_setup_needed()
+ {
+     s_last_setup_ms = mono_ms();
+-    schedule_play(MS_SND_NEEDS_YOU, true);
++    schedule_play(MS_SND_NEEDS_YOU, true, "setup_needed");
+ }
+ 
+ void maipai_sounds_tick()
+@@ -349,7 +417,7 @@ void maipai_sounds_tick()
+         }
+     }
+     if (announce) {
+-        schedule_play(MS_SND_NEEDS_YOU, false);
++        schedule_play(MS_SND_NEEDS_YOU, false, "link_refused");
+     }
+ }
+ 
+@@ -389,12 +457,13 @@ void maipai_sounds_wake_offline()
+     }
+     if (pick.kind == MS_PH_TONE) {
+         Application::GetInstance().PlaySound(Lang::Sounds::OGG_VIBRATION);
++        note_played(MS_SND_VIBRATION, "wake_offline");
+     }
+ }
+ 
+ void maipai_sounds_goodbye()
+ {
+-    play_gated(MS_SND_GOODBYE, false, false, nullptr);
++    play_gated(MS_SND_GOODBYE, false, false, nullptr, "goodbye");
+ }
+ 
+ void maipai_sounds_register_tools()
+diff --git a/firmware/main/hal/maipai_sounds.h b/firmware/main/hal/maipai_sounds.h
+index 042f3bd..b4c5c80 100644
+--- a/firmware/main/hal/maipai_sounds.h
++++ b/firmware/main/hal/maipai_sounds.h
+@@ -18,6 +18,9 @@ void maipai_sounds_register_tools();
+ // cue through at night; `bypass` is the self-test (skips "off" and the night rule, never the mute).
+ // Returns true when it was queued; otherwise `why` (if given) holds the reason word.
+ bool maipai_sound_play(const char* name, bool urgent, bool bypass, const char** why);
++// The same, for the stock firmware's own call sites (an alert, the low battery popup, the camera shutter): they
++// go through the policy gate and the per-cue minimum gap, and the host is told which one played (`src`).
++bool maipai_sound_play_src(const char* name, const char* src);
+ 
+ // The charger: call once a second with the AXP2101 facts. Plays plug_in, unplug or charged by day.
+ void maipai_sounds_power_poll(bool external_power, bool charging);
+diff --git a/firmware/main/hal/maipai_sounds_core.h b/firmware/main/hal/maipai_sounds_core.h
+index 1bd154d..c935cc5 100644
+--- a/firmware/main/hal/maipai_sounds_core.h
++++ b/firmware/main/hal/maipai_sounds_core.h
+@@ -53,6 +53,33 @@ static inline int ms_sound_from_name(const char* name)
+ 
+ static inline int ms_sound_is_asset(int snd) { return snd >= 0 && snd < MS_ASSET_SOUNDS; }
+ 
++/* The least time between two plays of the same cue (owner rule 2026-11-14: a chime is for something a person must
++ * notice, never repeating). The unit enforces it for every cue that goes through the gate, so a flapping trigger
++ * (a charger reading, a battery icon at its threshold, a retrying link) cannot beep over and over. 0 = no limit. */
++static const uint32_t MS_SOUND_MIN_GAP_MS[MS_SND_COUNT] = {
++    0u,       /* needs_you: the first-setup cue repeats once a minute by its own rule */
++    30000u,   /* plug_in */
++    60000u,   /* charged */
++    30000u,   /* unplug */
++    60000u,   /* offline */
++    0u,       /* goodbye */
++    1500u,    /* shutter: one click per picture */
++    30000u,   /* success */
++    0u,       /* popup: the wake word answer never goes through the gate */
++    5000u,    /* vibration */
++    10000u,   /* exclamation */
++    600000u,  /* low_battery: once per ten minutes */
++};
++
++/* True when `snd` may play now given when it last played (last_ms == 0 means never). Wrap safe. */
++static inline int ms_gap_ok(uint32_t last_ms, uint32_t now_ms, int snd)
++{
++    if (snd < 0 || snd >= MS_SND_COUNT || last_ms == 0u) {
++        return 1;
++    }
++    return (uint32_t)(now_ms - last_ms) >= MS_SOUND_MIN_GAP_MS[snd];
++}
++
+ /* ---- may it play? ---- */
+ 
+ typedef enum {
+@@ -164,10 +191,15 @@ static inline const char* ms_reason_word(ms_reason_t r)
+ 
+ typedef enum { MS_PWR_NONE = 0, MS_PWR_PLUG, MS_PWR_UNPLUG, MS_PWR_FULL } ms_power_event_t;
+ 
+-#define MS_PWR_CONFIRM 3 /* polls (1 s apart) that must agree before a change counts: a flapping read never chimes */
++#define MS_PWR_CONFIRM 10 /* polls (1 s apart) that must agree before a change counts: a flapping read never chimes */
++
++/* Once a cable is in, it takes this many agreeing "no cable" polls (1 s apart) to count as pulled out: a weak USB
++ * supply that dips under the robot's load must not read as an unplug (owner report 2026-11-14). */
++#define MS_PWR_UNPLUG_CONFIRM 20
+ 
+ typedef struct {
+     uint8_t init;
++    uint8_t flaps;        /* candidate changes abandoned after 3 or more agreeing polls (saturates at 255) */
+     uint8_t ext;          /* confirmed: a cable is in */
+     uint8_t charging;     /* confirmed */
+     uint8_t seen_charging; /* charging was seen since the cable went in, so "stopped" means "full" */
+@@ -191,17 +223,25 @@ static inline ms_power_event_t ms_power_update(ms_power_t* p, int ext, int charg
+         return MS_PWR_NONE;
+     }
+     if (ext == p->ext && charging == p->charging) {
++        if (p->cand_n >= 3 && p->flaps < 255) {
++            p->flaps++;  /* a change held for 3 s or more went back: a flapping reading */
++        }
+         p->cand_n = 0;
+         return MS_PWR_NONE;
+     }
+     if (p->cand_n > 0 && p->cand_ext == ext && p->cand_charging == charging) {
+-        p->cand_n++;
++        if (p->cand_n < 255) {
++            p->cand_n++;
++        }
+     } else {
++        if (p->cand_n >= 3 && p->flaps < 255) {
++            p->flaps++;
++        }
+         p->cand_ext = (uint8_t)ext;
+         p->cand_charging = (uint8_t)charging;
+         p->cand_n = 1;
+     }
+-    if (p->cand_n < MS_PWR_CONFIRM) {
++    if (p->cand_n < ((p->ext && !ext) ? MS_PWR_UNPLUG_CONFIRM : MS_PWR_CONFIRM)) {
+         return MS_PWR_NONE;
+     }
+     p->cand_n = 0;

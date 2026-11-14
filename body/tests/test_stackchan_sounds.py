@@ -654,6 +654,34 @@ def test_the_silenced_policy_is_repeated_every_thirty_seconds_and_first_on_conne
     assert len([c for c in unit.calls if c[0] == "self.audio.set_sound_policy"]) == pushes + 1
 
 
+def test_older_firmware_keeps_the_forced_mute_and_image_one_restores_the_normal_policy(monkeypatch):
+    monkeypatch.setattr(sounds_module, "SILENCE_UNIT_SOUNDS", True)
+    service, unit, clock, _, _ = make()
+    service.apply_settings({SOUNDS_ENABLED_KEY: True, MUTED_KEY: False, QUIET_KEY: False})
+    for old in ("0.2.86", "0.2.101", "unknown", None, "0.2", "x.y.z"):
+        service.on_firmware_version(old)
+        assert service.policy()["muted"] is True, old
+    assert service.policy()["enabled"] is False
+    service.on_firmware_version("0.2.102")
+    policy = service.policy()
+    assert policy["muted"] is False
+    assert policy["enabled"] is True
+    # a build suffix and a later version count; going back to older firmware silences again
+    service.on_firmware_version("0.2.103-rc1")
+    assert service.policy()["muted"] is False
+    service.on_firmware_version("0.2.86")
+    assert service.policy()["muted"] is True
+
+
+def test_the_restored_policy_is_pushed_at_once_when_the_firmware_is_new(monkeypatch):
+    monkeypatch.setattr(sounds_module, "SILENCE_UNIT_SOUNDS", True)
+    service, unit, clock, _, _ = make()
+    service.on_firmware_version("0.2.102")
+    pushes = [c for c in unit.calls if c[0] == "self.audio.set_sound_policy"]
+    assert pushes, "the normal policy goes to the unit as soon as the firmware is known to be new"
+    assert pushes[-1][1]["muted"] is False
+
+
 def test_the_unit_counters_are_logged_with_their_change_once_a_minute(caplog):
     service, unit, clock, _, _ = make()
     unit.answer = '{"played":3,"refused":1,"clips_played":0,"clips_missing":0}'

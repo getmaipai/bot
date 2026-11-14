@@ -255,6 +255,7 @@ class StackChanBehavior:
         self.reaction_tick: Callable[[], object] | None = None
         # Orientation: the pose logic, its timer, and whether a pose face is being held.
         self.orientation: Any = None
+        self.on_firmware_version: Callable[[object], None] = lambda _version: None
         self.vision_poster: Any = None  # vision_post.VisionPoster: scene descriptions from Home
         self.lux: Callable[[], float | None] = lambda: None  # the unit's light sensor, if read
         self._vision_posting = False
@@ -1626,6 +1627,18 @@ class StackChanBehavior:
                         self.orientation.on_event(extra)
                     except Exception:
                         self._warn_limited("orientation", "StackChan orientation reaction failed")
+                if event.kind == "fw":
+                    try:
+                        self.on_firmware_version(extra.get("version"))
+                    except Exception:
+                        self._warn_limited("firmware", "StackChan firmware version handling failed")
+                if event.kind == "sound_played":
+                    from maipai_body.bodies.stackchan.activity import log_activity
+
+                    log_activity(
+                        "unit played a sound",
+                        f"name={extra.get('name')} src={extra.get('src')}",
+                    )
                 detail = " ".join(f"{k}={v}" for k, v in extra.items())
                 label = {
                     "stop_word": "unit stop word",
@@ -1646,6 +1659,8 @@ class StackChanBehavior:
                     "coredump": "unit crash",
                     "heal": "unit heal",
                     "wake_selftest": "unit wake",
+                    "sound_played": "unit sound",
+                    "power_poll": "unit power",
                     "timer_fired": "unit timer",
                     "timer_ended": "unit timer",
                     "timer_missed": "unit timer",
@@ -2375,6 +2390,7 @@ async def _serve_stackchan_channels(
         daemon=True,
     ).start()
     behavior.privacy_light = light
+    behavior.on_firmware_version = sounds.on_firmware_version
     sounds.battery_low = lambda: light.facts.battery_low
 
     def camera_cue(active: bool) -> None:

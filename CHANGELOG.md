@@ -5,6 +5,15 @@ All notable changes to MaiPai Bot. Format follows
 Everything stays `0.x` until the product passes its battle-tested
 checklist (`docs/dev.md`).
 
+## [0.2.102] - 2026-11-14
+
+### Added
+- Firmware image 1 (patches 141 to 144): the unit's plug-in and unplug cues no longer flap (the charger reading is the AXP2101 VBUS-good bit, a change must hold 10 s and an unplug 20 s), every cue has a minimum gap, the stock tones that bypassed the sound gate are gated or gone, the unit reports each cue it plays (`sound_played`) and its charger reading once a minute (`power_poll`), the word "Offline" shows after 45 s instead of 10 s, and the voice and avatar channels have a fallback hub endpoint (the laptop's own Wi-Fi at 192.168.2.1, same ports, same saved pairing) with a return home about once a minute.
+- A flash script that never writes NVS (`body/scripts/stackchan_flash_nonvs.py`): full-flash backup, bootloader and partition table only when they differ, then the app, OTA data and assets.
+
+### Changed
+- The host stops forcing the unit's sounds muted once the unit reports firmware 0.2.102 or newer (older firmware keeps the forced mute) and pushes the normal policy.
+
 ## [0.2.100] - 2026-11-14
 
 ### Changed

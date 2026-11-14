@@ -47,6 +47,8 @@ DIAGNOSTIC_KINDS = frozenset(
         "coredump",
         "heal",
         "wake_selftest",
+        "sound_played",  # firmware patch 141: which cue the unit played and what asked for it
+        "power_poll",  # firmware patch 141: the charger reading and its flap count, once a minute
         # Mute, vision off and full quiet (patch 106): the new state, and a refused face unmute.
         "privacy",
         "privacy_refused",

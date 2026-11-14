@@ -118,6 +118,11 @@ POLICY_EVERY_S = 300.0  # the unit keeps its policy in flash; this only repairs 
 # gates can play (the shutter and the low battery earcon included). Set False to restore the normal
 # policy (enabled, night and mute follow the settings).
 SILENCE_UNIT_SOUNDS = True
+# The firmware that fixes the beeping at its root (image 1, 2026-11-14: the charger reading, the
+# per-cue gap, the stock tones through the gate) reports this version or a later one in its `fw`
+# event. From then on the forced mute above is dropped and the normal policy is pushed (shutter,
+# low battery, needs_you, goodbye... per the chime rules); older firmware keeps the forced mute.
+FIRMWARE_RESTORES_SOUNDS_FROM = (0, 2, 102)
 SILENCED_POLICY_EVERY_S = (
     30.0  # while silenced the policy is repeated this often, so a reboot cannot undo it
 )
@@ -215,6 +220,7 @@ class SoundService:
         self.night_ok = False
         self.muted = False
         self.quiet = False
+        self._firmware_ok = False  # the unit reports firmware that no longer needs the forced mute
         self._pushed: dict[str, object] | None = None
         self._pushed_at = float("-inf")
         self._push_failed_at = float("-inf")
@@ -263,7 +269,7 @@ class SoundService:
     def policy(self) -> dict[str, object]:
         """What the unit is told: its own gate applies it, on its own clock, with the host away."""
         start, end = self._quiet_minutes()
-        silenced = bool(SILENCE_UNIT_SOUNDS)
+        silenced = self._silenced()
         return {
             "enabled": self.enabled and not self._dance_silenced() and not silenced,
             "night_ok": self.night_ok,
@@ -273,12 +279,30 @@ class SoundService:
             "quiet_to": end,
         }
 
+    def _silenced(self) -> bool:
+        """The forced mute: on until the unit reports firmware that fixes the beeping."""
+        return bool(SILENCE_UNIT_SOUNDS) and not self._firmware_ok
+
+    def on_firmware_version(self, version: object) -> None:
+        """The unit said which firmware it runs (its `fw` event, about once a minute)."""
+        parsed = _parse_version(version)
+        ok = parsed is not None and parsed >= FIRMWARE_RESTORES_SOUNDS_FROM
+        with self._lock:
+            if ok == self._firmware_ok:
+                return
+            self._firmware_ok = ok
+        log_activity(
+            "sound policy follows the firmware",
+            f"version={version} forced_mute={'off' if ok else 'on'}",
+        )
+        self._run_async(lambda: self.push_policy(force=True))
+
     def push_policy(self, *, force: bool = False) -> bool:
         """Tell the unit the policy when it changed (or every few minutes). True when it took it."""
         policy = self.policy()
         now = self._clock()
         with self._lock:
-            every = SILENCED_POLICY_EVERY_S if SILENCE_UNIT_SOUNDS else POLICY_EVERY_S
+            every = SILENCED_POLICY_EVERY_S if self._silenced() else POLICY_EVERY_S
             if not force and policy == self._pushed and now - self._pushed_at < every:
                 return True
             if not force and now - self._push_failed_at < PUSH_RETRY_S:
@@ -500,3 +524,13 @@ class SoundService:
         logger.info(
             "sound self-test: played %s; not played %s", outcome["played"], outcome["failed"]
         )
+
+
+def _parse_version(version: object) -> tuple[int, int, int] | None:
+    """ "0.2.102" -> (0, 2, 102); None for anything else ("unknown", a build suffix is ignored)."""
+    if not isinstance(version, str):
+        return None
+    parts = version.strip().lstrip("v").split("-", 1)[0].split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        return None
+    return int(parts[0]), int(parts[1]), int(parts[2])

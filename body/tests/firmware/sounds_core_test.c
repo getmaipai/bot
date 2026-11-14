@@ -119,7 +119,7 @@ static void test_charger(void)
     CHECK(e == MS_PWR_FULL);                       /* charging stopped with the cable still in */
     feed(&p, 1, 0, 10, &e);
     CHECK(e == MS_PWR_NONE);                       /* and only once */
-    feed(&p, 0, 0, MS_PWR_CONFIRM, &e);
+    feed(&p, 0, 0, MS_PWR_UNPLUG_CONFIRM, &e);
     CHECK(e == MS_PWR_UNPLUG);
     /* a flapping read never chimes */
     ms_power_init(&p);
@@ -143,10 +143,63 @@ static void test_charger(void)
     /* unplugged while charging: unplug, no "full" afterwards */
     ms_power_init(&p);
     feed(&p, 1, 1, 1, &e);
-    feed(&p, 0, 0, MS_PWR_CONFIRM, &e);
+    feed(&p, 0, 0, MS_PWR_UNPLUG_CONFIRM, &e);
     CHECK(e == MS_PWR_UNPLUG);
     feed(&p, 0, 0, 10, &e);
     CHECK(e == MS_PWR_NONE);
+}
+
+/* Owner report 2026-11-14: plug-in and unplug cues every minute or two, idle and dancing. A reading that flips
+ * with the load (battery idle) or a weak USB supply that dips must not chime; a real cable change still does. */
+static void test_power_flap(void)
+{
+    ms_power_t p; ms_power_init(&p);
+    ms_power_event_t e;
+    int events = 0;
+    /* on battery, the reading reads "cable in" for 6 s and "no cable" for 6 s, over and over for 10 minutes */
+    ms_power_update(&p, 0, 0);
+    for (int i = 0; i < 600; i++) {
+        if (ms_power_update(&p, (i / 6) % 2, 0) != MS_PWR_NONE) {
+            events++;
+        }
+    }
+    CHECK(events == 0);
+    CHECK(p.flaps > 0);                            /* and the flap is counted for the host to read */
+    /* a cable in with a weak supply: dips of 8 s of "no cable" never count as an unplug */
+    ms_power_init(&p);
+    ms_power_update(&p, 1, 0);
+    events = 0;
+    for (int i = 0; i < 600; i++) {
+        if (ms_power_update(&p, (i % 40) < 8 ? 0 : 1, 0) != MS_PWR_NONE) {
+            events++;
+        }
+    }
+    CHECK(events == 0);
+    /* a real plug-in held 10 s: one PLUG on the tenth poll, not before */
+    ms_power_init(&p);
+    ms_power_update(&p, 0, 0);
+    feed(&p, 1, 0, MS_PWR_CONFIRM - 1, &e);
+    CHECK(e == MS_PWR_NONE);
+    CHECK(ms_power_update(&p, 1, 0) == MS_PWR_PLUG);
+    CHECK(ms_power_update(&p, 1, 0) == MS_PWR_NONE);
+    /* a real unplug held 20 s: one UNPLUG on the twentieth poll, not before */
+    feed(&p, 0, 0, MS_PWR_UNPLUG_CONFIRM - 1, &e);
+    CHECK(e == MS_PWR_NONE);
+    CHECK(ms_power_update(&p, 0, 0) == MS_PWR_UNPLUG);
+}
+
+static void test_cue_gap(void)
+{
+    CHECK(ms_gap_ok(0u, 5u, MS_SND_PLUG_IN));                       /* never played: always */
+    CHECK(!ms_gap_ok(1000u, 1000u + 29999u, MS_SND_PLUG_IN));       /* 30 s gap */
+    CHECK(ms_gap_ok(1000u, 1000u + 30000u, MS_SND_PLUG_IN));
+    CHECK(!ms_gap_ok(1000u, 1000u + 599999u, MS_SND_LOW_BATTERY));  /* 10 min gap */
+    CHECK(ms_gap_ok(1000u, 1000u + 600000u, MS_SND_LOW_BATTERY));
+    CHECK(!ms_gap_ok(1000u, 1000u + 1499u, MS_SND_SHUTTER));
+    CHECK(ms_gap_ok(1000u, 1000u + 1500u, MS_SND_SHUTTER));
+    CHECK(ms_gap_ok(1000u, 1000u + 1u, MS_SND_NEEDS_YOU));          /* no limit */
+    CHECK(!ms_gap_ok(4294960000u, 4294960000u + 20000u, MS_SND_UNPLUG)); /* wrap safe */
+    CHECK(ms_gap_ok(4294960000u, 4294960000u + 40000u, MS_SND_UNPLUG));
 }
 
 static void test_link(void)
@@ -283,6 +336,8 @@ int main(void)
     test_quiet_window();
     test_gate();
     test_charger();
+    test_power_flap();
+    test_cue_gap();
     test_link();
     test_groups_and_files();
     test_phrases_cycle_and_limit();

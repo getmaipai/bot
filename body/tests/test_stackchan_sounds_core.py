@@ -16,16 +16,41 @@ PATCH = PATCHES / "115-sounds-core.patch"
 C_TEST = HERE / "firmware" / "sounds_core_test.c"
 
 
-def header_from_patch() -> str:
+POWER_PATCH = PATCHES / "141-power-reading-and-sound-gate.patch"
+
+
+def header_from_patch(tmp_path: Path) -> str:
+    """The core header as patch 115 adds it, then patch 141's hunks for that file applied on top."""
     text = PATCH.read_text()
     block = text.split("+++ b/firmware/main/hal/maipai_sounds_core.h\n", 1)[1]
     body = block.split("\n", 1)[1]  # drop the @@ line
-    return "\n".join(line[1:] for line in body.splitlines() if line.startswith("+")) + "\n"
+    header = "\n".join(line[1:] for line in body.splitlines() if line.startswith("+")) + "\n"
+    target = tmp_path / "firmware/main/hal"
+    target.mkdir(parents=True)
+    (target / "maipai_sounds_core.h").write_text(header)
+    diff = POWER_PATCH.read_text()
+    start = diff.index("diff --git")
+    only = re.split(r"(?m)^(?=diff --git )", diff[start:])
+    core = [
+        part
+        for part in only
+        if part.strip() and "a/firmware/main/hal/maipai_sounds_core.h" in part.splitlines()[0]
+    ]
+    assert core, "patch 141 must change the core header"
+    (tmp_path / "core.diff").write_text(core[0])
+    applied = subprocess.run(
+        ["git", "apply", "--unidiff-zero", "--whitespace=nowarn", "core.diff"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert applied.returncode == 0, applied.stderr
+    return (target / "maipai_sounds_core.h").read_text()
 
 
 @pytest.mark.skipif(shutil.which("cc") is None, reason="no C compiler on this machine")
 def test_sound_core_c_tests_pass(tmp_path):
-    (tmp_path / "maipai_sounds_core.h").write_text(header_from_patch())
+    (tmp_path / "maipai_sounds_core.h").write_text(header_from_patch(tmp_path))
     binary = tmp_path / "core_test"
     build = subprocess.run(
         [

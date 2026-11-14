@@ -1,0 +1,85 @@
+# Intent: the stock xiaozhi tones that bypassed the unit's sound gate are gone or gated (owner 2026-11-14: a chime is for something a person must notice or that just changed because of them, never for something the robot does by itself). The "ready" success chime after activation is removed; an alert's sound plays only for the error (exclamation) and the server's alert tone (vibration) and goes through maipai_sound_play_src (policy, mute, night, per-cue gap, sound_played event); the stock low battery popup and the photo shutter click go through the same gate (shutter: the hard mute and a 1.5 s gap; low battery: once per 10 min). The wake word answer (OGG_POPUP), the timer tone, the offline wake tone and the first-setup cue are untouched.
+# Check after a flash: no tone on connect or reconnect; the wake word answers as before; a photo clicks once; `sound_played` events name `stock_alert`, `stock_low_battery` or `camera_photo` when those fire.
+diff --git a/firmware/main/hal/board/stackchan_camera.cc b/firmware/main/hal/board/stackchan_camera.cc
+diff --git a/firmware/main/hal/board/stackchan_camera.cc b/firmware/main/hal/board/stackchan_camera.cc
+index ee6964a..f73052d 100644
+--- a/firmware/main/hal/board/stackchan_camera.cc
++++ b/firmware/main/hal/board/stackchan_camera.cc
+@@ -17,6 +17,7 @@
+ #include "display.h"
+ #include "stackchan_camera.h"
+ #include "../maipai_privacy.h"
++#include "../maipai_sounds.h"
+ #include "esp_jpeg_common.h"
+ #include "jpg/image_to_jpeg.h"
+ #include "jpg/jpeg_to_image.h"
+@@ -406,8 +407,8 @@ bool StackChanCamera::Capture()
+         return false;
+     }
+ 
+-    // Play shutter sfx
+-    hal_bridge::app_play_sound(OGG_CAMERA_SHUTTER);
++    // One shutter click per picture, through the unit's sound gate (the hard mute and the per-cue gap apply).
++    maipai_sound_play_src("shutter", "camera_photo");
+ 
+     for (int i = 0; i < 3; i++) {
+         struct v4l2_buffer buf = {};
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+index 3683e9b..1fd6d33 100644
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -380,10 +380,8 @@ void Application::HandleActivationDoneEvent() {
+     auto& board = Board::GetInstance();
+     board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+ 
+-    Schedule([this]() {
+-        // Play the success sound to indicate the device is ready
+-        audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);
+-    });
++    // The stock "ready" chime is gone (owner rule 2026-11-14: a chime is for something a person must notice, not for
++    // what the robot does by itself). The unit's own cues go through maipai_sounds with a rate limit.
+ }
+ 
+ void Application::ActivationTask() {
+@@ -791,8 +789,12 @@ void Application::Alert(const char* status, const char* message, const char* emo
+     display->SetStatus(status);
+     display->SetEmotion(emotion);
+     display->SetChatMessage("system", message);
+-    if (!sound.empty()) {
+-        audio_service_.PlaySound(sound);
++    // An alert's sound goes through the unit's sound gate (policy, mute, night, per-cue gap) and only the error and
++    // the server's own alert tones remain; the upgrade and activation tones are routine and stay silent.
++    if (sound == Lang::Sounds::OGG_EXCLAMATION) {
++        maipai_sound_play_src("exclamation", "stock_alert");
++    } else if (sound == Lang::Sounds::OGG_VIBRATION) {
++        maipai_sound_play_src("vibration", "stock_alert");
+     }
+ }
+ 
+diff --git a/firmware/xiaozhi-esp32/main/display/lvgl_display/lvgl_display.cc b/firmware/xiaozhi-esp32/main/display/lvgl_display/lvgl_display.cc
+index 46668dd..9a7ac7e 100644
+--- a/firmware/xiaozhi-esp32/main/display/lvgl_display/lvgl_display.cc
++++ b/firmware/xiaozhi-esp32/main/display/lvgl_display/lvgl_display.cc
+@@ -13,6 +13,9 @@
+ #include "assets/lang_config.h"
+ #include "jpg/image_to_jpeg.h"
+ 
++// The unit's sound gate (hal/maipai_sounds.cc): policy, mute, night and a per-cue gap.
++bool maipai_sound_play_src(const char* name, const char* src);
++
+ #define TAG "Display"
+ 
+ LvglDisplay::LvglDisplay() {
+@@ -180,8 +183,10 @@ void LvglDisplay::UpdateStatusBar(bool update_all) {
+             if (strcmp(icon, FONT_AWESOME_BATTERY_EMPTY) == 0 && discharging) {
+                 if (lv_obj_has_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN)) { // Show if low battery popup is hidden
+                     lv_obj_remove_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
+-                    app.Schedule([&app]() {
+-                        app.PlaySound(Lang::Sounds::OGG_LOW_BATTERY);
++                    app.Schedule([]() {
++                        // Through the unit's sound gate: policy, mute, night and a ten minute gap, so a battery
++                        // icon flipping at its threshold cannot repeat the warning.
++                        maipai_sound_play_src("low_battery", "stock_low_battery");
+                     });
+                 }
+             } else {
