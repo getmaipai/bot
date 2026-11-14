@@ -172,7 +172,9 @@ class OrientationReactions:
         head_pitch_deg: Callable[[], float] = lambda: 0.0,
         head_moved_ago: Callable[[], float | None] = lambda: None,
         missed: Callable[[str, str, float], object] | None = None,
+        on_set_down: Callable[[], object] | None = None,
     ) -> None:
+        self._on_set_down = on_set_down  # MOVE-SCENE-05: the re-check after handling
         self._head_pitch_deg = head_pitch_deg
         self._head_moved_ago = head_moved_ago
         self._missed = missed  # the "what did I miss" hook (repeat.py)
@@ -199,6 +201,17 @@ class OrientationReactions:
             return True
         return self._changed_at is not None and self._clock() - self._changed_at < SENSOR_SETTLE_S
 
+    def note_set_down(self) -> None:
+        """MOVE-SCENE-05: the unit was handled and is down again. Whatever feeds this (the pose
+        coming back to upright, or another body's carry signal) starts the same SENSOR_SETTLE_S
+        window, so light and camera readings are ignored, then runs the re-check hook once."""
+        self._changed_at = self._clock()
+        if self._on_set_down is not None:
+            try:
+                self._on_set_down()
+            except Exception:
+                logger.warning("the re-check after handling failed", exc_info=True)
+
     @property
     def pose(self) -> str:
         return self._pose
@@ -222,6 +235,7 @@ class OrientationReactions:
             )
             return False
 
+        was = self._pose
         self._pose = pose
         self._changed_at = self._clock()
         logger.info("StackChan orientation: %s", pose)
@@ -230,6 +244,8 @@ class OrientationReactions:
         if not self._busy():
             self._send_face()
         self._maybe_say()
+        if pose == "upright" and was != "upright":
+            self.note_set_down()
         return True
 
     def _maybe_say(self) -> None:

@@ -272,6 +272,10 @@ class VoiceIdentifier:
         ]
         return max(fresh)[1] if fresh else None
 
+    def drop_heard(self) -> None:
+        """Forget who was heard: after the body was handled, the room may be different."""
+        self._heard.clear()
+
     def present(self, *, now: float) -> list[SpeakerEvidence]:
         return [
             speaker_evidence(person, "voice", level)

@@ -34,6 +34,7 @@ from typing import Any, Literal
 import numpy as np
 import requests
 
+from maipai_body.bodies.stackchan.orientation import SENSOR_SETTLE_S
 from maipai_body.expression.cue import Cue, Phase
 from maipai_body.expression.engine import ExpressionEngine
 from maipai_body.expression.suppression import SuppressionContext
@@ -242,7 +243,11 @@ class ConversationLoop:
         follow_up: FollowUpPolicy | None = None,
         identity_clock: Callable[[], float] = time.monotonic,
         audience_check_interval_s: float = _AUDIENCE_CHECK_INTERVAL_S,
+        face_search: Callable[[], object] | None = None,
     ) -> None:
+        # MOVE-SCENE-05: the one face search that runs when the body is set down.
+        self._face_search = face_search
+        self._sensors_settle_until = float("-inf")
         # S-EXPR-04: when given, gaze and idle replace the daemon's own tracker.
         self._attention = attention
         self._client = client
@@ -1533,13 +1538,14 @@ class ConversationLoop:
             return
         busy = self._current_funnel() is not FunnelState.IDLE
         try:
-            luma = self._luma_source() if self._luma_source is not None else None
+            settling = self.sensors_settling()
+            luma = self._luma_source() if self._luma_source is not None and not settling else None
             now = self._sleep_clock()
             edge = policy.update(
                 now,
                 luma=luma,
                 speech=observation.speech_detected or busy,
-                face=observation.face_detected,
+                face=observation.face_detected and not settling,
                 quiet_hours=self._quiet_hours(),
             )
             if edge == "sleep":
@@ -1670,6 +1676,35 @@ class ConversationLoop:
             self._gravity_on_by_us = False
             self._client.disable_gravity_compensation()
         self._expression.render_primitive("settle", self._suppression_context())
+        self.note_set_down()
+
+    def note_set_down(self) -> None:
+        """MOVE-SCENE-05: the body was handled and is down. What it knew about who is near and
+        its light and camera readings are stale: drop the old tracks (the present list is then
+        rebuilt from fresh ones), ignore light and camera for SENSOR_SETTLE_S, and run the face
+        search once. One narrow entry any carry or set_down signal can feed."""
+        self._sensors_settle_until = self._motion_clock() + SENSOR_SETTLE_S
+        for name, drop in (
+            ("face tracks", getattr(self._vision_watch, "drop_tracks", None)),
+            ("voice tracks", getattr(self._voice, "drop_heard", None)),
+        ):
+            if drop is not None:
+                try:
+                    drop()
+                except Exception:
+                    logger.warning("dropping the old %s failed", name, exc_info=True)
+        with self._lock:
+            self._state.face_verdict = None
+            self._state.face_verdict_at = None
+        if self._face_search is not None:
+            try:
+                self._face_search()
+            except Exception:
+                logger.warning("the face search after set down failed", exc_info=True)
+
+    def sensors_settling(self) -> bool:
+        """True for SENSOR_SETTLE_S after a set down: light and camera readings are ignored."""
+        return self._motion_clock() < self._sensors_settle_until
 
     def _on_freefall(self, falling: bool) -> None:
         """One line per fall (design record section 7): said on the rising
