@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.88] - 2026-11-14
+
+### Changed
+- Song naming now says what it does: every skip, refusal and failure (setting off, robot muted, clip cancelled, clip never ready, Home answered an error, no match) is one `StackChan song naming:` line in the Bot log, with no audio. A clip the unit cancels or never finishes is tried once more in the same music session after 12 seconds.
+
 ## [0.2.87] - 2026-11-14
 
 ### Added

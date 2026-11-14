@@ -225,6 +225,40 @@ def test_tick_drops_capture_that_never_reports_ready():
     assert not any(name == "self.music.read_clip" for name, _ in f.calls)
 
 
+def test_cancel_retries_once_after_twelve_seconds_only_in_running_ambient_session():
+    f = Fixture()
+    identify = f.build()
+    identify.on_session_start(0)
+    identify.on_clip_event("music_clip_cancelled", {"why": "wake"}, 1)
+    identify.tick(12)
+    assert sum(name == "self.music.capture_clip" for name, _ in f.calls) == 1
+    identify.tick(13)
+    assert sum(name == "self.music.capture_clip" for name, _ in f.calls) == 2
+    identify.on_clip_event("music_clip_cancelled", {"why": "again"}, 14)
+    identify.tick(30)
+    assert sum(name == "self.music.capture_clip" for name, _ in f.calls) == 2
+
+
+def test_expired_clip_retries_after_twelve_seconds():
+    f = Fixture()
+    identify = f.build()
+    identify.on_session_start(0)
+    identify.tick(25)
+    identify.tick(36)
+    assert sum(name == "self.music.capture_clip" for name, _ in f.calls) == 1
+    identify.tick(37)
+    assert sum(name == "self.music.capture_clip" for name, _ in f.calls) == 2
+
+
+def test_explicit_cancel_is_not_retried():
+    f = Fixture()
+    identify = f.build()
+    identify.listen_now("id", 10, 0)
+    identify.on_clip_event("music_clip_cancelled", {"why": "wake"}, 1)
+    identify.tick(20)
+    assert sum(name == "self.music.capture_clip" for name, _ in f.calls) == 1
+
+
 @pytest.mark.parametrize(
     "situation,setting",
     [
@@ -245,7 +279,7 @@ def test_capture_guards(situation, setting, caplog):
         identify.on_session_start(0)
     assert not any(name == "self.music.capture_clip" for name, _ in f.calls)
     assert (setting == "ask") == any(
-        "song naming waits for the confirm" in record.message for record in caplog.records
+        "waits for the confirm" in record.message for record in caplog.records
     )
 
 

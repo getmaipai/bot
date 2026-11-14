@@ -2349,9 +2349,26 @@ async def _serve_stackchan_channels(
                     timeout=15,
                 )
                 if 200 <= response.status_code < 300:
-                    return response.json()
-            except Exception:
-                pass
+                    try:
+                        return response.json()
+                    except Exception as exc:
+                        logger.warning(
+                            "StackChan song naming: 2xx response was not JSON: %s: %.200s",
+                            type(exc).__name__,
+                            str(exc),
+                        )
+                else:
+                    logger.warning(
+                        "StackChan song naming: Home HTTP %s: %.120s",
+                        response.status_code,
+                        response.text,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "StackChan song naming: identify request raised %s: %.200s",
+                    type(exc).__name__,
+                    str(exc),
+                )
             return None
 
         identify_setting_value = ["on"]
