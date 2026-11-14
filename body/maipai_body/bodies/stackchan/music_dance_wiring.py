@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import unicodedata
 from collections.abc import Callable
 from typing import Any
 
@@ -232,12 +233,44 @@ def wire_music_dance(
             return {"listen_song": "refused", "why": "song naming is not ready"}
         return identify.listen_now(request_id, seconds, clock())
 
+    def song_title_command(payload: dict) -> dict:
+        def finish(status: str, why: str = "") -> dict:
+            logger.info("StackChan song title: %s (%s)", status, why)
+            result = {"song_title": status}
+            if status == "refused":
+                result["why"] = why
+            return result
+
+        if not isinstance(payload, dict):
+            return finish("refused", "payload must be an object")
+        text = payload.get("text")
+        if not isinstance(text, str):
+            return finish("refused", "text must be a string")
+        text = "".join(char for char in text if unicodedata.category(char) != "Cc").strip()
+        if len(text) > 80:
+            return finish("refused", "too long")
+        situation = runner.situation()
+        if situation.muted:
+            return finish("refused", "muted")
+        if situation.full_quiet:
+            return finish("refused", "full quiet")
+        if identify_call_tool is None:
+            return finish("refused", "song title is not ready")
+        try:
+            result = identify_call_tool(TITLE_TOOL, {"text": text})
+            if result is False:
+                return finish("refused", "face tool failed")
+        except Exception:
+            return finish("refused", "face tool failed")
+        return finish("cleared" if not text else "shown")
+
     behavior.music_feat = on_music_feat
     if identify is not None:
         behavior.music_clip = identify.on_clip_event
     behavior.dance_events = on_events
     behavior.music_command = command
     behavior.listen_song_command = listen_song_command
+    behavior.song_title_command = song_title_command
 
     if start_ticker:
 

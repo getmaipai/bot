@@ -174,6 +174,91 @@ def test_listen_song_command_validates_payload(payload, expected):
     assert result["listen_song"] == expected
 
 
+def _song_title_behavior(f: Fixture, call_tool=None):
+    from types import SimpleNamespace
+
+    from maipai_body.bodies.stackchan.music_dance_wiring import wire_music_dance
+
+    behavior = SimpleNamespace(
+        dance_settings=SimpleNamespace(), dance_events=None, show_face=lambda _face: None
+    )
+    runner = SimpleNamespace(
+        situation=lambda: f.sit,
+        request=lambda *_args: SimpleNamespace(started=True, why=""),
+        stop=lambda: None,
+        running=False,
+        tick=lambda _now: None,
+    )
+    wire_music_dance(
+        behavior=behavior,
+        runner=runner,
+        move_head=lambda *_args: None,
+        centre_pitch=0,
+        speed=1,
+        start_ticker=False,
+        identify_post=f.post_with_request,
+        identify_setting=lambda: f.setting,
+        identify_call_tool=call_tool or (lambda name, args: f.calls.append((name, args)) or True),
+        identify_spawn=lambda worker: None,
+    )
+    return behavior
+
+
+def test_song_title_command_shows_and_clears_through_face_tool(caplog):
+    f = Fixture()
+    behavior = _song_title_behavior(f)
+    with caplog.at_level(logging.INFO):
+        assert behavior.song_title_command({"text": "  Song - Artist  "}) == {"song_title": "shown"}
+        assert behavior.song_title_command({"text": ""}) == {"song_title": "cleared"}
+    assert f.calls == [
+        ("self.face.song_title", {"text": "Song - Artist"}),
+        ("self.face.song_title", {"text": ""}),
+    ]
+    assert [record.message for record in caplog.records] == [
+        "StackChan song title: shown ()",
+        "StackChan song title: cleared ()",
+    ]
+
+
+@pytest.mark.parametrize(
+    "payload,why",
+    [
+        ({"text": "x" * 81}, "too long"),
+        (None, "payload must be an object"),
+        ({"text": 3}, "text must be a string"),
+    ],
+)
+def test_song_title_command_refuses_invalid_payload(payload, why):
+    f = Fixture()
+    result = _song_title_behavior(f).song_title_command(payload)
+    assert result == {"song_title": "refused", "why": why}
+    assert not f.calls
+
+
+@pytest.mark.parametrize(
+    "situation,why",
+    [({"muted": True}, "muted"), ({"full_quiet": "quiet hours"}, "full quiet")],
+)
+def test_song_title_command_refuses_while_silenced(situation, why):
+    f = Fixture(**situation)
+    result = _song_title_behavior(f).song_title_command({"text": "Song"})
+    assert result == {"song_title": "refused", "why": why}
+    assert not f.calls
+
+
+@pytest.mark.parametrize("failure", [False, RuntimeError("face tool failed")])
+def test_song_title_command_face_tool_failure_is_refused(failure):
+    f = Fixture()
+
+    def fail(_name, _args):
+        if isinstance(failure, Exception):
+            raise failure
+        return failure
+
+    result = _song_title_behavior(f, fail).song_title_command({"text": "Song"})
+    assert result == {"song_title": "refused", "why": "face tool failed"}
+
+
 def test_eof_before_advertised_size_posts_received_bytes():
     f = Fixture()
     f.read_answers = [answer(b"\xff", True)]

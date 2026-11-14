@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.91] - 2026-11-14
+
+### Added
+- The robot answers the hub's `song_title` command to show or clear the current song name on its screen.
+
 ## [0.2.90] - 2026-11-14
 
 ### Fixed

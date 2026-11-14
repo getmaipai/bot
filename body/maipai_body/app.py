@@ -286,6 +286,9 @@ class StackChanBehavior:
             "listen_song": "refused",
             "why": "song naming is not ready",
         }
+        self.song_title_command: Callable[[dict], dict | None] = lambda _payload: {
+            "song_title": "unavailable",
+        }
         self._last_event_poll = float("-inf")
         self._last_touch_wake = float("-inf")
         self._event_queue_drained = False
@@ -1862,6 +1865,7 @@ def _start_stackchan_night(
                 **(hub_handlers or {}),
                 "music_test": lambda payload: behavior.music_command(payload),
                 "listen_song": lambda payload: behavior.listen_song_command(payload),
+                "song_title": lambda payload: behavior.song_title_command(payload),
             },
             on_drop=link.channel_lost,
         )
