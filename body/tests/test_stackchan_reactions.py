@@ -146,13 +146,17 @@ def test_a_loving_reply_mood_earns_a_heart_and_a_happy_one_does_not():
 
 
 def test_no_host_face_or_mapping_can_produce_a_heart():
-    # The only heart in the system is the unit's decorator; the host sends emotion names only, and
-    # none of them is a heart. Happy replies map to the smile.
+    # A heart must be earned (owner ruling 2026-10-21): happy replies map to the smile, and the
+    # only reply moods that reach the heart-eyed love face are the loving ones the reactions
+    # already treat as a reason for the heart. The love face exists from firmware 0.2.93.
     assert REPLY_MOOD_FACE_MAP["happiness"] == "happy"
-    assert not any("love" in key or "heart" in key for key in FIRMWARE_EMOTIONS)
-    faces = {f.expression for f in CUE_FACE_MAP.values()} | set(REPLY_MOOD_FACE_MAP.values())
-    faces |= {a.face for a in PRIMITIVE_BODY_MAP.values() if a.face}
     assert REPLY_MOOD_FACE_MAP["love"] == "love"
+    loving = {mood for mood, face in REPLY_MOOD_FACE_MAP.items() if face == "love"}
+    assert loving <= {"love", "affection", "adoration"}
+    assert not any("heart" in key for key in FIRMWARE_EMOTIONS)
+    faces = {f.expression for f in CUE_FACE_MAP.values()}
+    faces |= {a.face for a in PRIMITIVE_BODY_MAP.values() if a.face}
+    assert "love" not in faces  # no turn cue or body action shows it
 
 
 def _bridge(monkeypatch):
