@@ -17,6 +17,7 @@ C_TEST = HERE / "firmware" / "sounds_core_test.c"
 
 
 POWER_PATCH = PATCHES / "141-power-reading-and-sound-gate.patch"
+CHARGED_PATCH = PATCHES / "151-charged-once-per-session.patch"
 
 
 def header_from_patch(tmp_path: Path) -> str:
@@ -45,6 +46,16 @@ def header_from_patch(tmp_path: Path) -> str:
         text=True,
     )
     assert applied.returncode == 0, applied.stderr
+    # Patch 151 (the charged cue once per plug-in session) is a diff against the header as it stands after patch 141.
+    charged = CHARGED_PATCH.read_text()
+    (tmp_path / "charged.diff").write_text(charged[charged.index("diff --git") :])
+    again = subprocess.run(
+        ["git", "apply", "--whitespace=nowarn", "charged.diff"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert again.returncode == 0, again.stderr
     return (target / "maipai_sounds_core.h").read_text()
 
 

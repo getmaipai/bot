@@ -113,10 +113,10 @@ static void test_charger(void)
     CHECK(e == MS_PWR_NONE);                       /* not confirmed yet */
     feed(&p, 1, 1, 1, &e);
     CHECK(e == MS_PWR_PLUG);
-    feed(&p, 1, 1, 10, &e);
+    feed(&p, 1, 1, MS_PWR_FULL_MIN_RUN, &e);
     CHECK(e == MS_PWR_NONE);                       /* once only */
     feed(&p, 1, 0, MS_PWR_CONFIRM, &e);
-    CHECK(e == MS_PWR_FULL);                       /* charging stopped with the cable still in */
+    CHECK(e == MS_PWR_FULL);                       /* a real charge of 5 minutes or more finished with the cable still in */
     feed(&p, 1, 0, 10, &e);
     CHECK(e == MS_PWR_NONE);                       /* and only once */
     feed(&p, 0, 0, MS_PWR_UNPLUG_CONFIRM, &e);
@@ -136,7 +136,7 @@ static void test_charger(void)
     CHECK(e == MS_PWR_NONE);
     /* booting on a cable: silence, then full after charging */
     ms_power_init(&p);
-    feed(&p, 1, 1, 1, &e);
+    feed(&p, 1, 1, MS_PWR_FULL_MIN_RUN + 1, &e);   /* the first poll only learns, the rest count */
     CHECK(e == MS_PWR_NONE);
     feed(&p, 1, 0, MS_PWR_CONFIRM, &e);
     CHECK(e == MS_PWR_FULL);
@@ -188,18 +188,80 @@ static void test_power_flap(void)
     CHECK(ms_power_update(&p, 0, 0) == MS_PWR_UNPLUG);
 }
 
+/* Owner report 2026-11-14: a full battery on a cable cycles between top-off charging and done and every flip played "charged"
+ * (10 plays in 67 minutes). It plays only after a real charge, once per plug-in session. */
+static void test_charged_once(void)
+{
+    ms_power_t p; ms_power_init(&p);
+    ms_power_event_t e;
+    int fulls = 0;
+    /* a full battery on a cable: charging for 3 minutes, done for 3 minutes, over and over for an hour: never "charged" */
+    ms_power_update(&p, 1, 0);
+    for (int i = 0; i < 3600; i++) {
+        if (ms_power_update(&p, 1, (i / 180) % 2 == 0) == MS_PWR_FULL) {
+            fulls++;
+        }
+    }
+    CHECK(fulls == 0);
+    /* the same oscillation with 4 minute runs: still never (under 5 minutes) */
+    ms_power_init(&p);
+    ms_power_update(&p, 1, 0);
+    for (int i = 0; i < 3600; i++) {
+        if (ms_power_update(&p, 1, (i / 240) % 2 == 0) == MS_PWR_FULL) {
+            fulls++;
+        }
+    }
+    CHECK(fulls == 0);
+    /* a real charge of 10 minutes, then top-off oscillation for an hour: exactly one "charged" in the whole session */
+    ms_power_init(&p);
+    ms_power_update(&p, 0, 0);
+    feed(&p, 1, 1, MS_PWR_CONFIRM, &e);
+    CHECK(e == MS_PWR_PLUG);
+    feed(&p, 1, 1, 600, &e);
+    for (int i = 0; i < 3600; i++) {
+        if (ms_power_update(&p, 1, (i / 400) % 2 == 1) == MS_PWR_FULL) {
+            fulls++;
+        }
+    }
+    CHECK(fulls == 1);
+    /* a confirmed unplug re-arms it: the next real charge plays "charged" once more */
+    feed(&p, 0, 0, MS_PWR_UNPLUG_CONFIRM, &e);
+    CHECK(e == MS_PWR_UNPLUG);
+    feed(&p, 1, 1, MS_PWR_CONFIRM, &e);
+    CHECK(e == MS_PWR_PLUG);
+    feed(&p, 1, 1, MS_PWR_FULL_MIN_RUN, &e);
+    feed(&p, 1, 0, MS_PWR_CONFIRM, &e);
+    CHECK(e == MS_PWR_FULL);
+    /* a weak supply dipping to "no cable" for 8 s never re-arms it */
+    ms_power_init(&p);
+    ms_power_update(&p, 1, 1);
+    feed(&p, 1, 1, MS_PWR_FULL_MIN_RUN, &e);
+    feed(&p, 1, 0, MS_PWR_CONFIRM, &e);
+    CHECK(e == MS_PWR_FULL);
+    int again = 0;
+    for (int i = 0; i < 1200; i++) {
+        ms_power_event_t x = ms_power_update(&p, (i % 40) < 8 ? 0 : 1, (i / 100) % 2);
+        if (x == MS_PWR_FULL || x == MS_PWR_UNPLUG || x == MS_PWR_PLUG) {
+            again++;
+        }
+    }
+    CHECK(again == 0);
+}
+
 static void test_cue_gap(void)
 {
     CHECK(ms_gap_ok(0u, 5u, MS_SND_PLUG_IN));                       /* never played: always */
-    CHECK(!ms_gap_ok(1000u, 1000u + 29999u, MS_SND_PLUG_IN));       /* 30 s gap */
-    CHECK(ms_gap_ok(1000u, 1000u + 30000u, MS_SND_PLUG_IN));
+    CHECK(!ms_gap_ok(1000u, 1000u + 119999u, MS_SND_PLUG_IN));      /* 2 min gap */
+    CHECK(ms_gap_ok(1000u, 1000u + 120000u, MS_SND_PLUG_IN));
+    CHECK(!ms_gap_ok(1000u, 1000u + 21599999u, MS_SND_CHARGED));    /* charged: once in 6 hours */
+    CHECK(ms_gap_ok(1000u, 1000u + 21600000u, MS_SND_CHARGED));
     CHECK(!ms_gap_ok(1000u, 1000u + 599999u, MS_SND_LOW_BATTERY));  /* 10 min gap */
     CHECK(ms_gap_ok(1000u, 1000u + 600000u, MS_SND_LOW_BATTERY));
     CHECK(!ms_gap_ok(1000u, 1000u + 1499u, MS_SND_SHUTTER));
     CHECK(ms_gap_ok(1000u, 1000u + 1500u, MS_SND_SHUTTER));
     CHECK(ms_gap_ok(1000u, 1000u + 1u, MS_SND_NEEDS_YOU));          /* no limit */
-    CHECK(!ms_gap_ok(4294960000u, 4294960000u + 20000u, MS_SND_UNPLUG)); /* wrap safe */
-    CHECK(ms_gap_ok(4294960000u, 4294960000u + 40000u, MS_SND_UNPLUG));
+    CHECK(!ms_gap_ok(4294960000u, 4294960000u + 100000u, MS_SND_UNPLUG)); /* wrap safe */
+    CHECK(ms_gap_ok(4294960000u, 4294960000u + 130000u, MS_SND_UNPLUG));
 }
 
 static void test_link(void)
@@ -337,6 +399,7 @@ int main(void)
     test_gate();
     test_charger();
     test_power_flap();
+    test_charged_once();
     test_cue_gap();
     test_link();
     test_groups_and_files();

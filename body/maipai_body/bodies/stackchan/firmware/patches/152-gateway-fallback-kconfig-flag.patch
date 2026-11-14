@@ -1,0 +1,36 @@
+# Intent: the laptop/Wi-Fi-gateway fallback (patches 144 and 146) sits behind a Kconfig flag, CONFIG_STACKCHAN_FALLBACK_GATEWAY (default y). The trip-candidate image keeps it on until the away-from-home tailnet path is proven on a hotspot; the end-state image builds with `recipe.sh --tailnet --no-gateway-fallback`, which compiles the gateway candidate out, so the saved pairing token can never be sent in the clear to any network's gateway and the tailnet (WireGuard) is the only away path. (Owner priority 2026-11-14: a robot that is performant, does not crash and stays connected.)
+# Check after a flash: a build with the flag off never logs `fallback host for attempt ...: <gateway>`; on a network named maipai* with the flag on it still does.
+diff --git a/firmware/main/Kconfig.projbuild b/firmware/main/Kconfig.projbuild
+--- a/firmware/main/Kconfig.projbuild
++++ b/firmware/main/Kconfig.projbuild
+@@ -56,6 +56,14 @@
+         once a minute). The default is the fixed address macOS Internet Sharing gives the laptop on its own
+         Wi-Fi, where a small relay forwards the two ports to the hub. It is the second candidate: the first is the
+         Wi-Fi gateway the unit currently has (the laptop, whatever subnet macOS picked). Empty leaves only the gateway.
++
++config STACKCHAN_FALLBACK_GATEWAY
++    bool "Away from home: fall back to the Wi-Fi gateway (the laptop's own network)"
++    default y
++    help
++        The trip stopgap: on a network whose name starts with the prefix below the unit sends its saved pairing token to the Wi-Fi
++        gateway (the laptop running a relay). The end-state image turns this off once the tailnet path is proven away from home:
++        the tailnet (WireGuard) is then the only away path and the pairing token never travels in the clear on any network.
+ 
+ config STACKCHAN_FALLBACK_SSID_PREFIX
+     string "Only use the fallback on Wi-Fi networks whose name starts with"
+diff --git a/firmware/main/hal/maipai_fallback.cc b/firmware/main/hal/maipai_fallback.cc
+--- a/firmware/main/hal/maipai_fallback.cc
++++ b/firmware/main/hal/maipai_fallback.cc
+@@ -118,7 +118,12 @@
+     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+         ssid = reinterpret_cast<const char*>(ap.ssid);
+     }
++#ifdef CONFIG_STACKCHAN_FALLBACK_GATEWAY
+     const bool lan_allowed = mf_ssid_allowed(ssid, CONFIG_STACKCHAN_FALLBACK_SSID_PREFIX) != 0;
++#else
++    (void)ssid;
++    const bool lan_allowed = false;  // patch 152: the gateway fallback is compiled out; the tailnet is the away path
++#endif
+     char gateway[16] = {0};
+     esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+     esp_netif_ip_info_t ip;

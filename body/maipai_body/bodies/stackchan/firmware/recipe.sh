@@ -14,6 +14,7 @@ DEV_AVATAR_URL=""
 DEV_TOKEN=""
 TAILNET=""
 TAILNET_AUTHKEY_FILE=""
+GATEWAY_FALLBACK=y
 while (($#)); do
   case "$1" in
     --no-persistent-websocket)
@@ -55,6 +56,11 @@ while (($#)); do
     --dev-token)
       if (($# < 2)) || [[ -z "$2" ]]; then echo "--dev-token needs the token the development Bot app expects." >&2; exit 2; fi
       DEV_TOKEN="$2"; shift 2 ;;
+    # The end-state image (patch 152): the laptop/Wi-Fi-gateway fallback is compiled out once the tailnet path is proven away from home.
+    --no-gateway-fallback)
+      GATEWAY_FALLBACK=n
+      shift
+      ;;
     # The tailnet client (patch 147): compile MicroLink in (off at run time until the host switches it on).
     --tailnet)
       TAILNET=y
@@ -388,6 +394,8 @@ apply_repo_patch 145-app-version-from-release.patch "$SRC"
 apply_repo_patch 146-fallback-gateway-and-ssid-gate.patch "$SRC"
 apply_repo_patch 147-tailnet-client.patch "$SRC"
 apply_repo_patch 148-tailnet-endpoint.patch "$SRC"
+apply_repo_patch 151-charged-once-per-session.patch "$SRC"
+apply_repo_patch 152-gateway-fallback-kconfig-flag.patch "$SRC"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"
@@ -451,7 +459,13 @@ CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
 CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
 CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
 CONFIG_BT_ENABLED=n
+# Internal RAM headroom (owner priority 2026-11-14: performant, no crashes, stays connected): the Wi-Fi and lwIP buffers try PSRAM first.
+# The audio tasks already trimmed their stacks and the opus codec stack is already in PSRAM (patches 055 and 058), so this is the lever left.
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 CFG
+if [[ "$GATEWAY_FALLBACK" == "n" ]]; then
+  echo 'CONFIG_STACKCHAN_FALLBACK_GATEWAY=n' >> "$FW/sdkconfig.defaults.local"
+fi
 if [[ -n "$DEVICE_ID" ]]; then
   printf 'CONFIG_STACKCHAN_DEVICE_ID="%s"\n' "$DEVICE_ID" >> "$FW/sdkconfig.defaults.local"
 fi
