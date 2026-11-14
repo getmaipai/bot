@@ -22,6 +22,11 @@ person ids and levels, and the outputs are the strict spec shapes built by
   `present` as an unknown entry, so a visitor entering means "not alone".
   This is deliberately conservative: an enrolled speaker whose own face fails
   to match is not "alone" either, and the sensitive records stay withheld.
+* SCENE-01g: a body without a face counts. A person box from the fast
+  detector (`vision/look_fast.py`) that no face covers adds one `unknown`
+  entry (basis `unknown`), so someone standing with their back to the robot
+  is still "not alone". A box and the face inside it are one person. Boxes
+  are geometry only: nobody is named or recognised from how they look.
 """
 
 from __future__ import annotations
@@ -73,12 +78,33 @@ def fuse(
     return unknown_evidence()
 
 
+Box = tuple[float, float, float, float]  # x, y, width, height as shares of the frame
+
+
+def uncovered_person_boxes(person_boxes: Sequence[Box], face_boxes: Sequence[Box]) -> int:
+    """How many person boxes have no face inside them.
+
+    A face covers the box that contains its centre; one face covers one box and
+    one box is covered once, so a face and its own person box are one person."""
+    free = list(person_boxes)
+    for fx, fy, fw, fh in face_boxes:
+        cx, cy = fx + fw / 2, fy + fh / 2
+        for box in free:
+            x, y, w, h = box
+            if x <= cx <= x + w and y <= cy <= y + h:
+                free.remove(box)
+                break
+    return len(free)
+
+
 def build_present(
     voice_present: Sequence[PresentEntry],
     face: FaceVerdict | None,
     *,
     faces_in_view: int,
     speaker_voice_unknown: bool = False,
+    person_boxes: Sequence[Box] = (),
+    face_boxes: Sequence[Box] = (),
 ) -> list[PresentEntry]:
     """Everyone with a fresh track or a fresh voice, each at their own level.
 
@@ -86,7 +112,8 @@ def build_present(
     face adds its person when matched; every other face adds an unknown entry.
     A person seen and heard is one entry (`voice_and_face`, `confirmed`).
     An unknown voice with no face in view is one unknown entry, so the list is
-    never empty while someone is talking."""
+    never empty while someone is talking. Each person box no face covers adds
+    one `unknown` entry (SCENE-01g), with no identity and no image data."""
     entries: dict[str, PresentEntry] = {}
     for entry in voice_present:
         if entry["person"] is not None:
@@ -103,6 +130,10 @@ def build_present(
             entries[person] = present_entry(person, "face", level)
     out: list[PresentEntry] = list(entries.values())
     out.extend(present_entry(None, "face", "unknown") for _ in range(max(unknown_faces, 0)))
+    out.extend(
+        present_entry(None, "unknown", "unknown")
+        for _ in range(uncovered_person_boxes(person_boxes, face_boxes))
+    )
     if speaker_voice_unknown and faces_in_view == 0:
         out.append(present_entry(None, "voice", "unknown"))
     return out

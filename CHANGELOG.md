@@ -7,6 +7,9 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+### Added
+- A person standing with their back to the robot still counts as present: a fast-detector person box no face covers adds one unknown `present` entry (SCENE-01g, `build_present`; the loop does not pass boxes yet).
+
 ## [0.2.81] - 2026-11-13
 
 ### Added
