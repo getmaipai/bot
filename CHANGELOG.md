@@ -7,6 +7,10 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.94] - 2026-11-14
+
+- Wireless firmware update. Firmware patch 133 adds the tool `self.firmware.update`: the unit pulls one image from a one-time URL on the body, checks its SHA-256 and size, writes only the inactive slot and restarts; the new image is validated after 15 healthy seconds or rolled back. A turning ring and a progress bar show while it updates. The body decides when (idle, not muted, battery 40 percent or charging, 6 hour backoff after a failure) and fetches the verified image from Home. The first updater firmware must be flashed once by USB; after that app-only firmware releases arrive over Wi-Fi.
+
 ## [0.2.93] - 2026-11-14
 
 - StackChan firmware patch 132 draws seven new faces (joy, content, excited, shocked, curious, love, worried). The host sends them only to a unit that reports firmware 0.2.93 or newer; an older unit keeps getting the nearest old face. The unit needs a USB flash for the new faces (the firmware has no wireless update path yet).

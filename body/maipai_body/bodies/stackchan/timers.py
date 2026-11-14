@@ -188,7 +188,11 @@ class TimerService:
         timers = [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
         with self._lock:
             self._active = {
-                r["id"]: {"kind": r.get("kind"), "label": r.get("label", "")}
+                r["id"]: {
+                    "kind": r.get("kind"),
+                    "label": r.get("label", ""),
+                    "left": r.get("left"),
+                }
                 for r in timers
                 if isinstance(r.get("id"), int)
             }

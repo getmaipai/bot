@@ -2212,6 +2212,102 @@ async def _serve_stackchan_channels(
     night = _start_stackchan_night(
         voice, behavior, link, stop_event, {**timers, **sounds.handlers()}
     )
+    if link is not None:
+        from maipai_body.bodies.stackchan.firmware_update import FirmwareUpdater
+
+        hub_credentials = _hub_credentials_reader(link, "")
+        firmware_answer: list[dict | None] = [None]
+
+        def ask_firmware_home() -> dict | None:
+            import requests
+
+            cookie, base_url = hub_credentials()
+            try:
+                response = requests.get(
+                    f"{base_url}/api/devices/me/firmware-update",
+                    headers={"Cookie": f"session={cookie}"},
+                    timeout=10,
+                )
+                payload = response.json() if 200 <= response.status_code < 300 else None
+                firmware_answer[0] = payload if isinstance(payload, dict) else None
+            except Exception:
+                firmware_answer[0] = None
+            return firmware_answer[0]
+
+        def download_firmware(path: Path) -> None:
+            from urllib.parse import urlencode
+
+            import requests
+
+            answer = firmware_answer[0]
+            if not isinstance(answer, dict) or not isinstance(answer.get("url_token"), str):
+                raise ValueError("missing Home firmware download token")
+            cookie, base_url = hub_credentials()
+            response = requests.get(
+                f"{base_url}/api/devices/me/firmware-update/app.bin?"
+                f"{urlencode({'token': answer['url_token']})}",
+                headers={"Cookie": f"session={cookie}"},
+                timeout=120,
+                stream=True,
+            )
+            if not 200 <= response.status_code < 300:
+                raise ValueError("Home firmware download failed")
+            with path.open("wb") as output:
+                for chunk in response.iter_content(64 * 1024):
+                    if chunk:
+                        output.write(chunk)
+
+        def firmware_situation() -> dict[str, Any]:
+            try:
+                live = runner.situation()
+                timer_service = behavior.timers
+                if timer_service is None:
+                    active, rows = None, []
+                else:
+                    with timer_service._lock:
+                        active = timer_service._active
+                        rows = list(active.values()) if active else []
+                kinds = [row.get("kind") for row in rows]
+                due = [row.get("left") for row in rows if isinstance(row.get("left"), int)]
+                return {
+                    "link_healthy": bool(voice._sessions) and not live.offline,
+                    "in_turn": behavior._active.is_set(),
+                    "in_call": bool(voice._speaking),
+                    "timer_active": active is None or bool(active),
+                    "timers_unknown": active is None,
+                    "alarm_active": "alarm" in kinds,
+                    "timer_due_in": min(due) if due else None,
+                    "muted": behavior.privacy.muted if behavior.privacy.known else True,
+                    "full_quiet": behavior.privacy.quiet if behavior.privacy.known else True,
+                }
+            except Exception:
+                return {"link_healthy": False, "timers_unknown": True}
+
+        def report_update(updating: bool, progress: int | None) -> None:
+            voice.firmware_update_status = (updating, progress)
+
+        updater = FirmwareUpdater(
+            ask_home=ask_firmware_home,
+            download=download_firmware,
+            serve_once=voice.serve_firmware_once,
+            call_tool=voice.robot.client._call,
+            situation=firmware_situation,
+            battery=voice.robot.client.get_battery_status,
+            unit_version=lambda: behavior.unit_facts.snapshot().get("fw_version"),
+            now=time.time,
+            report=report_update,
+        )
+        behavior.firmware_updater = updater
+        behavior.settings_listeners.append(updater.apply_settings)
+        voice.session_listeners.append(lambda _device_id: updater.tick(time.time()))
+
+        def firmware_tick() -> None:
+            while not stop_event.wait(600):
+                updater.tick(time.time())
+
+        threading.Thread(
+            target=firmware_tick, name="stackchan-firmware-update", daemon=True
+        ).start()
     behavior._rest_renderer._set_brightness = night._device.set_brightness
     behavior._rest_renderer._restore_brightness = night.effective_brightness
     behavior.on_levels_changed = night.set_levels_from_unit
@@ -2283,6 +2379,9 @@ async def _serve_stackchan_channels(
         voice.heal.observe(kind, extra)
         voice.wake_tester.on_event(kind, extra)
         behavior.privacy.observe(kind, extra)
+        updater = getattr(behavior, "firmware_updater", None)
+        if updater is not None and kind.startswith("firmware_update_"):
+            updater.on_unit_event(kind, extra, time.time())
 
     behavior.on_unit_event = _heal_event
     avatar.unit_idle = lambda: not behavior._active.is_set()
@@ -3363,6 +3462,8 @@ def _start_robot_checkin(voice: Any, behavior: Any, link: LinkLifecycle, stop_ev
             bot_version=_app_version(),
             now=time.time(),
             timers_active=behavior.timers.active_count() if behavior.timers is not None else None,
+            updating=getattr(voice, "firmware_update_status", (None, None))[0],
+            update_progress=getattr(voice, "firmware_update_status", (None, None))[1],
         )
 
     reporter = RobotCheckin(

@@ -6,6 +6,10 @@ The current provisioned `ws://` connections send the bearer token, audio, and co
 
 The firmware recipe enables its persistent xiaozhi WebSocket by default; `--avatar-server-url ws://192.0.2.10:8766` sets `CONFIG_STACKCHAN_SERVER_URL`. Build the avatar firmware with `--device-id <MAC> --client-id <UUID> --pairing-token <token>` so it uses the same approved identity and token as xiaozhi. The recipe applies patch 011 to add those headers and replace M5's constant avatar token. Pairing uses the existing `PairingStore`; revocation is checked on each received and sent frame. See the [firmware guide](../../body/maipai_body/bodies/stackchan/firmware/README.md) for details.
 
+### Wireless firmware updates
+
+The body checks Home's verified firmware offer on connect and every ten minutes. It waits for an idle, healthy, unmuted unit with a safe timer window and sufficient battery or charging power, verifies the downloaded image size and SHA-256, then offers it through an authenticated one-time URL on the existing vision HTTP listener. The unit needs the updater firmware installed once over USB. See the [wireless update design](stackchan-wireless-update-2026-11-14.md) for the Home and unit contracts and remaining hardware verification.
+
 The protocol implementation is in `body/maipai_body/bodies/stackchan/xiaozhi/`. `XiaozhiServer` checks the device and client identifiers with `PairingStore` before accepting a session, replies to hello, and passes binary audio frames to its async audio callback. The current app wiring does not yet connect that callback to the Home conversation loop.
 
 ## Camera

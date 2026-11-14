@@ -58,6 +58,11 @@ DIAGNOSTIC_KINDS = frozenset(
         "music_stats",
         "music_clip_ready",
         "music_clip_cancelled",
+        "firmware_update_started",
+        "firmware_update_progress",
+        "firmware_update_done",
+        "firmware_update_failed",
+        "firmware_update_validated",
     }
 )
 EVENT_KINDS = (

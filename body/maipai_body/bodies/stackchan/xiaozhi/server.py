@@ -384,6 +384,8 @@ class XiaozhiServer:
         self._speaking: set[str] = set()
         self._source_requests: dict[str, list[float]] = {}
         self._notification_audio: dict[tuple[str, str], bytes] = {}
+        self._firmware_files: dict[tuple[str, str], tuple[bytes, float]] = {}
+        self.firmware_update_status: tuple[bool | None, int | None] = (None, None)
         self._session_ready = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -408,6 +410,7 @@ class XiaozhiServer:
         app = web.Application(client_max_size=self.max_photo_bytes)
         app.router.add_post("/vision/{device_id}", self._receive_photo)
         app.router.add_get("/notify/{device_id}/{audio_id}.ogg", self._serve_notify_audio)
+        app.router.add_get("/firmware/{device_id}/{token}", self._serve_firmware_file)
         app.router.add_get("/selftest/checks", self._selftest_list)
         app.router.add_post("/selftest/run", self._selftest_run)
         app.router.add_post("/robot/updating", self._robot_updating)
@@ -1259,6 +1262,36 @@ class XiaozhiServer:
             host = self.vision_host if self.vision_host not in {"0.0.0.0", "::"} else "127.0.0.1"
             root = f"http://{host}:{self.vision_port}"
         return f"{root}/notify/{device_id}/{audio_id}.ogg"
+
+    def serve_firmware_once(self, path: Any) -> str:
+        """Publish a local image under an unguessable, one-read URL for ten minutes.
+
+        The image is a public release file, so the random one-time path is the only guard; the
+        pairing token is never put in the URL (a URL ends up in logs).
+        """
+        if len(self._sessions) != 1:
+            raise ConnectionError("A single paired StackChan session is required")
+        device_id = next(iter(self._sessions))
+        token = uuid.uuid4().hex
+        # Read now: the caller deletes its temp file as soon as the unit tool has been called.
+        self._firmware_files[(device_id, token)] = (path.read_bytes(), time.monotonic() + 600)
+        return (
+            self._notify_audio_url(device_id, token)
+            .replace("/notify/", "/firmware/")
+            .replace(f"/{token}.ogg", f"/{token}")
+        )
+
+    async def _serve_firmware_file(self, request: web.Request) -> web.StreamResponse:
+        device_id, token = request.match_info["device_id"], request.match_info["token"]
+        entry = self._firmware_files.pop((device_id, token), None)
+        if entry is None or time.monotonic() > entry[1]:
+            raise web.HTTPNotFound()
+        body = await asyncio.to_thread(entry[0].read_bytes)
+        return web.Response(
+            body=body,
+            headers={"Cache-Control": "no-store"},
+            content_type="application/octet-stream",
+        )
 
     async def send_notify(self, audio_url: str) -> None:
         if not self.device_supports("notify"):

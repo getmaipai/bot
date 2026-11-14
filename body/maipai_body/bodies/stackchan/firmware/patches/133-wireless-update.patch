@@ -1,0 +1,455 @@
+# Intent: wireless firmware update (owner 2026-11-14: the unit is on battery and off USB, "hopefully you can update wirelessly", plus "a special animated icon to show it's being updated"). A new MCP tool self.firmware.update {url, sha256, size, version} pulls one image from the body's one-time URL, streams SHA-256 and size, writes ONLY the inactive ota slot (esp_ota_begin/write/end), checks the image's version string equals the request, sets the boot partition and restarts. NVS and the assets partition are never touched. The new image stays pending-verify (CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE is already on in the flashed bootloader): maipai_update_init() validates it after 15 seconds of idle state with a healthy hub link (no connecting, offline or refused look) or rolls back after 300 seconds; a crash or reset before the mark makes the bootloader return to the old slot by itself. The unit refuses unless idle, battery >= 40 percent or charging, 70 KB internal heap free, and a different version. Events for the host: firmware_update_started, firmware_update_progress (percent, every 10), firmware_update_done, firmware_update_failed (reason), firmware_update_validated. The display shows a turning ring and a thin progress bar at the bottom center (ink colour of the skin, same overlay layer as the song title).
+# Upstream: MaiPai only (main/hal/maipai_update.cc and .h, hal_mcp.cpp, hal.cpp, stackchan_display.cc and .h). Applies after 132.
+# Check after a flash: tools/list shows self.firmware.update; calling it with a wrong hash answers started and then firmware_update_failed reason hash with the old image still running; a good call shows the ring and bar, reboots into the other slot and the log says the new image was validated after 15 seconds.
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index 4e677ab..54762d1 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -232,0 +233,4 @@ StackChanAvatarDisplay::~StackChanAvatarDisplay()
++    if (update_timer_ != nullptr) {
++        lv_timer_delete(update_timer_);
++        update_timer_ = nullptr;
++    }
+@@ -1372,0 +1377,58 @@ void StackChanAvatarDisplay::SetMusicNotes(int count)
++void StackChanAvatarDisplay::EnsureUpdateOverlay()
++{
++    if (update_ring_ != nullptr) return;
++    auto* mint = dynamic_cast<MintAvatar*>(&GetStackChan().avatar());
++    if (mint == nullptr || mint->getPanel() == nullptr) return;
++    auto* panel = mint->getPanel()->get();
++    update_ring_ = lv_arc_create(panel);
++    lv_obj_remove_style(update_ring_, nullptr, LV_PART_KNOB);
++    lv_obj_remove_flag(update_ring_, static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
++    lv_obj_set_size(update_ring_, 34, 34);
++    lv_arc_set_bg_angles(update_ring_, 0, 360);
++    lv_arc_set_angles(update_ring_, 0, 90);
++    lv_obj_set_style_arc_width(update_ring_, 4, LV_PART_MAIN);
++    lv_obj_set_style_arc_width(update_ring_, 4, LV_PART_INDICATOR);
++    lv_obj_set_style_arc_opa(update_ring_, LV_OPA_30, LV_PART_MAIN);
++    lv_obj_set_style_arc_color(update_ring_, MintAvatar::inkColor(), LV_PART_MAIN);
++    lv_obj_set_style_arc_color(update_ring_, MintAvatar::inkColor(), LV_PART_INDICATOR);
++    lv_obj_align(update_ring_, LV_ALIGN_BOTTOM_MID, 0, -44);
++    lv_obj_add_flag(update_ring_, LV_OBJ_FLAG_HIDDEN);
++    update_bar_ = lv_bar_create(panel);
++    lv_obj_remove_flag(update_bar_, static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
++    lv_obj_set_size(update_bar_, 110, 5);
++    lv_bar_set_range(update_bar_, 0, 100);
++    lv_obj_set_style_radius(update_bar_, 3, LV_PART_MAIN);
++    lv_obj_set_style_radius(update_bar_, 3, LV_PART_INDICATOR);
++    lv_obj_set_style_bg_opa(update_bar_, LV_OPA_30, LV_PART_MAIN);
++    lv_obj_set_style_bg_color(update_bar_, MintAvatar::inkColor(), LV_PART_MAIN);
++    lv_obj_set_style_bg_opa(update_bar_, LV_OPA_COVER, LV_PART_INDICATOR);
++    lv_obj_set_style_bg_color(update_bar_, MintAvatar::inkColor(), LV_PART_INDICATOR);
++    lv_obj_align(update_bar_, LV_ALIGN_BOTTOM_MID, 0, -30);
++    lv_obj_add_flag(update_bar_, LV_OBJ_FLAG_HIDDEN);
++}
++
++void StackChanAvatarDisplay::SetUpdateProgress(bool on, int percent)
++{
++    DisplayLockGuard lock(this);
++    if (!on) {
++        if (update_timer_ != nullptr) { lv_timer_delete(update_timer_); update_timer_ = nullptr; }
++        if (update_ring_ != nullptr) lv_obj_add_flag(update_ring_, LV_OBJ_FLAG_HIDDEN);
++        if (update_bar_ != nullptr) lv_obj_add_flag(update_bar_, LV_OBJ_FLAG_HIDDEN);
++        return;
++    }
++    EnsureUpdateOverlay();
++    if (update_ring_ == nullptr || update_bar_ == nullptr) return;
++    lv_bar_set_value(update_bar_, std::clamp(percent, 0, 100), LV_ANIM_OFF);
++    lv_obj_remove_flag(update_ring_, LV_OBJ_FLAG_HIDDEN);
++    lv_obj_remove_flag(update_bar_, LV_OBJ_FLAG_HIDDEN);
++    lv_obj_move_foreground(update_ring_);
++    lv_obj_move_foreground(update_bar_);
++    if (update_timer_ == nullptr) {
++        update_timer_ = lv_timer_create([](lv_timer_t* timer) {
++            auto* display = static_cast<StackChanAvatarDisplay*>(lv_timer_get_user_data(timer));
++            display->update_angle_ = (display->update_angle_ + 24) % 360;
++            if (display->update_ring_ != nullptr) lv_arc_set_rotation(display->update_ring_, display->update_angle_);
++        }, 60, this);
++    }
++}
++
+diff --git a/firmware/main/hal/board/stackchan_display.h b/firmware/main/hal/board/stackchan_display.h
+index cd6f85a..6582f9c 100644
+--- a/firmware/main/hal/board/stackchan_display.h
++++ b/firmware/main/hal/board/stackchan_display.h
+@@ -77,0 +78,6 @@ private:
++    // Patch 133: the update icon (a turning ring) and its thin progress bar.
++    lv_obj_t*   update_ring_ = nullptr;
++    lv_obj_t*   update_bar_ = nullptr;
++    lv_timer_t* update_timer_ = nullptr;
++    int         update_angle_ = 0;
++    void EnsureUpdateOverlay();
+@@ -141,0 +148,4 @@ public:
++    // Patch 133: show the update icon with a 0 to 100 progress bar, or hide it. It yields to nothing but the
++    // mute mark, which stays where it is. LinkHealthy is true when no connecting, offline or refused look is up.
++    void SetUpdateProgress(bool on, int percent);
++    bool LinkHealthy() const { return !hub_connecting_ && !hub_offline_ && !hub_refused_; }
+diff --git a/firmware/main/hal/hal.cpp b/firmware/main/hal/hal.cpp
+index 9fe96d8..ac16a62 100644
+--- a/firmware/main/hal/hal.cpp
++++ b/firmware/main/hal/hal.cpp
+@@ -13,0 +14 @@ void maipai_music_init();
++void maipai_update_init();
+@@ -62,0 +64 @@ void Hal::init()
++    maipai_update_init();  // patch 133: validate or roll back an image installed by a wireless update
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index c1e7c3b..915f01d 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -29,0 +30 @@
++#include "maipai_update.h"
+@@ -701,0 +703,17 @@ void Hal::xiaozhi_mcp_init()
++    mcp_server.AddTool("self.firmware.update",
++                       "Pull one firmware image from a one-time URL on the body, check its SHA-256 and size, write the "
++                       "inactive slot and reboot into it. Answers started or the reason it refused.",
++                       PropertyList({Property("url", kPropertyTypeString), Property("sha256", kPropertyTypeString),
++                                     Property("size", kPropertyTypeInteger, 0, 0, 5000000),
++                                     Property("version", kPropertyTypeString)}),
++                       [this](const PropertyList& properties) -> ReturnValue {
++                           const std::string url = properties["url"].value<std::string>();
++                           const std::string sha = properties["sha256"].value<std::string>();
++                           const std::string version = properties["version"].value<std::string>();
++                           const int size = properties["size"].value<int>();
++                           const std::string why = maipai_update_start(url.c_str(), sha.c_str(),
++                                                                       size > 0 ? static_cast<size_t>(size) : 0,
++                                                                       version.c_str());
++                           mclog::tagInfo(_tag, "firmware update request: {}", why.empty() ? "started" : why);
++                           return why.empty() ? std::string("started") : why;
++                       });
+@@ -802,0 +821,15 @@ void Hal::xiaozhi_mcp_init()
++
++// Patch 133: the display side of the wireless update (the icon) and the link health the new image waits for.
++void maipai_update_ui(bool on, int percent)
++{
++    LvglLockGuard lock;
++    auto* display = dynamic_cast<StackChanAvatarDisplay*>(Board::GetInstance().GetDisplay());
++    if (display != nullptr) display->SetUpdateProgress(on, percent);
++}
++
++bool maipai_update_link_healthy()
++{
++    LvglLockGuard lock;
++    auto* display = dynamic_cast<StackChanAvatarDisplay*>(Board::GetInstance().GetDisplay());
++    return display != nullptr && display->LinkHealthy();
++}
+diff --git a/firmware/main/hal/maipai_update.cc b/firmware/main/hal/maipai_update.cc
+new file mode 100644
+index 0000000..ef2ef25
+--- /dev/null
++++ b/firmware/main/hal/maipai_update.cc
+@@ -0,0 +1,281 @@
++/*
++ * SPDX-License-Identifier: MIT
++ */
++#include "maipai_update.h"
++#include "hal.h"
++#include "device_events.h"
++#include <application.h>
++#include <boards/common/board.h>
++#include <esp_app_desc.h>
++#include <esp_heap_caps.h>
++#include <esp_log.h>
++#include <esp_ota_ops.h>
++#include <esp_system.h>
++#include <esp_timer.h>
++#include <freertos/FreeRTOS.h>
++#include <freertos/task.h>
++#include <mbedtls/sha256.h>
++#include <atomic>
++#include <cstdio>
++#include <cstring>
++#include <new>
++
++namespace {
++
++const char* const kTag = "MaipaiUpdate";
++constexpr int kMinBatteryPercent = 40;
++constexpr size_t kMinImageBytes = 512 * 1024;
++constexpr size_t kPageSize = 4096;
++constexpr int64_t kTotalLimitUs = 15LL * 60 * 1000000;
++constexpr int kValidateSeconds = 15;
++constexpr int kRollbackAfterSeconds = 300;
++
++std::atomic<bool> s_active{false};
++
++struct Job {
++    char url[256];
++    char sha[65];
++    char version[32];
++    size_t size;
++};
++
++void note_failure(const char* reason)
++{
++    char extra[96];
++    std::snprintf(extra, sizeof(extra), "\"reason\":\"%s\"", reason);
++    device_events_push("firmware_update_failed", extra);
++    ESP_LOGE(kTag, "update failed: %s", reason);
++    maipai_update_ui(false, 0);
++    s_active = false;
++}
++
++bool is_hex64(const char* text)
++{
++    if (text == nullptr || std::strlen(text) != 64) return false;
++    for (int i = 0; i < 64; ++i) {
++        const char c = text[i];
++        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
++    }
++    return true;
++}
++
++bool safe_version(const char* text)
++{
++    if (text == nullptr || text[0] == '\0' || std::strlen(text) > 31) return false;
++    for (const char* p = text; *p != '\0'; ++p) {
++        const char c = *p;
++        if (!((c >= '0' && c <= '9') || c == '.')) return false;
++    }
++    return true;
++}
++
++void to_hex(const unsigned char* digest, char* out)
++{
++    static const char* const kHex = "0123456789abcdef";
++    for (int i = 0; i < 32; ++i) {
++        out[i * 2] = kHex[digest[i] >> 4];
++        out[i * 2 + 1] = kHex[digest[i] & 15];
++    }
++    out[64] = '\0';
++}
++
++void finish_task(Job* job)
++{
++    delete job;
++    vTaskDelete(nullptr);
++}
++
++void update_task(void* arg)
++{
++    Job* job = static_cast<Job*>(arg);
++    char extra[96];
++    std::snprintf(extra, sizeof(extra), "\"version\":\"%s\",\"size\":%u", job->version, static_cast<unsigned>(job->size));
++    device_events_push("firmware_update_started", extra);
++    maipai_update_ui(true, 0);
++
++    const esp_partition_t* part = esp_ota_get_next_update_partition(nullptr);
++    if (part == nullptr || job->size > part->size) {
++        note_failure("slot");
++        finish_task(job);
++        return;
++    }
++    auto network = Board::GetInstance().GetNetwork();
++    auto http = network->CreateHttp(0);
++    http->SetTimeout(30000);
++    if (!http->Open("GET", job->url)) {
++        note_failure("connect");
++        finish_task(job);
++        return;
++    }
++    if (http->GetStatusCode() != 200) {
++        http->Close();
++        note_failure("http");
++        finish_task(job);
++        return;
++    }
++    if (http->GetBodyLength() != job->size) {
++        http->Close();
++        note_failure("size");
++        finish_task(job);
++        return;
++    }
++    char* buffer = static_cast<char*>(heap_caps_malloc(kPageSize, MALLOC_CAP_INTERNAL));
++    if (buffer == nullptr) {
++        http->Close();
++        note_failure("memory");
++        finish_task(job);
++        return;
++    }
++    esp_ota_handle_t handle = 0;
++    if (esp_ota_begin(part, job->size, &handle) != ESP_OK) {
++        heap_caps_free(buffer);
++        http->Close();
++        note_failure("begin");
++        finish_task(job);
++        return;
++    }
++    mbedtls_sha256_context sha;
++    mbedtls_sha256_init(&sha);
++    mbedtls_sha256_starts(&sha, 0);
++    size_t total = 0;
++    size_t filled = 0;
++    int last_percent = -1;
++    int last_reported = -1;
++    const int64_t started = esp_timer_get_time();
++    const char* failure = nullptr;
++    while (failure == nullptr) {
++        const int got = http->Read(buffer + filled, kPageSize - filled);
++        if (got < 0) { failure = "read"; break; }
++        filled += static_cast<size_t>(got);
++        total += static_cast<size_t>(got);
++        if (total > job->size) { failure = "long"; break; }
++        const bool end = got == 0;
++        if (filled == kPageSize || (end && filled > 0)) {
++            mbedtls_sha256_update(&sha, reinterpret_cast<const unsigned char*>(buffer), filled);
++            if (esp_ota_write(handle, buffer, filled) != ESP_OK) { failure = "write"; break; }
++            filled = 0;
++        }
++        const int percent = static_cast<int>(total * 100 / job->size);
++        if (percent != last_percent) {
++            last_percent = percent;
++            maipai_update_ui(true, percent);
++            if (percent >= last_reported + 10) {
++                last_reported = percent;
++                std::snprintf(extra, sizeof(extra), "\"percent\":%d", percent);
++                device_events_push("firmware_update_progress", extra);
++            }
++        }
++        if (end) break;
++        if (esp_timer_get_time() - started > kTotalLimitUs) { failure = "timeout"; break; }
++    }
++    http->Close();
++    heap_caps_free(buffer);
++    unsigned char digest[32];
++    mbedtls_sha256_finish(&sha, digest);
++    mbedtls_sha256_free(&sha);
++    if (failure == nullptr && total != job->size) failure = "short";
++    char got_hex[65];
++    to_hex(digest, got_hex);
++    if (failure == nullptr && std::strcmp(got_hex, job->sha) != 0) failure = "hash";
++    if (failure != nullptr) {
++        esp_ota_abort(handle);
++        note_failure(failure);
++        finish_task(job);
++        return;
++    }
++    if (esp_ota_end(handle) != ESP_OK) {
++        note_failure("image");
++        finish_task(job);
++        return;
++    }
++    esp_app_desc_t desc;
++    if (esp_ota_get_partition_description(part, &desc) != ESP_OK || std::strcmp(desc.version, job->version) != 0) {
++        note_failure("version");
++        finish_task(job);
++        return;
++    }
++    if (esp_ota_set_boot_partition(part) != ESP_OK) {
++        note_failure("boot");
++        finish_task(job);
++        return;
++    }
++    maipai_update_ui(true, 100);
++    std::snprintf(extra, sizeof(extra), "\"version\":\"%s\"", job->version);
++    device_events_push("firmware_update_done", extra);
++    ESP_LOGI(kTag, "update written to %s, restarting into %s", part->label, job->version);
++    vTaskDelay(pdMS_TO_TICKS(2500));
++    esp_restart();
++    finish_task(job);
++}
++
++void validate_task(void*)
++{
++    int healthy = 0;
++    for (int second = 0; second < kRollbackAfterSeconds; ++second) {
++        vTaskDelay(pdMS_TO_TICKS(1000));
++        const bool idle = Application::GetInstance().GetDeviceState() == kDeviceStateIdle;
++        healthy = (idle && maipai_update_link_healthy()) ? healthy + 1 : 0;
++        if (healthy >= kValidateSeconds) {
++            esp_ota_mark_app_valid_cancel_rollback();
++            device_events_push("firmware_update_validated", "");
++            ESP_LOGI(kTag, "new image validated after %d seconds of a healthy link", second + 1);
++            maipai_update_ui(false, 0);
++            vTaskDelete(nullptr);
++            return;
++        }
++    }
++    ESP_LOGE(kTag, "the new image never reached a healthy hub link; rolling back");
++    esp_ota_mark_app_invalid_rollback_and_reboot();
++    vTaskDelete(nullptr);
++}
++
++}  // namespace
++
++bool maipai_update_active()
++{
++    return s_active.load();
++}
++
++std::string maipai_update_start(const char* url, const char* sha256_hex, size_t size, const char* version)
++{
++    if (url == nullptr || std::strlen(url) < 8 || std::strlen(url) > 250 ||
++        (std::strncmp(url, "http://", 7) != 0 && std::strncmp(url, "https://", 8) != 0)) {
++        return "url";
++    }
++    if (!is_hex64(sha256_hex)) return "hash";
++    if (!safe_version(version)) return "version";
++    const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
++    if (next == nullptr || size < kMinImageBytes || size > next->size) return "size";
++    const esp_app_desc_t* running = esp_app_get_description();
++    if (running != nullptr && std::strcmp(running->version, version) == 0) return "running";
++    bool expected = false;
++    if (!s_active.compare_exchange_strong(expected, true)) return "busy";
++    auto fail = [](const char* reason) {
++        s_active = false;
++        return std::string(reason);
++    };
++    if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) return fail("busy");
++    if (!GetHAL().isBatteryCharging() && GetHAL().getBatteryLevel() < kMinBatteryPercent) return fail("battery");
++    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < 70 * 1024) return fail("memory");
++    Job* job = new (std::nothrow) Job();
++    if (job == nullptr) return fail("memory");
++    std::snprintf(job->url, sizeof(job->url), "%s", url);
++    std::snprintf(job->sha, sizeof(job->sha), "%s", sha256_hex);
++    std::snprintf(job->version, sizeof(job->version), "%s", version);
++    job->size = size;
++    if (xTaskCreate(update_task, "fwupdate", 8192, job, 5, nullptr) != pdPASS) {
++        delete job;
++        return fail("memory");
++    }
++    return "";
++}
++
++void maipai_update_init()
++{
++    const esp_partition_t* running = esp_ota_get_running_partition();
++    esp_ota_img_states_t state;
++    if (running == nullptr || esp_ota_get_state_partition(running, &state) != ESP_OK) return;
++    if (state != ESP_OTA_IMG_PENDING_VERIFY) return;
++    ESP_LOGI(kTag, "this image is pending verification; it is validated after %d healthy seconds, else rolled back", kValidateSeconds);
++    xTaskCreate(validate_task, "fwvalid", 4096, nullptr, 2, nullptr);
++}
+diff --git a/firmware/main/hal/maipai_update.h b/firmware/main/hal/maipai_update.h
+new file mode 100644
+index 0000000..31c2665
+--- /dev/null
++++ b/firmware/main/hal/maipai_update.h
+@@ -0,0 +1,27 @@
++/*
++ * SPDX-License-Identifier: MIT
++ */
++#pragma once
++#include <cstddef>
++#include <string>
++
++// Patch 133: wireless firmware update. The host asks the unit to pull one image from a one-time URL
++// on the body, check its SHA-256 and size, write the INACTIVE ota slot and reboot into it. The new
++// image stays pending-verify until the hub link has been healthy for 15 seconds, otherwise the
++// bootloader (or the 5 minute watchdog here) returns to the old slot. NVS and the assets partition
++// are never touched.
++
++/// Checks the request and starts the update task. Returns "" when started, otherwise a short reason
++/// (busy, battery, memory, url, hash, size, version, running).
++std::string maipai_update_start(const char* url, const char* sha256_hex, size_t size, const char* version);
++
++/// True from the start of an accepted update until the unit reboots or the update fails.
++bool maipai_update_active();
++
++/// Call once at boot: when this image was just installed by an update, validates it or rolls back.
++void maipai_update_init();
++
++// Provided by hal_mcp.cpp (it owns the display types): the update icon with a 0 to 100 progress bar,
++// and whether the hub link looks healthy (no connecting, offline or refused screen).
++void maipai_update_ui(bool on, int percent);
++bool maipai_update_link_healthy();

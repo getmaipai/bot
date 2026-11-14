@@ -86,6 +86,8 @@ def build_payload(
     bot_version: str | None,
     now: float,
     timers_active: int | None = None,
+    updating: bool | None = None,
+    update_progress: int | None = None,
 ) -> dict[str, Any]:
     """The check-in body. Every key is always present; unknown values are null."""
     battery = (status or {}).get("battery")
@@ -121,6 +123,10 @@ def build_payload(
         "charging": battery.get("charging") if isinstance(battery.get("charging"), bool) else None,
         # Timers and alarms the unit is holding (null until it has been asked).
         "timers_active": timers_active if isinstance(timers_active, int) else None,
+        "updating": updating if isinstance(updating, bool) else None,
+        "update_progress": update_progress
+        if isinstance(update_progress, int) and not isinstance(update_progress, bool)
+        else None,
         # Mute, vision off and full quiet as the unit last reported them (null until it has).
         # Home shows "Muted" only when muted is true and mic_off_verified is true.
         "muted": _unit_flag(facts, "muted"),
