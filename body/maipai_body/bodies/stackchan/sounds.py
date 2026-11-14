@@ -112,7 +112,8 @@ LOW_BATTERY_LINE = "My battery is low. Please plug me in."
 SPEAK_FOR_S = 30.0  # keep trying to say the line while a turn is busy, then give up
 SHUTTER_GAP_S = 2.0  # one click per picture, however the cue flaps
 POLICY_EVERY_S = 300.0  # the unit keeps its policy in flash; this only repairs a missed push
-PUSH_RETRY_S = 30.0  # after a failed push (the unit is away) wait this long before trying again
+PUSH_RETRY_S = 5.0  # after a failed push (the unit is away) wait this long before trying again
+DANCE_QUIET_AFTER_S = 30.0  # event sounds stay off this long after a music session ends
 
 
 @dataclass(frozen=True)
@@ -212,6 +213,9 @@ class SoundService:
         self._camera_up = False
         self._last_shutter = float("-inf")
         self._chimed: dict[str, list[float]] = {}  # when each cue last sounded (the last 24 hours)
+        self.dance_active: Callable[[], bool] = lambda: False  # wired to the music session's state
+        self._dance_was_active = False
+        self._dance_quiet_until = float("-inf")  # the unit's event sounds stay off after it
         self.refusals: dict[str, int] = {}
 
     # ---- settings ----
@@ -228,11 +232,27 @@ class SoundService:
                 setattr(self, attr, value)
         self._run_async(self.push_policy)
 
+    def _dance_silenced(self) -> bool:
+        """A music session is running (``dance_active``) or ended less than 30 s ago: the unit's
+        event sounds are off (owner 2026-11-14: "make those beeps go away"). Read from the
+        session's own state every time the policy is built (about once a second), so a session
+        that ends in any way restores the sounds by itself."""
+        try:
+            active = bool(self.dance_active())
+        except Exception:
+            active = False
+        now = self._clock()
+        with self._lock:
+            if self._dance_was_active and not active:
+                self._dance_quiet_until = now + DANCE_QUIET_AFTER_S
+            self._dance_was_active = active
+            return active or now < self._dance_quiet_until
+
     def policy(self) -> dict[str, object]:
         """What the unit is told: its own gate applies it, on its own clock, with the host away."""
         start, end = self._quiet_minutes()
         return {
-            "enabled": self.enabled,
+            "enabled": self.enabled and not self._dance_silenced(),
             "night_ok": self.night_ok,
             "muted": self.muted or self.quiet,  # full quiet is a mute for sounds
             "dark": bool(self._night()),

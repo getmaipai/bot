@@ -5,6 +5,11 @@ All notable changes to MaiPai Bot. Format follows
 Everything stays `0.x` until the product passes its battle-tested
 checklist (`docs/dev.md`).
 
+## [0.2.100] - 2026-11-14
+
+### Changed
+- The unit's own event sounds are off while a music session runs and for 30 s after it. The host tells the unit (`self.audio.set_sound_policy`, `enabled` false) as soon as the session starts and again when it is over; the policy follows the session's own state, so a session that ends in any way brings the sounds back. A failed push (the unit is away, for example after a hub install) is retried after 5 s instead of 30 s, so the policy reaches the unit as soon as it reconnects. Only the cues the unit keeps for safety (a picture, the urgent setup cue) still sound.
+
 ## [0.2.99] - 2026-11-14
 
 ### Changed

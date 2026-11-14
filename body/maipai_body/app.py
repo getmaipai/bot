@@ -2534,6 +2534,8 @@ async def _serve_stackchan_channels(
             identify_call_tool=voice.robot.client._call,
         )
 
+        sounds.dance_active = lambda: music_dance.state in {"nod", "watch", "show", "calm", "break"}
+
         def idle_face_allowed() -> bool:
             if not IDLE_FACES_ENABLED or behavior._active.is_set():
                 return False

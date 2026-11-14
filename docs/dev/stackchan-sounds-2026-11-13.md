@@ -70,6 +70,10 @@ Rules, enforced by one gate in `SoundService.play` (every host-initiated sound g
 
 Firmware-originated cues (the unit's own policy, `self.audio.set_sound_policy`): the unit plays the vibration tone when a tap finds no hub link (a person tapped it: allowed), the offline earcon after three minutes without the hub (patch 120) and the success chime when the link returns after an outage that sounded offline (patch 116). Those last two are not asked from the host and cannot be gated there; a hub install that takes the hub away for three minutes or more can sound them. A firmware change would be needed to remove them (not done).
 
+### Quiet during a dance (owner 2026-11-14)
+
+"Make those beeps go away": while a music session runs, and for 30 s after it, the host pushes the sound policy with `enabled` false (`SoundService._dance_silenced`, read from the music session's state every second). The unit then refuses its event sounds (plug, charged, unplug, offline, success, popup, vibration and so on) and keeps only the safety cues (a picture, the urgent setup cue). The unit's own cues that exist for routine things, found in the firmware source: the success chime on boot after activation (stock xiaozhi), the popup tone when the wake word or a tap opens listening, the offline earcon and the "I'm back" chime after an outage (patches 116 and 120), plug, unplug and charged from the power poll (patch 116), the vibration tone for a tap with no hub link. No firmware cue is tied to a dance move or a face change. The host log cannot show which cue sounded (the unit sends no event for it); the next firmware image should add a `sound_played` diagnostic event with the cue name so the log can name it.
+
 ## The voice and its licence
 
 The phrases use the household's default voice, the Stack's Chatterbox Turbo preset (`chatterbox-turbo-voice-default`), Apache-2.0

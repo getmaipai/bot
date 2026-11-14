@@ -577,3 +577,44 @@ def test_tier_two_only_runs_when_the_unit_has_no_socket_so_the_tiers_never_both_
     )
     turn = (HERE.parent / "maipai_body/bodies/stackchan/turn.py").read_text()
     assert "def _offline_line" in turn  # tier 1 is still there and unchanged in kind
+
+
+# ---- the unit's event sounds are off during a music session and 30 s after (owner 2026-11-14)
+
+
+def test_event_sounds_are_off_for_a_music_session_and_thirty_seconds_after():
+    service, unit, clock, *_ = make()
+    session = {"on": False}
+    service.dance_active = lambda: session["on"]
+    assert service.policy()["enabled"] is True
+    session["on"] = True
+    assert service.policy()["enabled"] is False  # the session runs: the unit is told to stay quiet
+    clock.now += 600
+    assert service.policy()["enabled"] is False
+    session["on"] = False  # the session ends
+    assert service.policy()["enabled"] is False
+    clock.now += 29
+    assert service.policy()["enabled"] is False
+    clock.now += 2  # more than 30 s after: the sounds return by themselves
+    assert service.policy()["enabled"] is True
+
+
+def test_the_policy_is_pushed_when_the_session_state_changes_and_retried_quickly():
+    service, unit, clock, *_ = make()
+    session = {"on": False}
+    service.dance_active = lambda: session["on"]
+    assert service.push_policy()
+    session["on"] = True
+    assert service.push_policy()
+    pushes = [a for n, a in unit.calls if n == "self.audio.set_sound_policy"]
+    assert [p["enabled"] for p in pushes] == [True, False]
+    unit.error = RuntimeError("No StackChan is connected")
+    session["on"] = False
+    service.policy()  # the tick that sees the session end
+    clock.now += 31
+    assert service.push_policy() is False
+    unit.error = None
+    clock.now += 3
+    assert service.push_policy() is False  # inside the 5 s retry wait
+    clock.now += 3
+    assert service.push_policy() is True
