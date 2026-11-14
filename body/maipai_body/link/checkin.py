@@ -7,6 +7,7 @@ the route yet; a 404 is read as "not there" and the body asks again in ten minut
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import threading
 import time
@@ -25,6 +26,8 @@ _KEPT: dict[str, tuple[str, ...]] = {
     "boot": ("reason", "crash_resets"),
     "heap_stats": ("int_free", "int_min", "psram_free"),
     "fw": ("version", "rssi"),
+    # The unit's hub link as it reports it (state ws_up, ws_retry, ws_down, the fallback tries, the attempt count and signal).
+    "wifi": ("state", "attempt"),
     # The unit restart guard (restarts this hour, 1 while it refuses more) and microphone level.
     "wake_stats": (
         "heal_n",
@@ -60,6 +63,8 @@ class UnitFacts:
                     name = key if kind != "fw" else f"fw_{key}"
                     if kind == "boot":
                         name = f"boot_{key}"
+                    if kind == "wifi":
+                        name = f"wifi_{key}"
                     if self._values.get(name) != value:
                         self._values[name] = value
                         if kind in {"boot", "fw", "privacy"}:
@@ -68,6 +73,26 @@ class UnitFacts:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._values)
+
+
+_TAILNET = ipaddress.ip_network("100.64.0.0/10")
+
+
+def link_path(address: str | None) -> str | None:
+    """How the robot reaches the hub, from the address its connection came from: "home" (a home network
+    address), "away" (a Tailscale address: the laptop relay carries it from another network), "other" (a public address),
+    or None when there is no connection."""
+    if not address:
+        return None
+    try:
+        ip = ipaddress.ip_address(address.split("%")[0])
+    except ValueError:
+        return None
+    if ip.version == 4 and ip in _TAILNET:
+        return "away"
+    if ip.is_private or ip.is_loopback or ip.is_link_local:
+        return "home"
+    return "other"
 
 
 def _unit_flag(facts: Mapping[str, Any], key: str) -> bool | None:
@@ -139,6 +164,12 @@ def build_payload(
         if isinstance(facts.get("mute_source"), str)
         else None,
         "link_encrypted": bool(link_encrypted),
+        # How the robot is connected (home, away through the laptop relay, other) and what the unit says about its hub link.
+        "link_path": link_path(address),
+        "link_state": facts.get("wifi_state") if isinstance(facts.get("wifi_state"), str) else None,
+        "link_attempt": facts.get("wifi_attempt")
+        if isinstance(facts.get("wifi_attempt"), int)
+        else None,
     }
     if isinstance(wifi_saved, list):
         names = [name[:32] for name in wifi_saved if isinstance(name, str) and name]
