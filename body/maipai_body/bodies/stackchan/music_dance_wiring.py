@@ -13,12 +13,15 @@ import logging
 import threading
 import time
 import unicodedata
+from collections import deque
 from collections.abc import Callable
 from typing import Any
 
 from maipai_body.bodies.stackchan.dance import DanceRunner
+from maipai_body.bodies.stackchan.dance_phrases import PhraseOffset, phrase_plan, steady_bpm
 from maipai_body.bodies.stackchan.music_dance import (
     AUTO_PLAN,
+    BUILD_S,
     CALM_PLAN,
     DANCE_PLAN,
     MusicDance,
@@ -28,6 +31,7 @@ from maipai_body.bodies.stackchan.music_dance import (
     parse_music_feat,
 )
 from maipai_body.bodies.stackchan.music_identify import MusicIdentify, MusicIdentifyHooks
+from maipai_body.bodies.stackchan.song_title import TitleKeeper, TitleSituation
 
 logger = logging.getLogger("maipai_body.bodies.stackchan.music_dance_wiring")
 
@@ -36,6 +40,9 @@ SWITCH_RETRY_S = 15.0
 SWITCH_TOOL = "self.music.set"
 NOTES_TOOL = "self.face.music_notes"  # firmware patch 123: notes on the face while it dances
 TITLE_TOOL = "self.face.song_title"
+ACTIVE_STATES = ("nod", "watch", "show", "calm", "break")  # a music session is on
+TEMPO_READINGS = 8
+DANCE_FROM_S = BUILD_S  # where the dance part of a full round starts (the build-up before it)
 
 
 class MusicFeatureSwitch:
@@ -162,10 +169,37 @@ def wire_music_dance(
         if not runner.situation().in_turn:
             behavior.show_face("neutral")
 
+    tempos: deque[float] = deque(maxlen=TEMPO_READINGS)
+    offsets = PhraseOffset()
+
     def request_dance() -> tuple[bool, str]:
-        plan = {"full": AUTO_PLAN, "dance": DANCE_PLAN, "calm": CALM_PLAN}[controller.plan]
+        kind = controller.plan
+        plan = {"full": AUTO_PLAN, "dance": DANCE_PLAN, "calm": CALM_PLAN}[kind]
+        if kind in ("full", "dance"):
+            # The dance part alternates head nods and side-to-side sways, in phrases of eight
+            # beats at the song's tempo (dance_phrases.py); the build-up, the ring and the length
+            # of the round stay as they were.
+            bpm = steady_bpm(tempos)
+            plan = phrase_plan(
+                plan,
+                bpm=bpm,
+                dance_from_s=DANCE_FROM_S if kind == "full" else 0.0,
+                offset=offsets.next(),
+            )
         reply = runner.request("auto", plan)
         return reply.started, reply.why
+
+    def title_situation() -> TitleSituation:
+        sit = runner.situation()
+        return TitleSituation(muted=bool(sit.muted), full_quiet=bool(sit.full_quiet))
+
+    title_keeper: TitleKeeper | None = None
+    if identify_call_tool is not None:
+        title_keeper = TitleKeeper(
+            identify_call_tool,
+            situation=title_situation,
+            music_active=lambda: controller.state in ACTIVE_STATES,
+        )
 
     identify = None
     if identify_post is not None and identify_setting is not None:
@@ -178,6 +212,9 @@ def wire_music_dance(
                 setting=identify_setting,
                 clock=clock,
                 spawn=identify_spawn,
+                show_title=(lambda text: title_keeper.show(text, clock()))
+                if title_keeper
+                else None,
             )
         )
 
@@ -206,6 +243,8 @@ def wire_music_dance(
         if feat is None:
             logger.debug("StackChan music_feat event ignored: missing or odd fields %r", extra)
             return
+        if feat.bpm > 0 and feat.tc >= 8:
+            tempos.append(float(feat.bpm))
         controller.feed(feat, clock())
 
     previous_events = behavior.dance_events
@@ -258,9 +297,14 @@ def wire_music_dance(
         if identify_call_tool is None:
             return finish("refused", "song title is not ready")
         try:
-            result = identify_call_tool(TITLE_TOOL, {"text": text})
-            if result is False:
-                return finish("refused", "face tool failed")
+            if title_keeper is not None:
+                # Home's now playing (or a chat confirm): kept until Home clears it.
+                if not title_keeper.show(text, clock(), source="home"):
+                    return finish("refused", "face tool failed")
+            else:
+                result = identify_call_tool(TITLE_TOOL, {"text": text})
+                if result is False:
+                    return finish("refused", "face tool failed")
         except Exception:
             return finish("refused", "face tool failed")
         return finish("cleared" if not text else "shown")
@@ -286,6 +330,8 @@ def wire_music_dance(
                     if switch is not None:
                         switch.sync()  # a no-op unless the last call failed (then rate limited)
                     controller.tick(clock())
+                    if title_keeper is not None:
+                        title_keeper.tick(clock())
                 except Exception:
                     now = time.monotonic()
                     if now - warned >= 60.0:

@@ -48,6 +48,9 @@ class MusicIdentifyHooks:
     setting: Callable[[], str]
     clock: Callable[[], float] = time.monotonic
     spawn: Callable[[Callable[[], None]], object] | None = None
+    # Shows (and keeps) the title; the song title keeper (song_title.py). Without it the tool is
+    # called once.
+    show_title: Callable[[str], object] | None = None
 
 
 class MusicIdentify:
@@ -371,7 +374,10 @@ class MusicIdentify:
         artist = result.get("artist")
         text = f"{title} - {artist}" if isinstance(artist, str) and artist else title
         try:
-            self._hooks.call_tool("self.face.song_title", {"text": text[:60]})
+            if self._hooks.show_title is not None:
+                self._hooks.show_title(text[:60])
+            else:
+                self._hooks.call_tool("self.face.song_title", {"text": text[:60]})
         except Exception as exc:
             logger.warning("%s showing title failed: %s: %.200s", LOG, type(exc).__name__, str(exc))
             return

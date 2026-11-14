@@ -1,0 +1,77 @@
+# Intent: the song title on the face is a white, bolder, slightly larger text on a solid black bar, close to the bottom edge (owner 2026-11-14: "text aligned to the bottom more, bolder and a tiny bit larger. it should have the background behind it solid black with text white"). This is the one element fixed to black and white instead of a theme colour, by his explicit instruction. Montserrat 16 (compiled in) replaces 14; no bold font is compiled in, so the text is drawn twice, one pixel apart. The label keeps patch 123's show, hide, 60 s deadline and quiet suppression unchanged; the black bar hides with the label.
+# Upstream: MaiPai only (stackchan_display.cc/.h). Applies after 133.
+# Check after a flash: song_title {text:"Test song - Test artist"} shows white text on a black bar at the very bottom of the screen; {text:""} hides the whole bar; with the mute mark or the link strip showing, the bar is hidden as before.
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+index ed2d56b..d8d017c 100644
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -1270,12 +1270,29 @@ void StackChanAvatarDisplay::EnsureMusicOverlays()
+         song_title_ = lv_label_create(panel);
+         lv_obj_remove_style_all(song_title_);
+         lv_obj_remove_flag(song_title_, static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+-        lv_obj_set_width(song_title_, 240);
+-        lv_obj_set_style_text_font(song_title_, &lv_font_montserrat_14, 0);
+-        lv_obj_set_style_text_color(song_title_, MintAvatar::inkColor(), 0);
++        // Owner 2026-11-14: bottom-aligned, bolder, a little larger, white text on a solid black bar
++        // (the one element that is fixed black and white, not a theme colour).
++        lv_obj_set_width(song_title_, 252);
++        lv_obj_set_style_text_font(song_title_, &lv_font_montserrat_16, 0);
++        lv_obj_set_style_text_color(song_title_, lv_color_white(), 0);
++        lv_obj_set_style_bg_color(song_title_, lv_color_black(), 0);
++        lv_obj_set_style_bg_opa(song_title_, LV_OPA_COVER, 0);
++        lv_obj_set_style_pad_hor(song_title_, 6, 0);
++        lv_obj_set_style_pad_ver(song_title_, 2, 0);
++        lv_obj_set_style_radius(song_title_, 0, 0);
+         lv_obj_set_style_text_align(song_title_, LV_TEXT_ALIGN_CENTER, 0);
+         lv_label_set_long_mode(song_title_, LV_LABEL_LONG_DOT);
+-        lv_obj_align(song_title_, LV_ALIGN_BOTTOM_MID, 0, -20);
++        lv_obj_align(song_title_, LV_ALIGN_BOTTOM_MID, 0, -4);
++        // Bolder: the same text drawn again one pixel to the right (no bold font is compiled in).
++        song_title_bold_ = lv_label_create(song_title_);
++        lv_obj_remove_style_all(song_title_bold_);
++        lv_obj_remove_flag(song_title_bold_, static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
++        lv_obj_set_width(song_title_bold_, 240);
++        lv_obj_set_style_text_font(song_title_bold_, &lv_font_montserrat_16, 0);
++        lv_obj_set_style_text_color(song_title_bold_, lv_color_white(), 0);
++        lv_obj_set_style_text_align(song_title_bold_, LV_TEXT_ALIGN_CENTER, 0);
++        lv_label_set_long_mode(song_title_bold_, LV_LABEL_LONG_DOT);
++        lv_obj_align(song_title_bold_, LV_ALIGN_TOP_MID, 1, 0);
+         lv_obj_add_flag(song_title_, LV_OBJ_FLAG_HIDDEN);
+     }
+ }
+@@ -1365,6 +1382,7 @@ void StackChanAvatarDisplay::SetSongTitle(const char* text)
+     if (title.size() > 80) return;
+     if (title.empty()) {
+         lv_label_set_text(song_title_, "");
++        if (song_title_bold_ != nullptr) lv_label_set_text(song_title_bold_, "");
+         song_title_text_.clear();
+         song_title_deadline_ = 0;
+         if (song_title_timer_ != nullptr) { lv_timer_delete(song_title_timer_); song_title_timer_ = nullptr; }
+@@ -1373,6 +1391,7 @@ void StackChanAvatarDisplay::SetSongTitle(const char* text)
+         if (title.size() > 28) short_title = title.substr(0, 25) + "...";
+         song_title_text_ = short_title;
+         lv_label_set_text(song_title_, short_title.c_str());
++        if (song_title_bold_ != nullptr) lv_label_set_text(song_title_bold_, short_title.c_str());
+         song_title_deadline_ = GetHAL().millis() + 60000;
+         if (song_title_timer_ != nullptr) {
+             lv_timer_delete(song_title_timer_);
+@@ -1382,6 +1401,7 @@ void StackChanAvatarDisplay::SetSongTitle(const char* text)
+             auto* display = static_cast<StackChanAvatarDisplay*>(lv_timer_get_user_data(timer));
+             display->song_title_deadline_ = 0;
+             if (display->song_title_ != nullptr) lv_label_set_text(display->song_title_, "");
++            if (display->song_title_bold_ != nullptr) lv_label_set_text(display->song_title_bold_, "");
+             display->song_title_text_.clear();
+             display->UpdateMusicOverlays();
+             lv_timer_delete(timer);
+diff --git a/firmware/main/hal/board/stackchan_display.h b/firmware/main/hal/board/stackchan_display.h
+index cd6f85a..7947c40 100644
+--- a/firmware/main/hal/board/stackchan_display.h
++++ b/firmware/main/hal/board/stackchan_display.h
+@@ -72,6 +72,7 @@ private:
+     lv_timer_t* cue_timer_     = nullptr;
+     lv_obj_t*   music_notes_[3] = {};
+     lv_obj_t*   song_title_ = nullptr;
++    lv_obj_t*   song_title_bold_ = nullptr;
+     lv_timer_t* music_timer_ = nullptr;
+     lv_timer_t* music_expiry_timer_ = nullptr;
+     lv_timer_t* song_title_timer_ = nullptr;
