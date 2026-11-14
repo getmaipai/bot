@@ -1955,6 +1955,26 @@ hold, so it isn't repeated here.
   return request, a 5 C charge inhibit that also applies to an unknown
   pack temperature, a 25 percent UPS reserve, a 5 s goodbye grace.
 
+## Battery and heat ladder (2026-11-14, SELF-SCENE-02)
+
+`presence/power.py`, driven from the run loop's presence tick, keeps the
+ladder with no hub. Battery, falling, 3 points of hysteresis, one line per
+rung per discharge (the body's own counter, reset only by charging): warn at
+`robot.power.warn_at` (default 20, admin-moved, kept 16 to 50; one short line
+only if someone is near, else nothing), degrade at 15 (head moves, the look
+and breathing off, screen dim; nothing spoken), one dock ask at 10, and at 5
+a goodbye, the 5 s grace, the safe pose and sleep. The goodbye is the only
+line that plays through quiet hours; the rest wait for them. Charging clears
+every state. Heat, rising, 3 C hysteresis: warm 70, hot 76, critical 82;
+critical stops motion and says one line per episode (it reads the
+temperature the existing thermal governor already samples, so the older
+Reachy rungs 70/75/78/85 of `presence/thermal.py` are untouched). Lines come
+in an adult and a child pool (`line.power.<rung>` and `_child`); the child
+pool is used when anyone present is a child or not known to be anything else,
+and never says a percentage, fault, critical or error. The state frame gains
+`charging` and `low_power` beside `battery_level` and `on_battery` where a
+battery source is wired. `low_power` is true from the degrade rung on.
+
 ## Robot device state (2026-09-29, design-resolver, G10/ROBOT-CARD-01)
 
 Full record and rationale: `home`'s own `docs/dev.md`, "Robot device

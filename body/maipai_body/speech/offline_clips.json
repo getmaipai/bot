@@ -148,6 +148,102 @@
       "sha256": ""
     },
     {
+      "id": "line.power.warn.1",
+      "text": "My battery is getting low.",
+      "file": "line_power_warn_1.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.power.warn.2",
+      "text": "I'm running a little low on power.",
+      "file": "line_power_warn_2.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.power.warn_child.1",
+      "text": "I'm getting a little sleepy.",
+      "file": "line_power_warn_child_1.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.power.warn_child.2",
+      "text": "I'm starting to feel sleepy.",
+      "file": "line_power_warn_child_2.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.power.dock.1",
+      "text": "Could someone put me on my charger?",
+      "file": "line_power_dock_1.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.power.dock.2",
+      "text": "I need my charger soon. Could someone put me on it?",
+      "file": "line_power_dock_2.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.power.dock_child.1",
+      "text": "I'm sleepy, I need my charger.",
+      "file": "line_power_dock_child_1.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.power.dock_child.2",
+      "text": "Could you put me on my charger, please? I'm sleepy.",
+      "file": "line_power_dock_child_2.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.power.goodbye.1",
+      "text": "I'm out of power, so I'm going to sleep. Goodbye for now.",
+      "file": "line_power_goodbye_1.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.power.goodbye.2",
+      "text": "Goodbye for now. I'll be back once I'm charged.",
+      "file": "line_power_goodbye_2.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.power.goodbye_child.1",
+      "text": "I'm very sleepy. Goodnight, see you after my charger.",
+      "file": "line_power_goodbye_child_1.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.power.goodbye_child.2",
+      "text": "Goodnight. I'm going to sleep now.",
+      "file": "line_power_goodbye_child_2.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.power.heat.1",
+      "text": "I'm too hot to keep moving, so I'm stopping to cool down.",
+      "file": "line_power_heat_1.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.power.heat.2",
+      "text": "I need to stop and cool down for a bit.",
+      "file": "line_power_heat_2.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.power.heat_child.1",
+      "text": "I'm too warm, so I'm taking a rest to cool off.",
+      "file": "line_power_heat_child_1.wav",
+      "sha256": ""
+    },
+    {
+      "id": "line.power.heat_child.2",
+      "text": "I'm feeling hot, so I'm going to sit still for a bit.",
+      "file": "line_power_heat_child_2.wav",
+      "sha256": ""
+    },
+    {
       "id": "char.A",
       "text": "A",
       "file": "char_A.wav",
