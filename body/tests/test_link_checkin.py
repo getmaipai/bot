@@ -164,3 +164,16 @@ def test_payload_carries_the_number_of_timers_the_unit_holds():
         timers_active=3,
     )
     assert payload["timers_active"] == 3
+
+
+def test_link_class_line_says_the_class_never_the_address():
+    from maipai_body.link.checkin import link_class_line
+
+    line = link_class_line(
+        {"link_path": "away", "link_encrypted": True},
+        {"tailnet_state": "connected", "tailnet_ip": "100.64.1.2"},
+    )
+    assert line == "link path=away encrypted=yes tailnet_client=connected tailnet_ip=known"
+    assert "100.64" not in line
+    plain = link_class_line({"link_path": "home", "link_encrypted": False}, {})
+    assert plain == "link path=home encrypted=no tailnet_client=unknown tailnet_ip=unknown"

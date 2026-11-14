@@ -3484,7 +3484,12 @@ def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power:
 
 def _start_robot_checkin(voice: Any, behavior: Any, link: LinkLifecycle, stop_event: Any) -> None:
     """Report the connected StackChan to the hub: address, firmware, memory, boot reason."""
-    from maipai_body.link.checkin import RobotCheckin, UnitFacts, build_payload
+    from maipai_body.link.checkin import (
+        RobotCheckin,
+        UnitFacts,
+        build_payload,
+        link_class_line,
+    )
 
     facts = UnitFacts()
     behavior.unit_facts = facts
@@ -3525,7 +3530,7 @@ def _start_robot_checkin(voice: Any, behavior: Any, link: LinkLifecycle, stop_ev
                     except Exception:
                         wifi_cache[:] = [now_mono, None]
                 wifi_saved = wifi_cache[1]
-        return build_payload(
+        payload = build_payload(
             device_id=device_id,
             address=address,
             connected_since=since,
@@ -3540,7 +3545,16 @@ def _start_robot_checkin(voice: Any, behavior: Any, link: LinkLifecycle, stop_ev
             wifi_saved=wifi_saved,
             link_encrypted=UNIT_LINK_ENCRYPTED,
         )
+        # Log how the link looks to Home when it changes (a class, never an address).
+        line = link_class_line(payload, facts.snapshot())
+        if link_logged[0] != line:
+            link_logged[0] = line
+            from maipai_body.bodies.stackchan.activity import log_activity
 
+            log_activity(line)
+        return payload
+
+    link_logged: list[str | None] = [None]
     reporter = RobotCheckin(
         _hub_credentials_reader(link, ""), stop_event, collect, facts, connected
     )

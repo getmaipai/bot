@@ -120,6 +120,21 @@ def tailnet_channel(address: str | None, facts: Mapping[str, Any]) -> bool:
     return peer == own and peer.version == 4 and peer in _TAILNET
 
 
+def link_class_line(payload: Mapping[str, Any], facts: Mapping[str, Any]) -> str:
+    """One plain line: the hub link's path class, its encryption flag and the unit's tailnet state.
+
+    No address appears in it (a class, never the number), so it is safe in the host log; it is
+    logged whenever it changes."""
+    ip = facts.get("tailnet_ip")
+    encrypted = "yes" if payload.get("link_encrypted") else "no"
+    client = facts.get("tailnet_state") or "unknown"
+    known = "known" if isinstance(ip, str) and ip else "unknown"
+    return (
+        f"link path={payload.get('link_path')} encrypted={encrypted} "
+        f"tailnet_client={client} tailnet_ip={known}"
+    )
+
+
 def _unit_flag(facts: Mapping[str, Any], key: str) -> bool | None:
     value = facts.get(key)
     return bool(value) if isinstance(value, int) and not isinstance(value, bool) else None
