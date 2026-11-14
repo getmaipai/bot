@@ -214,14 +214,14 @@ def build_payload(
         if isinstance(facts.get("wifi_attempt"), int)
         else None,
     }
+    # The network the unit is on, by name (owner decision 2026-11-14: the card names it). Home shows
+    # it to owners and admins only.
+    current = network.get("ssid")
+    if isinstance(current, str) and current:
+        payload["wifi_current"] = current[:32]
     if isinstance(wifi_saved, list):
         names = [name[:32] for name in wifi_saved if isinstance(name, str) and name]
         payload["wifi_saved"] = names[:10]
-        # The network the unit is on is named only when it is one of the saved names Home already
-        # shows, so the card can mark it "Connected now" without telling Home anything new.
-        ssid = network.get("ssid")
-        if isinstance(ssid, str) and ssid[:32] in names:
-            payload["wifi_current"] = ssid[:32]
     if isinstance(wifi_saved_at, (int, float)) and not isinstance(wifi_saved_at, bool):
         payload["wifi_saved_at"] = datetime.fromtimestamp(wifi_saved_at, UTC).isoformat(
             timespec="seconds"

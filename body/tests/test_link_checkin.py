@@ -55,7 +55,7 @@ def test_payload_reports_a_connected_unit():
         connected_since=60.0,
         facts={"fw_version": "0.2.31", "int_free": 25000, "boot_reason": 3},
         status={
-            "network": {"signal": "strong", "ssid": "never sent"},
+            "network": {"signal": "strong", "ssid": "SKYNET"},
             "battery": {"level": 80, "charging": False},
         },
         bot_version="0.2.31",
@@ -64,7 +64,7 @@ def test_payload_reports_a_connected_unit():
     assert payload["online"] is True and payload["ip"] == "192.0.2.7"
     assert payload["signal"] == "strong" and payload["battery_level"] == 80
     assert payload["charging"] is False and payload["boot_reason"] == 3
-    assert "never sent" not in str(payload)
+    assert payload["wifi_current"] == "SKYNET"
 
 
 def _checkin(session, **kw):

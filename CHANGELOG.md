@@ -5,6 +5,11 @@ All notable changes to MaiPai Bot. Format follows
 Everything stays `0.x` until the product passes its battle-tested
 checklist (`docs/dev.md`).
 
+## [0.2.106] - 2026-11-14
+
+### Changed
+- The check-in names the Wi-Fi network the unit is on (`wifi_current`, from the unit's own status) even when it is not a saved one, so Home can say "Connected to <name>" to owners and admins (owner 2026-11-14: "I can't tell what it's connected to"). Home shows it to owners and admins only. No firmware change.
+
 ## [0.2.105] - 2026-11-14
 
 ### Added

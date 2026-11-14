@@ -327,7 +327,7 @@ def test_checkin_carries_when_the_list_was_read_what_the_last_change_did_and_the
     )
 
 
-def test_the_current_network_is_never_named_unless_it_is_a_saved_one():
+def test_the_current_network_is_named_even_when_it_is_not_a_saved_one():
     payload = build_payload(
         device_id="d",
         address="192.0.2.7",
@@ -338,7 +338,7 @@ def test_the_current_network_is_never_named_unless_it_is_a_saved_one():
         now=10.0,
         wifi_saved=["home"],
     )
-    assert "wifi_current" not in payload and "someone-elses" not in str(payload)
+    assert payload["wifi_current"] == "someone-elses"
     bad = build_payload(
         device_id="d",
         address=None,
