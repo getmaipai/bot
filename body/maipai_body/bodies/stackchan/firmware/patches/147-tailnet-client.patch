@@ -176,9 +176,9 @@ index 0000000..5bebf6a
 +{
 +    nvs_handle_t h;
 +    if (nvs_open(kNamespace, NVS_READONLY, &h) != ESP_OK) {
-+        return false;  // never saved: OFF
++        return CONFIG_STACKCHAN_TAILNET_AUTHKEY[0] != 0;  // never saved: OFF (a private first-enrolment build, a key compiled in, starts ON)
 +    }
-+    uint8_t v = 0;
++    uint8_t v = CONFIG_STACKCHAN_TAILNET_AUTHKEY[0] != 0 ? 1 : 0;  // not found in flash: the default above
 +    nvs_get_u8(h, kKeyOn, &v);
 +    nvs_close(h);
 +    return v == 1;
