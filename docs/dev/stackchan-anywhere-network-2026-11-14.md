@@ -78,16 +78,18 @@ We do not choose B, C or D silently. Option A's gate decides.
 
 ## Part B: saved Wi-Fi networks, with priority and easy sharing
 
-### What the firmware already has
+### What the firmware already has (checked against the pinned tree, patches 1 to 133)
 
-The `esp-wifi-connect` component (`SsidManager`) saves up to 10 networks in the unit's flash. On boot, `WifiStation` scans, keeps the saved networks it can see, sorts them by signal strength and tries them in turn. When none connect it starts its own setup access point with a page at its own address. BluFi (Bluetooth setup) exists in the xiaozhi board code.
+- The `esp-wifi-connect` registry component (`SsidManager`, pinned to 3.1.x by `dependencies.lock`) saves up to 10 networks in flash. A new network goes to the FRONT of the saved list. When the list is full it silently drops the last entry. List order is only the saved order: `WifiStation` scans, sorts the saved networks it can see by signal strength and tries them in that order. On a network that cannot be joined, the unit starts its own setup access point with a page at its own address; Bluetooth setup (BluFi) also exists.
+- Patch 023 already adds unit tools on the MCP channel: `self.wifi.list_saved` (names, never passwords), `self.wifi.add`, `self.wifi.forget` (by index) and `self.wifi.switch` (moves a saved network to the front). Patch 044 makes the unit join the strongest access point of a saved network.
+- So the unit side needs no new tools. What is missing is the hub and Home side that uses them, and a true priority order.
 
-### What we add (patch 134, unit side)
+### What is new, and the constraint on it
 
-- A strict priority order: when several saved networks are in range, the one with the lowest priority number is tried first (home, then the phone hotspot, then the friend's), with signal strength only breaking ties. The order is the saved order and can be changed.
-- Device tools (the existing MCP tool channel from the hub): `self.wifi.list` (names and priorities, never passwords), `self.wifi.add` (name, password, optional priority; the password is write-only and never echoed or logged), `self.wifi.remove`, `self.wifi.move`.
-- A plain on-screen hint when no saved network connects ("No Wi-Fi: tap to add one").
-- QR scan: on the "Add Wi-Fi" screen the camera reads a standard Wi-Fi QR code (`WIFI:T:WPA;S:name;P:password;;`, what an iPhone shows under Settings, Wi-Fi, share). The camera is normally off for privacy; it is turned on only for this scan, with a clear on-screen state, and turned off at once afterwards. The code is read on the unit and never leaves it.
+- Strict priority (home first, then the hotspot, then the friend's, with signal only breaking ties) is not possible by patching the recipe's usual targets: the connect order lives in `WifiStation::HandleScanResult` inside a registry component that is downloaded at build time. Two ways, to be chosen when it is built: (a) a local override of `esp-wifi-connect` under `firmware/components` with a one-function change, pinned and checksummed, or (b) a chooser in our own `hal.cpp` that watches which saved networks are in range and, when a lower-priority one is joined while a higher one is visible, rejoins the higher one. Until then "preferred" means "tried first when the signals are close", which is what `self.wifi.switch` gives today. At a friend's house only that house's network and the hotspot are in range, so the common trip case works without it.
+- The silent drop of the last entry when the list is full must be replaced by a refusal that says what to do ("Forget one network first"), in the Home list.
+- QR scan: on the "Add Wi-Fi" screen the camera reads a standard Wi-Fi QR code (`WIFI:T:WPA;S:name;P:password;;`, what an iPhone shows under Settings, Wi-Fi, share). The camera is normally off for privacy; it is turned on only for this scan, with a clear on-screen state, and off again at once. The code is read on the unit and never leaves it. Needs firmware.
+- A plain on-screen hint when no saved network connects, reusing the existing setup-hint text in the board code: "Add a Wi-Fi network in Home, or scan its QR code".
 
 ### Home and the hub
 
@@ -109,13 +111,13 @@ The unit's own setup page and Bluetooth setup stay as the last resort.
 
 ## Reuse check
 
-Searched `tailscale`, `wireguard`, `microlink`, `ssid`, `SsidManager`, `blufi` and `wifi` in `bot/body/maipai_body/bodies/stackchan`, the firmware patches and `docs/dev`, and the xiaozhi and `esp-wifi-connect` sources. Reused: `SsidManager` and `WifiStation` (saved list and scan), the existing device tool channel, the existing status rows. New: the priority order, the Wi-Fi tools, the QR scan, MicroLink as a dependency.
+Searched `tailscale`, `wireguard`, `microlink`, `ssid`, `SsidManager`, `blufi` and `wifi` in `bot/body/maipai_body/bodies/stackchan`, the firmware patches (found patches 023 and 044) and `docs/dev`, and the xiaozhi and `esp-wifi-connect` sources. Reused: `SsidManager` and `WifiStation` (saved list and scan), the patch 023 Wi-Fi tools, the existing device tool channel, the existing status rows. New: the strict priority order, the QR scan, the hub and Home side, MicroLink as a dependency.
 
 ## Phases
 
 1. Spike (done on the build side, above): size and fit analysis. Open: the on-device low-water test.
-2. Host side, no firmware: Home "Robot Wi-Fi" list and device command, body handler, capability detection (ships over Wi-Fi to the hub).
-3. Firmware, combined with the updater (patch 133) and the faces (patch 132): Wi-Fi tools, priority, QR scan, MicroLink behind a flag. One USB visit.
+2. Host side, no firmware (the unit tools exist): a spec command kind for the Wi-Fi actions (add, forget, switch), the Home "Robot Wi-Fi" list on the Devices page (admin only), the body handler that calls the existing `self.wifi.*` tools, and a way to show the saved names. Showing the names needs the body to report them to Home; the robot check-in path that carries state returns HTTP 500 today (open bug, branch `cloud/checkin-500` not reviewed), so that bug is fixed first or the list is read through a command result. Ships over Wi-Fi to the hub.
+3. Firmware, combined with the updater (patch 133) and the faces (patch 132): strict priority, the QR scan, the setup hint and MicroLink behind a flag. One USB visit.
 4. On-device test: tailnet up on a second network, low-water gate, voice over the tailnet. Only then the flag defaults to ON and the Devices page offers "Let this robot go anywhere".
 
 ## Not verified
