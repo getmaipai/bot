@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.85] - 2026-11-14
+
+### Changed
+- The dance starts sooner and stops sooner (owner: "it takes too long to start dancing, ideally it would start head bobbing immediately to the beat", "it didnt stop within 5 seconds of no music"): the nod comes after 3 s of music (was 4), the dance 4 s after the nod (was 20), and no music for 3 s pauses it (was 4.5). Host and the unit's own session.
+- StackChan firmware patch 130: the beat grid holds steady. The tempo is the median of the last 8 folded estimates (they wandered between seconds), a beat needs most of them to agree, and the grid's phase and period move 30 percent toward each new measurement instead of jumping, so the sway stays in time.
+
 ## [0.2.84] - 2026-11-14
 
 ### Fixed

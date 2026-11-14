@@ -46,10 +46,22 @@ class Ev:
     extra: dict | None = None
 
 
+# the mechanics tests use the old waits (4 s music, 20 s to the dance, 4.5 s silence);
+# the shipped defaults are checked by the tests that pass `timing=M.NORMAL`
+LEGACY_TIMING = M.Timing(detect_s=4.0, nod_to_build_s=20.0, end_silence_s=4.5)
+
+
 class World:
     """A controller on a fake clock with recording hooks and a scripted situation."""
 
-    def __init__(self, *, auto: bool = True, sensitivity: str = "medium", **situation) -> None:
+    def __init__(
+        self,
+        *,
+        auto: bool = True,
+        sensitivity: str = "medium",
+        timing: M.Timing | None = None,
+        **situation,
+    ) -> None:
         self.t = 5000.0
         self.sit = DanceSituation(**{"battery_percent": 90, "charging": False, **situation})
         self.settings = DanceSettings()
@@ -68,7 +80,11 @@ class World:
             situation=lambda: self.sit,
         )
         self.ctl = MusicDance(
-            hooks, self.settings, spawn=lambda fn: fn(), choose_face=lambda: next(self.faces)
+            hooks,
+            self.settings,
+            spawn=lambda fn: fn(),
+            choose_face=lambda: next(self.faces),
+            timing=timing or LEGACY_TIMING,
         )
 
     def _request_dance(self):
@@ -1075,3 +1091,17 @@ def test_after_a_pause_it_goes_right_back_to_the_mood_it_was_in():
     assert medium.ctl.state == "break"
     medium.second(MUSIC)
     assert medium.ctl.state == "show" and medium.ctl.plan == "full"
+
+
+def test_the_shipped_waits_start_quickly_and_stop_quickly():
+    t = M.NORMAL
+    assert (t.detect_s, t.nod_to_build_s, t.end_silence_s) == (3.0, 4.0, 3.0)
+    world = World(timing=M.NORMAL, charging=True)
+    world.play(MUSIC, 4)  # music at +1, +2, +3, +4: a 3 s run: the nod at +4
+    assert world.names("nod") == [4.0]
+    world.play(MUSIC, 4)  # the dance starts 4 s after the nod
+    assert world.names("request_dance") == [8.0]
+    world.play(None, 2)
+    assert world.dancing
+    world.play(None, 1)  # three seconds without music: the dance stops
+    assert [a for _, n, a in world.calls if n == "stop_dance"] == ["music ended"]

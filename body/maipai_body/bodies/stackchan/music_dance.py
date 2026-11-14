@@ -217,11 +217,11 @@ def judge(feat: MusicFeat, sensitivity: str = "medium", *, relaxed: bool = False
 
 @dataclass(frozen=True)
 class Timing:
-    detect_s: float = 4.0  # clear music this long starts the nod
+    detect_s: float = 3.0  # clear music this long starts the nod
     gap_s: float = 2.5  # one missed or doubtful second between music seconds is forgiven
-    nod_to_build_s: float = 20.0  # from the nod's start to the build-up
+    nod_to_build_s: float = 4.0  # from the nod's start to the build-up
     end_silence_s: float = (
-        4.5  # no clear music this long pauses a running dance (it resumes at once)
+        3.0  # no clear music this long pauses a running dance (it resumes at once)
     )
     rearm_quiet_s: float = 10.0  # quiet this long before another session can begin
     session_gap_s: float = 60.0  # a song change: gaps under this keep the music session going
@@ -234,9 +234,9 @@ class Timing:
 NORMAL = Timing()
 # for music_test with {"fast": true}: the same chain in about 40 s
 FAST = Timing(
-    detect_s=2.0,
-    nod_to_build_s=6.0,
-    end_silence_s=4.0,
+    detect_s=1.5,
+    nod_to_build_s=2.5,
+    end_silence_s=2.0,
     rearm_quiet_s=4.0,
     session_gap_s=8.0,
     break_s=6.0,

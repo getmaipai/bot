@@ -1,0 +1,118 @@
+# Intent: start head bobbing on the beat sooner, stop sooner, and hold the beat (owner 2026-11-13: "i feel like it takes too long to start dancing, ideally it would start head bobbing immediately to the beat, but when I just watched it dance, nothing was to the beat"; "it didnt stop within 5 seconds of no music, more like 10"). The unit's own session now nods after 3 s of music (was 4), dances 4 s later (was 20) and pauses after 3 s without music (was 4.5). The beat grid is steadier: the tempo is the median of the last 8 folded estimates (they wandered between seconds, for example 88 against 122 BPM), a beat needs most of them to agree, and the grid's phase and period are nudged 30 percent toward each new measurement instead of jumping, so the sway holds the beat second to second.
+# Upstream: MaiPai only (hal_music.cpp, maipai_music_judge.h). Applies after 129.
+# Check after a flash: music with a steady beat: the head moves on the beat from the second dance round on and keeps time; stop the music: the dance stops in about 3 to 4 s.
+diff --git a/firmware/main/hal/hal_music.cpp b/firmware/main/hal/hal_music.cpp
+--- a/firmware/main/hal/hal_music.cpp
++++ b/firmware/main/hal/hal_music.cpp
+@@ -201,10 +201,48 @@
+ // fall and publish the period and the time of a recent beat for the dance (beat_sway.h).
+ void publish_beat(const mm_feat_t& f, uint32_t now_ms)
+ {
++    // A steady beat grid (patch 130): the tempo is the median of the last 8 folded estimates (they wander between
++    // seconds), a beat needs most of them to agree, and the grid's phase is nudged toward each new measurement
++    // instead of jumping to it, so the sway holds the beat from one second to the next.
+     static uint32_t last_log_ms = 0;
++    static uint32_t period_hist[8] = {};
++    static int hist_n = 0, hist_head = 0;
++    static bool grid_valid = false;
++    static uint32_t grid_ref = 0, grid_period = 0;
+     const int n = s_an->count;
+-    if (f.bpm <= 0 || f.tc < 15 || n < MM_MIN_FRAMES) {
++    if (f.bpm <= 0 || f.tc < 12 || n < MM_MIN_FRAMES) {
++        s_beat_conf.store(0);
++        grid_valid = false;
++        return;
++    }
++    period_hist[hist_head] = static_cast<uint32_t>(60000 / mb_fold_bpm(f.bpm));
++    hist_head = (hist_head + 1) % 8;
++    if (hist_n < 8) {
++        ++hist_n;
++    }
++    uint32_t sorted[8];
++    for (int i = 0; i < hist_n; ++i) {
++        sorted[i] = period_hist[i];
++    }
++    for (int i = 1; i < hist_n; ++i) {
++        const uint32_t v = sorted[i];
++        int k = i;
++        for (; k > 0 && sorted[k - 1] > v; --k) {
++            sorted[k] = sorted[k - 1];
++        }
++        sorted[k] = v;
++    }
++    const uint32_t median = sorted[hist_n / 2];
++    int agree = 0;
++    for (int i = 0; i < hist_n; ++i) {
++        const uint32_t d = period_hist[i] > median ? period_hist[i] - median : median - period_hist[i];
++        if (d * 100 <= median * 6) {
++            ++agree;
++        }
++    }
++    if (hist_n < 4 || agree < 4 || median < 250) {
+         s_beat_conf.store(0);
++        grid_valid = false;
+         return;
+     }
+     int16_t onset[MM_RING];
+@@ -212,18 +250,36 @@
+         onset[n - 1 - i] = s_an->onset[mm_ring_at(s_an, i)];  // oldest first
+     }
+     mb_beat_t beat;
+-    const int conf = mb_phase(onset, n, 1000 / MM_FPS, f.bpm, &beat);
+-    if (conf < 30 || beat.period_ms <= 0) {
+-        s_beat_conf.store(0);
+-        return;
++    const int conf = mb_phase(onset, n, 1000 / MM_FPS, static_cast<int>(60000 / median), &beat);
++    if (conf < 25 || beat.period_ms <= 0) {
++        if (!grid_valid || now_ms - s_beat_pub_ms.load() > 3000) {
++            s_beat_conf.store(0);
++        }
++        return;  // a weak second keeps the grid already published
+     }
+-    s_beat_period_ms.store(static_cast<uint32_t>(beat.period_ms));
+-    s_beat_ref_ms.store(now_ms - static_cast<uint32_t>(beat.last_beat_ms_ago));
+-    s_beat_conf.store(conf);
++    const uint32_t measured_ref = now_ms - static_cast<uint32_t>(beat.last_beat_ms_ago);
++    if (!grid_valid) {
++        grid_ref = measured_ref;
++        grid_period = static_cast<uint32_t>(beat.period_ms);
++        grid_valid = true;
++    } else {
++        const int32_t period = static_cast<int32_t>(grid_period);
++        int32_t d = static_cast<int32_t>(measured_ref - grid_ref) % period;
++        if (d > period / 2) {
++            d -= period;
++        } else if (d < -period / 2) {
++            d += period;
++        }
++        grid_ref += static_cast<uint32_t>(d * 3 / 10);
++        grid_period = (grid_period * 7 + static_cast<uint32_t>(beat.period_ms) * 3) / 10;
++    }
++    s_beat_period_ms.store(grid_period);
++    s_beat_ref_ms.store(grid_ref);
++    s_beat_conf.store(conf >= 30 ? conf : 30);
+     s_beat_pub_ms.store(now_ms);
+     if (now_ms - last_log_ms >= 30000) {
+         last_log_ms = now_ms;
+-        ESP_LOGI("HAL-Music", "beat: %d bpm (folded period %d ms), confidence %d", f.bpm, beat.period_ms, conf);
++        ESP_LOGI("HAL-Music", "beat: %d bpm (median period %u ms), confidence %d", f.bpm, static_cast<unsigned>(median), conf);
+     }
+ }
+ 
+diff --git a/firmware/main/hal/maipai_music_judge.h b/firmware/main/hal/maipai_music_judge.h
+--- a/firmware/main/hal/maipai_music_judge.h
++++ b/firmware/main/hal/maipai_music_judge.h
+@@ -11,10 +11,10 @@
+ #define MMJ_STEADY_MO_MAX 32
+ #define MMJ_STEADY_PS_MAX 20
+ #define MMJ_STEADY_FL_MAX 97
+-#define MMJ_DETECT_MS 4000U
++#define MMJ_DETECT_MS 3000U
+ #define MMJ_GAP_MS 2500U
+-#define MMJ_NOD_TO_DANCE_MS 20000U
+-#define MMJ_END_SILENCE_MS 4500U
++#define MMJ_NOD_TO_DANCE_MS 4000U
++#define MMJ_END_SILENCE_MS 3000U
+ #define MMJ_MIN_GAP_MS 120000U
+ #define MMJ_SESSION_GAP_MS 60000U
+ #define MMJ_BREAK_MS 90000U

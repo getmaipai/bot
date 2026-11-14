@@ -362,6 +362,7 @@ apply_repo_patch 126-slow-mood-and-pause.patch "$SRC"
 apply_repo_patch 127-pause-faster-resume-mood.patch "$SRC"
 apply_repo_patch 128-beat-sway.patch "$SRC"
 apply_repo_patch 129-music-clip-capture.patch "$SRC"
+apply_repo_patch 130-steady-beat-and-quick-start.patch "$SRC"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"
