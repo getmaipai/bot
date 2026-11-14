@@ -260,7 +260,9 @@ class _Bench:
         if charging is not None:
             self.battery["charging"] = charging
         self.now += seconds
-        self.loop._power_tick(False)
+        self.loop._power_tick(False)  # starts the worker read when one is due
+        self.loop._battery_status.wait_idle()
+        self.loop._power_tick(False)  # and applies the answer it brought
 
 
 def test_loop_ladder_on_a_scripted_discharge():

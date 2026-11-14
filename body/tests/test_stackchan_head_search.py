@@ -730,3 +730,35 @@ def test_the_spoken_sweep_moves_fast_through_the_robot_and_a_face_stops_it_at_on
         assert not behavior._search.active
     finally:
         behavior.close()
+
+
+def test_a_set_down_starts_one_quiet_look_for_a_face_and_says_nothing_if_it_misses():
+    """MOVE-SCENE-05: the orientation `upright` return starts the person look once. The method
+    runs against the real search schedule with a light stand-in for the rest of the behavior."""
+    import threading
+
+    from maipai_body.bodies.stackchan.head_search import HeadSearch
+
+    said: list[str] = []
+    me = SimpleNamespace(
+        _vision=object(),
+        _active=threading.Event(),
+        _rest=SimpleNamespace(stage="awake"),
+        _search=HeadSearch(),
+        night_active=lambda: False,
+        announce=said.append,
+    )
+    start = StackChanBehavior.search_after_set_down
+    assert start(me) is True
+    assert me._search.reason == "person"
+    assert start(me) is False  # one at a time
+    me._search = HeadSearch()
+    me._active.set()  # mid-reply: never
+    assert start(me) is False
+    me._active.clear()
+    me._rest.stage = "drowsy"  # asleep or resting: never
+    assert start(me) is False
+    me._rest.stage = "awake"
+    me._vision = None  # no camera, nothing to look with
+    assert start(me) is False
+    assert said == []

@@ -18,6 +18,13 @@ class Dropper:
     drop_heard = drop_tracks
 
 
+def join_search(bench: Bench) -> None:
+    """The face search runs on its own worker; wait for it before asserting."""
+    worker = bench.loop._face_search_thread
+    if worker is not None:
+        worker.join(timeout=3.0)
+
+
 def lift_and_put_down(bench: Bench) -> float:
     bench.tick(3.0, shake=True)
     started = bench.now
@@ -31,10 +38,12 @@ def test_the_face_search_runs_once_within_five_seconds_of_set_down():
     bench.tick(3.0, shake=True)
     assert searches == []  # nothing while carried
     bench.tick(motion_state.PUT_DOWN_STILL_S + 2.0)
+    join_search(bench)
     assert len(searches) == 1
     put_down_at = bench.now - 2.0  # the still window ended about here
     assert searches[0] - put_down_at <= 5.0
     bench.tick(10.0)
+    join_search(bench)
     assert len(searches) == 1
 
 
@@ -43,6 +52,7 @@ def test_light_and_camera_are_ignored_for_thirty_seconds_after_a_carry():
     bench = Bench(face_search=lambda: edges.append(bench.now))
     assert not bench.loop.sensors_settling()
     lift_and_put_down(bench)
+    join_search(bench)
     bench.now = edges[0] + SENSOR_SETTLE_S - 1
     assert bench.loop.sensors_settling()
     bench.now = edges[0] + SENSOR_SETTLE_S + 1

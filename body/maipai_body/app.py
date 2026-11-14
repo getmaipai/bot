@@ -84,6 +84,7 @@ from maipai_body.presence.entries import presence_entries_from
 from maipai_body.presence.motor_health import MotorHealth
 from maipai_body.presence.night import NightController
 from maipai_body.presence.thermal import ThermalMonitor
+from maipai_body.settings_keys import power_warn_at
 from maipai_body.speech.capture import AudioCapture
 from maipai_body.speech.follow_up import FollowUpPolicy, PeopleDirectory
 from maipai_body.speech.models import EMBEDDING, MELSPECTROGRAM, WAKE_PHRASE, ensure_wakeword_models
@@ -983,6 +984,20 @@ class StackChanBehavior:
         self._find_request = ("ask_level" if level_only else "ask", time.monotonic())
         self._react_at_once(level_only)
         return "searching"
+
+    def search_after_set_down(self) -> bool:
+        """MOVE-SCENE-05: the unit was handled and is down. Start the 0.2.59 look for a face once
+        (reason "person", under its own back-off and its never-mid-reply, asleep or at night
+        rules). It only schedules the search: the presence loop drives the head moves, so the
+        orientation tick that calls this never waits on them."""
+        if self._vision is None or self._active.is_set() or self._rest.stage != "awake":
+            return False
+        if self.night_active() or self._search.active:
+            return False
+        started = self._search.start("person", time.monotonic())
+        if started:
+            logger.info("StackChan looking for a face after being set down")
+        return started
 
     REACT_PAN_DEG = 12.0  # the first, frame-free move of a find-me: a small pan (and a glance up)
 
@@ -2908,6 +2923,11 @@ def _build_conversation_loop(
         unmute_listener=_build_unmute_listener(cache_dir, os.environ),
         band_of=people.band_of,
         presence_entries=lambda: presence_entries_from(vision_watch.current(), people.band_of),
+        # MOVE-SCENE-05: after a set down the loop runs this once on its own worker: one fresh
+        # detection cycle of the watch (the tracks were just dropped). Reachy has no battery
+        # and no screen, so the SELF-SCENE-02 ladder stays off (`battery_status` is omitted).
+        face_search=vision_watch.step,
+        power_warn_at=lambda: power_warn_at(_EYES_VALUES),
     )
     loop.subscribe_view(director.on_view)
     alarm = _build_alarm_controller(loop, audio_playback, offline, people, lambda m: _send(m))
@@ -3227,6 +3247,7 @@ def _wire_orientation(voice: Any, behavior: Any, bridge: Any, night: Any, power:
         head_pitch_deg=lambda: behavior._tracker.pose[1],
         head_moved_ago=behavior.head_moved_ago,
         missed=getattr(getattr(behavior, "missed_log", None), "note", None),
+        on_set_down=behavior.search_after_set_down,
     )
     behavior.orientation = orientation
     night.sensors_blocked = orientation.sensors_untrusted

@@ -119,6 +119,55 @@ _WAKE_ACK_PRIMITIVE = "perk"
 # the unit row decides whether the IMU read is fast enough or the mic onset is needed).
 _KNOCK_INTERVAL_S = 0.02
 _POWER_INTERVAL_S = 5.0  # SELF-SCENE-02: how often the battery is read
+
+
+class _LatestRead:
+    """The last answer of a possibly slow read, refreshed on a worker at most once per interval.
+
+    `latest()` does no I/O: it returns the cached answer (None before the first one) and, when
+    one is due and none is running, starts a daemon thread for the next. A failed read keeps the
+    previous answer."""
+
+    def __init__(self, read: Callable[[], Mapping[str, object] | None], interval_s: float) -> None:
+        self._read = read
+        self._interval_s = interval_s
+        self._lock = threading.Lock()
+        self._value: Mapping[str, object] | None = None
+        self._seq = 0  # counts answers, so a caller can tell a new one from the cached one
+        self._next_at = float("-inf")
+        self._worker: threading.Thread | None = None
+
+    def latest(self, now: float) -> tuple[Mapping[str, object] | None, int]:
+        """The cached answer and its sequence number. `now` is the caller's clock."""
+        with self._lock:
+            if self._worker is None and now >= self._next_at:
+                self._next_at = now + self._interval_s
+                self._worker = threading.Thread(target=self._refresh, name="battery", daemon=True)
+                self._worker.start()
+            return self._value, self._seq
+
+    def _refresh(self) -> None:
+        try:
+            value = self._read()
+        except Exception:
+            logger.warning("battery read failed", exc_info=True)
+            value = None
+        with self._lock:
+            if value is not None:
+                self._value = value
+                self._seq += 1
+            self._worker = None
+
+    def wait_idle(self, timeout: float = 2.0) -> None:
+        """Block until no read is running (tests; the loop never calls it)."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                if self._worker is None:
+                    return
+            time.sleep(0.002)
+
+
 _TOUCH_INTERVAL_S = 0.05  # TOUCH-01: 20 Hz reads of the worker's cached antenna probe
 _TOUCH_DRIVE_WINDOW_S = 0.06  # a write this recent counts as the worker driving the antennas
 
@@ -258,6 +307,7 @@ class ConversationLoop:
     ) -> None:
         # MOVE-SCENE-05: the one face search that runs when the body is set down.
         self._face_search = face_search
+        self._face_search_thread: threading.Thread | None = None
         self._sensors_settle_until = float("-inf")
         # S-EXPR-04: when given, gaze and idle replace the daemon's own tracker.
         self._attention = attention
@@ -381,12 +431,16 @@ class ConversationLoop:
         # lines; `battery_status` is `get_battery_status`'s shape (percent, charging), read
         # at most every `_POWER_INTERVAL_S`. Without it no battery ladder runs, and the
         # state frame reports the level as unknown.
-        self._battery_status = battery_status
+        # The read runs on a worker, at most one per `_POWER_INTERVAL_S`; the tick only looks at
+        # the last answer, so a slow or hung source never delays the conversation loop.
+        self._battery_status = (
+            _LatestRead(battery_status, _POWER_INTERVAL_S) if battery_status is not None else None
+        )
         self._power_warn_at = power_warn_at
         self._screen_dim = screen_dim
         self._power = PowerLadder()
         self._heat = HeatLadder()
-        self._power_next_at = float("-inf")
+        self._battery_seen = 0
         self._power_dimmed = False
         self._power_asleep = False
         if sleep_auto is not None:
@@ -1239,6 +1293,17 @@ class ConversationLoop:
             raise ValueError(f"claimed person must look like person-xxxxxx, got {person_id!r}")
         self._claim = person_id
 
+    def _box_view(self) -> dict[str, Any]:
+        """SCENE-01g: the watch's person boxes (the fast detector) and face boxes, as the
+        `build_present` keywords. Geometry only; empty where no watch or no fast detector."""
+        if self._vision_watch is None:
+            return {}
+        snapshot = self._vision_watch.current()
+        return {
+            "person_boxes": tuple(getattr(snapshot, "person_boxes", ()) or ()),
+            "face_boxes": tuple(getattr(snapshot, "face_boxes", ()) or ()),
+        }
+
     def _speaker_context(
         self, stt_result: Any
     ) -> tuple[SpeakerEvidence | None, list[PresentEntry] | None]:
@@ -1266,6 +1331,7 @@ class ConversationLoop:
             faces_in_view=faces,
             speaker_voice_unknown=voice_evidence is not None
             and voice_evidence["level"] == "unknown",
+            **self._box_view(),
         )
         return evidence, present
 
@@ -1289,7 +1355,10 @@ class ConversationLoop:
         """The delivery-time recheck: the speaker is still the only one present."""
         face, faces = self._face_view()
         voice_present = list(self._voice.present(now=self._identity_clock())) if self._voice else []
-        return sensitive_allowed(evidence, build_present(voice_present, face, faces_in_view=faces))
+        return sensitive_allowed(
+            evidence,
+            build_present(voice_present, face, faces_in_view=faces, **self._box_view()),
+        )
 
     def speaker_snapshot(self) -> tuple[SpeakerEvidence, list[PresentEntry]]:
         """Evidence and `present` without an utterance (face and recent voices
@@ -1298,7 +1367,7 @@ class ConversationLoop:
         now = self._identity_clock()
         voice_present = list(self._voice.present(now=now)) if self._voice else []
         return fuse(None, face, faces_in_view=faces), build_present(
-            voice_present, face, faces_in_view=faces
+            voice_present, face, faces_in_view=faces, **self._box_view()
         )
 
     def _say_clip(self, clip_id: str, fallback_text: str | None = None) -> bool:
@@ -1636,9 +1705,9 @@ class ConversationLoop:
             self._on_change()
 
     def _battery_step(self, now: float) -> None:
-        if now >= self._power_next_at:
-            self._power_next_at = now + _POWER_INTERVAL_S
-            status = self._battery_status() if self._battery_status is not None else None
+        status, seq = self._battery_status.latest(now) if self._battery_status else (None, 0)
+        if seq != self._battery_seen:
+            self._battery_seen = seq
             if status is not None:
                 percent, charging = status.get("percent"), status.get("charging")
                 if self._power_warn_at is not None:
@@ -1832,11 +1901,27 @@ class ConversationLoop:
         with self._lock:
             self._state.face_verdict = None
             self._state.face_verdict_at = None
-        if self._face_search is not None:
-            try:
-                self._face_search()
-            except Exception:
-                logger.warning("the face search after set down failed", exc_info=True)
+        self._start_face_search()
+
+    def _start_face_search(self) -> None:
+        """The one face search after a set down, on its own worker: the caller (the carry
+        handling on the presence thread, or a body's orientation hook) never waits for it.
+        A search still running absorbs a second set down."""
+        if self._face_search is None:
+            return
+        with self._lock:
+            running = self._face_search_thread
+            if running is not None and running.is_alive():
+                return
+            worker = threading.Thread(target=self._run_face_search, name="face-search", daemon=True)
+            self._face_search_thread = worker
+        worker.start()
+
+    def _run_face_search(self) -> None:
+        try:
+            self._face_search()  # type: ignore[misc]
+        except Exception:
+            logger.warning("the face search after set down failed", exc_info=True)
 
     def sensors_settling(self) -> bool:
         """True for SENSOR_SETTLE_S after a set down: light and camera readings are ignored."""
