@@ -2400,6 +2400,8 @@ Unchanged and still open, dispatched as already written: EYES-02 to EYES-07 (rev
 | RM-03's `scripts/build-space.sh` and the Space listing (design section 10, open question 1) | delete the script; mark the question closed: no listing | no vendor store |
 | design section 10's PyPI install sentence and the daemon update row; the privacy page's PyPI row | replaced by ROBOT-WHEELHOUSE-01 and BODY-DAEMON-UPDATE-01 | zero-external |
 | ROBOT-TAILSCALE-01's hub auto-provisioning half | dropped (OWNER-ANSWERS 1) | a third-party account credential in the hub |
+| ROBOT-TAILSCALE-01's "a body that cannot run Tailscale (StackChan's ESP32-S3) stays on the LAN and the bot host is the tailnet node" | superseded for the StackChan by ANYWHERE-01 (the unit joins the tailnet itself, outbound only, after an on-device RAM test); stays true for any body that cannot | owner 2026-11-14 ("bring the robot anywhere"); `dev/stackchan-anywhere-network-2026-11-14.md` |
+| ROBOT-TAILSCALE-01's out-of-scope line "a relay or proxy for a robot that is not a tailnet member" | unchanged: no relay or proxy is built; the phone-bridge idea is a documented fallback only (option D) | same note |
 | DESIGN-reachy-alive option A (wake word as yes) and its tier 0 step 6 | superseded by OFFER-01 and SAFETY-ALARM-01 | OWNER-ANSWERS 3 (spoken accept words) and DESIGN-V2 decision 2 (alarm audience) |
 | FACE-01's "opportunistic, capped, never continuous" clause; design section 4's amendment paragraph | amended by FACE-WATCH-01 | OWNER-ANSWERS 4 |
 | the "software camera-off" label | replaced by watch level `off` | OWNER-ANSWERS 4 |
@@ -2814,6 +2816,11 @@ value; RT-02 and RT-03 carry it.
       scripts/check.sh`.
 
 ## Standalone setup and the screen
+
+- [ ] **ANYWHERE-01 (bot, firmware): the robot joins the household tailnet itself** (L, spike done; on-device test open). Objective: a StackChan works on any Wi-Fi with no extra hardware. Design: `dev/stackchan-anywhere-network-2026-11-14.md` (owner-approved 2026-11-14). MicroLink (MIT, pinned and checksummed download, flag default off) with three of its four task stacks in PSRAM; Google STUN fallback removed; outbound only; auth key pasted by an admin (never minted by Home), tagged ephemeral, travels encrypted only; expiry and one-click forget shown on the Devices page. Acceptance: on the unit, at least 25 KB internal RAM free (low-water mark) for 10 minutes while connected over the tailnet with the voice link up; LAN first, tailnet when the LAN address does not answer; no key or password in any log. Reuse check: MicroLink, the existing link and status rows; nothing rewritten.
+
+- [ ] **ANYWHERE-02 (bot, Home, spec): saved Wi-Fi list, sharing and priority** (M). Objective: an admin adds and forgets the robot's saved Wi-Fi networks from the Devices page (names only; passwords write-only, never stored or logged; refuse plainly when the unit's 10-entry list is full), by the QR scan (vision rules apply) or the setup page; priority is the saved order. Uses the unit's patch 023 tools (`self.wifi.list_saved`, `add`, `forget`, `switch`). Strict priority needs a component override or a `hal.cpp` chooser (open); until then the unit joins the strongest saved network in range and "switch" only reorders and reconnects. Reuse check: patches 023 and 044, `SsidManager`, the device command channel and the check-in report.
+
 
 - [ ] **SETUP-01: Wi-Fi provisioning** (M). Objective: first boot brings
       up an access point with a captive portal and shows the same steps
