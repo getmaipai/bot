@@ -461,9 +461,8 @@ CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
 CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
 CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
 CONFIG_BT_ENABLED=n
-# Internal RAM headroom (owner priority 2026-11-14: performant, no crashes, stays connected): the Wi-Fi and lwIP buffers try PSRAM first.
-# The audio tasks already trimmed their stacks and the opus codec stack is already in PSRAM (patches 055 and 058), so this is the lever left.
-CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# Measured 2026-11-14 on the unit: CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y made internal RAM WORSE (low-water 2 KB, largest block 6.6 KB against
+# 29.7 KB and 28.7 KB without it), so it stays off.
 CFG
 if [[ "$GATEWAY_FALLBACK" == "n" ]]; then
   echo 'CONFIG_STACKCHAN_FALLBACK_GATEWAY=n' >> "$FW/sdkconfig.defaults.local"
