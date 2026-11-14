@@ -7,6 +7,10 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.95] - 2026-11-14
+
+- The firmware update check sends the unit's firmware version to Home and downloads the image without a token, matching what Home serves. 0.2.94 asked without the version and so never saw an update.
+
 ## [0.2.94] - 2026-11-14
 
 - Wireless firmware update. Firmware patch 133 adds the tool `self.firmware.update`: the unit pulls one image from a one-time URL on the body, checks its SHA-256 and size, writes only the inactive slot and restarts; the new image is validated after 15 healthy seconds or rolled back. A turning ring and a progress bar show while it updates. The body decides when (idle, not muted, battery 40 percent or charging, 6 hour backoff after a failure) and fetches the verified image from Home. The first updater firmware must be flashed once by USB; after that app-only firmware releases arrive over Wi-Fi.

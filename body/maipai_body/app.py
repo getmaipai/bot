@@ -2223,8 +2223,11 @@ async def _serve_stackchan_channels(
 
             cookie, base_url = hub_credentials()
             try:
+                # Home requires the unit's firmware version; an unknown one counts as the oldest.
+                current = behavior.unit_facts.snapshot().get("fw_version") or "0.0.0"
                 response = requests.get(
                     f"{base_url}/api/devices/me/firmware-update",
+                    params={"current": current},
                     headers={"Cookie": f"session={cookie}"},
                     timeout=10,
                 )
@@ -2235,17 +2238,11 @@ async def _serve_stackchan_channels(
             return firmware_answer[0]
 
         def download_firmware(path: Path) -> None:
-            from urllib.parse import urlencode
-
             import requests
 
-            answer = firmware_answer[0]
-            if not isinstance(answer, dict) or not isinstance(answer.get("url_token"), str):
-                raise ValueError("missing Home firmware download token")
             cookie, base_url = hub_credentials()
             response = requests.get(
-                f"{base_url}/api/devices/me/firmware-update/app.bin?"
-                f"{urlencode({'token': answer['url_token']})}",
+                f"{base_url}/api/devices/me/firmware-update/app.bin",
                 headers={"Cookie": f"session={cookie}"},
                 timeout=120,
                 stream=True,
