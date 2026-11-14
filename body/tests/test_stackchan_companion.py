@@ -83,6 +83,8 @@ def test_dances_and_event_kinds_export_the_supported_sets():
             "timer_missed",
             "music_feat",
             "music_stats",
+            "music_clip_ready",
+            "music_clip_cancelled",
             "privacy",
             "privacy_refused",
         }
@@ -164,6 +166,19 @@ def test_poll_events_accepts_an_already_parsed_list():
     companion = StackChanCompanion(call)
 
     assert companion.poll_events() == [DeviceEvent(kind="head_swipe_forward", at_ms=9)]
+
+
+def test_poll_events_preserves_music_clip_event_metadata():
+    call = _RecordingCall()
+    call.results["self.robot.get_events"] = [
+        {"kind": "music_clip_ready", "at_ms": 12, "bytes": 321, "rate": 8000, "codec": "mulaw"},
+        {"kind": "music_clip_cancelled", "at_ms": 13, "why": "wake"},
+    ]
+    events = StackChanCompanion(call).poll_events()
+    assert [event.extra for event in events] == [
+        {"bytes": 321, "rate": 8000, "codec": "mulaw"},
+        {"why": "wake"},
+    ]
 
 
 def test_poll_events_keeps_unknown_kinds_for_forward_compatibility():

@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.89] - 2026-11-14
+
+### Fixed
+- Song naming works: the unit's clip-ready and clip-cancelled events now keep their details (the byte count, rate and codec were dropped, so every clip was rejected as invalid).
+- Song naming also runs when the dance is held back (a nod or dance less than 2 minutes ago, a low battery or a break), so a second song soon after the first is still named.
+
 ## [0.2.88] - 2026-11-14
 
 ### Changed

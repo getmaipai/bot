@@ -61,6 +61,7 @@ class MusicIdentify:
         self._session_running = False
         self._capture_tries = 0
         self._retry_at: float | None = None
+        self._adhoc = False
         self._lock = threading.Lock()
 
     def on_session_start(self, now: float) -> None:
@@ -77,7 +78,7 @@ class MusicIdentify:
         sit = self._hooks.situation()
         setting = self._hooks.setting()
         if setting == "ask":
-            logger.info("%s waits for the confirm (setting=ask)", LOG)
+            logger.info("%s skipped: music heard but setting=ask; waits for the confirm", LOG)
             return
         for condition, reason in (
             (setting == "off", "setting=off"),
@@ -98,6 +99,43 @@ class MusicIdentify:
             )
             return
         self._start_capture(now)
+
+    def on_music_heard(self, now: float, why: str) -> None:
+        """Name music even when the dance gate suppresses movement."""
+        sit = self._hooks.situation()
+        setting = self._hooks.setting()
+        reason = None
+        if not sit.awake:
+            reason = "asleep"
+        elif sit.night:
+            reason = "night"
+        elif sit.muted:
+            reason = "muted"
+        elif sit.full_quiet:
+            reason = "full_quiet"
+        elif sit.in_turn:
+            reason = "in_turn"
+        elif sit.offline:
+            reason = "offline"
+        elif not sit.connected:
+            reason = "not connected"
+        elif setting == "off":
+            reason = "setting=off"
+        elif setting == "ask":
+            logger.info("%s waits for the confirm (setting=ask)", LOG)
+            return
+        elif now - self._last_result < RETRY_S:
+            reason = f"retry window has {RETRY_S - (now - self._last_result):.1f} seconds left"
+        elif self._captured:
+            reason = "capture already pending"
+        if reason is not None:
+            logger.info("%s skipped: music heard but %s", LOG, reason)
+            return
+        self._start_capture(now)
+        with self._lock:
+            if self._captured:
+                self._adhoc = True
+                self._capture_tries = 1
 
     def _start_capture(self, now: float) -> None:
         try:
@@ -156,7 +194,15 @@ class MusicIdentify:
             why = extra.get("why") if isinstance(extra, dict) else None
             with self._lock:
                 ambient = self._captured and self._request_id is None
-                retry = ambient and self._session_running and self._capture_tries < 2
+                adhoc = self._adhoc
+                retry = ambient and not adhoc and self._session_running and self._capture_tries < 2
+                if adhoc:
+                    self._capture_tries = 0
+                    self._retry_at = None
+                    self._adhoc = False
+                    self._pending_since = None
+                    self._captured = False
+                    self._request_id = None
                 if retry:
                     self._retry_at = now + RETRY_CAPTURE_S
                     self._captured = False
@@ -273,13 +319,18 @@ class MusicIdentify:
             logger.warning("%s identify post raised: %s: %.200s", LOG, type(exc).__name__, str(exc))
             return
         finally:
-            if request_id is not None:
+            with self._lock:
+                adhoc = self._adhoc
+            if request_id is not None or adhoc:
                 with self._lock:
                     if self._request_id == request_id:
                         # No music session ends an explicit request: free the slot.
                         self._request_id = None
                         self._captured = False
                         self._pending_since = None
+                        self._capture_tries = 0
+                        self._retry_at = None
+                        self._adhoc = False
         self._last_result = now
         if result is None:
             logger.info("%s identify post returned None", LOG)
@@ -325,6 +376,10 @@ class MusicIdentify:
             self._pending_since = None
             self._captured = False
             self._request_id = None
+            if self._adhoc:
+                self._capture_tries = 0
+                self._retry_at = None
+                self._adhoc = False
 
     def tick(self, now: float) -> None:
         with self._lock:
@@ -334,8 +389,16 @@ class MusicIdentify:
                 waited = now - pending
                 self._pending_since = None
                 self._captured = False
+                adhoc = self._adhoc
+                if adhoc:
+                    self._capture_tries = 0
+                    self._retry_at = None
+                    self._adhoc = False
                 retry = (
-                    self._request_id is None and self._session_running and self._capture_tries < 2
+                    not adhoc
+                    and self._request_id is None
+                    and self._session_running
+                    and self._capture_tries < 2
                 )
                 self._retry_at = now + RETRY_CAPTURE_S if retry else None
                 if not retry:

@@ -321,6 +321,7 @@ class MusicDanceHooks:
     notes: Callable[[int], object] | None = None  # music notes on the face: 0 hides, 1 nod, 3 dance
     on_session_start: Callable[[], object] | None = None
     on_session_end: Callable[[], object] | None = None
+    on_music_heard: Callable[[str], object] | None = None
     stop_bob: Callable[[], object] | None = None  # stops the up and down nodding on the unit
     wonder: Callable[[], object] | None = (
         None  # the curious look when the music is gone, then the usual face
@@ -726,6 +727,15 @@ class MusicDance:
         why, _ = self._gate(now, for_nod=True)
         if why is not None:
             self._set_state("spent", f"no nod: {why}")
+            if not self.testing and self._hooks.on_music_heard is not None:
+                logger.info(
+                    "StackChan music: the dance is suppressed (%s); song naming may still listen",
+                    why,
+                )
+                try:
+                    self._hooks.on_music_heard(why)
+                except Exception:
+                    logger.debug("StackChan music heard hook failed", exc_info=True)
             return
         face = self._choose_face()
         self._session_test = self.testing

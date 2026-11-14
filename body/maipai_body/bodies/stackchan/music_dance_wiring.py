@@ -190,6 +190,9 @@ def wire_music_dance(
             notes=(lambda count: switch.call(NOTES_TOOL, {"count": count})) if switch else None,
             on_session_start=(lambda: identify.on_session_start(clock())) if identify else None,
             on_session_end=identify.on_session_end if identify else None,
+            on_music_heard=(
+                (lambda why: identify.on_music_heard(clock(), why)) if identify else None
+            ),
             stop_bob=stop_bob if switch else None,
             wonder=wonder,
         ),

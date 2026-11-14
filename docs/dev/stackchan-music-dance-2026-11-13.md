@@ -97,6 +97,8 @@ Needs: the firmware with patches 100 and 101 flashed, the bot release with this 
 
 ### On-demand song naming
 
+Ambient song naming also starts when clear music is heard but a dance or nod is suppressed by a gate, so movement restrictions do not prevent naming the song. `music_clip_ready` and `music_clip_cancelled` are in `DIAGNOSTIC_KINDS` so the companion preserves their metadata and cancellation reason for the identify handler.
+
 The host log prefixes this path with `StackChan song naming:`. `skipped` lines name the setting or guard that prevented a capture; `capture started` confirms the requested duration and attempt; `clip cancelled` includes the unit's `why`; `clip ready` and `clip read complete` report metadata size and transfer reads. `clip read failed`, `invalid clip metadata`, `identify post raised`, and the HTTP/JSON lines identify failures without logging audio or credentials. `the unit never said the clip was ready` means the 25-second deadline elapsed. Ambient cancel and expiry lines indicate a retry is scheduled 12 seconds later; only one retry is allowed in a running session. `Home status` reports Home's decision, while `matched` reports the title.
 
 Home can send the StackChan `listen_song` device command with `{request_id, seconds?}`. The body

@@ -297,6 +297,47 @@ def test_one_capture_per_session_and_600_second_result_cooldown():
     assert sum(name == "self.music.capture_clip" for name, _ in f.calls) == 2
 
 
+def test_suppressed_music_capture_busy_then_retry_guard_and_cancel_releases(caplog):
+    f = Fixture()
+    identify = f.build()
+    with caplog.at_level(logging.INFO):
+        identify.on_music_heard(0, "a nod was less than 2 minutes ago")
+        identify.on_music_heard(1, "a nod was less than 2 minutes ago")
+    assert sum(name == "self.music.capture_clip" for name, _ in f.calls) == 1
+    identify.on_clip_event("music_clip_ready", ready(0), 2)
+    with caplog.at_level(logging.INFO):
+        identify.on_music_heard(10, "a nod was less than 2 minutes ago")
+    assert "retry window" in caplog.records[-1].message
+
+
+def test_suppressed_music_cancelled_clip_frees_the_slot_for_the_next_song():
+    f = Fixture()
+    identify = f.build()
+    identify.on_music_heard(0, "a nod was less than 2 minutes ago")
+    identify.on_clip_event("music_clip_cancelled", {"why": "wake"}, 2)
+    identify.on_music_heard(13, "a nod was less than 2 minutes ago")
+    assert sum(name == "self.music.capture_clip" for name, _ in f.calls) == 2
+
+
+@pytest.mark.parametrize(
+    "situation,setting,reason",
+    [
+        ({"awake": False}, "on", "asleep"),
+        ({"night": True}, "on", "night"),
+        ({"muted": True}, "on", "muted"),
+        ({}, "off", "setting=off"),
+    ],
+)
+def test_suppressed_music_capture_safety_guards(situation, setting, reason, caplog):
+    f = Fixture(**situation)
+    f.setting = setting
+    identify = f.build()
+    with caplog.at_level(logging.INFO):
+        identify.on_music_heard(0, "dance refused")
+    assert not any(name == "self.music.capture_clip" for name, _ in f.calls)
+    assert any(reason in record.message for record in caplog.records)
+
+
 @pytest.mark.parametrize(
     "result",
     [
@@ -335,3 +376,14 @@ def test_match_title_variants_and_private_info_log(title, artist, expected, capl
         start_and_ready(f, identify, 1)
     assert f.calls[-1] == ("self.face.song_title", {"text": expected})
     assert all(title not in record.message for record in caplog.records)
+
+
+def test_suppressed_music_capture_is_freed_when_the_post_to_home_raises():
+    f = Fixture()
+    identify = f.build()
+    identify.on_music_heard(0, "a nod was less than 2 minutes ago")
+    f.result = RuntimeError("Home answered 500")
+    identify.on_clip_event("music_clip_ready", ready(0), 1)
+    f.result = None
+    identify.on_music_heard(2, "a nod was less than 2 minutes ago")
+    assert sum(name == "self.music.capture_clip" for name, _ in f.calls) == 2

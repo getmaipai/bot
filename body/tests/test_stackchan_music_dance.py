@@ -70,6 +70,7 @@ class World:
         self.calls: list[tuple[float, str, object]] = []
         self.dancing = False
         self.dance_refusal = ""
+        self.heard: list[str] = []
         self.faces = iter(["happy", "wink"] * 20)
         hooks = MusicDanceHooks(
             request_dance=self._request_dance,
@@ -80,6 +81,7 @@ class World:
             situation=lambda: self.sit,
             stop_bob=lambda: self.calls.append((self.t, "stop_bob", None)),
             wonder=lambda: self.calls.append((self.t, "wonder", None)),
+            on_music_heard=self.heard.append,
         )
         self.ctl = MusicDance(
             hooks,
@@ -309,7 +311,21 @@ def test_a_dance_that_the_runner_refuses_spends_the_session():
     world.dance_refusal = "the unit is not upright"
     world.play(MUSIC, 26)
     assert world.ctl.state == "spent"
-    assert not world.dancing
+
+
+def test_refused_nod_still_notifies_song_naming_but_testing_does_not():
+    world = World()
+    world.ctl._last_nod = world.t - 60
+    world.ctl._try_nod(world.t)
+    assert world.ctl.state == "spent"
+    assert world.heard == ["a nod was less than 2 minutes ago"]
+    assert not world.names("nod")
+
+    test_world = World(auto=False)
+    test_world.ctl.start_test(test_world.t)
+    test_world.ctl._last_nod = test_world.t - 60
+    test_world.ctl._try_nod(test_world.t)
+    assert test_world.heard == []
 
 
 # ------------------------------------------------------------------ gates
