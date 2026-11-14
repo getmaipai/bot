@@ -1,0 +1,18 @@
+# Intent: the app description version is the release version (a fix for patch 133). The image's esp_app_desc version was the fixed "1.5.1-maipai.1" while the updater compares the written slot's description version with the version it was asked to install (the release version, e.g. 0.2.102), so every over-the-air update would have been refused with reason "version" and the unit would have needed USB again. A release build now passes MAIPAI_FIRMWARE_VERSION (recipe.sh) and CMake uses it as PROJECT_VER; a build without it keeps the old string.
+# Check after a flash: `unit firmware: fw version=` and the app description version agree; an over-the-air update to a higher version passes the version check and reboots into it.
+diff --git a/firmware/CMakeLists.txt b/firmware/CMakeLists.txt
+index 3ad6095..e7e1017 100644
+--- a/firmware/CMakeLists.txt
++++ b/firmware/CMakeLists.txt
+@@ -3,6 +3,11 @@
+ cmake_minimum_required(VERSION 3.16)
+ 
+ set(PROJECT_VER "1.5.1-maipai.1")
++# A release build passes its version (recipe.sh gets MAIPAI_FIRMWARE_VERSION): the app description then carries it,
++# which the updater (patch 133) compares with the version it was asked to install.
++if(DEFINED ENV{MAIPAI_FIRMWARE_VERSION} AND NOT "$ENV{MAIPAI_FIRMWARE_VERSION}" STREQUAL "")
++    set(PROJECT_VER "$ENV{MAIPAI_FIRMWARE_VERSION}")
++endif()
+ add_definitions(-DFIRMWARE_VERSION=\"${PROJECT_VER}\")
+ 
+ # Add this line to disable the specific warning

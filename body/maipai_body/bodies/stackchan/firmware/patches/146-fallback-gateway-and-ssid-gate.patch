@@ -1,0 +1,320 @@
+# Intent: the away-from-home fallback must work whatever Wi-Fi the friend has and must never hand the pairing token to a stranger's network (owner 2026-11-14: 'this needs to be robust to work whatever his home wifi is'). Patch 144 tried a fixed 192.168.2.1; macOS Internet Sharing may pick another subnet, so the fallback host is now the unit's current Wi-Fi default GATEWAY first (the laptop on its own Internet Sharing network, any subnet), then 192.168.2.1, chosen at each attempt. The fallback only runs on a network whose name starts with CONFIG_STACKCHAN_FALLBACK_SSID_PREFIX (default 'maipai', case-insensitive): the owner names the laptop's sharing network 'maipai-trip', the unit joins it only with its WPA2 password, so a friend's router or a hotel never receives the saved token, and a lookalike network cannot join without the password.
+# Check after a flash: on a network named maipai-trip with the home address unreachable the serial log says 'fallback host for attempt N: <gateway>'; on any other network it says 'fallback not used: this Wi-Fi network is not a maipai* network' and no connection is attempted to its gateway; core test: body/tests/firmware/fallback_core_test.c.
+diff --git a/firmware/main/Kconfig.projbuild b/firmware/main/Kconfig.projbuild
+index e3685b42a..bccf10776 100644
+--- a/firmware/main/Kconfig.projbuild
++++ b/firmware/main/Kconfig.projbuild
+@@ -54,7 +54,18 @@ config STACKCHAN_FALLBACK_HUB_HOST
+         When the saved home address of the hub cannot be reached, the voice and avatar channels try this host
+         on the same ports with the same saved pairing token, then return home by themselves (retried about
+         once a minute). The default is the fixed address macOS Internet Sharing gives the laptop on its own
+-        Wi-Fi, where a small relay forwards the two ports to the hub. Empty turns the fallback off.
++        Wi-Fi, where a small relay forwards the two ports to the hub. It is the second candidate: the first is the
++        Wi-Fi gateway the unit currently has (the laptop, whatever subnet macOS picked). Empty leaves only the gateway.
++
++config STACKCHAN_FALLBACK_SSID_PREFIX
++    string "Only use the fallback on Wi-Fi networks whose name starts with"
++    default "maipai"
++    help
++        The fallback sends the saved pairing token to the gateway of the network the unit is on. A stranger's network
++        (a friend's router, a hotel) must never receive it, so the fallback only runs on a network whose name starts
++        with this text (case-insensitive): the owner names the laptop's Internet Sharing network accordingly (for
++        example "maipai-trip"; the unit joins it only with its WPA2 password, so a lookalike network cannot take part).
++        An empty value allows every network (development only).
+ 
+ config STACKCHAN_DEV_VOICE_URL
+     string "Development override: voice websocket URL"
+diff --git a/firmware/main/hal/maipai_fallback.h b/firmware/main/hal/maipai_fallback.h
+index 4671c12c7..2bdbae5d9 100644
+--- a/firmware/main/hal/maipai_fallback.h
++++ b/firmware/main/hal/maipai_fallback.h
+@@ -18,13 +18,24 @@ bool maipai_url_parts(const std::string& url, std::string* host, int* port, std:
+ // reconnect loop for a minute or more: this is the "a few seconds without answer" check.
+ bool maipai_probe_tcp(const std::string& host, int port, int timeout_ms);
+ 
++// True when a fallback is compiled in (a configured host or the gateway rule): what the reconnect loops use to decide
++// whether a failing home address leads to a fallback attempt at all. Which host and whether this network may use it is
++// decided per attempt (maipai_fallback_host).
++bool maipai_fallback_configured();
++
++// The fallback host for attempt number `attempt`: the Wi-Fi default gateway first (the laptop on its own Internet
++// Sharing network, whatever subnet it picked), then CONFIG_STACKCHAN_FALLBACK_HUB_HOST. Empty when the connected
++// network's name does not start with CONFIG_STACKCHAN_FALLBACK_SSID_PREFIX (the pairing token is never sent to an
++// unknown network's gateway), when no candidate differs from `home_host`, or when the fallback is off.
++std::string maipai_fallback_host(int attempt, const std::string& home_host);
++
+ // The voice URL to try after the home address failed: ws://<fallback host>:<the port of the saved url><path of
+ // the saved url>. The fallback uses the same ports as the home address (the laptop relay listens on them), so a
+ // port change on the hub needs no new firmware. Empty when no fallback host is configured or the saved url does
+ // not parse.
+-std::string maipai_fallback_voice_url(const std::string& saved_url);
++std::string maipai_fallback_voice_url(const std::string& saved_url, int attempt = 0);
+ 
+ // The avatar base URL to try after the home address failed: ws://<fallback host>:<the port of the saved avatar
+ // base>. `saved_base` is the base the avatar channel holds (http://host:port or ws://host:port). Empty when no
+ // fallback host is configured or it does not parse.
+-std::string maipai_fallback_avatar_base(const std::string& saved_base);
++std::string maipai_fallback_avatar_base(const std::string& saved_base, int attempt = 0);
+diff --git a/firmware/main/hal/maipai_fallback.cc b/firmware/main/hal/maipai_fallback.cc
+index 4eff33170..e9f2b12ed 100644
+--- a/firmware/main/hal/maipai_fallback.cc
++++ b/firmware/main/hal/maipai_fallback.cc
+@@ -2,8 +2,11 @@
+  * SPDX-License-Identifier: MIT
+  */
+ #include "maipai_fallback.h"
++#include "maipai_fallback_core.h"
+ 
+ #include <esp_log.h>
++#include <esp_netif.h>
++#include <esp_wifi.h>
+ #include <esp_timer.h>
+ #include <fcntl.h>
+ #include <lwip/inet.h>
+@@ -88,28 +91,65 @@ bool maipai_probe_tcp(const std::string& host, int port, int timeout_ms)
+     return ok;
+ }
+ 
+-std::string maipai_fallback_voice_url(const std::string& saved_url)
++bool maipai_fallback_configured()
+ {
+-    if (CONFIG_STACKCHAN_FALLBACK_HUB_HOST[0] == '\0') {
++    return true;  // the gateway rule is always compiled in; the SSID prefix and the candidates decide per attempt
++}
++
++std::string maipai_fallback_host(int attempt, const std::string& home_host)
++{
++    wifi_ap_record_t ap;
++    memset(&ap, 0, sizeof(ap));
++    const char* ssid = nullptr;
++    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
++        ssid = reinterpret_cast<const char*>(ap.ssid);
++    }
++    if (!mf_ssid_allowed(ssid, CONFIG_STACKCHAN_FALLBACK_SSID_PREFIX)) {
++        static bool said = false;
++        if (!said) {
++            said = true;
++            ESP_LOGI(TAG, "fallback not used: this Wi-Fi network is not a '%s*' network", CONFIG_STACKCHAN_FALLBACK_SSID_PREFIX);
++        }
+         return std::string();
+     }
++    char gateway[16] = {0};
++    esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
++    esp_netif_ip_info_t ip;
++    if (netif != nullptr && esp_netif_get_ip_info(netif, &ip) == ESP_OK && ip.gw.addr != 0) {
++        esp_ip4addr_ntoa(&ip.gw, gateway, sizeof(gateway));
++    }
++    char host[16] = {0};
++    if (!mf_pick_host(attempt, gateway, CONFIG_STACKCHAN_FALLBACK_HUB_HOST, home_host.c_str(), host, sizeof(host))) {
++        return std::string();
++    }
++    ESP_LOGI(TAG, "fallback host for attempt %d: %s (gateway %s)", attempt, host, gateway[0] != '\0' ? gateway : "none");
++    return std::string(host);
++}
++
++std::string maipai_fallback_voice_url(const std::string& saved_url, int attempt)
++{
+     std::string host, path;
+     int port = 0;
+     if (!maipai_url_parts(saved_url, &host, &port, &path)) {
+         return std::string();
+     }
+-    return std::string("ws://") + CONFIG_STACKCHAN_FALLBACK_HUB_HOST + ":" + std::to_string(port) + path;
++    const std::string fallback_host = maipai_fallback_host(attempt, host);
++    if (fallback_host.empty()) {
++        return std::string();
++    }
++    return std::string("ws://") + fallback_host + ":" + std::to_string(port) + path;
+ }
+ 
+-std::string maipai_fallback_avatar_base(const std::string& saved_base)
++std::string maipai_fallback_avatar_base(const std::string& saved_base, int attempt)
+ {
+-    if (CONFIG_STACKCHAN_FALLBACK_HUB_HOST[0] == '\0') {
+-        return std::string();
+-    }
+     std::string host, path;
+     int port = 0;
+     if (!maipai_url_parts(saved_base, &host, &port, &path)) {
+         return std::string();
+     }
+-    return std::string("ws://") + CONFIG_STACKCHAN_FALLBACK_HUB_HOST + ":" + std::to_string(port);
++    const std::string fallback_host = maipai_fallback_host(attempt, host);
++    if (fallback_host.empty()) {
++        return std::string();
++    }
++    return std::string("ws://") + fallback_host + ":" + std::to_string(port);
+ }
+diff --git a/firmware/main/hal/hal_ws_avatar.cpp b/firmware/main/hal/hal_ws_avatar.cpp
+index 86e15eaac..6cc9bb009 100644
+--- a/firmware/main/hal/hal_ws_avatar.cpp
++++ b/firmware/main/hal/hal_ws_avatar.cpp
+@@ -90,13 +90,10 @@ public:
+             base = "wss://" + base.substr(8);
+         }
+         _url = fmt::format("{}/stackChan/ws?deviceType=StackChan", base);
+-        {
+-            // The fallback endpoint (patch 144): the same ports on the fallback host (the laptop's own Wi-Fi).
+-            const std::string fb = maipai_fallback_avatar_base(base);
+-            if (!fb.empty()) {
+-                _fallback_url = fmt::format("{}/stackChan/ws?deviceType=StackChan", fb);
+-            }
+-        }
++        // The fallback endpoint (patches 144 and 146): the same ports on the Wi-Fi gateway (the laptop on its own
++        // Internet Sharing network), chosen at each attempt and only on a 'maipai*' network.
++        _saved_base       = base;
++        _fallback_enabled = maipai_fallback_configured();
+ 
+         connect();
+ 
+@@ -199,18 +196,21 @@ public:
+         std::string url = _url;
+         bool using_fallback = false;
+         _trying_home        = false;
+-        if (_on_fallback && !_fallback_url.empty()) {
++        if (_on_fallback && _fallback_enabled) {
+             if (GetHAL().millis() - _last_home_try_ms >= 60000) {
+                 _trying_home       = true;
+                 _last_home_try_ms  = GetHAL().millis();
+             } else {
+-                url            = _fallback_url;
+-                using_fallback = true;
++                const std::string fb = maipai_fallback_avatar_base(_saved_base, _fb_attempt++);
++                if (!fb.empty()) {
++                    url            = fmt::format("{}/stackChan/ws?deviceType=StackChan", fb);
++                    using_fallback = true;
++                }  // else this network may not use the fallback (patch 146): the home address is tried
+             }
+         }
+         bool connected = false;
+         bool probed_out = false;
+-        if (!using_fallback && !_fallback_url.empty() && (_home_fails > 0 || _on_fallback)) {
++        if (!using_fallback && _fallback_enabled && (_home_fails > 0 || _on_fallback)) {
+             // The stock connect has no timeout: ask the home address first, for two seconds at most.
+             std::string host, path;
+             int port = 0;
+@@ -224,7 +224,7 @@ public:
+         if (!connected) {
+             ESP_LOGE(_tag.c_str(), "Failed to connect%s", probed_out ? " (home address gave no answer)" : "");
+             GetHAL().onWsLog.emit(CommonLogLevel::Error, "Connect to server Failed");
+-            if (!_fallback_url.empty()) {
++            if (_fallback_enabled) {
+                 if (using_fallback) {
+                     _last_home_try_ms = 0;  // the fallback failed too: the next attempt tries home
+                 } else if (!_trying_home && ++_home_fails >= 2) {
+@@ -233,7 +233,7 @@ public:
+                     ESP_LOGW(_tag.c_str(), "Home address failed twice: trying the fallback endpoint");
+                 }
+             }
+-        } else if (!_fallback_url.empty()) {
++        } else if (_fallback_enabled) {
+             if (using_fallback) {
+                 ESP_LOGI(_tag.c_str(), "Connected through the fallback endpoint");
+             } else {
+@@ -522,7 +522,9 @@ public:
+ private:
+     std::unique_ptr<WebSocket> _websocket;
+     std::string _url;
+-    std::string _fallback_url;  // patch 144: the same path on the fallback host and the same port; empty = none
++    std::string _saved_base;     // patch 146: the saved avatar base; the fallback host is chosen at each attempt
++    bool _fallback_enabled       = false;
++    int _fb_attempt              = 0;
+     bool _on_fallback            = false;
+     bool _trying_home            = false;
+     int _home_fails              = 0;
+diff --git a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+index 27ee3aa91..3b160d607 100644
+--- a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
++++ b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+@@ -196,11 +196,12 @@ bool WebsocketProtocol::ConnectAudioChannel() {
+     }
+ #endif
+     if (g_voice_use_fallback) {
+-        const std::string fallback = maipai_fallback_voice_url(url);
++        static int fallback_attempt = 0;
++        const std::string fallback = maipai_fallback_voice_url(url, fallback_attempt++);
+         if (!fallback.empty()) {
+             ESP_LOGI(TAG, "Home address not answering: using the fallback endpoint");
+             url = fallback;
+-        }
++        }  // else this network may not use the fallback (patch 146): the home address is tried
+     }
+     int version = settings.GetInt("version");
+     if (version != 0) {
+@@ -375,7 +376,7 @@ void WebsocketProtocol::ReconnectTask(void* arg) {
+     // The fallback endpoint (patch 144): home first; after two failures the fallback host; while on it, the home
+     // address once a minute (and a quick probe while connected), so the unit returns home by itself.
+     constexpr int64_t kHomeRetryUs = 60LL * 1000 * 1000;
+-    const bool fallback_configured = maipai_fallback_voice_url("ws://192.0.2.1:1/x").empty() ? false : true;
++    const bool fallback_configured = maipai_fallback_configured();
+     bool on_fallback = false;
+     bool trying_home = false;
+     int home_fails = 0;
+diff --git a/firmware/main/hal/maipai_fallback_core.h b/firmware/main/hal/maipai_fallback_core.h
+new file mode 100644
+index 000000000..33af80cea
+--- /dev/null
++++ b/firmware/main/hal/maipai_fallback_core.h
+@@ -0,0 +1,62 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * The pure choices behind the away-from-home fallback (patch 146), plain C so a host test can run them:
++ * which hosts to try (the Wi-Fi gateway first, then a configured address) and which networks may use the fallback
++ * at all (only one whose name starts with a prefix the owner controls, so a stranger's network is never given the
++ * robot's pairing token).
++ */
++#pragma once
++#include <stddef.h>
++#include <string.h>
++#include <strings.h>
++
++/* 1 when the connected network's name starts with `prefix` (case-insensitive). An empty prefix allows every network
++ * (a development setting); an empty or missing ssid never matches a non-empty prefix. */
++static inline int mf_ssid_allowed(const char* ssid, const char* prefix)
++{
++    if (prefix == NULL || prefix[0] == '\0') {
++        return 1;
++    }
++    if (ssid == NULL || ssid[0] == '\0') {
++        return 0;
++    }
++    return strncasecmp(ssid, prefix, strlen(prefix)) == 0 ? 1 : 0;
++}
++
++static inline int mf_usable_host(const char* host, const char* home)
++{
++    if (host == NULL || host[0] == '\0' || strcmp(host, "0.0.0.0") == 0) {
++        return 0;
++    }
++    if (home != NULL && strcmp(host, home) == 0) {
++        return 0;  /* the home address is already the first attempt: a fallback that is the same host adds nothing */
++    }
++    return 1;
++}
++
++/* The fallback host for attempt number `attempt` (0, 1, 2 ...): candidates are the Wi-Fi default gateway, then the
++ * configured host (skipping a duplicate, a 0.0.0.0 and the home host), rotating by attempt. Returns 1 and fills `out`
++ * when there is a candidate, else 0. */
++static inline int mf_pick_host(int attempt, const char* gateway, const char* configured, const char* home, char* out,
++                               size_t out_size)
++{
++    const char* cand[2];
++    int n = 0;
++    if (mf_usable_host(gateway, home)) {
++        cand[n++] = gateway;
++    }
++    if (mf_usable_host(configured, home) && !(n == 1 && strcmp(cand[0], configured) == 0)) {
++        cand[n++] = configured;
++    }
++    if (n == 0 || out == NULL || out_size == 0) {
++        return 0;
++    }
++    const char* chosen = cand[(attempt < 0 ? 0 : attempt) % n];
++    size_t len = strlen(chosen);
++    if (len + 1 > out_size) {
++        return 0;
++    }
++    memcpy(out, chosen, len + 1);
++    return 1;
++}
