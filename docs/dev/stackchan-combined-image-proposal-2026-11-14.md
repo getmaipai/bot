@@ -1,64 +1,70 @@
-# StackChan combined firmware image: proposal for the one USB flash (2026-11-14)
+# StackChan firmware images: proposal (2026-11-14, revised after the independent security review)
 
-Status: proposal. Nothing in this list is built into an image yet, and nothing is flashed. Related: `stackchan-anywhere-network-2026-11-14.md` (design, Parts A to C), `stackchan-faces-2026-11-14.md`, patch 133 (wireless update).
+Status: proposal. Nothing here is built into an image beyond the spike, and nothing is flashed. Related: `stackchan-anywhere-network-2026-11-14.md` (design, Parts A to C), `stackchan-faces-2026-11-14.md`, patch 133 (wireless update). This replaces the earlier single combined image: it is now FOUR images, one over USB and three over the air.
 
-## Why one image
+## Why split
 
-The unit is on battery and not on USB. Its current firmware (0.2.86) has no updater, so the next image has to be flashed once over USB. After that, patch 133 lets later images arrive over Wi-Fi. So that one image should carry everything that needs the bootloader or a first install: the updater, the new faces, the saved-network priority, the QR scan, the tailnet client (compiled in, off), and the on-robot settings page.
+The unit is on battery and not on USB. Its current firmware (0.2.86) has no updater, so the first image is flashed once over USB. A USB-written image resets the OTA data, so it has no previous slot to roll back to. That is why it must be minimal and why the updater has to be proven on the bench before anyone unplugs the cable. Everything riskier then arrives over the air, where a bad image rolls back by itself.
 
-## Contents
+## The images
 
-| Patch | What | State |
-|---|---|---|
-| 132 | the new face shapes (joy, content, excited, shocked, curious, love, worried) | on bot `main` |
-| 133 | wireless firmware update and the update icon | on bot `main` |
-| 134 | strict saved-network priority (see the decision below) | to write |
-| 135 | the "Add Wi-Fi" QR scan screen | to write |
-| 136 | MicroLink tailnet client: three stacks in PSRAM, Google STUN fallback removed, build flag compiled IN but off at runtime until a key is pasted | to write |
-| 137 to 139 | the settings page on the robot (Part C): setup window, HTTPS server and sessions, pages | to write after the architect has looked |
+| Image | Delivered | Patches | Notes |
+|---|---|---|---|
+| 1 | USB, once | current `main` through 132 (faces) and 133 (updater) | No MicroLink, no priority change. Minimal on purpose. |
+| 2 | over the air | 134 strict priority, 135 QR scan and setup hint | Then the priority tests at home. |
+| 3 | over the air | 136 MicroLink (OFF until a unit passes its test) | Boot-loop guard; RAM re-measured after any mbedTLS change. |
+| 4 | over the air | 137 to 139 Part C (the settings window and page) | After the Part C redesign is reviewed. |
 
-The sleep "z" overlay and the unbuilt faces (dizzy, silly) are not in this list.
+The earlier notes disagreed on whether MicroLink is in the first image. Resolved: it is not. It is off until a unit passes its on-device test and arrives in image 3.
 
-## Strict priority: the decision
+## Image 1 bench proof (before unplugging)
+
+1. Flash image 1 over USB with `esptool` over the five app images only (bootloader and partition table only if their bytes differ from a full-flash backup taken first; never the NVS partition, never 0x9000). Pairing and saved networks stay.
+2. A version-bump image delivered over the air installs and the unit reports the new version.
+3. A deliberately bad image (it must not reach the hub link) is delivered: the unit rolls back to the previous slot by itself and reports the old version.
+4. A good image is delivered again and installs.
+5. Only then is the unit unplugged.
+
+## Strict priority (patch 134, image 2): the decision
 
 Goal: with two saved networks both in range, the higher-priority one is joined even when it is weaker (home first, then the hotspot, then a friend's).
 
-The connect order is decided in `WifiStation::HandleScanResult` (sorts the visible saved networks by signal strength and pushes them into `connect_queue_`). That file is in the registry component `esp-wifi-connect` (pinned by `dependencies.lock`, commit `a7b34167750f0188486b489240268d0f7c306caf`), downloaded at build time, so our recipe's usual patch targets cannot reach it.
+The connect order is decided in `WifiStation::HandleScanResult` (sorts the visible saved networks by signal strength), and a new network is inserted at the FRONT of the saved list by `SsidManager::AddSsid`. Both are in the registry component `esp-wifi-connect` (pinned by `dependencies.lock`, commit `a7b34167750f0188486b489240268d0f7c306caf`), downloaded at build time, so the recipe's usual patch targets cannot reach it.
 
-Options:
-1. Project-local override of the component. The recipe downloads the exact pinned version into `firmware/components/esp-wifi-connect`, checks it against the lock's `component_hash`, applies patch 134 to `wifi_station.cc`, and a small patch to the xiaozhi `main/idf_component.yml` points the dependency at it (`override_path`). The change is one function: order the queue by saved-order index first, signal strength only as the tie-break and as a floor (a network weaker than -85 dBm goes after the others, so a barely visible top-priority network does not block a usable one). If joining fails, the next entry in the queue is tried, as today.
-2. Our own connect-order logic in the board's start path. Rejected: the component owns the station state machine (it reconnects and rescans on its own events), and a second chooser that disconnects and joins by hand would fight it. That is the less safe path.
+Choice: a project-local override of the component. The recipe downloads the exact pinned version into `firmware/components/esp-wifi-connect`, checks it against the lock's `component_hash`, applies patch 134, and a small patch to the xiaozhi `main/idf_component.yml` points the dependency at it (`override_path`). Changes: order the connect queue by saved-order index first with signal strength only as the tie-break and a floor (a network weaker than -85 dBm goes after the others); `AddSsid` appends at the END (lowest priority), because under strict priority a new hotspot or a friend's Wi-Fi at the front would beat the home Wi-Fi. A future component bump re-checks the patch like the others. Rejected: our own chooser in the board path (it would fight the component's reconnect state machine).
 
-Choice: option 1. It is smaller (one function), keeps the component's state machine, and is deterministic. Cost: the recipe must fetch and verify one more pinned download, and a future component bump must re-check the patch (same discipline as the other patches).
+Host-side proof first: a header-only ordering function (`maipai_wifi_order.h`) with a C unit test covering priority over signal, the weak floor, ties, unseen networks and append-at-end, in the style of `maipai_beat.h`.
 
-On-device acceptance test (needs two access points of ours, for example the home router and a phone hotspot, both saved, home first in the list):
-1. Both visible, the hotspot clearly stronger: after a reboot the unit joins home. Serial log shows both in range and home chosen.
-2. Move the saved order (hotspot first): after a reboot the unit joins the hotspot even though home is stronger.
-3. Switch the top network off: the unit joins the second within one minute; switch it back on: the unit stays on the second until the next reconnect (no flapping) and returns to the first after a reboot or a disconnect.
+On-device priority tests (two access points of ours, for example the home router and a phone hotspot, both saved, home first):
+1. Both visible, the hotspot clearly stronger: after a reboot the unit joins home.
+2. Reorder (hotspot first): after a reboot the unit joins the hotspot even though home is stronger.
+3. Top network switched off: the unit joins the second within one minute; switched back on, it stays on the second until the next reconnect (no flapping) and returns to the first after a reboot or a disconnect.
 4. A top-priority network weaker than -85 dBm with a usable second: the second is joined.
-5. Saved-network migration: a unit with existing saved networks keeps all of them and their current order after the flash.
+5. A newly added network lands at the end of the list, not the front.
+6. A unit with existing saved networks keeps all of them and their order after the flash.
 
-Host-side proof before the flash: a header-only ordering function (`maipai_wifi_order.h`) with a C unit test covering priority over signal, the weak floor, ties and unseen networks, in the same style as `maipai_beat.h`.
+## RAM rules (all images)
+
+- Any task that writes NVS (or does any flash operation) has an internal-RAM stack. ESP-IDF asserts on flash operations from a PSRAM stack. NVS writes from PSRAM-stack tasks go to one internal-stack worker.
+- The gate is measured with everything running at once: the voice link up, camera face watching on, MicroLink connected, and (from image 4) a setup page request in flight. Internal low-water mark at or above 25 KB for 10 minutes AND the largest free internal block at or above 16 KB (proposed; set from a measurement of the voice link's biggest reconnect allocation). Re-measure after any mbedTLS change.
+
+## Image 3 safety
+
+MicroLink starts only when a key is present and the flag is on; a boot-loop guard turns the tailnet client off by itself after 3 resets within 2 minutes of starting, and reports it. The robot never tries the hub's home LAN address on an unknown network (the unit sends its pairing token to whatever `ws://` address it holds): LAN only on the network marked as home, otherwise the tailnet only.
 
 ## Gates before any image is built beyond the spike
 
-- `code-review` at medium on patches 134 to 139, one at a time.
-- The architect has looked at the design note (Parts A to C).
-- A combined image is built only into my own build directory, never over another session's, and is not flashed.
+- `code-review` at medium on each patch, one at a time.
+- The architect has looked at the design note (Parts A to C) after this revision.
+- Images are built only into my own build directory, never over another session's, and are not flashed.
 
-## On-device acceptance gates (after the USB flash)
+## On-device acceptance after image 1
 
-1. Boots, shows the new faces, reports firmware `0.2.9x` to the hub, pairing and saved networks intact (the flash never writes the NVS partition).
-2. Priority tests 1 to 5 above.
-3. QR scan: with the vision-off switch off, a Wi-Fi QR code from an iPhone is read and saved with the pink light on; with the switch on, the screen says so and nothing is read.
-4. Tailnet: with a pasted ephemeral tagged key, the unit joins the tailnet on a second Wi-Fi network, reaches the hub's robot port and the voice link works. Internal RAM low-water mark stays at or above 25 KB for 10 minutes while connected with the voice link up. If it does not, the tailnet flag stays off and the options in the design note (B, C, D) are reopened.
-5. Updater: a later image delivered over Wi-Fi installs, and a deliberately bad image rolls back.
-6. Part C (when built): the checks listed in its section.
+1. Boots, shows the new faces, reports the new firmware version to the hub, pairing and saved networks intact.
+2. The bench proof above (bump, bad image rolls back, good image).
 
-## Flash steps (when approved)
-
-`esptool` write of the five app images only (bootloader, partition table, otadata, app, assets), at the offsets in `build/flash_args`. Never the NVS partition, never 0x9000. The unit is connected to the Studio by USB for this one time. Pairing, saved networks and settings stay.
+Later images have their own acceptance lists: priority (image 2), QR scan with the vision-off switch honored and the pink light on (image 2), tailnet and RAM gate (image 3), the Part C checks (image 4).
 
 ## Not verified
 
-Everything on the unit. The component override and the ordering function are designed, not written. MicroLink's behaviour with PSRAM stacks, the HTTPS server's RAM, and QR read quality are unmeasured.
+Everything on the unit. The component override and the ordering function are designed, not written. MicroLink's behaviour with PSRAM stacks, the access point and page RAM, and QR read quality are unmeasured.
