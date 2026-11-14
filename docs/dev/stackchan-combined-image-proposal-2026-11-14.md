@@ -68,3 +68,8 @@ Later images have their own acceptance lists: priority (image 2), QR scan with t
 ## Not verified
 
 Everything on the unit. The component override and the ordering function are designed, not written. MicroLink's behaviour with PSRAM stacks, the access point and page RAM, and QR read quality are unmeasured.
+
+
+## Patch 140: the song title bar (added 2026-11-14)
+
+A small display-only patch (`140-song-title-bar.patch`, after 133): the song title as white, bolder, slightly larger text on a solid black bar at the bottom edge (owner's words, 2026-11-14). It applies cleanly in the recipe's patch check and has a preview sheet; it changes no logic of patch 123 (same show, hide and 60 s deadline). Proposed image: the first over-the-air image (image 2, with 134 and 135), not image 1: image 1 stays minimal (132 and 133 only) because a USB-written image has no slot to roll back to. If the owner wants the title look sooner, it can join image 1 once a full firmware compile has passed.

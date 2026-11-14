@@ -657,7 +657,7 @@ wheels = [
 
 [[package]]
 name = "maipai-bot"
-version = "0.2.98"
+version = "0.2.99"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },

@@ -5,6 +5,15 @@ All notable changes to MaiPai Bot. Format follows
 Everything stays `0.x` until the product passes its battle-tested
 checklist (`docs/dev.md`).
 
+## [0.2.99] - 2026-11-14
+
+### Changed
+- The song title stays on the robot's face while the song plays. The firmware hides a title after 60 seconds, so the host now shows it again every 40 seconds, and takes it down 15 seconds after the music is over (and at once when the robot is muted or in full quiet). A title from Home's player is kept until Home clears it.
+- The dance alternates head nods and side-to-side sways. Each round is phrases of eight beats at the song's tempo: nod, sway, nod, stiff turns, then the same again, starting one step further along each round. The round keeps its length and its still listening gap.
+
+### Added
+- Firmware patch 140 (rides with the next firmware image, not part of this release): the song title as white, bolder, slightly larger text on a solid black bar at the very bottom of the screen.
+
 ## [0.2.98] - 2026-11-14
 
 ### Fixed
