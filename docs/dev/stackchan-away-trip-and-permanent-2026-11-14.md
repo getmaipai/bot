@@ -60,3 +60,29 @@ The robot joins the household tailnet itself (MicroLink, ANYWHERE-01), with no p
 - Fallbacks if MicroLink does not fit: a plain WireGuard endpoint on the Studio, then Funnel as an opt-in, off-by-default "Trip mode"
   that turns itself off after a set time and shows a notice in Home.
 - Open owner decisions: WPA3-SAE as an encrypted channel for CREDENTIALS.md; NVS encryption (an eFuse that cannot be undone).
+
+## Decided for the trip: the robot only uses the relay on the laptop's own network (2026-11-14, patch 146)
+
+Jesse's requirement: it must work whatever the friend's Wi-Fi is. The relay path now is independent of the friend's network:
+
+- The robot joins the laptop's own Wi-Fi (macOS Internet Sharing from the iPhone's USB tether), named `maipai-trip` or anything
+  starting with `maipai`. The fallback host is the unit's current Wi-Fi gateway (the laptop, any subnet macOS picks), then 192.168.2.1.
+- The fallback runs only on a network whose name starts with `maipai` (CONFIG_STACKCHAN_FALLBACK_SSID_PREFIX). The robot sends its
+  saved pairing token to the fallback host, so a friend's router, a hotel or an evil twin (which cannot complete the WPA2 handshake
+  without the password) must never be one. Patch 146 has a host-tested core (`maipai_fallback_core.h`, `fallback_core_test.c`).
+- The friend's Wi-Fi is never used, so its subnet cannot clash (for example a friend's router on 192.168.2.1 and the laptop on 192.168.2.2).
+
+Not built: a robot and the laptop on the SAME Wi-Fi that is not the laptop's own. The unit would need the laptop's address and a
+reason to trust it. Options weighed:
+
+- (a) A UDP beacon from the laptop that the unit listens for. Rejected without authentication: any device on a friend's network could
+  send a fake beacon and receive the robot's pairing token.
+- (b) Challenge before token: the unit sends a random nonce first and sends the token only after the real Studio answers through the
+  relay with a signature it can verify. Needs a protocol change on the voice and avatar servers (today the bearer token travels in
+  the first request) and a signing key on the unit that is not baked into a public image. Backlog under ANYWHERE-05.
+- (c) The relay asks the Studio over Tailscale for a short-lived HMAC of a nonce the unit sends. Same key problem.
+
+Also noted in the review of patch 133 (the updater): the unit checks size, SHA-256 and the version in the written slot, and rolls back
+unless a healthy hub link is held, but the SHA-256 arrives over the same (plain ws) link as the update command, so anything that can
+speak the protocol to the unit can push firmware. A signed image (ed25519, public key in the app image) is a backlog item; for the
+trip the exposure is the laptop relay path, protected by the `maipai` network gate and the WPA2 password.
