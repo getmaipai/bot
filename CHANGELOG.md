@@ -5,6 +5,11 @@ All notable changes to MaiPai Bot. Format follows
 Everything stays `0.x` until the product passes its battle-tested
 checklist (`docs/dev.md`).
 
+## [0.2.97] - 2026-11-14
+
+### Added
+- The robot handles Home's `wifi_add` and `wifi_forget` commands through the unit's own saved-network tools, and reports the saved network names (names only) and whether its link to the unit is encrypted in its check-in. A Wi-Fi password is never logged, stored or returned (ANYWHERE-02).
+
 ## [0.2.96] - 2026-11-14
 
 ### Fixed
