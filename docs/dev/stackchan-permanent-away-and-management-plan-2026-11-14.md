@@ -39,11 +39,18 @@ robot's own protected hotspot in one tap, iOS opens the Captive Network Assistan
 fit without an app: it is what ESP SoftAP provisioning, Matter commissioning QR codes and Sonos/Chromecast code screens converge on; Web Bluetooth does not work in
 iOS Safari, NFC on iPhone only opens URLs and cannot join Wi-Fi (and the CoreS3 has no NFC), and a camera plus a captive page needs nothing installed.
 
-1. TRIGGERS (any one): no saved network reachable for 30 to 60 s at any time; Wi-Fi up but no hub (home or tailnet) for 5 minutes; a Home command
-   `show setup code` (when the robot is reachable); a deliberate gesture: swipe up for the quick-settings panel (already deliberate), then a `Setup` row that needs a
-   3 second press and a tick, so no new touch zone conflicts with mute (mouth), vision off (eyes) and full quiet (above and between the eyes), and a child or
-   a pet cannot hit it by accident. The window closes by itself when a saved network returns, setup succeeds, or after 10 minutes (countdown on screen).
-   No update runs during a window and no window opens during an update; the page never changes the hub address and never accepts firmware.
+1. ENTRY (owner principle 2026-11-14: the hotspot and its page exist only while a setup window is open, opened deliberately; never an always-on access point).
+   The primary, discoverable route is INSIDE the existing swipe-up quick-settings panel (volume, brightness, saved Wi-Fi, Done): it gets two entries, `Setup` and
+   `Status`. Swipe left and right stay volume (the owner's habit; moving volume into the panel would add a step to something used daily, so the tradeoff is decided
+   against a left/right swipe). Child safety: `Setup` needs a deliberate 2 s press-and-hold on a `Start setup` button, with the countdown and a single-use code,
+   and the window closes by itself (10 minutes, or when setup succeeds, or a saved network returns). Automatic screens: with NO saved network reachable for 30 to 60 s the
+   robot shows the Setup screen by itself (nothing opens a hotspot until the person starts one); with Wi-Fi up but no hub (home or tailnet) for 5 minutes the robot only
+   OFFERS Setup (the same press-and-hold confirm). A Home command `show setup code` (robot reachable) shows the same offer. No update runs during a window and no window
+   opens during an update; the page never changes the hub address and never accepts firmware.
+1a. THREE WAYS TO ADD A WI-FI, in this order on the Setup screen: (1) ON THE ROBOT, no phone and no hotspot (the thermostat pattern): a scan list to tap, then an on-screen
+   LVGL keyboard for the password with a show/hide toggle, a Join button and a clear tick or plain error; saved into the list of 10. (2) For a phone: the QR and short code
+   below (the WPA3 hotspot opens only now). (3) Scan a Wi-Fi QR the phone made, with the robot's camera (patch 135). Option 1 is the smallest to build and test: it needs
+   only the scan call (esp_wifi_scan in STA mode, with the AP closed) and an LVGL keyboard, and works with nothing else in place.
 2. THE SCREEN: a large QR, a 6-character pairing code, one line ("Scan with your phone camera"), the countdown, and below it in order: "Or scan a Wi-Fi QR from your
    phone" (robot camera, patch 135, vision-off aware, pink light) and "Or add it from Home" (shown once the robot is on the tailnet).
 3. THE PAGE (one short page, iOS CNA sheet safe: no window.open, no downloads, no reliance on persisted JavaScript state or multiple tabs): nearby networks to tap,
@@ -70,10 +77,11 @@ iOS Safari, NFC on iPhone only opens URLs and cannot join Wi-Fi (and the CoreS3 
 | Stage | What | Size | Local test without the tailnet |
 |---|---|---|---|
 | 0 | Spike build: patches 147 to 149, recipe flag, pin, tests (done) | S | host tests, compile |
+| 1b | EARLY, LOCAL: the Setup entry in the swipe-up panel, the press-and-hold confirm, and option 1: join a Wi-Fi from the touchscreen (scan list, LVGL keyboard with show/hide, Join, tick or error). Smallest on-device test: forget the home network in Home, open Setup from the panel, tap the network, type the password on the robot, see the tick and the robot rejoin | M | yes (needs only the robot) |
 | 1 | FIRST ON-DEVICE TEST: private first-enrolment image, register, connect from a phone hotspot, RAM gate, 10 minute soak, same identity after reboot and Wi-Fi switch | S | no |
 | 2 | Home: tailnet connections count as an encrypted link (`link_encrypted` true, peer 100.64/10), add Wi-Fi from Home over it (wifi_add, existing route and card), reorder, status "Connected through your tailnet (away)", tailnet address and last seen | M | host and Home tests |
 | 3 | Strict Wi-Fi priority: project-local override of esp-wifi-connect (saved order first, -85 dBm floor, append at end), host-tested ordering | M | host tests |
-| 4 | Setup window: WPA3 hotspot plus APSTA, single-use passphrase, QR screen, captive page (iPhone-first), triggers and gesture, diagnostics panel, offline reasons | L | yes (all local) |
+| 4 | Setup window for a phone: WPA3 hotspot plus APSTA, single-use passphrase, QR screen, captive page (iPhone-first), the offers, diagnostics panel, offline reasons | L | yes (all local) |
 | 5 | Robot camera scan of a Wi-Fi QR (patch 135) | M | yes |
 | 6 | Bot management in Home (Devices, kit parts): path and quality, versions, Update button through the updater (idle, battery or charger rules), restart connection / robot, rename, forget the tailnet key; unit self-healing (Wi-Fi up but no hub for 10 minutes: restart Wi-Fi, then reboot) | M to L | host tests |
 | 7 | Production enrolment without a private build: an admin pastes the key in Home over the encrypted link, expiry shown, one-click forget (ANYWHERE-03 tail) | M | no |

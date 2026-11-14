@@ -1,4 +1,4 @@
-"""The robot's own tailnet client: its pure choices (firmware patch 147), plain C, run on the host, and the recipe wiring."""
+"""The robot's tailnet client: its pure choices (firmware patch 147), plain C, run on the host."""
 
 from __future__ import annotations
 
@@ -37,7 +37,17 @@ def test_the_tailnet_core_passes_its_c_test(tmp_path: Path):
     core_header(tmp_path)
     binary = tmp_path / "tailnet_core_test"
     build = subprocess.run(
-        [cc, "-std=c99", "-D_DEFAULT_SOURCE", "-Wall", "-Werror", f"-I{tmp_path}", str(C_TEST), "-o", str(binary)],
+        [
+            cc,
+            "-std=c99",
+            "-D_DEFAULT_SOURCE",
+            "-Wall",
+            "-Werror",
+            f"-I{tmp_path}",
+            str(C_TEST),
+            "-o",
+            str(binary),
+        ],
         capture_output=True,
         text=True,
     )

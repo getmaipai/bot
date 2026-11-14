@@ -49,6 +49,7 @@ DIAGNOSTIC_KINDS = frozenset(
         "wake_selftest",
         "sound_played",  # firmware patch 141: which cue the unit played and what asked for it
         "power_poll",  # firmware patch 141: the charger reading and its flap count, once a minute
+        "tailnet_state",  # firmware patch 147: the tailnet client's state and address (state, ip)
         # Mute, vision off and full quiet (patch 106): the new state, and a refused face unmute.
         "privacy",
         "privacy_refused",

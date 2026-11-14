@@ -94,6 +94,7 @@ def test_dances_and_event_kinds_export_the_supported_sets():
             "privacy_refused",
             "sound_played",
             "power_poll",
+            "tailnet_state",
         }
     )
 
