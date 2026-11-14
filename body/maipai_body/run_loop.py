@@ -1601,11 +1601,28 @@ class ConversationLoop:
     def _power_tick(self, held: bool) -> None:
         """SELF-SCENE-02: one battery and heat step. A bug here is logged, never raised."""
         try:
+            # There is no battery poll to make and no owed line to arbitrate on
+            # the common unconfigured path. Keep conversation ticks clear of the
+            # presence, quiet-hours, mute and funnel collaborators in that case.
+            if (
+                self._battery_status is None
+                and not self._power.has_line_due
+                and not self._heat.has_line_due
+            ):
+                if self._thermal is None:
+                    return
+                # Thermal state is sampled by _safety_ticks. Updating this small
+                # state machine is needed to notice a newly critical temperature.
+                self._heat_step()
+                if not self._heat.has_line_due:
+                    return
             now = self._sleep_clock()
-            self._heat_step()
+            if self._thermal is not None:
+                self._heat_step()
             if self._battery_status is not None:
                 self._battery_step(now)
-            self._power_lines(held)
+            if self._power.has_line_due or self._heat.has_line_due:
+                self._power_lines(held)
             self._power_sleep(now, held)
         except Exception:
             logger.warning("power ladder tick failed", exc_info=True)

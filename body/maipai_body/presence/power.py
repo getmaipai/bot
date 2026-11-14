@@ -126,6 +126,11 @@ class PowerLadder:
         """The state frame's flag: the body is in its reduced mode (degrade or beyond)."""
         return self.level >= PowerLevel.DEGRADED
 
+    @property
+    def has_line_due(self) -> bool:
+        """Whether a battery line is owed and may need policy checks to release it."""
+        return self._owed is not None
+
     def _threshold(self, level: PowerLevel) -> int:
         return {
             PowerLevel.WARN: self._warn_at,
@@ -221,6 +226,11 @@ class HeatLadder:
     @property
     def motion_stopped(self) -> bool:
         return self.level >= HeatLevel.CRITICAL
+
+    @property
+    def has_line_due(self) -> bool:
+        """Whether the critical heat line is owed and may need policy checks."""
+        return self._owed
 
     def update(self, temp_c: float | None) -> HeatLevel:
         if temp_c is None:

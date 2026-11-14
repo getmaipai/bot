@@ -181,6 +181,21 @@ def test_critical_says_one_line_per_episode_and_respects_quiet_hours():
     assert heat.take_line(quiet=False, may_speak=True) is Rung.HEAT
 
 
+def test_line_due_flags_track_owed_lines():
+    power = PowerLadder()
+    heat = HeatLadder()
+    assert not power.has_line_due
+    assert not heat.has_line_due
+    power.update(20, False, 0.0)
+    heat.update(82.0)
+    assert power.has_line_due
+    assert heat.has_line_due
+    assert power.take_line(near=True, quiet=False, may_speak=True) is Rung.WARN
+    assert heat.take_line(quiet=False, may_speak=True) is Rung.HEAT
+    assert not power.has_line_due
+    assert not heat.has_line_due
+
+
 # ---- the line pools ---------------------------------------------------------------------
 
 
@@ -330,6 +345,20 @@ def test_loop_without_a_battery_source_does_not_claim_one():
     loop, _ = _make_loop()
     assert "battery_level" not in loop.snapshot()
     assert "low_power" not in loop.snapshot()
+
+
+def test_power_tick_without_a_source_or_owed_line_skips_policy_collaborators():
+    def unexpected(*args, **kwargs):
+        raise AssertionError("power policy collaborator called without an owed line")
+
+    loop, _ = _make_loop(
+        presence_entries=unexpected,
+        quiet_hours=unexpected,
+        sleep_clock=unexpected,
+    )
+    loop._is_muted = unexpected
+    loop._current_funnel = unexpected
+    loop._power_tick(False)
 
 
 def test_loop_warn_at_follows_the_setting():
