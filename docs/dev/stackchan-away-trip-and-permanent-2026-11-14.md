@@ -86,3 +86,37 @@ Also noted in the review of patch 133 (the updater): the unit checks size, SHA-2
 unless a healthy hub link is held, but the SHA-256 arrives over the same (plain ws) link as the update command, so anything that can
 speak the protocol to the unit can push firmware. A signed image (ed25519, public key in the app image) is a backlog item; for the
 trip the exposure is the laptop relay path, protected by the `maipai` network gate and the WPA2 password.
+
+## Which MicroLink to pin (owner's find, 2026-11-14)
+
+Jesse pointed at `github.com/Csontikka/esphome-tailscale`. It is an ESPHome external component, so it cannot be dropped into this xiaozhi
+ESP-IDF firmware, but it carries a maintained copy of the MicroLink client (`Csontikka/microlink`, MIT) with fixes the dormant upstream
+(`CamM2325/microlink`, described there as dormant since March 2026) lacks. Facts read from its README and changelog (2026-11-14):
+
+- Latest changelog entry 0.5.31 on 2026-11-09; 192 stars, 309 commits. The only verified chip is an ESP32-S3 with PSRAM (the unit's chip).
+- Memory: the netmap buffer defaults to 512 KB (range 64 to 2048), about 1 KB per peer slot, 16 peers by default. A no-PSRAM mode exists for a
+  C3 (32 to 74 KB free internal heap) and is experimental. Our budget (about 76 KB free internal, gate 25 KB) still decides.
+- Speed: WireGuard about 2 to 5 Mbit/s on the S3; DERP relay adds 50 to 150 ms; one measured relay-only OTA took 498 s against 26 s direct, so
+  large downloads over a relay are slow while opus voice (3 to 4 KiB/s each way) is fine. The default DERP home region and `netcheck_override`
+  matter for latency.
+- Keys: the auth key is used at first boot; the node key lives in NVS and expires after 180 days on the hosted service unless key expiry is
+  disabled for that node; no private-CA control plane; it cannot advertise subnet routes or be an exit node (we only need a client).
+- Other maintained ESP-IDF options named there: `Asimmimx/tailtiny` (a plain ESP-IDF fork, tested on a C3), `fugo101/microlink` (ESP-IDF 6).
+
+Decision for ANYWHERE-01 and ANYWHERE-05: pin the maintained `Csontikka/microlink` fork (checksummed, downloaded, not vendored) as the
+base, compare with `tailtiny` at the spike, and re-measure our internal RAM and the voice latency over a DERP relay before anything ships.
+Still a later step; the trip uses the laptop relay.
+
+### Two corrections from a second opinion (2026-11-14)
+
+An independent outline of the same plan (MicroLink in the firmware, prove it on the board first) agreed with this design and added two points we adopt:
+
+- **Key type:** use a one-off, reusable, NON-ephemeral, pre-approved auth key with key expiry disabled for the robot node. An ephemeral key makes the
+  robot vanish from the machine list whenever it is offline, and a robot is offline often. This replaces the earlier "ephemeral" wording in
+  `stackchan-anywhere-network-2026-11-14.md` (the key stays paste-only by an admin, tagged `tag:robot`, never in Git).
+- **Narrow access rule:** the tag may reach only the Studio's two robot ports (the hub log shows `ws://0.0.0.0:62923` and `:62924`); check the tailnet
+  policy for an existing allow-all rule, because a narrow grant does not override it.
+
+Proof order for the spike: identify the build framework (ESP-IDF 5.5.4 here, above the 5.3 floor), test on the unit with a spare image kept for restore (the
+full-flash backup `~/stackchan-backups/stackchan-full-2026-11-14.bin` exists), enroll on a phone hotspot, one outbound TCP connection to a tailnet
+address, one authenticated robot connection through the normal code path, reboot and switch Wi-Fi to confirm the same machine entry returns without a new key.
