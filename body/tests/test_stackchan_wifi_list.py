@@ -51,7 +51,7 @@ def test_forget_by_name_uses_saved_index_and_unknown_refuses():
 
 
 def test_password_never_appears_in_logs_when_add_tool_exception_contains_it(caplog):
-    secret = "private-secret-123"
+    sample_pw = "sample-wifi-pw-123"
     unit = Unit()
     unit.fail_add = f"tool rejected password {secret}"
     wifi = WifiList(unit.call)
