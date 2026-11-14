@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -93,6 +93,7 @@ class _Track:
     first_seen: float
     last_seen: float
     last_embedded: float | None = None
+    box: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)  # frame shares, geometry only
     raw: FaceVerdict | None = None
     raw_at: float | None = None
 
@@ -102,6 +103,11 @@ class WatchSnapshot:
     level: WatchLevel
     present: int
     verdict: FaceVerdict | None
+    # SCENE-01g: geometry only (x, y, width, height as shares of the frame), no image data.
+    # `person_boxes` come from the fast Look detector where the body has one; `face_boxes` are
+    # the live tracks. Together they let `build_present` count a person whose back is turned.
+    person_boxes: tuple[tuple[float, float, float, float], ...] = ()
+    face_boxes: tuple[tuple[float, float, float, float], ...] = ()
 
 
 class VisionWatch:
@@ -118,7 +124,9 @@ class VisionWatch:
         rate_hz: Callable[[], float] | None = None,
         clock: Callable[[], float] = time.monotonic,
         verdict_stale_after_s: float = VERDICT_STALE_AFTER_S,
+        person_boxes: Callable[[], Sequence[tuple[float, float, float, float]]] | None = None,
     ) -> None:
+        self._person_boxes = person_boxes
         self._camera = camera
         self._detector = detector
         self._embedder = embedder
@@ -240,6 +248,12 @@ class VisionWatch:
                 else:
                     free.remove(best)
                     best.cx, best.cy, best.size, best.last_seen = cx, cy, size, now
+                best.box = (
+                    x / FRAME_SIZE[0],
+                    y / FRAME_SIZE[1],
+                    w / FRAME_SIZE[0],
+                    h / FRAME_SIZE[1],
+                )
                 matched.append((face, best))
             self._tracks = live
             return matched
@@ -262,16 +276,29 @@ class VisionWatch:
             if level == "off":
                 return WatchSnapshot("off", 0, None)
             live = [t for t in self._tracks if now - t.last_seen <= TRACK_LOSS_GRACE_S]
-            if not live:
-                return WatchSnapshot(level, 0, None)
+            faces = tuple(t.box for t in live)
+        people = self._read_person_boxes()
+        if not live:
+            return WatchSnapshot(level, 0, None, people, faces)
+        with self._lock:
             nearest = max(live, key=lambda t: t.size)
             raw = nearest.raw
             fresh = nearest.raw_at is not None and now - nearest.raw_at <= self._stale_after
         if level == "presence":
-            return WatchSnapshot(level, len(live), _UNKNOWN)
+            return WatchSnapshot(level, len(live), _UNKNOWN, people, faces)
         if raw is None or not fresh:
-            return WatchSnapshot(level, len(live), None)
-        return WatchSnapshot(level, len(live), self._effective(raw, level))
+            return WatchSnapshot(level, len(live), None, people, faces)
+        return WatchSnapshot(level, len(live), self._effective(raw, level), people, faces)
+
+    def _read_person_boxes(self) -> tuple[tuple[float, float, float, float], ...]:
+        """The fast detector's newest person boxes (cached by it; no frame is read here)."""
+        if self._person_boxes is None:
+            return ()
+        try:
+            return tuple(tuple(b) for b in self._person_boxes())  # type: ignore[misc]
+        except Exception:
+            logger.warning("person boxes unreadable; counting faces only", exc_info=True)
+            return ()
 
     def _effective(self, raw: FaceVerdict, level: WatchLevel) -> FaceVerdict:
         """Apply the person's own level and the live gallery to a raw match."""
