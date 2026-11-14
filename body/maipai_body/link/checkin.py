@@ -26,7 +26,8 @@ _KEPT: dict[str, tuple[str, ...]] = {
     "boot": ("reason", "crash_resets"),
     "heap_stats": ("int_free", "int_min", "psram_free"),
     "fw": ("version", "rssi"),
-    # The unit's hub link as it reports it (state ws_up, ws_retry, ws_down, the fallback tries, the attempt count and signal).
+    # The unit's hub link as it reports it (state ws_up, ws_retry, ws_down, the fallback tries)
+    # and the attempt count.
     "wifi": ("state", "attempt"),
     # The unit restart guard (restarts this hour, 1 while it refuses more) and microphone level.
     "wake_stats": (
@@ -79,9 +80,10 @@ _TAILNET = ipaddress.ip_network("100.64.0.0/10")
 
 
 def link_path(address: str | None) -> str | None:
-    """How the robot reaches the hub, from the address its connection came from: "home" (a home network
-    address), "away" (a Tailscale address: the laptop relay carries it from another network), "other" (a public address),
-    or None when there is no connection."""
+    """How the robot reaches the hub, from the address its connection came from.
+
+    "home" is a home network address, "away" a Tailscale address (the laptop relay carries the
+    robot from another network), "other" a public address, None no connection."""
     if not address:
         return None
     try:
@@ -164,7 +166,8 @@ def build_payload(
         if isinstance(facts.get("mute_source"), str)
         else None,
         "link_encrypted": bool(link_encrypted),
-        # How the robot is connected (home, away through the laptop relay, other) and what the unit says about its hub link.
+        # How the robot is connected (home, away through the laptop relay, other)
+        # and what the unit says about its hub link.
         "link_path": link_path(address),
         "link_state": facts.get("wifi_state") if isinstance(facts.get("wifi_state"), str) else None,
         "link_attempt": facts.get("wifi_attempt")

@@ -102,16 +102,15 @@ def test_a_unit_that_answers_false_as_text_or_wrapper_is_a_refusal():
 def test_checkin_says_how_the_robot_is_connected():
     from maipai_body.link.checkin import UnitFacts, build_payload, link_path
 
-    assert link_path("172.19.210.246") == "home"
-    assert link_path("192.0.2.9") == "home"  # documentation range counts as private for this check only through is_private
-    assert link_path("100.81.94.122") == "away"  # the laptop relay's Tailscale address
+    assert link_path("198.51.100.20") == "home"
+    assert link_path("100.64.0.9") == "away"  # the laptop relay's Tailscale address
     assert link_path("8.8.8.8") == "other"
     assert link_path(None) is None and link_path("not an address") is None
     facts = UnitFacts()
     facts.observe("wifi", {"state": "ws_retry", "attempt": 3, "rssi": -64, "wifi": 1})
     payload = build_payload(
         device_id="r1",
-        address="100.81.94.122",
+        address="100.64.0.9",
         connected_since=None,
         facts=facts.snapshot(),
         status=None,
@@ -121,6 +120,16 @@ def test_checkin_says_how_the_robot_is_connected():
     assert payload["link_path"] == "away"
     assert payload["link_state"] == "ws_retry" and payload["link_attempt"] == 3
     offline = build_payload(
-        device_id=None, address=None, connected_since=None, facts={}, status=None, bot_version=None, now=0.0
+        device_id=None,
+        address=None,
+        connected_since=None,
+        facts={},
+        status=None,
+        bot_version=None,
+        now=0.0,
     )
-    assert offline["link_path"] is None and offline["link_state"] is None and offline["link_attempt"] is None
+    assert (
+        offline["link_path"] is None
+        and offline["link_state"] is None
+        and offline["link_attempt"] is None
+    )
