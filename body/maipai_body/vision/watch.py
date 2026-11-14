@@ -244,6 +244,12 @@ class VisionWatch:
             self._tracks = live
             return matched
 
+    def drop_tracks(self) -> None:
+        """Forget every track: after the body was handled, who was in view is stale and the
+        next cycles rebuild the list from fresh detections only."""
+        with self._lock:
+            self._tracks = []
+
     # -- reading -----------------------------------------------------
 
     def current(self) -> WatchSnapshot:
