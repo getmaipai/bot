@@ -297,6 +297,14 @@ class StackChanBehavior:
             "wifi": "refused",
             "why": "Wi-Fi management is not ready",
         }
+        self.wifi_use_command: Callable[[dict], dict | None] = lambda _payload: {
+            "wifi": "refused",
+            "why": "Wi-Fi management is not ready",
+        }
+        self.prefer_tailnet_command: Callable[[dict], dict | None] = lambda _payload: {
+            "tailnet": "refused",
+            "why": "the robot is not ready",
+        }
         self.song_title_command: Callable[[dict], dict | None] = lambda _payload: {
             "song_title": "unavailable",
         }
@@ -1909,6 +1917,8 @@ def _start_stackchan_night(
                 "listen_song": lambda payload: behavior.listen_song_command(payload),
                 "wifi_add": lambda payload: behavior.wifi_add_command(payload),
                 "wifi_forget": lambda payload: behavior.wifi_forget_command(payload),
+                "wifi_use": lambda payload: behavior.wifi_use_command(payload),
+                "prefer_tailnet": lambda payload: behavior.prefer_tailnet_command(payload),
                 "song_title": lambda payload: behavior.song_title_command(payload),
             },
             on_drop=link.channel_lost,
@@ -2484,6 +2494,14 @@ async def _serve_stackchan_channels(
         )
         behavior.wifi_forget_command = lambda payload: wifi_list.forget(
             payload.get("ssid") if isinstance(payload, dict) else None
+        )
+        behavior.wifi_use_command = lambda payload: wifi_list.use(
+            payload.get("ssid") if isinstance(payload, dict) else None
+        )
+        from maipai_body.bodies.stackchan.wifi_list import prefer_tailnet as _prefer_tailnet
+
+        behavior.prefer_tailnet_command = lambda payload: _prefer_tailnet(
+            music_switch.call, payload
         )
 
         def identify_post(pcm: bytes, request_id: str | None = None) -> dict | None:

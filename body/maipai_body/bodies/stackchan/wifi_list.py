@@ -143,3 +143,50 @@ class WifiList:
         self._has_saved = False
         self.saved()
         self._on_changed()
+
+    def use(self, ssid: object) -> dict[str, str]:
+        """Ask the unit to leave its network and join the named saved one now (firmware patch 154).
+
+        The unit holds the choice in memory only, never rewrites its saved list, and goes back by
+        itself if the hub is not reached within 3 minutes. Nothing here writes the saved list."""
+        if not isinstance(ssid, str) or not ssid:
+            return {"wifi": "refused", "why": "Choose one of the robot's saved networks."}
+        with self._lock:
+            names = self.saved()
+            try:
+                index = names.index(ssid)
+            except ValueError:
+                return {"wifi": "refused", "why": "That network is not saved on the robot."}
+            try:
+                result = self._call("self.wifi.use_now", {"index": index})
+            except Exception:
+                logger.warning("wifi use tool call failed")
+                return {"wifi": "refused", "why": "The robot could not be reached."}
+            if _is_false(result) or _is_not_ok(result):
+                return {"wifi": "refused", "why": "The robot could not switch to that network."}
+            return {"wifi": "switching"}
+
+
+def _is_not_ok(result: object) -> bool:
+    """A unit tool that answers JSON {"ok": false, ...} (possibly as text) is a refusal."""
+    if isinstance(result, (str, bytes, bytearray)):
+        try:
+            result = json.loads(result)
+        except (ValueError, TypeError, UnicodeDecodeError):
+            return False
+    return isinstance(result, Mapping) and result.get("ok") is False
+
+
+def prefer_tailnet(call: Callable[[str, dict], object], payload: object) -> dict[str, Any]:
+    """Ask the unit to prefer its tailnet path to the hub for N minutes (0 is off; patch 153)."""
+    minutes = payload.get("minutes") if isinstance(payload, Mapping) else None
+    if isinstance(minutes, bool) or not isinstance(minutes, int) or not 0 <= minutes <= 120:
+        return {"tailnet": "refused", "why": "Minutes must be a whole number from 0 to 120."}
+    try:
+        result = call("self.network.prefer_tailnet", {"minutes": minutes})
+    except Exception:
+        logger.warning("prefer_tailnet tool call failed")
+        return {"tailnet": "refused", "why": "The robot could not be reached."}
+    if _is_false(result) or _is_not_ok(result):
+        return {"tailnet": "refused", "why": "The robot's tailnet is not up yet."}
+    return {"tailnet": "off"} if minutes == 0 else {"tailnet": "preferred", "minutes": minutes}

@@ -1,7 +1,7 @@
 import json
 import logging
 
-from maipai_body.bodies.stackchan.wifi_list import WifiList
+from maipai_body.bodies.stackchan.wifi_list import WifiList, prefer_tailnet
 from maipai_body.link.checkin import build_payload
 
 
@@ -10,6 +10,7 @@ class Unit:
         self.names = list(names)
         self.calls = []
         self.fail_add = None
+        self.tailnet_ready = True
 
     def call(self, tool, args):
         self.calls.append((tool, args))
@@ -24,6 +25,14 @@ class Unit:
         if tool == "self.wifi.forget":
             self.names.pop(args["index"])
             return True
+        if tool == "self.wifi.use_now":
+            if args["index"] >= len(self.names):
+                return json.dumps({"ok": False, "error": "no_such_network"})
+            return json.dumps({"ok": True, "revert_in_s": 180})
+        if tool == "self.network.prefer_tailnet":
+            if self.tailnet_ready:
+                return json.dumps({"ok": True, "minutes": args["minutes"]})
+            return json.dumps({"ok": False, "error": "tailnet_not_ready"})
         raise AssertionError(tool)
 
 
@@ -133,3 +142,86 @@ def test_checkin_says_how_the_robot_is_connected():
         and offline["link_state"] is None
         and offline["link_attempt"] is None
     )
+
+
+def _payload(address, facts):
+    return build_payload(
+        device_id="unit",
+        address=address,
+        connected_since=None,
+        facts=facts,
+        status=None,
+        bot_version="1",
+        now=0,
+    )
+
+
+def test_the_units_own_tailnet_connection_is_an_encrypted_channel():
+    up = {"tailnet_state": "connected", "tailnet_ip": "100.84.176.31"}
+    assert _payload("100.84.176.31", up)["link_encrypted"] is True
+    # The laptop relay: a tailnet peer that is not the unit's own address (plain Wi-Fi last leg).
+    assert _payload("100.70.0.9", up)["link_encrypted"] is False
+    # A home address stays plain even while the tailnet client is up.
+    assert _payload("192.0.2.5", up)["link_encrypted"] is False
+    # The client must be connected, and must have reported an address.
+    down = {"tailnet_state": "reconnecting", "tailnet_ip": "100.84.176.31"}
+    assert _payload("100.84.176.31", down)["link_encrypted"] is False
+    assert _payload("100.84.176.31", {"tailnet_state": "connected"})["link_encrypted"] is False
+    assert _payload(None, up)["link_encrypted"] is False
+
+
+def test_tailnet_events_are_kept_as_unit_facts():
+    from maipai_body.link.checkin import UnitFacts
+
+    facts = UnitFacts()
+    facts.observe("tailnet_state", {"state": "connected", "ip": "100.84.176.31"})
+    assert facts.snapshot()["tailnet_state"] == "connected"
+    assert facts.snapshot()["tailnet_ip"] == "100.84.176.31"
+    assert facts.changed.is_set()
+
+
+def test_use_asks_the_unit_to_join_the_named_saved_network_by_index():
+    unit = Unit(["Home", "Hotspot"])
+    wifi = WifiList(unit.call)
+    assert wifi.use("Hotspot") == {"wifi": "switching"}
+    assert ("self.wifi.use_now", {"index": 1}) in unit.calls
+    # Nothing in this path writes the saved list.
+    assert not any(
+        tool in {"self.wifi.add", "self.wifi.forget", "self.wifi.switch"} for tool, _ in unit.calls
+    )
+
+
+def test_use_refuses_an_unknown_name_and_a_bad_value():
+    unit = Unit(["Home"])
+    wifi = WifiList(unit.call)
+    assert wifi.use("Missing")["wifi"] == "refused"
+    assert wifi.use(None)["wifi"] == "refused"
+    assert not any(tool == "self.wifi.use_now" for tool, _ in unit.calls)
+
+
+def test_use_reports_a_unit_that_refuses_or_is_unreachable():
+    unit = Unit(["Home"])
+    wifi = WifiList(
+        lambda tool, args: (
+            json.dumps({"ok": False}) if tool == "self.wifi.use_now" else unit.call(tool, args)
+        )
+    )
+    assert wifi.use("Home")["wifi"] == "refused"
+
+    def broken(tool, args):
+        if tool == "self.wifi.use_now":
+            raise RuntimeError("unit gone")
+        return unit.call(tool, args)
+
+    assert WifiList(broken).use("Home")["wifi"] == "refused"
+
+
+def test_prefer_tailnet_passes_minutes_and_reports_a_tailnet_that_is_not_up():
+    unit = Unit()
+    assert prefer_tailnet(unit.call, {"minutes": 10}) == {"tailnet": "preferred", "minutes": 10}
+    assert ("self.network.prefer_tailnet", {"minutes": 10}) in unit.calls
+    assert prefer_tailnet(unit.call, {"minutes": 0}) == {"tailnet": "off"}
+    unit.tailnet_ready = False
+    assert prefer_tailnet(unit.call, {"minutes": 5})["tailnet"] == "refused"
+    for bad in ({}, {"minutes": -1}, {"minutes": 500}, {"minutes": "x"}, {"minutes": True}, None):
+        assert prefer_tailnet(unit.call, bad)["tailnet"] == "refused"

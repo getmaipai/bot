@@ -29,6 +29,8 @@ _KEPT: dict[str, tuple[str, ...]] = {
     # The unit's hub link as it reports it (state ws_up, ws_retry, ws_down, the fallback tries)
     # and the attempt count.
     "wifi": ("state", "attempt"),
+    # The unit's own tailnet client (firmware patch 147): its state and its tailnet address.
+    "tailnet_state": ("state", "ip"),
     # The unit restart guard (restarts this hour, 1 while it refuses more) and microphone level.
     "wake_stats": (
         "heal_n",
@@ -66,9 +68,11 @@ class UnitFacts:
                         name = f"boot_{key}"
                     if kind == "wifi":
                         name = f"wifi_{key}"
+                    if kind == "tailnet_state":
+                        name = f"tailnet_{key}"
                     if self._values.get(name) != value:
                         self._values[name] = value
-                        if kind in {"boot", "fw", "privacy"}:
+                        if kind in {"boot", "fw", "privacy", "tailnet_state"}:
                             self.changed.set()
 
     def snapshot(self) -> dict[str, Any]:
@@ -95,6 +99,25 @@ def link_path(address: str | None) -> str | None:
     if ip.is_private or ip.is_loopback or ip.is_link_local:
         return "home"
     return "other"
+
+
+def tailnet_channel(address: str | None, facts: Mapping[str, Any]) -> bool:
+    """True when the hub link is the unit's own tailnet connection (WireGuard, encrypted).
+
+    Both must hold: the unit reports its tailnet client connected, and the address the voice
+    connection came from is the unit's own tailnet address. Another tailnet address (the laptop
+    relay, whose last leg is plain Wi-Fi) or a home address is not this channel."""
+    if facts.get("tailnet_state") != "connected":
+        return False
+    ip = facts.get("tailnet_ip")
+    if not address or not isinstance(ip, str) or not ip:
+        return False
+    try:
+        peer = ipaddress.ip_address(address.split("%")[0])
+        own = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return peer == own and peer.version == 4 and peer in _TAILNET
 
 
 def _unit_flag(facts: Mapping[str, Any], key: str) -> bool | None:
@@ -165,7 +188,7 @@ def build_payload(
         "mute_source": facts.get("mute_source")
         if isinstance(facts.get("mute_source"), str)
         else None,
-        "link_encrypted": bool(link_encrypted),
+        "link_encrypted": bool(link_encrypted) or tailnet_channel(address, facts),
         # How the robot is connected (home, away through the laptop relay, other)
         # and what the unit says about its hub link.
         "link_path": link_path(address),

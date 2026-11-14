@@ -1,0 +1,183 @@
+# Intent: a test hook so the tailnet path can be proven at home (owner 2026-11-14): the device command self.network.prefer_tailnet(minutes) makes the voice and avatar channels skip the home address and use the tailnet hub address for that many minutes (an open link is reopened through the tailnet at once). Off by default, never saved to flash (a restart clears it), refused with tailnet_not_ready while the tailnet is not up. It is an MCP tool, so only the authenticated hub connection can call it.
+# Check after a flash: self.network.prefer_tailnet(5) answers {"ok":true,"minutes":5}; the serial log says "Tailnet preferred: reconnecting through the tailnet" then "fallback host for attempt N: <tailnet address> (tailnet preferred)" and the hub sees the unit from a 100.64.0.0/10 address; five minutes later the next reconnect uses the home address again.
+diff --git a/firmware/main/hal/hal_ws_avatar.cpp b/firmware/main/hal/hal_ws_avatar.cpp
+index 6cc9bb0..e3ecb91 100644
+--- a/firmware/main/hal/hal_ws_avatar.cpp
++++ b/firmware/main/hal/hal_ws_avatar.cpp
+@@ -8,6 +8,7 @@
+ #include "board/hal_bridge.h"
+ #include "maipai_privacy.h"
+ #include "maipai_fallback.h"
++#include "maipai_tailnet.h"
+ #include <mooncake.h>
+ #include <mooncake_log.h>
+ #include <board.h>
+@@ -208,6 +209,16 @@ public:
+                 }  // else this network may not use the fallback (patch 146): the home address is tried
+             }
+         }
++        if (!using_fallback && _fallback_enabled && maipai_tailnet_prefer_active() && maipai_tailnet_ready()) {
++            // The tailnet test hook (patch 153): skip the home address.
++            const std::string fb = maipai_fallback_avatar_base(_saved_base, _fb_attempt++);
++            if (!fb.empty()) {
++                url            = fmt::format("{}/stackChan/ws?deviceType=StackChan", fb);
++                using_fallback = true;
++                _trying_home   = false;
++            }
++        }
++        _prefer_gen = maipai_tailnet_prefer_generation();
+         bool connected = false;
+         bool probed_out = false;
+         if (!using_fallback && _fallback_enabled && (_home_fails > 0 || _on_fallback)) {
+@@ -257,6 +268,16 @@ public:
+         } else {
+             processMessages();
+ 
++            // The tailnet test hook (patch 153): a new request while connected reopens the link through the tailnet.
++            if (_prefer_gen != maipai_tailnet_prefer_generation()) {
++                _prefer_gen = maipai_tailnet_prefer_generation();
++                if (maipai_tailnet_prefer_active()) {
++                    ESP_LOGI(_tag.c_str(), "Tailnet preferred: reconnecting through the tailnet");
++                    _websocket->Close();
++                    return;
++                }
++            }
++
+             // Check heartbeat timeout
+             if (GetHAL().millis() - _last_heartbeat_time > 10000) {
+                 ESP_LOGE(_tag.c_str(), "Heartbeat timeout!");
+@@ -527,6 +548,7 @@ private:
+     int _fb_attempt              = 0;
+     bool _on_fallback            = false;
+     bool _trying_home            = false;
++    unsigned _prefer_gen         = 0;
+     int _home_fails              = 0;
+     uint32_t _last_home_try_ms   = 0;
+     uint32_t _last_reconnect_attempt = 0;
+diff --git a/firmware/main/hal/maipai_fallback.cc b/firmware/main/hal/maipai_fallback.cc
+index 52e09a2..daf5ec5 100644
+--- a/firmware/main/hal/maipai_fallback.cc
++++ b/firmware/main/hal/maipai_fallback.cc
+@@ -110,6 +110,11 @@ std::string maipai_fallback_host(int attempt, const std::string& home_host)
+     if (maipai_tailnet_ready()) {
+         tailnet = maipai_tailnet_peer_host();
+     }
++    // The test hook (patch 153): while self.network.prefer_tailnet is on, the tailnet host is the only answer.
++    if (!tailnet.empty() && maipai_tailnet_prefer_active()) {
++        ESP_LOGI(TAG, "fallback host for attempt %d: %s (tailnet preferred)", attempt, tailnet.c_str());
++        return tailnet;
++    }
+     // 2. The gateway and the configured host (patch 146): only on a network whose name starts with the owner's prefix,
+     //    because they receive the saved pairing token in the clear.
+     wifi_ap_record_t ap;
+diff --git a/firmware/main/hal/maipai_tailnet.cc b/firmware/main/hal/maipai_tailnet.cc
+index 5bebf6a..527c03b 100644
+--- a/firmware/main/hal/maipai_tailnet.cc
++++ b/firmware/main/hal/maipai_tailnet.cc
+@@ -240,9 +240,44 @@ void maipai_tailnet_init()
+     }
+ }
+ 
++static int64_t s_prefer_until_us = 0;
++static unsigned s_prefer_gen     = 0;
++
++bool maipai_tailnet_prefer_active()
++{
++    return s_prefer_until_us != 0 && esp_timer_get_time() < s_prefer_until_us;
++}
++
++unsigned maipai_tailnet_prefer_generation()
++{
++    return s_prefer_gen;
++}
++
+ void maipai_tailnet_register_tools()
+ {
+     auto& mcp = McpServer::GetInstance();
++    // Patch 153: a test hook, off by default and never saved: while on, the unit prefers the tailnet path to the hub
++    // even when the home address answers, so the tailnet path can be proven at home.
++    mcp.AddTool("self.network.prefer_tailnet",
++                "Prefer the tailnet path to the hub for the given minutes (0 turns it off). Not saved: a restart "
++                "clears it. Answers {\"ok\":true,\"minutes\":n} or {\"ok\":false,\"error\":\"tailnet_not_ready\"}.",
++                PropertyList({Property("minutes", kPropertyTypeInteger, 0, 0, 120)}),
++                [](const PropertyList& properties) -> ReturnValue {
++                    const int minutes = properties["minutes"].value<int>();
++                    if (minutes <= 0) {
++                        s_prefer_until_us = 0;
++                        s_prefer_gen++;
++                        return std::string("{\"ok\":true,\"minutes\":0}");
++                    }
++                    if (!maipai_tailnet_ready()) {
++                        return std::string("{\"ok\":false,\"error\":\"tailnet_not_ready\"}");
++                    }
++                    s_prefer_until_us = esp_timer_get_time() + static_cast<int64_t>(minutes) * 60 * 1000000;
++                    s_prefer_gen++;
++                    char buf[48];
++                    snprintf(buf, sizeof(buf), "{\"ok\":true,\"minutes\":%d}", minutes);
++                    return std::string(buf);
++                });
+     mcp.AddTool("self.tailnet.status",
+                 "The tailnet client: whether it is compiled in, switched on, its state (idle, waiting_wifi, connecting, "
+                 "registering, connected, reconnecting, error, guard_off), the tailnet address, the hub address it "
+diff --git a/firmware/main/hal/maipai_tailnet.h b/firmware/main/hal/maipai_tailnet.h
+index 5a4660f..61df9c9 100644
+--- a/firmware/main/hal/maipai_tailnet.h
++++ b/firmware/main/hal/maipai_tailnet.h
+@@ -23,5 +23,11 @@ bool maipai_tailnet_ready();
+ std::string maipai_tailnet_peer_host();
+ 
+ // The pure host choice the fallback uses (patch 148): the tailnet peer first while the tailnet is up.
++// True while the host asked (self.network.prefer_tailnet, patch 153) for the tailnet path to be tried first: the
++// voice and avatar channels then skip the home address and use the tailnet hub address. Off by default; it ends by
++// itself after the requested minutes. The generation changes at each new request so an open link can be reopened.
++bool maipai_tailnet_prefer_active();
++unsigned maipai_tailnet_prefer_generation();
++
+ // Registers self.tailnet.status and self.tailnet.set.
+ void maipai_tailnet_register_tools();
+diff --git a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+index 3b160d6..17f6b04 100644
+--- a/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
++++ b/firmware/xiaozhi-esp32/main/protocols/websocket_protocol.cc
+@@ -16,6 +16,7 @@
+ #include <hal/board/hal_bridge.h>
+ #include <hal/maipai_sounds.h>
+ #include <hal/maipai_fallback.h>
++#include <hal/maipai_tailnet.h>
+ #include <esp_timer.h>
+ #include <esp_wifi.h>
+ #include <cstdio>
+@@ -400,6 +401,10 @@ void WebsocketProtocol::ReconnectTask(void* arg) {
+                 g_voice_use_fallback = true;
+             }
+         }
++        if (fallback_configured && maipai_tailnet_prefer_active() && maipai_tailnet_ready()) {
++            trying_home           = false;
++            g_voice_use_fallback = true;  // the tailnet test hook (patch 153): skip the home address
++        }
+         bool connected_now;
+         if (fallback_configured && !g_voice_use_fallback && (home_fails > 0 || on_fallback) && !HomeAddressAnswers()) {
+             self->last_connect_error_ = -2;  // the home address gave no answer in two seconds
+@@ -444,11 +449,22 @@ void WebsocketProtocol::ReconnectTask(void* arg) {
+             // blocked send() on the main task fails and the loop reconnects, instead of waiting for
+             // TCP to give up after minutes. The hub talks to the unit about twice a second.
+             EventBits_t bits = 0;
++            unsigned prefer_gen = maipai_tailnet_prefer_generation();
+             while (true) {
+                 bits = xEventGroupWaitBits(self->event_group_handle_, WEBSOCKET_PROTOCOL_DISCONNECTED_EVENT | WEBSOCKET_PROTOCOL_STOP_EVENT, pdTRUE, pdFALSE, pdMS_TO_TICKS(5000));
+                 if (bits & (WEBSOCKET_PROTOCOL_DISCONNECTED_EVENT | WEBSOCKET_PROTOCOL_STOP_EVENT)) {
+                     break;
+                 }
++                if (prefer_gen != maipai_tailnet_prefer_generation()) {
++                    prefer_gen = maipai_tailnet_prefer_generation();
++                    if (maipai_tailnet_prefer_active()) {
++                        ESP_LOGI(TAG, "Tailnet preferred: reconnecting through the tailnet");
++                        auto ws = self->GetWebSocket();
++                        if (ws != nullptr) {
++                            ws->Close();
++                        }
++                    }
++                }
+                 if (fallback_configured && on_fallback) {
+                     static int64_t last_probe_us = 0;
+                     const int64_t now_us = esp_timer_get_time();

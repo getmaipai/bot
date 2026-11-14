@@ -5,6 +5,16 @@ All notable changes to MaiPai Bot. Format follows
 Everything stays `0.x` until the product passes its battle-tested
 checklist (`docs/dev.md`).
 
+## [0.2.104] - 2026-11-14
+
+### Added
+- Away test without moving the robot (ANYWHERE-08, firmware patches 153 and 154): the host commands `wifi_use` (leave the current Wi-Fi and join one saved network now; the choice is held in memory only, the saved list in flash is never written, and the unit goes back to its saved networks by itself when it has not reached the hub in 3 minutes) and `prefer_tailnet` (the unit skips the home address and reaches the hub over its own tailnet address for N minutes; off by default, never saved).
+- The check-in reports `link_encrypted: true` when the hub connection comes from the unit's own tailnet address while its tailnet client says connected, so Home's add-network form unlocks over the tailnet; the unit's `tailnet_state` is kept as a unit fact (`tailnet_state`, `tailnet_ip`).
+
+### Changed
+- The `charged` cue plays once per plug-in session, 6 hours apart at most, and only after 5 minutes of real charging (patch 151), so a flapping top-off no longer repeats it.
+- A private first-enrolment build (a key compiled in) starts the tailnet client on by itself (patch 147); `recipe.sh --no-gateway-fallback` compiles the laptop gateway fallback out (patch 152); Wi-Fi and lwIP buffers try PSRAM first.
+
 ## [Unreleased]
 
 ### Added
