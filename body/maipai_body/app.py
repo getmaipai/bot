@@ -2432,7 +2432,6 @@ async def _serve_stackchan_channels(
             level_head=lambda: _move_head(CENTRE_YAW, CENTRE_PITCH, SPEED),
             device_connected=device_connected,
             full_quiet_reason=behavior.privacy.muted_reason,
-            on_start=sounds.on_dance_start,
         )
         from maipai_body.bodies.stackchan.music_dance_wiring import (
             MusicFeatureSwitch,

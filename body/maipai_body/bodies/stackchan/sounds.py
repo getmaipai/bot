@@ -84,6 +84,30 @@ NIGHT_OK = frozenset({"shutter", "goodbye", "low_battery", "exclamation", "popup
 # Cues that survive "sounds off" (the firmware's ms_safety): a picture and the urgent setup cue.
 SAFETY = frozenset({"shutter"})
 
+# The chime policy (owner 2026-11-14: "this is not something to chime for"; see "When it may
+# chime" in docs/dev/stackchan-sounds-2026-11-13.md). A host-initiated cue sounds only when a
+# person must notice it or it just changed because of them, never for something the robot chose
+# to do by itself: no chime for dancing, music, song naming, face changes, idle looks,
+# reconnects, retries or update checks. Every host play goes through ``SoundService.play``, which
+# checks this list, a minimum gap per cue and a daily cap.
+CHIME_ALLOWED = frozenset(
+    {
+        "needs_you",  # a person must act or decide
+        "plug_in",  # power events a person caused
+        "unplug",
+        "charged",
+        "low_battery",
+        "shutter",  # a picture was taken
+        "goodbye",  # shutdown
+        "exclamation",  # a failure they must know about, after an action they asked for
+    }
+)
+CHIME_GAP_S = 60.0  # the least time between two chimes of one cue, however often the event flaps
+CHIME_GAP_BY_CUE = {"shutter": 2.0}  # one click per picture
+CHIME_DAILY_CAP = 20  # chimes of one cue in 24 hours
+CHIME_DAILY_CAP_BY_CUE = {"shutter": 500}
+DAY_S = 24 * 3600.0
+
 LOW_BATTERY_LINE = "My battery is low. Please plug me in."
 SPEAK_FOR_S = 30.0  # keep trying to say the line while a turn is busy, then give up
 SHUTTER_GAP_S = 2.0  # one click per picture, however the cue flaps
@@ -94,9 +118,9 @@ PUSH_RETRY_S = 30.0  # after a failed push (the unit is away) wait this long bef
 @dataclass(frozen=True)
 class PlayResult:
     ok: bool
-    reason: str = (
-        ""  # muted | night | disabled | unknown_sound | unreachable | unsupported | missing
-    )
+    # muted | night | disabled | unknown_sound | not_allowed | rate_limited | daily_cap |
+    # unreachable | unsupported | missing
+    reason: str = ""
 
 
 def _parse(result: object) -> dict[str, Any]:
@@ -187,6 +211,7 @@ class SoundService:
         self._pending_line: float | None = None  # when to give up saying the low battery line
         self._camera_up = False
         self._last_shutter = float("-inf")
+        self._chimed: dict[str, list[float]] = {}  # when each cue last sounded (the last 24 hours)
         self.refusals: dict[str, int] = {}
 
     # ---- settings ----
@@ -261,10 +286,31 @@ class SoundService:
                 return "night"
         return None
 
+    def _chime_gate(self, name: str) -> str | None:
+        """The one chime gate: the cue is on the allowed list, has not sounded within its minimum
+        gap and is under its daily cap. Records the chime when it passes. The sound test bypasses
+        it."""
+        if name not in CHIME_ALLOWED:
+            return "not_allowed"
+        now = self._clock()
+        with self._lock:
+            times = [t for t in self._chimed.get(name, []) if now - t < DAY_S]
+            if times and now - times[-1] < CHIME_GAP_BY_CUE.get(name, CHIME_GAP_S):
+                self._chimed[name] = times
+                return "rate_limited"
+            if len(times) >= CHIME_DAILY_CAP_BY_CUE.get(name, CHIME_DAILY_CAP):
+                self._chimed[name] = times
+                return "daily_cap"
+            times.append(now)
+            self._chimed[name] = times
+        return None
+
     def play(self, name: str, *, urgent: bool = False, test: bool = False) -> PlayResult:
         """Ask the unit to play one sound now (blocks on the device; use ``play_later`` from an
         event thread)."""
         why = self.refusal(name, urgent=urgent, test=test)
+        if why is None and not test:
+            why = self._chime_gate(name)
         if why is not None:
             with self._lock:
                 self.refusals[why] = self.refusals.get(why, 0) + 1
@@ -287,7 +333,14 @@ class SoundService:
 
     def _play_logged(self, name: str, urgent: bool) -> None:
         result = self.play(name, urgent=urgent)
-        if not result.ok and result.reason not in ("muted", "night", "disabled"):
+        if not result.ok and result.reason not in (
+            "muted",
+            "night",
+            "disabled",
+            "not_allowed",
+            "rate_limited",
+            "daily_cap",
+        ):
             logger.info("sound %s was not played: %s", name, result.reason)
 
     # ---- the host's events ----
@@ -309,10 +362,6 @@ class SoundService:
         """An apology is about to be spoken: the error earcon comes first (at night it is the only
         sound, the apology itself being skipped by the quiet rules elsewhere)."""
         self.play_later("exclamation")
-
-    def on_dance_start(self) -> None:
-        """A dance starts: a bright chime by day (the night rule refuses it at night)."""
-        self.play_later("success")
 
     def tick(self) -> None:
         """About once a second: the low battery sound and line, and the policy when it changed."""

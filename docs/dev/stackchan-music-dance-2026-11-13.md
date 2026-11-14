@@ -169,3 +169,7 @@ offline dance (patch 121) still does one block: the same cycles on the unit are 
 The 90 s between dance blocks is a slow mood, not a stop: the gentle happy sway only (no robot moves, no ring show, one note on the
 face), then the slow start and the full dance again. The dance stops only when the music is gone (9 s without clear music pauses it and
 clear music restarts it; 60 s ends the session), the unit is paused (forehead tap, mute), a turn starts, it is tilted or the battery is low.
+
+## Only silence ends a running session (owner 2026-11-13, fixed 2026-11-14)
+
+The beat finder doubts many real songs (weak beat, flat, a voice over them). Starting a session still needs clear music for the detect time and passes the talker check. Once a session runs, `MusicDance._sound_at()` is the last second with either a clear music window or any window loud enough to be sent (level 400 or more); only no sound for the end-silence time pauses the dance and only no sound for the session gap ends the session. Before this, a song whose windows were mostly rejected broke the dance every 5 to 6 seconds (live log 2026-11-14 12:33: "stage show -> break" four seconds after the dance began). The dance start chime is gone; see "When it may chime" in `stackchan-sounds-2026-11-13.md`.

@@ -381,6 +381,7 @@ class MusicDance:
         self._break_at = float("-inf")
         self._run_start: float | None = None
         self._last_pos: float | None = None
+        self._last_loud: float | None = None  # the last window loud enough to be sound at all
         self._run_len_pos = 0
         self._nod_at = float("-inf")
         self._nod_cancel = False
@@ -421,6 +422,8 @@ class MusicDance:
             if not self._active():
                 return
             self._count_minute(now)
+            if feat.lv >= MIN_LEVEL:
+                self._last_loud = now
             relaxed = self.state in ("nod", "watch", "show", "calm", "break")
             verdict = judge(feat, self.settings.auto_sensitivity, relaxed=relaxed)
             self._talk.append(feat.ps >= TALKER_PS or feat.mo >= TALKER_MO)
@@ -518,13 +521,23 @@ class MusicDance:
             return 0.0
         return self._last_pos - self._run_start
 
+    def _sound_at(self) -> float | None:
+        """The last second of sound in a running session: a clear music window, or any window loud
+        enough to be sent. The beat finder doubts many real songs (weak beat, flat, a voice over
+        them); once a session started, only silence ends it (owner 2026-11-13: a song playing for
+        hours keeps dancing; live log 2026-11-14 12:33, the dance broke 4 s after it began)."""
+        seen = [t for t in (self._last_pos, self._last_loud) if t is not None]
+        return max(seen) if seen else None
+
     def _music_gone(self, now: float) -> bool:
-        """The music dipped: no clear second for the end-silence time (a round stops)."""
-        return self._last_pos is None or now - self._last_pos >= self._timing.end_silence_s
+        """No sound for the end-silence time (a round stops, the dance pauses)."""
+        last = self._sound_at()
+        return last is None or now - last >= self._timing.end_silence_s
 
     def _session_over(self, now: float) -> bool:
-        """The music session is over: no clear second for the session gap (a song change is not)."""
-        return self._last_pos is None or now - self._last_pos >= self._timing.session_gap_s
+        """The music session is over: no sound for the session gap (a song change is not)."""
+        last = self._sound_at()
+        return last is None or now - last >= self._timing.session_gap_s
 
     # -- the stages
 
@@ -936,7 +949,7 @@ class MusicDance:
             self._test_until = now + (30.0 if fast else TEST_S)
             self._test_next = now
             self.state = "idle"
-            self._run_start = self._last_pos = None
+            self._run_start = self._last_pos = self._last_loud = None
             logger.info("StackChan music test started (%s)", "fast" if fast else "normal")
             return True, ""
 

@@ -5,6 +5,15 @@ All notable changes to MaiPai Bot. Format follows
 Everything stays `0.x` until the product passes its battle-tested
 checklist (`docs/dev.md`).
 
+## [0.2.96] - 2026-11-14
+
+### Fixed
+- The robot shows the song title again. Home answers `{status, result: {title, artist, ...}}` and the body read the top level, so every match ended with "Home matched without a title". The body now reads the nested answer (a flat answer still works) and the genre mood gets the song fields.
+- A song the beat finder doubts keeps the dance going. Once a music session started, only silence ends a dance round, the pause and the session: any window loud enough to be sent counts as sound, even when it is rejected as a weak beat, flat or a voice over music. The dance no longer breaks and restarts every few seconds while a song plays (live log 2026-11-14 12:33). Starting a session still needs clear music and the talker check.
+
+### Changed
+- No dance start chime, and a chime policy in code. Every host-initiated sound goes through one gate in `sounds.py`: only the cues on the allowed list (needs you, plug in, unplug, charged, low battery, shutter, goodbye, the error earcon) sound, a cue sounds at most once a minute (a shutter click once in two seconds) and at most 20 times a day. Success, popup, vibration and offline are refused from the host. The owner rules are in `docs/dev/stackchan-sounds-2026-11-13.md`, "When it may chime".
+
 ## [Unreleased]
 
 ## [0.2.95] - 2026-11-14

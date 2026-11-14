@@ -516,3 +516,28 @@ def test_suppressed_music_capture_is_freed_when_the_post_to_home_raises():
     f.result = None
     identify.on_music_heard(2, "a nod was less than 2 minutes ago")
     assert sum(name == "self.music.capture_clip" for name, _ in f.calls) == 2
+
+
+def test_the_real_home_answer_nests_the_song_under_result(caplog):
+    """Home's identifyView returns {status, result: {title, artist, album, year, source}} (live log
+    2026-11-14 12:33: 'Home matched without a title' because the body read the top level)."""
+    f = Fixture()
+    f.result = {
+        "status": "matched",
+        "result": {
+            "title": "Nested Song",
+            "artist": "Nested Artist",
+            "album": "An Album",
+            "year": 2001,
+            "source": "shazam",
+        },
+    }
+    f.read_answers = [answer(b"\xff", True)]
+    seen = []
+    identify = f.build()
+    identify._hooks.on_result = seen.append  # how music_dance_wiring attaches the genre mood hook
+    with caplog.at_level(logging.INFO):
+        start_and_ready(f, identify, 1)
+    assert f.calls[-1] == ("self.face.song_title", {"text": "Nested Song - Nested Artist"})
+    assert seen and seen[0]["title"] == "Nested Song"  # the genre hook gets the song fields
+    assert "without a title" not in " ".join(r.message for r in caplog.records)

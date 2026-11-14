@@ -355,6 +355,11 @@ class MusicIdentify:
             if not isinstance(result, dict):
                 logger.info("%s Home returned an unexpected response", LOG)
             return
+        # Home's answer is {status, result: {title, artist, album, year, source}} (identifyView in
+        # backend/src/routes/music.ts); a flat answer with the fields at the top level still works.
+        nested = result.get("result")
+        if isinstance(nested, dict):
+            result = {**nested, "status": "matched"}
         genre_callback = getattr(self._hooks, "on_result", None)
         if callable(genre_callback):
             genre_callback(result)

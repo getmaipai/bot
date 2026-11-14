@@ -603,7 +603,7 @@ def test_the_log_has_a_line_per_stage_detection_and_minute(caplog):
     with caplog.at_level(logging.INFO, logger="maipai_body.bodies.stackchan.music_dance"):
         world.play(MUSIC, 26)
         world.play(None, 8)
-        world.play(NO_BEAT, 60)
+        world.play(None, 62)  # quiet: the session gap passes (a loud non-song keeps a session open)
     text = "\n".join(r.getMessage() for r in caplog.records)
     assert "detected clear music for 4 s (tempo 120 bpm, confidence 80%)" in text
     assert "stage idle -> nod" in text
@@ -1144,3 +1144,45 @@ def test_when_the_music_goes_the_robot_wonders_once_where_it_went():
         None, 30
     )  # the music stops while the head was only nodding: no dance to wonder about
     assert quiet.names("wonder") == []
+
+
+# ---- a song the beat finder doubts keeps the dance going (live log 2026-11-14 12:33 and 03:25)
+
+# a live-log window (12:27:21): loud enough to be sent (level 403), weak_beat even when relaxed
+WEAK_LOUD = MusicFeat(lv=403, b=(66, 9, 4, 21), bpm=82, tc=9, fl=15, zc=180, zs=39, mo=7, ps=6)
+
+
+def test_loud_sound_the_beat_finder_rejects_does_not_break_a_running_dance():
+    world = World(timing=M.NORMAL)
+    world.play(MUSIC, 22)  # the nod, the build-up and the dance start
+    assert world.ctl.state == "show"
+    assert len(world.names("request_dance")) == 1
+    for i in range(60):  # a minute of a song whose windows mostly fail the beat test
+        world.second(WEAK_LOUD if i % 4 else MUSIC)
+    assert world.ctl.state == "show"
+    assert world.dancing
+    assert [a for _, n, a in world.calls if n == "stop_dance"] == []
+    assert len(world.names("request_dance")) == 1  # one continuous dance, no flap
+    assert world.names("wonder") == []
+    world.play(None, 6)  # the sound is really gone: it stops within a few seconds
+    assert not world.dancing
+    assert [a for _, n, a in world.calls if n == "stop_dance"] == ["music ended"]
+
+
+def test_alternating_music_and_rejected_windows_every_few_seconds_make_one_dance():
+    world = World(timing=M.NORMAL)
+    world.play(MUSIC, 22)
+    for _ in range(10):  # 3 s of weak windows, 3 s of music, over and over
+        world.play(WEAK_LOUD, 3)
+        world.play(MUSIC, 3)
+    assert world.ctl.state == "show"
+    assert len(world.names("request_dance")) == 1
+    assert [a for _, n, a in world.calls if n == "stop_dance"] == []
+
+
+def test_the_session_does_not_end_while_the_sound_stays_loud():
+    world = World(timing=M.NORMAL)
+    world.play(MUSIC, 22)
+    world.play(WEAK_LOUD, 120)  # two minutes with no clear second at all, still loud
+    assert world.ctl.state in ("show", "calm")
+    assert world.names("wonder") == []

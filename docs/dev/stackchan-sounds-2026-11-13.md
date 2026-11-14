@@ -53,6 +53,23 @@ repair), plays the host-owned cues from a worker thread (a camera cue never wait
 the success chime at a dance start; and answers the hub's `sound_test` command (starts a background test that plays all twelve in
 turn, skipping "off" and the night rule but never the mute, and answers at once).
 
+## When it may chime (owner, 2026-11-14)
+
+"This is not something to chime for." A chime is for something a person must notice, or that just changed because of them. It is never for something the robot chose to do by itself.
+
+May chime (`CHIME_ALLOWED` in `sounds.py`): `needs_you` (a person must act or decide), `plug_in`, `unplug` and `charged` (power events a person caused), `low_battery`, `shutter` (a picture was taken), `goodbye` (shutdown), `exclamation` (a failure after an action they asked for). A timer or alarm they set rings through the alarm controller, not through this list.
+
+Never chimes: dancing and the music session (no dance start chime), song naming and its retries, face changes and idle looks, reconnects, retries, update checks and anything else routine. `success`, `popup`, `vibration` and `offline` are not asked from the host.
+
+Rules, enforced by one gate in `SoundService.play` (every host-initiated sound goes through it; a test checks that nothing else asks the unit to play a sound):
+- a cue on the allowed list only;
+- at least 60 s between two chimes of one cue (the shutter: 2 s), so a state that flaps makes at most one chime per gap;
+- at most 20 chimes of one cue in 24 hours (the shutter: 500);
+- the volume setting, mute, quiet hours and the night rules apply as before;
+- the Settings sound test bypasses the gate on purpose (it plays every sound in turn).
+
+Firmware-originated cues (the unit's own policy, `self.audio.set_sound_policy`): the unit plays the vibration tone when a tap finds no hub link (a person tapped it: allowed), the offline earcon after three minutes without the hub (patch 120) and the success chime when the link returns after an outage that sounded offline (patch 116). Those last two are not asked from the host and cannot be gated there; a hub install that takes the hub away for three minutes or more can sound them. A firmware change would be needed to remove them (not done).
+
 ## The voice and its licence
 
 The phrases use the household's default voice, the Stack's Chatterbox Turbo preset (`chatterbox-turbo-voice-default`), Apache-2.0

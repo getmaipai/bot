@@ -13,6 +13,8 @@ import pytest
 
 from maipai_body.bodies.stackchan import sounds as sounds_module
 from maipai_body.bodies.stackchan.sounds import (
+    CHIME_ALLOWED,
+    CHIME_GAP_S,
     EARCONS,
     LOW_BATTERY_LINE,
     NIGHT_OK,
@@ -133,7 +135,8 @@ def test_play_sends_the_name_the_urgent_flag_and_the_test_flag():
 def test_every_name_in_the_list_can_be_played_by_day_when_the_firmware_says_yes():
     service, unit, *_ = make()
     for name in EARCONS:
-        assert service.play(name).ok, name
+        # a sound test (test=True) bypasses the chime gate; routine cues are refused without it
+        assert service.play(name, test=True).ok, name
     assert unit.played() == list(EARCONS)
 
 
@@ -147,7 +150,7 @@ def test_an_unknown_name_is_refused_before_the_unit_is_asked():
 def test_the_units_own_refusal_comes_back_as_the_reason():
     service, unit, *_ = make()
     unit.answer = '{"ok":false,"error":"night"}'
-    result = service.play("success")
+    result = service.play("success", test=True)
     assert (result.ok, result.reason) == (False, "night")
 
 
@@ -156,7 +159,7 @@ def test_an_unreachable_or_old_unit_is_reported_not_raised():
     unit.error = RuntimeError("StackChan did not complete self.audio.play_sound")
     assert service.play("plug_in").reason == "unreachable"
     unit.error = RuntimeError("StackChan does not support x: unknown tool")
-    assert service.play("plug_in").reason == "unsupported"
+    assert service.play("plug_in", test=True).reason == "unsupported"
 
 
 def test_at_night_only_the_safety_and_answering_cues_are_asked():
@@ -164,10 +167,10 @@ def test_at_night_only_the_safety_and_answering_cues_are_asked():
     state["night"] = True
     for name in EARCONS:
         result = service.play(name)
-        assert result.ok == (name in NIGHT_OK), name
+        assert result.ok == (name in NIGHT_OK and name in CHIME_ALLOWED), name
         if not result.ok:
-            assert result.reason == "night"
-    assert set(unit.played()) == set(NIGHT_OK)
+            assert result.reason in ("night", "not_allowed")
+    assert set(unit.played()) == set(NIGHT_OK) & CHIME_ALLOWED
     assert {"shutter", "goodbye", "low_battery", "exclamation"} <= set(NIGHT_OK)
     assert not {"plug_in", "charged", "unplug", "offline", "success", "needs_you"} & set(NIGHT_OK)
 
@@ -295,7 +298,8 @@ def test_low_battery_plays_the_earcon_then_says_the_line_once_per_crossing():
     assert unit.played() == ["low_battery"] and said == [LOW_BATTERY_LINE]
     state["low"] = False  # charged a little
     service.tick()
-    state["low"] = True  # a second crossing
+    state["low"] = True  # a second crossing a minute later (a crossing within the gap stays silent)
+    clock.now += CHIME_GAP_S + 1
     service.tick()
     assert unit.played() == ["low_battery", "low_battery"]
     assert said == [LOW_BATTERY_LINE, LOW_BATTERY_LINE]
@@ -362,16 +366,65 @@ def test_a_flapping_cue_does_not_machine_gun_the_shutter():
     assert unit.played() == ["shutter"]
 
 
-def test_the_error_and_dance_cues():
-    service, unit, _, _, state = make()
+def test_the_error_cue_and_no_dance_chime():
+    service, unit, clock, _, state = make()
     service.on_error_line()
-    service.on_dance_start()
-    assert unit.played() == ["exclamation", "success"]
+    assert unit.played() == ["exclamation"]
+    assert not hasattr(service, "on_dance_start")  # nothing chimes for a dance (owner 2026-11-14)
     unit.calls.clear()
+    clock.now += CHIME_GAP_S + 1
     state["night"] = True
     service.on_error_line()  # the earcon only at night
-    service.on_dance_start()  # no chime at night
     assert unit.played() == ["exclamation"]
+
+
+# ---- the chime gate (owner 2026-11-14: rules for when to chime)
+
+
+def test_only_the_allowed_cues_chime_and_routine_ones_are_refused():
+    service, unit, *_ = make()
+    for name in ("success", "popup", "vibration", "offline"):
+        result = service.play(name)
+        assert (result.ok, result.reason) == (False, "not_allowed"), name
+    assert unit.played() == []
+    assert CHIME_ALLOWED == {
+        "needs_you",
+        "plug_in",
+        "unplug",
+        "charged",
+        "low_battery",
+        "shutter",
+        "goodbye",
+        "exclamation",
+    }
+
+
+def test_a_flapping_event_makes_at_most_one_chime_per_gap():
+    service, unit, clock, *_ = make()
+    for _ in range(30):  # a state that flaps every 5 s for 150 s
+        service.play_later("needs_you")
+        clock.now += 5.0
+    assert unit.played().count("needs_you") == 3  # 0 s, 65 s, 130 s with a 60 s gap
+    clock.now += CHIME_GAP_S
+    assert service.play("needs_you").ok
+
+
+def test_a_cue_has_a_daily_cap_and_a_sound_test_bypasses_the_gate():
+    service, unit, clock, *_ = make()
+    for _ in range(40):
+        clock.now += CHIME_GAP_S + 1
+        service.play("charged")
+    assert unit.played().count("charged") == 20
+    assert service.play("charged", test=True).ok  # the self-test plays every sound
+    clock.now += 24 * 3600
+    assert service.play("charged").ok
+
+
+def test_every_host_play_goes_through_the_chime_gate():
+    source = Path(sounds_module.__file__).read_text()
+    # the only place the host asks the unit to play a sound is SoundService.play, behind the gate
+    assert source.count('"self.audio.play_sound"') == 1
+    assert "_chime_gate(name)" in source
 
 
 # ---- the sound self-test ----
