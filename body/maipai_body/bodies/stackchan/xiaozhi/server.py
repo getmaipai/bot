@@ -53,6 +53,14 @@ FIRMWARE_EMOTIONS = {
     "wink": "winking",
     "listening": "listening",
     "thinking": "thinking",
+    # Firmware 0.2.93 (patch 132): the seven new mint faces.
+    "joy": "joy",
+    "content": "content",
+    "excited": "excited",
+    "shocked": "shocked",
+    "curious": "curious",
+    "love": "love",
+    "worried": "worried",
 }
 MAX_EARLY_DEVICE_REPLIES = 32
 

@@ -106,3 +106,24 @@ def test_expression_map_names_missing_face_in_plain_import_error(tmp_path, monke
         importlib.import_module("maipai_body.bodies.stackchan.expression_map")
     sys.modules.pop("maipai_body.bodies.stackchan.expression_map", None)
     monkeypatch.delenv("MAIPAI_STACKCHAN_FACE_SET", raising=False)
+
+
+def test_new_faces_are_native_from_firmware_0_2_93_and_fall_back_before():
+    from maipai_body.bodies.stackchan.avatar.server import EXPRESSIONS
+    from maipai_body.bodies.stackchan.face_vocabulary import resolve_face
+    from maipai_body.bodies.stackchan.xiaozhi.server import FIRMWARE_EMOTIONS
+
+    for name in ("joy", "content", "excited", "shocked", "curious", "love", "worried"):
+        assert resolve_face(name, "0.2.93") == name
+        assert resolve_face(name, "0.2.92") != name
+        assert name in EXPRESSIONS and name in FIRMWARE_EMOTIONS
+    # dizzy and silly are not drawn by any firmware yet: they keep their fallbacks.
+    assert resolve_face("dizzy", "0.2.93") == "doubt"
+    assert resolve_face("silly", "0.2.93") == "wink"
+    assert resolve_face("listening", "0.2.61") == "neutral"
+
+
+def test_patch_132_is_in_the_recipe():
+    recipe = (PACKAGE / "firmware" / "recipe.sh").read_text()
+    assert 'apply_repo_patch 132-expressive-faces.patch "$SRC"' in recipe
+    assert (PACKAGE / "firmware" / "patches" / "132-expressive-faces.patch").is_file()

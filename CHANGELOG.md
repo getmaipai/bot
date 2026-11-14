@@ -7,6 +7,10 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.93] - 2026-11-14
+
+- StackChan firmware patch 132 draws seven new faces (joy, content, excited, shocked, curious, love, worried). The host sends them only to a unit that reports firmware 0.2.93 or newer; an older unit keeps getting the nearest old face. The unit needs a USB flash for the new faces (the firmware has no wireless update path yet).
+
 ## [0.2.92] - 2026-11-14
 
 - Add StackChan's logical face vocabulary with firmware fallbacks, event mappings, and optional sleep-Z and meeting face hooks.

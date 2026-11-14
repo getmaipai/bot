@@ -47,6 +47,13 @@ EXPRESSIONS = {
     "wink": "wink",
     "listening": "listening",
     "thinking": "thinking",
+    "joy": "joy",
+    "content": "content",
+    "excited": "excited",
+    "shocked": "shocked",
+    "curious": "curious",
+    "love": "love",
+    "worried": "worried",
 }
 _EYE_WEIGHTS = {
     "neutral": 100,
@@ -60,6 +67,13 @@ _EYE_WEIGHTS = {
     "wink": 100,
     "listening": 100,
     "thinking": 100,
+    "joy": 100,
+    "content": 100,
+    "excited": 100,
+    "shocked": 100,
+    "curious": 100,
+    "love": 100,
+    "worried": 100,
 }
 _EYE_ROTATIONS = {
     "neutral": 0,
@@ -73,6 +87,13 @@ _EYE_ROTATIONS = {
     "wink": 0,
     "listening": 0,
     "thinking": 0,
+    "joy": 0,
+    "content": 0,
+    "excited": 0,
+    "shocked": 0,
+    "curious": 0,
+    "love": 0,
+    "worried": 0,
 }
 
 

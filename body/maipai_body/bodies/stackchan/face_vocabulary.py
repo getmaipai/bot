@@ -8,7 +8,8 @@ from .expression_map import SUPPORTED_FACES, face_for_firmware, version_at_least
 
 logger = logging.getLogger(__name__)
 
-NEW_FACES_FIRMWARE: tuple[int, int, int] | None = None
+# The first release whose firmware draws the seven new mint faces (patch 132).
+NEW_FACES_FIRMWARE: tuple[int, int, int] | None = (0, 2, 93)
 
 # (native firmware face, fallback face already drawn by the current firmware)
 FACE_VOCABULARY: dict[str, tuple[str | None, str]] = {
@@ -29,8 +30,8 @@ FACE_VOCABULARY: dict[str, tuple[str | None, str]] = {
     "angry": ("angry", "angry"),
     "sleepy": ("sleepy", "sleepy"),
     "sleeping": ("sleeping", "sleeping"),
-    "dizzy": ("dizzy", "doubt"),
-    "silly": ("silly", "wink"),
+    "dizzy": (None, "doubt"),
+    "silly": (None, "wink"),
 }
 
 _unknown: set[str] = set()

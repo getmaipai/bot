@@ -1,0 +1,114 @@
+# Intent: seven new faces for the owner-approved expressive set (2026-11-14, preview judged): joy, content, excited, shocked, curious, love, worried. New Emotion values, mint eye and mouth shapes built from the shipped primitives (dots, "^" and "u" arcs, brows, caps, ovals, waves) plus one closed heart outline for the love eyes; "shocked" now has its own face (it used to be the surprised face). Names the unit accepts over the voice socket: joy, content, excited, shocked, curious, love, worried.
+# Upstream: MaiPai only (emotion.h, skins/mint/mint.cpp, stackchan_display.cc). Applies after 131. The host resolves these names only for a unit that reports firmware 0.2.93 or newer (face_vocabulary.NEW_FACES_FIRMWARE); an older unit gets the nearest old face.
+# Check after a flash: set each face by hand (the host face tool or an llm emotion frame) and compare with the preview sheet; love shows two heart outlines, shocked a tall open mouth; the palette change recolours all of them; mute, timer card and link strip still win.
+diff --git a/firmware/main/hal/board/stackchan_display.cc b/firmware/main/hal/board/stackchan_display.cc
+--- a/firmware/main/hal/board/stackchan_display.cc
++++ b/firmware/main/hal/board/stackchan_display.cc
+@@ -1185 +1185 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
+-    } else if (strcmp(emotion, "surprised") == 0 || strcmp(emotion, "shocked") == 0) {
++    } else if (strcmp(emotion, "surprised") == 0) {
+@@ -1186,0 +1187,14 @@ void StackChanAvatarDisplay::SetEmotion(const char* emotion)
++    } else if (strcmp(emotion, "shocked") == 0) {
++        avatar.setEmotion(Emotion::Shocked);
++    } else if (strcmp(emotion, "joy") == 0) {
++        avatar.setEmotion(Emotion::Joy);
++    } else if (strcmp(emotion, "content") == 0) {
++        avatar.setEmotion(Emotion::Content);
++    } else if (strcmp(emotion, "excited") == 0) {
++        avatar.setEmotion(Emotion::Excited);
++    } else if (strcmp(emotion, "curious") == 0) {
++        avatar.setEmotion(Emotion::Curious);
++    } else if (strcmp(emotion, "love") == 0) {
++        avatar.setEmotion(Emotion::Love);
++    } else if (strcmp(emotion, "worried") == 0) {
++        avatar.setEmotion(Emotion::Worried);
+diff --git a/firmware/main/stackchan/avatar/avatar/elements/emotion.h b/firmware/main/stackchan/avatar/avatar/elements/emotion.h
+--- a/firmware/main/stackchan/avatar/avatar/elements/emotion.h
++++ b/firmware/main/stackchan/avatar/avatar/elements/emotion.h
+@@ -20,0 +21,7 @@ enum class Emotion {
++    Joy,        // patch 132: wide arcs and a big open smile
++    Content,    // patch 132: closed peaceful eyes and a soft smile
++    Excited,    // patch 132: big round eyes and an open smile
++    Shocked,    // patch 132: very wide eyes and a tall open mouth
++    Curious,    // patch 132: one eye bigger than the other, a raised brow, a small round mouth
++    Love,       // patch 132: heart eyes and a small smile
++    Worried,    // patch 132: steep brows and a wavy mouth
+diff --git a/firmware/main/stackchan/avatar/skins/mint/mint.cpp b/firmware/main/stackchan/avatar/skins/mint/mint.cpp
+--- a/firmware/main/stackchan/avatar/skins/mint/mint.cpp
++++ b/firmware/main/stackchan/avatar/skins/mint/mint.cpp
+@@ -79,0 +80,11 @@ static uint32_t quad(std::array<lv_point_precise_t, N>& out, uint32_t start, uin
++// Patch 132: a closed heart outline of 17 points (mockup units, around the origin), the love eyes.
++static uint32_t heart(std::array<lv_point_precise_t, 17>& out, int originX, int originY)
++{
++    static constexpr float kHeart[17][2] = {{0.0f, -5.9f}, {0.9f, -8.5f}, {5.5f, -12.3f}, {12.3f, -11.1f}, {15.6f, -4.9f}, {12.3f, 2.2f}, {5.5f, 8.4f}, {0.9f, 13.4f}, {0.0f, 15.6f}, {-0.9f, 13.4f}, {-5.5f, 8.4f}, {-12.3f, 2.2f}, {-15.6f, -4.9f}, {-12.3f, -11.1f}, {-5.5f, -12.3f}, {-0.9f, -8.5f}, {-0.0f, -5.9f}};
++    for (uint32_t i = 0; i < 17; ++i) {
++        out[i] = {static_cast<lv_value_precise_t>(originX + px(kHeart[i][0])),
++                  static_cast<lv_value_precise_t>(originY + px(kHeart[i][1]))};
++    }
++    return 17;
++}
++
+@@ -361 +372,2 @@ void MintEye::render()
+-    enum class Shape { Dot, Up, Down, Point, Flat } shape = Shape::Dot;
++    enum class Shape { Dot, Up, Down, Point, Flat, Heart } shape = Shape::Dot;
++    float up_half_width = 13;  // the "^" arc: Joy draws it a little wider and taller (patch 132)
+@@ -401,0 +414,28 @@ void MintEye::render()
++        case Emotion::Joy:  // patch 132
++            shape         = Shape::Up;
++            up_half_width = 15;
++            break;
++        case Emotion::Content:  // patch 132: the peaceful closed "u"
++            shape = Shape::Down;
++            break;
++        case Emotion::Excited:
++            dot_radius = 12;
++            break;
++        case Emotion::Shocked:
++            dot_radius = 14;
++            break;
++        case Emotion::Curious:  // the left eye wide, the right smaller under a raised brow
++            if (_is_left_eye) {
++                dot_radius = 10;
++            } else {
++                dot_radius = 7;
++                brow       = true;
++            }
++            break;
++        case Emotion::Love:
++            shape = Shape::Heart;
++            break;
++        case Emotion::Worried:
++            dot_radius = 9;
++            brow       = true;
++            break;
+@@ -413 +453,4 @@ void MintEye::render()
+-            points = quad(line, 0, 9, -13, 4, 0, -14, 13, 4, cx, cy);
++            points = quad(line, 0, 9, -up_half_width, 4, 0, -14 - (up_half_width - 13), up_half_width, 4, cx, cy);
++            break;
++        case Shape::Heart:  // patch 132: a closed outline, 17 points, in mockup units around the eye centre
++            points = heart(line, cx, cy);
+@@ -454,0 +498,3 @@ void MintEye::render()
++        } else if (_emotion == Emotion::Worried) {  // patch 132: steeper than Sad
++            float outer = _is_left_eye ? -13 : 13;
++            quad(next, 0, 2, outer, -12, 0, -20, -outer, -29, cx, cy);
+@@ -668,0 +715,20 @@ void MintMouth::layout()
++        case Emotion::Joy:  // patch 132
++            showCap(px(72), px(46), px(-12), true, true);
++            return;
++        case Emotion::Excited:
++            showCap(px(64), px(40), px(-10), true, true);
++            return;
++        case Emotion::Shocked:
++            showOval(px(30), px(52), px(6), false);
++            return;
++        case Emotion::Curious:
++            showOval(px(12), px(14), px(3), false);
++            return;
++        case Emotion::Love:
++            showCap(px(44), px(26), px(-8), true, false);
++            return;
++        case Emotion::Worried:  // a smaller wave than Doubt
++            n = quad(line, 0, 9, -16, 3, -8, -4, 0, 3, cx, cy);
++            n = quad(line, n - 1, 9, 0, 3, 8, 10, 16, 3, cx, cy);
++            break;
++        case Emotion::Content:
