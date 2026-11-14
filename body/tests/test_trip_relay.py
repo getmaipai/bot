@@ -20,7 +20,7 @@ spec.loader.exec_module(trip_relay)
 IFCONFIG = """lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
 \tinet 127.0.0.1 netmask 0xff000000
 en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
-\tinet 172.19.211.130 netmask 0xfffff000 broadcast 172.19.223.255
+\tinet 198.51.100.20 netmask 0xfffff000 broadcast 198.51.100.255
 bridge100: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
 \tinet 192.168.3.1 netmask 0xffffff00 broadcast 192.168.3.255
 \tinet6 fe80::1 prefixlen 64
@@ -31,7 +31,7 @@ utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280
 
 def test_parse_ifconfig_and_sharing_address():
     interfaces = trip_relay.parse_ifconfig(IFCONFIG)
-    assert interfaces["en0"] == ["172.19.211.130"]
+    assert interfaces["en0"] == ["198.51.100.20"]
     assert interfaces["bridge100"] == ["192.168.3.1"]
     assert trip_relay.sharing_address(interfaces) == "192.168.3.1"  # whatever subnet macOS picked
     assert trip_relay.sharing_address({"en0": ["10.0.0.5"]}) is None

@@ -29,15 +29,15 @@ static void test_pick(void)
 {
     char out[16];
     /* the laptop picked another subnet: the gateway comes first, then the configured 192.168.2.1 */
-    CHECK(mf_pick_host(0, "192.168.3.1", "192.168.2.1", "172.19.210.246", out, sizeof(out)) && strcmp(out, "192.168.3.1") == 0);
-    CHECK(mf_pick_host(1, "192.168.3.1", "192.168.2.1", "172.19.210.246", out, sizeof(out)) && strcmp(out, "192.168.2.1") == 0);
-    CHECK(mf_pick_host(2, "192.168.3.1", "192.168.2.1", "172.19.210.246", out, sizeof(out)) && strcmp(out, "192.168.3.1") == 0);
+    CHECK(mf_pick_host(0, "192.168.3.1", "192.168.2.1", "198.51.100.7", out, sizeof(out)) && strcmp(out, "192.168.3.1") == 0);
+    CHECK(mf_pick_host(1, "192.168.3.1", "192.168.2.1", "198.51.100.7", out, sizeof(out)) && strcmp(out, "192.168.2.1") == 0);
+    CHECK(mf_pick_host(2, "192.168.3.1", "192.168.2.1", "198.51.100.7", out, sizeof(out)) && strcmp(out, "192.168.3.1") == 0);
     /* the usual case: the gateway IS 192.168.2.1: one candidate, no duplicate */
-    CHECK(mf_pick_host(0, "192.168.2.1", "192.168.2.1", "172.19.210.246", out, sizeof(out)) && strcmp(out, "192.168.2.1") == 0);
-    CHECK(mf_pick_host(1, "192.168.2.1", "192.168.2.1", "172.19.210.246", out, sizeof(out)) && strcmp(out, "192.168.2.1") == 0);
+    CHECK(mf_pick_host(0, "192.168.2.1", "192.168.2.1", "198.51.100.7", out, sizeof(out)) && strcmp(out, "192.168.2.1") == 0);
+    CHECK(mf_pick_host(1, "192.168.2.1", "192.168.2.1", "198.51.100.7", out, sizeof(out)) && strcmp(out, "192.168.2.1") == 0);
     /* no gateway yet: the configured host alone */
-    CHECK(mf_pick_host(0, "", "192.168.2.1", "172.19.210.246", out, sizeof(out)) && strcmp(out, "192.168.2.1") == 0);
-    CHECK(mf_pick_host(0, "0.0.0.0", "192.168.2.1", "172.19.210.246", out, sizeof(out)) && strcmp(out, "192.168.2.1") == 0);
+    CHECK(mf_pick_host(0, "", "192.168.2.1", "198.51.100.7", out, sizeof(out)) && strcmp(out, "192.168.2.1") == 0);
+    CHECK(mf_pick_host(0, "0.0.0.0", "192.168.2.1", "198.51.100.7", out, sizeof(out)) && strcmp(out, "192.168.2.1") == 0);
     /* the gateway is the home host itself: skipped (it is already the first attempt) */
     CHECK(mf_pick_host(0, "192.168.2.1", "", "192.168.2.1", out, sizeof(out)) == 0);
     CHECK(mf_pick_host(0, "192.168.2.1", "192.168.2.9", "192.168.2.1", out, sizeof(out)) && strcmp(out, "192.168.2.9") == 0);
