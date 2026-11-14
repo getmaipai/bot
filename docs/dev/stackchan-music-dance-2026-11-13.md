@@ -138,6 +138,10 @@ Steady-sound path (0.2.70): a second real song never gave a stable tempo, so the
 
 The standalone unit can make the same per-second music decision and track its nod and dance session locally with the plain C99 header `body/maipai_body/bodies/stackchan/firmware/assets/maipai_music_judge.h`.
 
+## Dancing on the beat
+
+The unit already estimates tempo from its onset ring, but tempo alone does not say when the next beat lands. The standalone C99 helper `maipai_beat.h` reuses onset frames and the tempo estimate to find phase, fold half/double tempo estimates into a danceable range, and predict the next beat on the caller's clock; this is the first step toward timing StackChan's movement to the song.
+
 ## Cycles for hours (owner 2026-11-13)
 
 A music session is one stretch of music whose gaps stay under 60 s (a song change does not end it). Inside it: the slow start (nod, build-up,
