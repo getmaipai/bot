@@ -11,6 +11,8 @@ import numpy as np
 import numpy.typing as npt
 import requests
 
+from .activity import log_activity
+
 logger = logging.getLogger("maipai_body.bodies.stackchan.vision_post")
 
 # Pictures go to Home for a description whenever the robot is paired and `robot.vision` allows it
@@ -26,7 +28,8 @@ SCENE_REFRESH_S = 60.0
 SCENE_STALE_S = 300.0  # post even an unchanged scene this often, so Home's look does not go cold
 MAX_INTERVAL_S = 600.0
 NO_VISION_BACKOFF_S = 60.0
-TOO_FAST_BACKOFF_S = 10.0
+TOO_FAST_BACKOFF_S = 30.0  # owner 2026-11-14: Home's floor was hit every 10 s; double up to the cap
+TOO_FAST_BACKOFF_MAX_S = 600.0
 THUMB_CHANGE = 6.0  # mean gray change (0..255) that counts as a different scene
 MODES = ("continual", "on_demand", "none")
 VISION_PATH = "/api/devices/me/vision"
@@ -221,8 +224,19 @@ class VisionPoster:
                     else:
                         result = PostResult(False, "error", status)
                 elif status == 429:
-                    self._scale = min(10.0, self._scale * 2)
-                    self._backoff_until = self._clock() + TOO_FAST_BACKOFF_S
+                    self._scale = min(20.0, self._scale * 2)
+                    wait = min(TOO_FAST_BACKOFF_MAX_S, TOO_FAST_BACKOFF_S * self._scale / 2)
+                    try:
+                        wait = max(
+                            wait,
+                            min(
+                                TOO_FAST_BACKOFF_MAX_S,
+                                float(response.headers.get("Retry-After", 0)),
+                            ),
+                        )
+                    except (TypeError, ValueError, AttributeError):
+                        pass
+                    self._backoff_until = self._clock() + wait
                     result = PostResult(False, "too_fast", status)
                 elif status == 503:
                     self._scale = min(10.0, self._scale * 2)
@@ -240,4 +254,5 @@ class VisionPoster:
         except Exception:
             result = PostResult(False, "error", status)
         logger.info("vision post purpose=%s status=%s reason=%s", purpose, status, result.reason)
+        log_activity("picture posted", f"purpose={purpose} status={status}")
         return result

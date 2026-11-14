@@ -40,6 +40,16 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.101] - 2026-11-14
+
+### Changed
+- The unit is told every sound is muted, always, and the policy is repeated every 30 seconds and first thing on every reconnect, until the beeping source is named (owner: "just remove the tone"). `SILENCE_UNIT_SOUNDS` in `sounds.py` turns it back to the normal policy. The shutter and the low battery earcon are silenced too while it is on.
+- The drowsy and asleep animation calls to the unit are off (`SLEEP_ANIMATION_ENABLED` in `routines.py`); the rest stages, faces and head pose still run.
+- Scene pictures that Home refuses as too fast now wait 30 seconds, doubling up to 10 minutes (and Retry-After when Home sends it), and a success resets it.
+
+### Added
+- `robot activity:` log lines (one place, `activity.py`) for every sound request, sound policy push, rest stage step and picture post, and a once-a-minute line with how many sounds the unit played, refused and clips it played since the last look, so the next beep can be matched to the log without a firmware flash.
+
 ## [0.2.95] - 2026-11-14
 
 - The firmware update check sends the unit's firmware version to Home and downloads the image without a token, matching what Home serves. 0.2.94 asked without the version and so never saw an update.

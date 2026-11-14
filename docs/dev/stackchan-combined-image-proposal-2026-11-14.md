@@ -73,3 +73,15 @@ Everything on the unit. The component override and the ordering function are des
 ## Patch 140: the song title bar (added 2026-11-14)
 
 A small display-only patch (`140-song-title-bar.patch`, after 133): the song title as white, bolder, slightly larger text on a solid black bar at the bottom edge (owner's words, 2026-11-14). It applies cleanly in the recipe's patch check and has a preview sheet; it changes no logic of patch 123 (same show, hide and 60 s deadline). Proposed image: the first over-the-air image (image 2, with 134 and 135), not image 1: image 1 stays minimal (132 and 133 only) because a USB-written image has no slot to roll back to. If the owner wants the title look sooner, it can join image 1 once a full firmware compile has passed.
+
+
+## Beeping findings and firmware items (2026-11-14)
+
+The robot made short beeps while idle and during a stuck dance. The host logged no sound requests, so the sounds are unit-originated: its own earcon list (patches 115 to 118, gated by `self.audio.set_sound_policy`, which now always says muted) or the stock voice-engine tones (`Application::PlaySound(Lang::Sounds::OGG_*)` on connect, activation, wake, listening and errors, plus patch 075 and 118's `OGG_VIBRATION` for the offline tone), which the policy does not gate. Signs in the log: the unit's music analysis reports a block of about 235 skipped windows (about 5 s) once or twice a minute, and the unit reconnects after each hub restart.
+
+Next firmware image, in this order:
+
+1. **A `sound_played` event** naming every sound the unit plays, from both its own list and the stock `PlaySound` calls (a wrapper at the one `Application::PlaySound` entry), so the host log names the cue. The host side already logs `robot activity:` lines and polls `self.audio.sound_info`.
+2. **Stock tones gated by the same policy.** Route `Application::PlaySound` through `ms_decide` (muted and disabled refuse it; safety cues pass), so one setting silences stock tones too.
+3. **No tone on reconnect or activation.** Remove the stock connect, activation and success tones, and the offline `OGG_VIBRATION` fallback when the link only blinked.
+4. **Remove the host's temporary silence** (`SILENCE_UNIT_SOUNDS`) once 1 to 3 are proven on the unit.

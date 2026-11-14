@@ -36,6 +36,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from maipai_body.bodies.stackchan.activity import log_activity
 from maipai_body.settings_keys import (
     MUTED_KEY,
     QUIET_KEY,
@@ -112,6 +113,15 @@ LOW_BATTERY_LINE = "My battery is low. Please plug me in."
 SPEAK_FOR_S = 30.0  # keep trying to say the line while a turn is busy, then give up
 SHUTTER_GAP_S = 2.0  # one click per picture, however the cue flaps
 POLICY_EVERY_S = 300.0  # the unit keeps its policy in flash; this only repairs a missed push
+# Owner 2026-11-14, twice ("make those beeps go away", "just remove the tone"): until the beeping
+# source is named by the activity log below, the unit is told every sound is muted, so nothing it
+# gates can play (the shutter and the low battery earcon included). Set False to restore the normal
+# policy (enabled, night and mute follow the settings).
+SILENCE_UNIT_SOUNDS = True
+SILENCED_POLICY_EVERY_S = (
+    30.0  # while silenced the policy is repeated this often, so a reboot cannot undo it
+)
+INFO_POLL_S = 60.0  # the unit's own play counters are logged about once a minute
 PUSH_RETRY_S = 5.0  # after a failed push (the unit is away) wait this long before trying again
 DANCE_QUIET_AFTER_S = 30.0  # event sounds stay off this long after a music session ends
 
@@ -212,6 +222,8 @@ class SoundService:
         self._pending_line: float | None = None  # when to give up saying the low battery line
         self._camera_up = False
         self._last_shutter = float("-inf")
+        self._info_at = float("-inf")
+        self._info_last: dict[str, int] | None = None
         self._chimed: dict[str, list[float]] = {}  # when each cue last sounded (the last 24 hours)
         self.dance_active: Callable[[], bool] = lambda: False  # wired to the music session's state
         self._dance_was_active = False
@@ -251,10 +263,11 @@ class SoundService:
     def policy(self) -> dict[str, object]:
         """What the unit is told: its own gate applies it, on its own clock, with the host away."""
         start, end = self._quiet_minutes()
+        silenced = bool(SILENCE_UNIT_SOUNDS)
         return {
-            "enabled": self.enabled and not self._dance_silenced(),
+            "enabled": self.enabled and not self._dance_silenced() and not silenced,
             "night_ok": self.night_ok,
-            "muted": self.muted or self.quiet,  # full quiet is a mute for sounds
+            "muted": self.muted or self.quiet or silenced,  # full quiet is a mute for sounds
             "dark": bool(self._night()),
             "quiet_from": start,
             "quiet_to": end,
@@ -265,7 +278,8 @@ class SoundService:
         policy = self.policy()
         now = self._clock()
         with self._lock:
-            if not force and policy == self._pushed and now - self._pushed_at < POLICY_EVERY_S:
+            every = SILENCED_POLICY_EVERY_S if SILENCE_UNIT_SOUNDS else POLICY_EVERY_S
+            if not force and policy == self._pushed and now - self._pushed_at < every:
                 return True
             if not force and now - self._push_failed_at < PUSH_RETRY_S:
                 return False
@@ -280,6 +294,10 @@ class SoundService:
             return False
         with self._lock:
             self._pushed, self._pushed_at = policy, now
+        log_activity(
+            "sound policy pushed",
+            f"enabled={policy.get('enabled')} muted={policy.get('muted')} forced={force}",
+        )
         return True
 
     def on_connect(self) -> None:
@@ -335,6 +353,7 @@ class SoundService:
             with self._lock:
                 self.refusals[why] = self.refusals.get(why, 0) + 1
             return PlayResult(False, why)
+        log_activity("sound requested", f"name={name} urgent={urgent} test={test}")
         try:
             result = _parse(
                 self._call("self.audio.play_sound", {"name": name, "urgent": urgent, "test": test})
@@ -396,6 +415,28 @@ class SoundService:
         if self._pending_line is not None:
             self._speak_low_battery()
         self._run_async(self.push_policy)
+        now = self._clock()
+        if now - self._info_at >= INFO_POLL_S:
+            self._info_at = now
+            self._run_async(self._poll_unit_counters)
+
+    def _poll_unit_counters(self) -> None:
+        """About once a minute: how many sounds the unit itself played since the last look, so a
+        beep heard at a time can be matched to this log without a firmware flash. (The unit counts
+        the sounds of its own list; the stock tones of the voice engine are not in it.)"""
+        try:
+            info = _parse(self._call("self.audio.sound_info", {}))
+        except Exception:
+            return
+        keys = ("played", "refused", "clips_played", "clips_missing")
+        now_counts = {k: int(info[k]) for k in keys if isinstance(info.get(k), int)}
+        with self._lock:
+            last, self._info_last = self._info_last, now_counts
+        if last is None:
+            log_activity("unit sound counters", " ".join(f"{k}={v}" for k, v in now_counts.items()))
+            return
+        delta = " ".join(f"{k}=+{now_counts[k] - last.get(k, 0)}" for k in now_counts)
+        log_activity("unit sound counters since the last look", delta)
 
     def _speak_low_battery(self) -> None:
         until = self._pending_line

@@ -24,6 +24,13 @@ from maipai_body.bodies.stackchan.sounds import (
 from maipai_body.presence.sleep_auto import QuietHours
 from maipai_body.settings_keys import MUTED_KEY, QUIET_KEY, SOUNDS_ENABLED_KEY, SOUNDS_NIGHT_KEY
 
+
+@pytest.fixture(autouse=True)
+def _normal_policy(monkeypatch):
+    """The older tests describe the normal policy; the silenced default has its own tests below."""
+    monkeypatch.setattr(sounds_module, "SILENCE_UNIT_SOUNDS", False)
+
+
 HERE = Path(__file__).resolve().parent
 FIRMWARE = HERE.parent / "maipai_body/bodies/stackchan/firmware"
 SOUNDS = FIRMWARE / "assets/sounds"
@@ -618,3 +625,43 @@ def test_the_policy_is_pushed_when_the_session_state_changes_and_retried_quickly
     assert service.push_policy() is False  # inside the 5 s retry wait
     clock.now += 3
     assert service.push_policy() is True
+
+
+# ---- the unit is told every sound is muted until the beeping source is named ----
+
+
+def test_the_unit_is_silenced_by_default_whatever_the_settings(monkeypatch):
+    monkeypatch.setattr(sounds_module, "SILENCE_UNIT_SOUNDS", True)
+    service, unit, clock, _, _ = make()
+    service.apply_settings({SOUNDS_ENABLED_KEY: True, MUTED_KEY: False, QUIET_KEY: False})
+    assert service.push_policy(force=True)
+    name, arguments = unit.calls[-1]
+    assert name == "self.audio.set_sound_policy"
+    assert arguments["enabled"] is False
+    assert arguments["muted"] is True
+
+
+def test_the_silenced_policy_is_repeated_every_thirty_seconds_and_first_on_connect(monkeypatch):
+    monkeypatch.setattr(sounds_module, "SILENCE_UNIT_SOUNDS", True)
+    service, unit, clock, _, _ = make()
+    service.on_connect()
+    assert unit.calls[0][0] == "self.audio.set_sound_policy"
+    pushes = len([c for c in unit.calls if c[0] == "self.audio.set_sound_policy"])
+    service.push_policy()
+    assert len([c for c in unit.calls if c[0] == "self.audio.set_sound_policy"]) == pushes
+    clock.now += sounds_module.SILENCED_POLICY_EVERY_S + 1
+    service.push_policy()
+    assert len([c for c in unit.calls if c[0] == "self.audio.set_sound_policy"]) == pushes + 1
+
+
+def test_the_unit_counters_are_logged_with_their_change_once_a_minute(caplog):
+    service, unit, clock, _, _ = make()
+    unit.answer = '{"played":3,"refused":1,"clips_played":0,"clips_missing":0}'
+    with caplog.at_level("INFO"):
+        service.tick()
+        clock.now += sounds_module.INFO_POLL_S + 1
+        unit.answer = '{"played":5,"refused":1,"clips_played":0,"clips_missing":0}'
+        service.tick()
+    lines = [r.getMessage() for r in caplog.records if "robot activity" in r.getMessage()]
+    assert any("unit sound counters played=3" in line for line in lines)
+    assert any("since the last look played=+2" in line for line in lines)

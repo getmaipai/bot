@@ -8,12 +8,16 @@ import time
 from maipai_body.expression.rest import RestOutput
 from maipai_body.hal.seam import BodyProfile, HeadActuator, HeadPose
 
+from .activity import log_activity
 from .avatar.server import control_avatar, sleeping_avatar
 from .expression_map import version_at_least as _version_at_least
 from .renderer import pitch_for
 
 LOG = logging.getLogger(__name__)
 SLEEPING_FACE_MIN_FIRMWARE = (0, 2, 54)
+# Owner 2026-11-14 (beeps): the drowsy and asleep animation calls to the unit are off until
+# the beeping source is named. The rest stages, faces and head pose still run. True restores.
+SLEEP_ANIMATION_ENABLED = False
 
 
 RETRY_S = 5.0  # a stage whose face could not be sent is tried again this often
@@ -105,6 +109,7 @@ class RestRenderer:
             try:
                 action()
                 LOG.info("StackChan rest: %s", name)
+                log_activity("rest", name)
                 return True
             except Exception:
                 LOG.warning("StackChan rest: %s failed", name, exc_info=True)
@@ -167,7 +172,7 @@ class RestRenderer:
             face_ok = step(f"face {face_name} sent", lambda: sender(control_avatar(face_name)))
 
         sleep_z = self._sleep_z or getattr(client, "sleep_z", None)
-        if sleep_z is not None:
+        if SLEEP_ANIMATION_ENABLED and sleep_z is not None:
             method = {"drowsy": "drowsy", "asleep": "asleep", "awake": "off"}.get(stage)
             if method is not None:
                 step(f"sleep animation {method}", getattr(sleep_z, method))

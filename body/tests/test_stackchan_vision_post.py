@@ -107,7 +107,7 @@ def test_on_demand_response_changes_mode():
 
 
 @pytest.mark.parametrize(
-    ("status", "reason", "delay"), [(429, "too_fast", 10), (503, "no_vision", 60)]
+    ("status", "reason", "delay"), [(429, "too_fast", 30), (503, "no_vision", 60)]
 )
 def test_backoffs_apply_to_scene_due_but_not_asks(status, reason, delay):
     poster, _, clock = make(Response(status))
@@ -323,3 +323,17 @@ def test_a_flat_picture_with_the_sensor_at_its_floor_is_a_dark_room():
         light_bucket(84, 77.1) == "bright"
     )  # the lamp on: the sensor says so even if the picture is dim
     assert light_bucket(84, 9.3) == "dim"
+
+
+def test_consecutive_too_fast_answers_back_off_twice_as_long_and_a_success_resets():
+    poster, session, clock = make(Response(429))
+    assert poster.post(b"x", purpose="scene").reason == "too_fast"
+    clock.now += 30
+    assert poster.scene_due()
+    assert poster.post(b"x", purpose="scene").reason == "too_fast"
+    clock.now += 59
+    assert not poster.scene_due()  # the second refusal waits a minute, not ten seconds
+    clock.now += 1
+    assert poster.scene_due()
+    session.response = Response(200)
+    assert poster.post(b"x", purpose="scene").ok
