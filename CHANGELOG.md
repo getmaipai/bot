@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.83] - 2026-11-14
+
+### Added
+- Robot song naming, host side (MUSIC-ID-03): when a music session starts the body asks the unit for one short clip (`self.music.capture_clip`), pulls it in pieces when the unit reports it ready, decodes it and sends it to Home's `POST /api/music/identify`; on a match it shows the song title at the bottom of the face and clears it when the session ends. One clip per session and 10 minutes between results; never during a turn, muted, in full quiet or offline; nothing is shown or said on a failed lookup; the title is never logged above debug. Needs Home with MUSIC-ID-01 and firmware 0.2.82 or newer.
+
 ## [0.2.82] - 2026-11-14
 
 ### Added

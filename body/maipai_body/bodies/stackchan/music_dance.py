@@ -319,6 +319,8 @@ class MusicDanceHooks:
     restore_face: Callable[[], object]  # the idle face again
     situation: Callable[[], DanceSituation]
     notes: Callable[[int], object] | None = None  # music notes on the face: 0 hides, 1 nod, 3 dance
+    on_session_start: Callable[[], object] | None = None
+    on_session_end: Callable[[], object] | None = None
 
 
 class MusicDance:
@@ -718,6 +720,11 @@ class MusicDance:
             self._last_nod = now
         self._nod_cancel = False
         self._set_state("nod", f"the nod (face {face}, no ring light)")
+        if self._hooks.on_session_start is not None:
+            try:
+                self._hooks.on_session_start()
+            except Exception:
+                logger.debug("StackChan music session start hook failed", exc_info=True)
         self._spawn(lambda: self._do_nod(face))
 
     def _do_nod(self, face: str) -> None:
@@ -788,8 +795,14 @@ class MusicDance:
     def _set_state(self, state: str, why: str) -> None:
         if state == self.state:
             return
-        logger.info("StackChan music: stage %s -> %s (%s)", self.state, state, why)
+        previous = self.state
+        logger.info("StackChan music: stage %s -> %s (%s)", previous, state, why)
         self.state = state
+        if state == "spent" and previous != "spent" and self._hooks.on_session_end is not None:
+            try:
+                self._hooks.on_session_end()
+            except Exception:
+                logger.debug("StackChan music session end hook failed", exc_info=True)
         if state == "idle":
             self._session_test = False
         self._notes({"nod": 1, "show": 3, "calm": 1}.get(state, 0), self._now)

@@ -25,6 +25,7 @@ from maipai_body.bodies.stackchan.music_dance import (
     nod_steps,
     parse_music_feat,
 )
+from maipai_body.bodies.stackchan.music_identify import MusicIdentify, MusicIdentifyHooks
 
 logger = logging.getLogger("maipai_body.bodies.stackchan.music_dance_wiring")
 
@@ -108,6 +109,10 @@ def wire_music_dance(
     clock: Callable[[], float] = time.monotonic,
     start_ticker: bool = True,
     switch: MusicFeatureSwitch | None = None,
+    identify_post: Callable[[bytes], dict | None] | None = None,
+    identify_setting: Callable[[], str] | None = None,
+    identify_call_tool: Callable[[str, dict], object] | None = None,
+    identify_spawn: Callable[[Callable[[], None]], object] | None = None,
 ) -> MusicDance:
     def nod(face: str, cancelled: Callable[[], bool]) -> None:
         behavior.show_face(face)
@@ -132,6 +137,20 @@ def wire_music_dance(
         reply = runner.request("auto", plan)
         return reply.started, reply.why
 
+    identify = None
+    if identify_post is not None and identify_setting is not None:
+        identify = MusicIdentify(
+            MusicIdentifyHooks(
+                call_tool=identify_call_tool
+                or (switch.call if switch else (lambda _name, _args: None)),
+                post_clip=identify_post,
+                situation=runner.situation,
+                setting=identify_setting,
+                clock=clock,
+                spawn=identify_spawn,
+            )
+        )
+
     controller = MusicDance(
         MusicDanceHooks(
             request_dance=request_dance,
@@ -141,6 +160,8 @@ def wire_music_dance(
             restore_face=restore_face,
             situation=runner.situation,
             notes=(lambda count: switch.call(NOTES_TOOL, {"count": count})) if switch else None,
+            on_session_start=(lambda: identify.on_session_start(clock())) if identify else None,
+            on_session_end=identify.on_session_end if identify else None,
         ),
         behavior.dance_settings,
     )
@@ -164,6 +185,8 @@ def wire_music_dance(
         return {"music_test": "started" if ok else "refused", "why": why}
 
     behavior.music_feat = on_music_feat
+    if identify is not None:
+        behavior.music_clip = identify.on_clip_event
     behavior.dance_events = on_events
     behavior.music_command = command
 

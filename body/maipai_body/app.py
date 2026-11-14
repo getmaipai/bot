@@ -272,6 +272,7 @@ class StackChanBehavior:
         # The music dance (music_dance.py, music_dance_wiring.py): the unit's per-second music
         # numbers and the hub's "music_test" device command.
         self.music_feat: Callable[[dict, float], object] | None = None
+        self.music_clip: Callable[[str, dict, float], object] | None = None
         self.music_command: Callable[[dict], dict | None] = lambda _payload: {
             "music_test": "refused",
             "why": "the music dance is not ready",
@@ -1522,6 +1523,17 @@ class StackChanBehavior:
                     except Exception:
                         self._warn_limited("timers", "StackChan timer event failed")
         for event in events:
+            if getattr(event, "kind", None) in ("music_clip_ready", "music_clip_cancelled"):
+                if self.music_clip is not None:
+                    try:
+                        self.music_clip(
+                            event.kind,
+                            getattr(event, "extra", None) or {},
+                            now,
+                        )
+                    except Exception:
+                        self._warn_limited("music", "StackChan music clip handling failed")
+                continue
             if getattr(event, "kind", None) == "music_feat":
                 # About one a second while the room is loud (firmware patch 100): the music dance
                 # decides on them. The first look after a pause only drains old ones.
@@ -2281,6 +2293,37 @@ async def _serve_stackchan_channels(
             auto=lambda: behavior.dance_settings.auto,
             silenced=lambda: bool(behavior.speech_muted() or _unit_muted(behavior)),
         )
+
+        def identify_post(pcm: bytes) -> dict | None:
+            try:
+                import requests
+
+                cookie, base_url = _hub_credentials_reader(link, "")()
+                response = requests.post(
+                    f"{base_url}/api/music/identify?kind=pcm16&rate=8000",
+                    data=pcm,
+                    headers={
+                        "Cookie": f"session={cookie}",
+                        "Content-Type": "application/octet-stream",
+                    },
+                    timeout=15,
+                )
+                if 200 <= response.status_code < 300:
+                    return response.json()
+            except Exception:
+                pass
+            return None
+
+        identify_setting_value = ["on"]
+
+        def identify_setting() -> str:
+            return identify_setting_value[0]
+
+        def apply_identify_setting(values: dict) -> None:
+            value = values.get("music.identify.online", "on")
+            if value in ("on", "ask", "off"):
+                identify_setting_value[0] = value
+
         wire_music_dance(
             behavior=behavior,
             runner=runner,
@@ -2288,7 +2331,11 @@ async def _serve_stackchan_channels(
             centre_pitch=CENTRE_PITCH,
             speed=SPEED,
             switch=music_switch,
+            identify_post=identify_post,
+            identify_setting=identify_setting,
+            identify_call_tool=voice.robot.client._call,
         )
+        behavior.settings_listeners.append(apply_identify_setting)
         behavior.settings_listeners.append(music_switch.apply_settings)
         voice.session_listeners.append(music_switch.on_session)
 
