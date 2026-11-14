@@ -1,0 +1,365 @@
+# Intent: the unit captures a short clip of the room's audio for song naming (owner 2026-11-13: when the robot hears music it names the song through Home and shows it on its face; approved by the owner: a short clip goes to Home, only when music is detected, never during a turn). The clip is a passive copy of the audio the music detector already reads (channel 0 of the tap, 24 kHz decimated to 8 kHz by averaging three samples, G.711 mu-law, one PSRAM buffer of up to 12 s), so wake-word listening is never touched. MCP tools: self.music.capture_clip {seconds 1..12} starts a capture, self.music.read_clip {offset, length up to 2400} returns {data base64, bytes, eof}, self.music.drop_clip frees it. Events: music_clip_ready {bytes, rate, codec} and music_clip_cancelled {why: suppress, mute, quiet, link or wake}. The wake word (application.cc calls maipai_music_note_wake), a turn or any suppress, a mute, quiet or a lost hub link cancels the capture and frees the buffer; a waiting clip is freed after 60 s. No logging, allocation or events in the audio tap.
+# Upstream: MaiPai only (hal_music.cpp, application.cc). Applies after 128.
+# Check after a flash: music_clip capture by hand through the host (capture_clip 5, wait for the ready event, read_clip until eof, drop_clip); say the wake word during a capture: a cancelled event, wake word still works.
+diff --git a/firmware/main/hal/hal_music.cpp b/firmware/main/hal/hal_music.cpp
+--- a/firmware/main/hal/hal_music.cpp
++++ b/firmware/main/hal/hal_music.cpp
+@@ -26,6 +26,7 @@
+ #include <cstdint>
+ #include <cstdio>
+ #include <cstring>
++#include <string>
+ #include <esp_heap_caps.h>
+ #include <esp_timer.h>
+ #include <freertos/FreeRTOS.h>
+@@ -51,6 +52,7 @@
+ void maipai_music_dance_start();
+ bool maipai_beat_get(uint32_t* period_ms, uint32_t* ref_ms);
+ void maipai_music_dance_stop();
++void device_events_push(const char* kind, const char* extra);
+ 
+ 
+ namespace {
+@@ -61,6 +63,7 @@
+ constexpr int64_t kTraceUntilUs   = 30LL * 60 * 1000000;
+ constexpr int kChunkMax           = 480;  // samples per pass through the front end: at most 2 frames
+ constexpr int kQueueDepth         = 16;   // 0.3 s of frames
++constexpr size_t kClipReadMax     = 2400;
+ constexpr const char* kNvsNamespace = "mp_music";  // its own namespace, never the websocket one
+ constexpr const char* kNvsKey       = "on";
+ 
+@@ -84,6 +87,116 @@
+ std::atomic<uint32_t> s_dropped{0};
+ std::atomic<uint32_t> s_suppressed_chunks{0};
+ 
++// Clip state is shared by MCP, the audio tap and worker. The lock is a short critical section;
++// the tap never allocates, logs, posts events or performs base64/JSON work.
++portMUX_TYPE s_clip_mux = portMUX_INITIALIZER_UNLOCKED;
++portMUX_TYPE s_clip_copy_mux = portMUX_INITIALIZER_UNLOCKED;
++uint8_t* s_clip_data = nullptr;
++size_t s_clip_capacity = 0;
++size_t s_clip_written = 0;
++size_t s_clip_ready_bytes = 0;
++int64_t s_clip_ready_at_us = 0;
++int32_t s_clip_partial_sum = 0;
++unsigned s_clip_partial_count = 0;
++std::atomic<bool> s_clip_capture{false};
++std::atomic<int> s_clip_cancel_reason{0};  // suppress, mute, quiet, link, wake
++std::atomic<bool> s_clip_ready_pending{false};
++
++enum ClipCancelReason { kClipNoCancel, kClipSuppress, kClipMute, kClipQuiet, kClipLink, kClipWake };
++
++const char* clip_cancel_name(int why)
++{
++    switch (why) {
++        case kClipSuppress: return "suppress";
++        case kClipMute: return "mute";
++        case kClipQuiet: return "quiet";
++        case kClipLink: return "link";
++        case kClipWake: return "wake";
++        default: return "unknown";
++    }
++}
++
++void clip_request_cancel(int why)
++{
++    if (s_clip_capture.exchange(false)) {
++        s_clip_cancel_reason.store(why);
++    }
++}
++
++void clip_release_locked()
++{
++    if (s_clip_data != nullptr) {
++        heap_caps_free(s_clip_data);
++    }
++    s_clip_data = nullptr;
++    s_clip_capacity = s_clip_written = s_clip_ready_bytes = 0;
++    s_clip_ready_at_us = 0;
++    s_clip_partial_sum = 0;
++    s_clip_partial_count = 0;
++}
++
++void clip_worker_housekeeping()
++{
++    const int why = s_clip_cancel_reason.exchange(kClipNoCancel);
++    if (why != kClipNoCancel) {
++        portENTER_CRITICAL(&s_clip_copy_mux);
++        portENTER_CRITICAL(&s_clip_mux);
++        if (s_clip_ready_bytes != 0) {
++            portEXIT_CRITICAL(&s_clip_mux);
++            portEXIT_CRITICAL(&s_clip_copy_mux);
++            return;  // the tap filled the clip before the cancellation reached the worker
++        }
++        clip_release_locked();
++        portEXIT_CRITICAL(&s_clip_mux);
++        portEXIT_CRITICAL(&s_clip_copy_mux);
++        char extra[48];
++        snprintf(extra, sizeof(extra), "\"why\":\"%s\"", clip_cancel_name(why));
++        device_events_push("music_clip_cancelled", extra);
++        ESP_LOGI("HAL-Music", "clip cancelled (%s)", clip_cancel_name(why));
++    }
++    if (s_clip_ready_pending.exchange(false)) {
++        size_t bytes;
++        portENTER_CRITICAL(&s_clip_mux);
++        bytes = s_clip_ready_bytes;
++        s_clip_ready_at_us = esp_timer_get_time();
++        portEXIT_CRITICAL(&s_clip_mux);
++        char extra[64];
++        snprintf(extra, sizeof(extra), "\"bytes\":%u,\"rate\":8000,\"codec\":\"mulaw\"", static_cast<unsigned>(bytes));
++        device_events_push("music_clip_ready", extra);
++        ESP_LOGI("HAL-Music", "clip ready (%u bytes)", static_cast<unsigned>(bytes));
++    }
++    bool expired = false;
++    portENTER_CRITICAL(&s_clip_mux);
++    if (!s_clip_capture.load() && s_clip_ready_bytes > 0 && s_clip_ready_at_us > 0 &&
++        esp_timer_get_time() - s_clip_ready_at_us >= 60000000) {
++        clip_release_locked();
++        expired = true;
++    }
++    portEXIT_CRITICAL(&s_clip_mux);
++    if (expired) {
++        ESP_LOGI("HAL-Music", "clip dropped (expired)");
++    }
++}
++
++int16_t clip_mulaw_sample(int16_t sample)
++{
++    constexpr int kBias = 0x84;
++    constexpr int kClip = 32635;
++    int value = sample;
++    int mask;
++    if (value < 0) {
++        value = -value;
++        mask = 0x7f;
++    } else {
++        mask = 0xff;
++    }
++    value = std::min(value, kClip) + kBias;
++    int exponent = 7;
++    for (int exp_mask = 0x4000; exponent > 0 && (value & exp_mask) == 0; --exponent, exp_mask >>= 1) {}
++    const int mantissa = (value >> (exponent + 3)) & 0x0f;
++    return static_cast<int16_t>((~((exponent << 4) | mantissa) & mask) & 0xff);
++}
++
+ // The beat of the song (patch 128): from the last 6 s of onset frames and the tempo estimate, find where the beats
+ // fall and publish the period and the time of a recent beat for the dance (beat_sway.h).
+ void publish_beat(const mm_feat_t& f, uint32_t now_ms)
+@@ -233,18 +346,33 @@
+     int frames = 0;
+     uint32_t minute_start_ms = 0, seconds = 0, loud = 0, sent = 0;
+     while (true) {
+-        if (xQueueReceive(s_queue, &m, portMAX_DELAY) != pdTRUE) {
++        if (xQueueReceive(s_queue, &m, pdMS_TO_TICKS(1000)) != pdTRUE) {
++            clip_worker_housekeeping();
++            if (maipai_muted()) clip_request_cancel(kClipMute);
++            else if (maipai_quiet()) clip_request_cancel(kClipQuiet);
++            else if (!hal_bridge::hub_link_up()) clip_request_cancel(kClipLink);
++            clip_worker_housekeeping();
+             continue;
+         }
+         if (m.reset) {
+             mm_an_reset(s_an);
+             frames = 0;
++            clip_worker_housekeeping();
++            if (maipai_muted()) clip_request_cancel(kClipMute);
++            else if (maipai_quiet()) clip_request_cancel(kClipQuiet);
++            else if (!hal_bridge::hub_link_up()) clip_request_cancel(kClipLink);
++            clip_worker_housekeeping();
+             if (!hal_bridge::hub_link_up() && s_enabled.load()) {
+                 offline_music_step(mm_feat_t{});
+             }
+             continue;
+         }
+         mm_an_push(s_an, &m.frame);
++        clip_worker_housekeeping();
++        if (maipai_muted()) clip_request_cancel(kClipMute);
++        else if (maipai_quiet()) clip_request_cancel(kClipQuiet);
++        else if (!hal_bridge::hub_link_up()) clip_request_cancel(kClipLink);
++        clip_worker_housekeeping();
+         if (++frames % MM_FPS != 0) {
+             continue;
+         }
+@@ -307,10 +435,41 @@
+ // `suppress` is true while the unit listens, speaks or plays a sound (and just after).
+ void maipai_music_tap(const int16_t* interleaved, size_t frames, int channels, int sample_rate, bool suppress)
+ {
++    const bool muted = maipai_muted() || s_muted.load();
++    const bool quiet = maipai_quiet();
++    if (s_clip_capture.load()) {
++        if (suppress) {
++            clip_request_cancel(kClipSuppress);
++        } else if (muted) {
++            clip_request_cancel(kClipMute);
++        } else if (quiet) {
++            clip_request_cancel(kClipQuiet);
++        } else if (!hal_bridge::hub_link_up()) {
++            clip_request_cancel(kClipLink);
++        } else if (interleaved != nullptr && channels > 0 && sample_rate == 24000) {
++            portENTER_CRITICAL(&s_clip_copy_mux);
++            for (size_t i = 0; i < frames && s_clip_capture.load() && s_clip_written < s_clip_capacity; ++i) {
++                const int16_t sample = interleaved[i * static_cast<size_t>(channels)];
++                s_clip_partial_sum += static_cast<int32_t>(sample);  // signed: the average of three samples
++                if (++s_clip_partial_count == 3) {
++                    const int16_t average = static_cast<int16_t>(s_clip_partial_sum / 3);
++                    s_clip_data[s_clip_written++] = static_cast<uint8_t>(clip_mulaw_sample(average));
++                    s_clip_partial_sum = 0;
++                    s_clip_partial_count = 0;
++                    if (s_clip_written == s_clip_capacity) {
++                        s_clip_ready_bytes = s_clip_written;
++                        s_clip_capture.store(false);
++                        s_clip_ready_pending.store(true);
++                    }
++                }
++            }
++            portEXIT_CRITICAL(&s_clip_copy_mux);
++        }
++    }
+     if (!s_enabled.load() || s_queue == nullptr || interleaved == nullptr || channels < 1 || sample_rate < 8000) {
+         return;  // switched off: no analysis, no event, nothing counted
+     }
+-    if (suppress || s_muted.load()) {
++    if (suppress || muted || quiet) {
+         s_suppressed_chunks.fetch_add(1);
+         if (!s_was_suppressed) {
+             s_was_suppressed = true;
+@@ -347,8 +506,15 @@
+ void maipai_music_set_muted(bool muted)
+ {
+     s_muted.store(muted);
++    if (muted) clip_request_cancel(kClipMute);
+ }
+ 
++// Called from Application's wake-word callback; cancellation and event delivery remain in worker context.
++void maipai_music_note_wake()
++{
++    clip_request_cancel(kClipWake);
++}
++
+ // The host's switch (patch 100): analysis runs only while the setting robot.dance.auto is on and the
+ // robot is not muted. Kept in RAM and in the unit's own flash (namespace mp_music, written only when
+ // the value changes), so it survives a reboot before the host is back.
+@@ -418,4 +584,104 @@
+                                          return std::string(on ? R"({"ok":true,"enabled":true})"
+                                                                : R"({"ok":true,"enabled":false})");
+                                      });
++    McpServer::GetInstance().AddTool("self.music.capture_clip", "Capture a short room music clip for song naming.",
++        PropertyList({Property("seconds", kPropertyTypeInteger, 1, 12)}),
++        [](const PropertyList& properties) -> ReturnValue {
++            int seconds = std::clamp(properties["seconds"].value<int>(), 1, 12);
++            bool discarded = false;
++            if (s_clip_capture.load()) return false;
++            portENTER_CRITICAL(&s_clip_copy_mux);
++            portENTER_CRITICAL(&s_clip_mux);
++            if (s_clip_data != nullptr && !s_clip_capture.load()) {
++                clip_release_locked();
++                discarded = true;
++            }
++            portEXIT_CRITICAL(&s_clip_mux);
++            portEXIT_CRITICAL(&s_clip_copy_mux);
++            if (discarded) ESP_LOGI("HAL-Music", "clip dropped (replaced)");
++            if (maipai_muted()) return false;
++            if (maipai_quiet()) return false;
++            if (!hal_bridge::hub_link_up()) return false;
++            if (s_clip_capture.load()) return false;
++            auto* buffer = static_cast<uint8_t*>(heap_caps_malloc(static_cast<size_t>(seconds) * 8000,
++                                                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
++            if (buffer == nullptr) return false;
++            portENTER_CRITICAL(&s_clip_copy_mux);
++            portENTER_CRITICAL(&s_clip_mux);
++            if (s_clip_capture.load() || s_clip_ready_bytes != 0) {
++                portEXIT_CRITICAL(&s_clip_mux);
++                portEXIT_CRITICAL(&s_clip_copy_mux);
++                heap_caps_free(buffer);
++                return false;
++            }
++            s_clip_data = buffer;
++            s_clip_capacity = static_cast<size_t>(seconds) * 8000;
++            s_clip_written = s_clip_ready_bytes = 0;
++            s_clip_partial_sum = 0;
++            s_clip_partial_count = 0;
++            s_clip_ready_at_us = 0;
++            s_clip_cancel_reason.store(kClipNoCancel);
++            s_clip_capture.store(true);
++            portEXIT_CRITICAL(&s_clip_mux);
++            portEXIT_CRITICAL(&s_clip_copy_mux);
++            ESP_LOGI("HAL-Music", "clip capture started (%d seconds)", seconds);
++            return true;
++        });
++    McpServer::GetInstance().AddTool("self.music.read_clip", "Read a waiting music clip in base64 chunks.",
++        PropertyList({Property("offset", kPropertyTypeInteger), Property("length", kPropertyTypeInteger)}),
++        [](const PropertyList& properties) -> ReturnValue {
++            const int offset_arg = properties["offset"].value<int>();
++            const int length_arg = properties["length"].value<int>();
++            if (offset_arg < 0 || length_arg < 0) return false;
++            const size_t offset = static_cast<size_t>(offset_arg);
++            const size_t length = std::min(static_cast<size_t>(length_arg), kClipReadMax);
++            std::string bytes(kClipReadMax, '\0');  // allocated before the critical section: no heap call inside it
++            size_t clip_size = 0;
++            size_t count     = 0;
++            portENTER_CRITICAL(&s_clip_copy_mux);
++            portENTER_CRITICAL(&s_clip_mux);
++            clip_size = s_clip_ready_bytes;
++            if (clip_size == 0 || offset > clip_size) {
++                portEXIT_CRITICAL(&s_clip_mux);
++                portEXIT_CRITICAL(&s_clip_copy_mux);
++                return false;
++            }
++            count = std::min(length, clip_size - offset);
++            memcpy(&bytes[0], s_clip_data + offset, count);
++            portEXIT_CRITICAL(&s_clip_mux);
++            portEXIT_CRITICAL(&s_clip_copy_mux);
++            bytes.resize(count);
++            size_t encoded_size = 0, written = 0;
++            mbedtls_base64_encode(nullptr, 0, &encoded_size,
++                                  reinterpret_cast<const unsigned char*>(bytes.data()), bytes.size());
++            std::string encoded(encoded_size, '\0');
++            if (mbedtls_base64_encode(reinterpret_cast<unsigned char*>(encoded.data()), encoded.size(), &written,
++                                      reinterpret_cast<const unsigned char*>(bytes.data()), bytes.size()) != 0) return false;
++            encoded.resize(written);
++            cJSON* json = cJSON_CreateObject();
++            if (json == nullptr) return false;
++            cJSON_AddStringToObject(json, "data", encoded.c_str());
++            cJSON_AddNumberToObject(json, "bytes", static_cast<double>(bytes.size()));
++            cJSON_AddBoolToObject(json, "eof", offset + bytes.size() >= clip_size);
++            char* json_text = cJSON_PrintUnformatted(json);
++            cJSON_Delete(json);
++            if (json_text == nullptr) return false;
++            std::string result(json_text);
++            cJSON_free(json_text);
++            return result;
++        });
++    McpServer::GetInstance().AddTool("self.music.drop_clip", "Discard a waiting music clip.", std::vector<Property>{},
++        [](const PropertyList&) -> ReturnValue {
++            bool dropped = false;
++            portENTER_CRITICAL(&s_clip_copy_mux);
++            portENTER_CRITICAL(&s_clip_mux);
++            if (s_clip_data != nullptr) {
++                clip_release_locked();
++                dropped = true;
++            }
++            portEXIT_CRITICAL(&s_clip_mux);
++            portEXIT_CRITICAL(&s_clip_copy_mux);
++            if (dropped) ESP_LOGI("HAL-Music", "clip dropped");
++            return dropped;
++        });
+ }
+diff --git a/firmware/xiaozhi-esp32/main/application.cc b/firmware/xiaozhi-esp32/main/application.cc
+--- a/firmware/xiaozhi-esp32/main/application.cc
++++ b/firmware/xiaozhi-esp32/main/application.cc
+@@ -27,6 +27,7 @@
+ #include <atomic>
+ extern std::atomic<bool> g_barge_speaking;  // afe_wake_word.cc
+ extern std::atomic<uint32_t> g_main_alive;  // hal_imu.cpp: the stall watch
++void maipai_music_note_wake();
+ 
+ #define TAG "Application"
+ 
+@@ -89,6 +90,7 @@
+         xEventGroupSetBits(event_group_, MAIN_EVENT_SEND_AUDIO);
+     };
+     callbacks.on_wake_word_detected = [this](const std::string& wake_word) {
++        maipai_music_note_wake();
+         xEventGroupSetBits(event_group_, MAIN_EVENT_WAKE_WORD_DETECTED);
+     };
+     callbacks.on_vad_change = [this](bool speaking) {

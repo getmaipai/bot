@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.82] - 2026-11-14
+
+### Added
+- StackChan firmware patch 129: the unit captures a short passive clip of the room's audio for song naming (MCP tools `self.music.capture_clip`, `read_clip`, `drop_clip`; events `music_clip_ready` and `music_clip_cancelled`). The wake word, a turn, mute, quiet or a lost link cancels it. The host side (asks for the clip, sends it to Home, shows the title) follows in the next release.
+
 ## [0.2.81] - 2026-11-13
 
 ### Added
