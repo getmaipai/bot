@@ -38,3 +38,10 @@ licence was checked against the Stack's pinned catalog record on 2026-11-13.
 
 The StackChan earcons (firmware/assets/sounds) are synthesized by body/scripts/render_unit_sounds.py
 from sine waves: no recording, no third-party sound, MIT with the rest of this repo's firmware work.
+
+MicroLink, MIT (Cameron Malone; the maintained fork github.com/Csontikka/microlink at the commit pinned in
+body/maipai_body/bodies/stackchan/firmware/pins.toml, section [tailnet]). A Tailscale-compatible client for the ESP32. It is
+downloaded by recipe.sh when `--tailnet` is given, into the build root, never vendored into this repository; firmware patch 149 is
+a small library patch applied to that downloaded copy. It carries wireguard-lwip (BSD-3-Clause, Daniel Hope, 2021) and an X25519
+implementation (MIT, Cryptography Research, Inc., 2015-2016). Tailscale is a trademark of Tailscale Inc.; this project is not
+affiliated with or endorsed by it.

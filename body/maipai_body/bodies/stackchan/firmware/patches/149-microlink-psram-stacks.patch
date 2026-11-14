@@ -1,0 +1,86 @@
+# Intent: the library patch for the pinned MicroLink (applied by recipe.sh to the downloaded copy in the build root, not to the StackChan tree): the net_io, derp_tx, derp_rx and coord task stacks live in PSRAM (the unit has about 76 KB of free internal RAM and MicroLink's stacks are 46 KB); wg_mgr keeps an internal stack because it writes NVS and a PSRAM stack faults while the flash cache is off; the fallback STUN host is Tailscale's own derp1.tailscale.com, never a third party.
+# Check after a flash: the serial log shows the five MicroLink tasks start; self.tailnet.status reports internal_free well above 25 KB while connected.
+diff --git a/components/microlink/include/microlink_internal.h b/components/microlink/include/microlink_internal.h
+index d6fb520..114105d 100644
+--- a/components/microlink/include/microlink_internal.h
++++ b/components/microlink/include/microlink_internal.h
+@@ -137,7 +137,7 @@ extern "C" {
+ /* STUN servers (Tailscale primary, Google fallback) */
+ #define ML_STUN_PRIMARY_HOST    "derp9.tailscale.com"
+ #define ML_STUN_PRIMARY_PORT    3478
+-#define ML_STUN_FALLBACK_HOST   "stun.l.google.com"
++#define ML_STUN_FALLBACK_HOST   "derp1.tailscale.com"  /* MAIPAI: Tailscale's own STUN (3478), never a third party */
+ #define ML_STUN_FALLBACK_PORT   19302
+ #define ML_STUN_MAX_RETRIES     3
+ #define ML_STUN_RETRY_INTERVAL_MS   2000
+@@ -570,7 +570,7 @@ struct microlink_s {
+ 
+     /* STUN server cache (pre-resolved IPs, host byte order) */
+     uint32_t stun_primary_ip;       /* derp9.tailscale.com resolved IPv4 */
+-    uint32_t stun_fallback_ip;      /* stun.l.google.com resolved IPv4 */
++    uint32_t stun_fallback_ip;      /* fallback STUN host resolved IPv4 */
+     uint8_t stun_retry_count;       /* Retries on current server */
+     bool stun_using_fallback;       /* true if probing fallback server */
+     uint64_t stun_last_probe_ms;    /* Timestamp of last probe sent */
+diff --git a/components/microlink/src/microlink.c b/components/microlink/src/microlink.c
+index 79a5e15..79ef1e3 100644
+--- a/components/microlink/src/microlink.c
++++ b/components/microlink/src/microlink.c
+@@ -27,6 +27,21 @@
+ #include "ml_cellular.h"
+ #endif
+ 
++#if defined(CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM) && defined(CONFIG_SPIRAM)
++#include "esp_heap_caps.h"
++/* MAIPAI: a task whose stack lives in PSRAM (the unit has about 76 KB of free internal RAM; MicroLink's stacks are 46 KB).
++ * Only tasks that never touch flash (NVS) may do this: with the cache disabled during a flash write a PSRAM stack faults.
++ * wg_mgr writes the peer cache to NVS, so it keeps an internal stack. */
++static BaseType_t ml_task_create_psram(TaskFunction_t fn, const char *name, uint32_t stack, void *arg,
++                                       UBaseType_t prio, TaskHandle_t *out, BaseType_t core)
++{
++    return xTaskCreatePinnedToCoreWithCaps(fn, name, stack, arg, prio, out, core, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
++}
++#else
++#define ml_task_create_psram(fn, name, stack, arg, prio, out, core) \
++    xTaskCreatePinnedToCore(fn, name, stack, arg, prio, out, core)
++#endif
++
+ static const char *TAG = "microlink";
+ 
+ /* NVS keys */
+@@ -443,7 +458,7 @@ skip_bsd_socket:
+     /* Create tasks */
+     BaseType_t ret;
+ 
+-    ret = xTaskCreatePinnedToCore(ml_net_io_task, "ml_net_io", ML_TASK_NET_IO_STACK,
++    ret = ml_task_create_psram(ml_net_io_task, "ml_net_io", ML_TASK_NET_IO_STACK,
+                                    ml, ML_TASK_NET_IO_PRIO, &ml->net_io_task, ML_TASK_NET_IO_CORE);
+     if (ret != pdPASS) {
+         ESP_LOGE(TAG, "Failed to create net_io task");
+@@ -451,7 +466,7 @@ skip_bsd_socket:
+     }
+     __atomic_add_fetch(&ml->tasks_alive, 1, __ATOMIC_SEQ_CST);
+ 
+-    ret = xTaskCreatePinnedToCore(ml_derp_tx_task, "ml_derp_tx", ML_TASK_DERP_TX_STACK,
++    ret = ml_task_create_psram(ml_derp_tx_task, "ml_derp_tx", ML_TASK_DERP_TX_STACK,
+                                    ml, ML_TASK_DERP_TX_PRIO, &ml->derp_tx_task, ML_TASK_DERP_TX_CORE);
+     if (ret != pdPASS) {
+         ESP_LOGE(TAG, "Failed to create derp_tx task");
+@@ -463,7 +478,7 @@ skip_bsd_socket:
+      * and TX (mbedtls_ssl_write) run concurrently on the same ssl context (one
+      * reader + one writer = the documented mbedtls threading model). Same
+      * stack/prio/core as the writer so the two time-slice predictably on core 0. */
+-    ret = xTaskCreatePinnedToCore(ml_derp_rx_task, "ml_derp_rx", ML_TASK_DERP_TX_STACK,
++    ret = ml_task_create_psram(ml_derp_rx_task, "ml_derp_rx", ML_TASK_DERP_TX_STACK,
+                                    ml, ML_TASK_DERP_TX_PRIO, &ml->derp_rx_task, ML_TASK_DERP_TX_CORE);
+     if (ret != pdPASS) {
+         ESP_LOGE(TAG, "Failed to create derp_rx task");
+@@ -471,7 +486,7 @@ skip_bsd_socket:
+     }
+     __atomic_add_fetch(&ml->tasks_alive, 1, __ATOMIC_SEQ_CST);
+ 
+-    ret = xTaskCreatePinnedToCore(ml_coord_task, "ml_coord", ML_TASK_COORD_STACK,
++    ret = ml_task_create_psram(ml_coord_task, "ml_coord", ML_TASK_COORD_STACK,
+                                    ml, ML_TASK_COORD_PRIO, &ml->coord_task, ML_TASK_COORD_CORE);
+     if (ret != pdPASS) {
+         ESP_LOGE(TAG, "Failed to create coord task");

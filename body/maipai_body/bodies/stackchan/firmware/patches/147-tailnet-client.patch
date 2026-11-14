@@ -1,0 +1,574 @@
+# Intent: the robot's own tailnet client (owner 2026-11-14: "register it to a tailscale network and then just give it any WiFi"). The unit joins the household's Tailscale network itself (MicroLink, a downloaded, pinned MIT client; recipe.sh fetches it into the build root, never into this tree) after Wi-Fi gets an address, and reaches the hub at its tailnet address from any Wi-Fi with no relay and no public address. Compiled only with CONFIG_STACKCHAN_TAILNET (recipe --tailnet); off at run time until the host calls self.tailnet.set; a boot-loop guard switches it off after 3 crashed boots in a row. Node identity lives in MicroLink's own NVS namespaces (microlink, ml_peers), which collide with none of ours.
+# Check after a flash: self.tailnet.status answers {compiled,enabled,state,ip,peer,ready,internal_free,largest_block}; with a private first-enrolment build and the switch on, the serial log shows "tailnet state: connected" and the unit appears in the Tailscale machine list as maipai-robot; internal_free stays at or above 25 KB with voice, avatar and the client all running.
+diff --git a/firmware/CMakeLists.txt b/firmware/CMakeLists.txt
+index e7e1017..6c417cc 100644
+--- a/firmware/CMakeLists.txt
++++ b/firmware/CMakeLists.txt
+@@ -24,5 +24,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/sdkconfig.defaults.local")
+     message(STATUS "StackChan: detected sdkconfig.defaults.local, applying overlay")
+ endif()
+ 
++# The tailnet client (patch 147): the recipe downloads the pinned MicroLink into the build root (never into this tree) and
++# names it here. Without the variable nothing about it is built.
++if(DEFINED ENV{MAIPAI_MICROLINK_DIR} AND NOT "$ENV{MAIPAI_MICROLINK_DIR}" STREQUAL "")
++    list(APPEND EXTRA_COMPONENT_DIRS "$ENV{MAIPAI_MICROLINK_DIR}/components")
++endif()
++
+ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+ project(maipai-stackchan)
+diff --git a/firmware/main/CMakeLists.txt b/firmware/main/CMakeLists.txt
+index 224a42a..3777120 100644
+--- a/firmware/main/CMakeLists.txt
++++ b/firmware/main/CMakeLists.txt
+@@ -548,3 +548,8 @@ if ("${size}" AND "${offset}")
+ else()
+     message(STATUS "Assets partition not found, using v1 partition table")
+ endif()
++
++# The tailnet client (patch 147): a requirement only when the recipe supplied it.
++if(DEFINED ENV{MAIPAI_MICROLINK_DIR} AND NOT "$ENV{MAIPAI_MICROLINK_DIR}" STREQUAL "")
++    idf_component_optional_requires(PRIVATE microlink)
++endif()
+diff --git a/firmware/main/Kconfig.projbuild b/firmware/main/Kconfig.projbuild
+index bccf107..44741c9 100644
+--- a/firmware/main/Kconfig.projbuild
++++ b/firmware/main/Kconfig.projbuild
+@@ -67,6 +67,38 @@ config STACKCHAN_FALLBACK_SSID_PREFIX
+         example "maipai-trip"; the unit joins it only with its WPA2 password, so a lookalike network cannot take part).
+         An empty value allows every network (development only).
+ 
++config STACKCHAN_TAILNET
++    bool "Tailnet client: the robot joins the household's Tailscale network itself (MicroLink)"
++    default n
++    help
++        Compiles the tailnet client (a downloaded, pinned MIT Tailscale client, MAIPAI_MICROLINK_DIR). It stays off at
++        run time until the host switches it on (self.tailnet.set). With it on and Wi-Fi up, the unit registers on the
++        tailnet and reaches the hub at its tailnet address from any Wi-Fi. Needs PSRAM and about 25 KB of free
++        internal RAM.
++
++config STACKCHAN_TAILNET_PEER_IP
++    string "The hub's tailnet address (the Studio)"
++    default "100.113.4.61"
++    help
++        The tailnet address the voice and avatar channels try once the tailnet is up (after the home address failed).
++
++config STACKCHAN_TAILNET_HOSTNAME
++    string "The unit's name on the tailnet"
++    default "maipai-robot"
++
++config STACKCHAN_TAILNET_MAX_PEERS
++    int "Peer slots (the hub plus a few)"
++    default 4
++    range 2 16
++
++config STACKCHAN_TAILNET_AUTHKEY
++    string "First-enrolment auth key (a PRIVATE build only)"
++    default ""
++    help
++        A tagged Tailscale auth key for the first registration of a unit. Empty in every published build and never
++        committed: the recipe fills it from a private file for a one-off development image. After the first
++        registration the unit keeps its own node key in flash and later images carry no key.
++
+ config STACKCHAN_DEV_VOICE_URL
+     string "Development override: voice websocket URL"
+     default ""
+diff --git a/firmware/main/hal/hal.cpp b/firmware/main/hal/hal.cpp
+index ac16a62..8a863db 100644
+--- a/firmware/main/hal/hal.cpp
++++ b/firmware/main/hal/hal.cpp
+@@ -158,6 +158,7 @@ void Hal::updateHeapStatusLog()
+ #include <assets/assets.h>
+ #include "maipai_timers.h"
+ #include "maipai_sounds.h"
++#include "maipai_tailnet.h"
+ 
+ void Hal::xiaozhi_board_init()
+ {
+@@ -223,6 +224,7 @@ void Hal::startXiaozhi()
+     // The saved timers and alarms (patch 091) come back before the update task ticks them.
+     maipai_timers_init();
+     maipai_sounds_init();  // the saved sound policy (patch 116)
++    maipai_tailnet_init();  // the tailnet client, off until the host switches it on (patch 147)
+ 
+     // Start stackchan update task
+     xTaskCreatePinnedToCore(_stackchan_update_task, "stackchan", 4096, NULL, 3, NULL, 1);
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+index 915f01d..dd7efd8 100644
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -27,6 +27,7 @@
+ #include "maipai_timers.h"
+ #include "maipai_timers_core.h"
+ #include "maipai_sounds.h"
++#include "maipai_tailnet.h"
+ #include "maipai_update.h"
+ #include <string>
+ 
+@@ -633,6 +634,7 @@ void Hal::xiaozhi_mcp_init()
+ 
+     // self.audio.play_sound, set_sound_policy and sound_info (patch 116).
+     maipai_sounds_register_tools();
++    maipai_tailnet_register_tools();  // self.tailnet.status and self.tailnet.set (patch 147)
+ 
+     mclog::tagInfo(_tag, "add robot.dance tool");
+     mcp_server.AddTool("self.robot.dance",
+diff --git a/firmware/main/hal/maipai_tailnet.cc b/firmware/main/hal/maipai_tailnet.cc
+new file mode 100644
+index 0000000..5bebf6a
+--- /dev/null
++++ b/firmware/main/hal/maipai_tailnet.cc
+@@ -0,0 +1,293 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * The robot's own tailnet client, the device side (patch 147). See maipai_tailnet.h.
++ *
++ * MicroLink (a downloaded, pinned MIT Tailscale client) runs only when CONFIG_STACKCHAN_TAILNET is set and the saved
++ * switch is on. Memory rule (the unit has about 76 KB free internal RAM): the client's task stacks are in PSRAM
++ * except wg_mgr, which writes NVS and so keeps an internal stack (library patch 148); this file's one task keeps an
++ * internal stack because microlink_init writes the node identity to NVS.
++ */
++#include "maipai_tailnet.h"
++#include "maipai_tailnet_core.h"
++#include "device_events.h"
++#include <mcp_server.h>
++#include <esp_event.h>
++#include <esp_log.h>
++#include <esp_netif.h>
++#include <esp_system.h>
++#include <esp_timer.h>
++#include <esp_attr.h>
++#include <esp_heap_caps.h>
++#include <nvs.h>
++#include <nvs_flash.h>
++#include <freertos/FreeRTOS.h>
++#include <freertos/task.h>
++#include <cstdio>
++#include <cstring>
++#include <string>
++
++#ifndef CONFIG_STACKCHAN_TAILNET
++#define CONFIG_STACKCHAN_TAILNET 0
++#endif
++
++#if CONFIG_STACKCHAN_TAILNET
++#include "microlink.h"
++#endif
++
++static const char* TAG        = "MAIPAI-TAILNET";
++static const char* kNamespace = "maipai_tn";  // our own: never the websocket namespace, never MicroLink's "microlink"/"ml_peers"
++static const char* kKeyOn     = "on";
++
++static RTC_NOINIT_ATTR mt_guard_t s_guard;  // survives a crash reset, not a power cycle
++static volatile bool s_enabled   = false;
++static volatile bool s_guard_off = false;
++static volatile bool s_started   = false;
++static volatile int s_state      = 0;       // microlink_state_t when compiled in
++static volatile uint32_t s_vpn_ip = 0;
++static volatile int64_t s_started_at_us = 0;
++
++bool maipai_tailnet_compiled()
++{
++    return CONFIG_STACKCHAN_TAILNET != 0;
++}
++
++static bool load_enabled()
++{
++    nvs_handle_t h;
++    if (nvs_open(kNamespace, NVS_READONLY, &h) != ESP_OK) {
++        return false;  // never saved: OFF
++    }
++    uint8_t v = 0;
++    nvs_get_u8(h, kKeyOn, &v);
++    nvs_close(h);
++    return v == 1;
++}
++
++static void save_enabled(bool on)
++{
++    nvs_handle_t h;
++    if (nvs_open(kNamespace, NVS_READWRITE, &h) != ESP_OK) {
++        return;
++    }
++    nvs_set_u8(h, kKeyOn, on ? 1 : 0);
++    nvs_commit(h);
++    nvs_close(h);
++}
++
++static bool last_reset_was_crash()
++{
++    switch (esp_reset_reason()) {
++        case ESP_RST_PANIC:
++        case ESP_RST_INT_WDT:
++        case ESP_RST_TASK_WDT:
++        case ESP_RST_WDT:
++        case ESP_RST_BROWNOUT:
++            return true;
++        default:
++            return false;
++    }
++}
++
++std::string maipai_tailnet_peer_host()
++{
++    return std::string(CONFIG_STACKCHAN_TAILNET_PEER_IP);
++}
++
++#if CONFIG_STACKCHAN_TAILNET
++
++static microlink_t* s_ml = nullptr;
++
++bool maipai_tailnet_ready()
++{
++    return s_ml != nullptr && s_state == ML_STATE_CONNECTED && s_vpn_ip != 0;
++}
++
++static const char* state_word(int s)
++{
++    switch (s) {
++        case ML_STATE_IDLE: return "idle";
++        case ML_STATE_WIFI_WAIT: return "waiting_wifi";
++        case ML_STATE_CONNECTING: return "connecting";
++        case ML_STATE_REGISTERING: return "registering";
++        case ML_STATE_CONNECTED: return "connected";
++        case ML_STATE_RECONNECTING: return "reconnecting";
++        case ML_STATE_ERROR: return "error";
++        default: return "unknown";
++    }
++}
++
++static void push_state_event()
++{
++    char ip[16] = "";
++    if (s_vpn_ip != 0) {
++        mt_ip_to_str(s_vpn_ip, ip);
++    }
++    char extra[96];
++    snprintf(extra, sizeof(extra), "\"state\":\"%s\",\"ip\":\"%s\"", state_word(s_state), ip);
++    device_events_push("tailnet_state", extra);
++}
++
++static void on_state(microlink_t* ml, microlink_state_t state, void*)
++{
++    s_state  = state;
++    s_vpn_ip = microlink_get_vpn_ip(ml);
++    ESP_LOGI(TAG, "tailnet state: %s", state_word(state));
++    push_state_event();
++}
++
++static bool sta_has_ip()
++{
++    esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
++    esp_netif_ip_info_t ip;
++    return netif != nullptr && esp_netif_get_ip_info(netif, &ip) == ESP_OK && ip.ip.addr != 0;
++}
++
++static void tailnet_task(void*)
++{
++    // Wait for a Wi-Fi address (the client needs one), then give the rest of the boot a few seconds first.
++    while (!sta_has_ip()) {
++        vTaskDelay(pdMS_TO_TICKS(1000));
++        if (!s_enabled) {
++            vTaskDelete(nullptr);
++            return;
++        }
++    }
++    vTaskDelay(pdMS_TO_TICKS(5000));
++    microlink_config_t config = {};
++    config.auth_key        = CONFIG_STACKCHAN_TAILNET_AUTHKEY;  // empty in every published build; a private first-enrolment build only
++    config.device_name     = CONFIG_STACKCHAN_TAILNET_HOSTNAME;
++    config.enable_derp     = true;
++    config.enable_stun     = true;
++    config.enable_disco    = true;
++    config.max_peers       = CONFIG_STACKCHAN_TAILNET_MAX_PEERS;
++    config.priority_peer_ip = mt_parse_ip(CONFIG_STACKCHAN_TAILNET_PEER_IP);
++    ESP_LOGI(TAG, "starting the tailnet client (internal free %u, largest block %u)",
++             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
++             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
++    mt_guard_started(&s_guard);
++    s_started_at_us = esp_timer_get_time();
++    s_ml = microlink_init(&config);
++    if (s_ml == nullptr) {
++        ESP_LOGE(TAG, "the tailnet client did not initialise");
++        mt_guard_stable(&s_guard);  // not a crash
++        vTaskDelete(nullptr);
++        return;
++    }
++    microlink_set_state_callback(s_ml, on_state, nullptr);
++    if (microlink_start(s_ml) != ESP_OK) {
++        ESP_LOGE(TAG, "the tailnet client did not start");
++    }
++    s_started = true;
++    bool stable_said = false;
++    int tick = 0;
++    for (;;) {
++        vTaskDelay(pdMS_TO_TICKS(1000));
++        tick++;
++        s_state  = microlink_get_state(s_ml);
++        s_vpn_ip = microlink_get_vpn_ip(s_ml);
++        if (!stable_said && (esp_timer_get_time() - s_started_at_us) / 1000 >= MT_STABLE_MS) {
++            mt_guard_stable(&s_guard);
++            stable_said = true;
++            ESP_LOGI(TAG, "the tailnet client has run %d s: this boot counts as good", MT_STABLE_MS / 1000);
++        }
++        if (tick % 60 == 0) {
++            ESP_LOGI(TAG, "tailnet %s, internal free %u, largest block %u, min free %u", state_word(s_state),
++                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
++                     (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
++                     (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
++        }
++    }
++}
++
++static void start_task()
++{
++    // An internal stack on purpose: microlink_init writes the node identity to NVS (flash).
++    xTaskCreatePinnedToCore(tailnet_task, "tailnet", 5120, nullptr, 3, nullptr, 0);
++}
++
++#else  // not compiled in
++
++bool maipai_tailnet_ready()
++{
++    return false;
++}
++
++static void start_task() {}
++
++#endif
++
++void maipai_tailnet_init()
++{
++    const bool crash = last_reset_was_crash();
++    const int allowed = mt_guard_boot(&s_guard, crash ? 1 : 0);
++    s_enabled = load_enabled();
++    if (!allowed) {
++        // Three crashed boots in a row with the client running: switch it off by itself (saved), say so to the host.
++        s_guard_off = true;
++        if (s_enabled) {
++            s_enabled = false;
++            save_enabled(false);
++        }
++        ESP_LOGW(TAG, "the boot-loop guard switched the tailnet client off (%d crashed boots in a row)", MT_GUARD_CRASHES);
++        device_events_push("tailnet_state", "\"state\":\"guard_off\",\"ip\":\"\"");
++        mt_guard_stable(&s_guard);
++        return;
++    }
++    ESP_LOGI(TAG, "tailnet client: compiled %s, switch %s", maipai_tailnet_compiled() ? "in" : "out", s_enabled ? "on" : "off");
++    if (maipai_tailnet_compiled() && s_enabled) {
++        start_task();
++    }
++}
++
++void maipai_tailnet_register_tools()
++{
++    auto& mcp = McpServer::GetInstance();
++    mcp.AddTool("self.tailnet.status",
++                "The tailnet client: whether it is compiled in, switched on, its state (idle, waiting_wifi, connecting, "
++                "registering, connected, reconnecting, error, guard_off), the tailnet address, the hub address it "
++                "reaches, and the internal RAM free now. Answers JSON.",
++                PropertyList(), [](const PropertyList&) -> ReturnValue {
++                    char ip[16] = "";
++                    if (s_vpn_ip != 0) {
++                        mt_ip_to_str(s_vpn_ip, ip);
++                    }
++                    char buf[320];
++                    snprintf(buf, sizeof(buf),
++                             "{\"compiled\":%s,\"enabled\":%s,\"guard_off\":%s,\"state\":\"%s\",\"ip\":\"%s\",\"peer\":\"%s\","
++                             "\"ready\":%s,\"internal_free\":%u,\"largest_block\":%u}",
++                             maipai_tailnet_compiled() ? "true" : "false", s_enabled ? "true" : "false",
++                             s_guard_off ? "true" : "false",
++#if CONFIG_STACKCHAN_TAILNET
++                             state_word(s_state),
++#else
++                             "off",
++#endif
++                             ip, CONFIG_STACKCHAN_TAILNET_PEER_IP, maipai_tailnet_ready() ? "true" : "false",
++                             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
++                             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
++                    return std::string(buf);
++                });
++    mcp.AddTool("self.tailnet.set",
++                "Switch the tailnet client on or off (saved in flash). Switching on starts it at once when Wi-Fi has an "
++                "address; switching off takes effect at the next restart. Answers {\"ok\":true,\"restart\":bool} or "
++                "{\"ok\":false,\"error\":\"not_compiled\"}.",
++                PropertyList({Property("enabled", kPropertyTypeBoolean, false)}),
++                [](const PropertyList& properties) -> ReturnValue {
++                    if (!maipai_tailnet_compiled()) {
++                        return std::string("{\"ok\":false,\"error\":\"not_compiled\"}");
++                    }
++                    const bool on = properties["enabled"].value<bool>();
++                    save_enabled(on);
++                    const bool was = s_enabled;
++                    s_enabled = on;
++                    s_guard_off = s_guard_off && !on;
++                    bool restart = false;
++                    if (on && !was && !s_started) {
++                        start_task();
++                    } else if (!on && s_started) {
++                        restart = true;  // the client cannot be stopped cleanly mid-run: off at the next restart
++                    }
++                    return std::string("{\"ok\":true,\"restart\":") + (restart ? "true" : "false") + "}";
++                });
++}
+diff --git a/firmware/main/hal/maipai_tailnet.h b/firmware/main/hal/maipai_tailnet.h
+new file mode 100644
+index 0000000..5a4660f
+--- /dev/null
++++ b/firmware/main/hal/maipai_tailnet.h
+@@ -0,0 +1,27 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * The robot's own tailnet client (patch 147): the unit joins the household's Tailscale network itself (MicroLink,
++ * a downloaded and pinned MIT client) after Wi-Fi gets an address, so it reaches the hub over the tailnet from any
++ * Wi-Fi with no relay and no public address. Compiled in only with CONFIG_STACKCHAN_TAILNET; off at runtime until
++ * the host enables it (self.tailnet.set). The pure logic is in maipai_tailnet_core.h.
++ */
++#pragma once
++#include <string>
++
++// Reads the saved on/off flag and the boot-loop guard, and starts the client when Wi-Fi gets an address (it waits
++// for the address by itself). Call once after NVS and the network stack are up (Hal::startXiaozhi).
++void maipai_tailnet_init();
++
++// True when the tailnet client is compiled into this firmware.
++bool maipai_tailnet_compiled();
++
++// True once the client is connected to the control plane and has an address on the tailnet.
++bool maipai_tailnet_ready();
++
++// The hub's tailnet address (CONFIG_STACKCHAN_TAILNET_PEER_IP) as text; empty when none is configured.
++std::string maipai_tailnet_peer_host();
++
++// The pure host choice the fallback uses (patch 148): the tailnet peer first while the tailnet is up.
++// Registers self.tailnet.status and self.tailnet.set.
++void maipai_tailnet_register_tools();
+diff --git a/firmware/main/hal/maipai_tailnet_core.h b/firmware/main/hal/maipai_tailnet_core.h
+new file mode 100644
+index 0000000..46c2812
+--- /dev/null
++++ b/firmware/main/hal/maipai_tailnet_core.h
+@@ -0,0 +1,122 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * The pure choices behind the robot's own tailnet client (patch 147), plain C so a host test can run them:
++ * the boot-loop guard (the client switches itself off after three crashes of its boots in a row) and the
++ * tailnet address helpers. Nothing here touches the hardware.
++ */
++#pragma once
++#include <stdint.h>
++#include <stdio.h>
++#include <string.h>
++
++/* Crashes of boots in which the client had started, in a row, that switch the client off. */
++#define MT_GUARD_CRASHES 3
++/* A boot that keeps the client up this long is a good boot (the crash counter goes back to zero). */
++#define MT_STABLE_MS 120000
++
++/* Kept in RTC no-init memory: it survives a reset, not a power cycle (a power cycle is a person acting). */
++typedef struct {
++    uint32_t magic;
++    uint8_t started;  /* the client had started in the previous boot and had not yet proven itself stable */
++    uint8_t crashes;  /* consecutive crashed boots */
++    uint8_t reserved[2];
++} mt_guard_t;
++
++#define MT_GUARD_MAGIC 0x4d544731u
++
++/* Call once at boot with the saved record and whether the last reset was a crash (panic, watchdog, brownout).
++ * Returns 1 when the client may start, 0 when the guard has switched it off (three crashed boots in a row). */
++static inline int mt_guard_boot(mt_guard_t* g, int last_reset_was_crash)
++{
++    if (g->magic != MT_GUARD_MAGIC) {
++        memset(g, 0, sizeof(*g));
++        g->magic = MT_GUARD_MAGIC;
++    }
++    if (g->started && last_reset_was_crash) {
++        if (g->crashes < 255) {
++            g->crashes++;
++        }
++    } else {
++        g->crashes = 0;
++    }
++    g->started = 0;
++    return g->crashes < MT_GUARD_CRASHES ? 1 : 0;
++}
++
++/* The client has started: a crash from here on counts. */
++static inline void mt_guard_started(mt_guard_t* g)
++{
++    g->started = 1;
++}
++
++/* The client has stayed up for MT_STABLE_MS: this boot was a good one. */
++static inline void mt_guard_stable(mt_guard_t* g)
++{
++    g->started = 0;
++    g->crashes = 0;
++}
++
++/* Host byte order IPv4 -> "a.b.c.d" (out holds at least 16 bytes). */
++static inline void mt_ip_to_str(uint32_t ip, char* out)
++{
++    snprintf(out, 16, "%u.%u.%u.%u", (unsigned)((ip >> 24) & 255), (unsigned)((ip >> 16) & 255),
++             (unsigned)((ip >> 8) & 255), (unsigned)(ip & 255));
++}
++
++/* "a.b.c.d" -> host byte order, 0 when it does not parse. */
++static inline uint32_t mt_parse_ip(const char* s)
++{
++    unsigned a, b, c, d;
++    char tail;
++    if (s == NULL || sscanf(s, "%u.%u.%u.%u%c", &a, &b, &c, &d, &tail) != 4 || a > 255 || b > 255 || c > 255 || d > 255) {
++        return 0;
++    }
++    return (a << 24) | (b << 16) | (c << 8) | d;
++}
++
++/* 1 for an address in the tailnet range 100.64.0.0/10 (CGNAT), which the WireGuard interface owns. */
++static inline int mt_is_tailnet_ip(uint32_t ip)
++{
++    return (ip & 0xffc00000u) == 0x64400000u ? 1 : 0;
++}
++
++/* The candidate hosts for the hub, in order, for attempt number `attempt` after the home address failed: the tailnet
++ * address first (only when the tailnet is up: it is encrypted end to end, safe on any network), then the others
++ * the caller passes (the gateway when the network may use it, the configured host). A NULL or empty entry, a
++ * duplicate of an earlier one or of `home` is skipped. Returns 1 and fills `out` when there is a candidate. */
++static inline int mt_pick_host(int attempt, const char* tailnet, const char* second, const char* third, const char* home,
++                               char* out, size_t out_size)
++{
++    const char* list[3] = {tailnet, second, third};
++    const char* cand[3];
++    int n = 0;
++    for (int i = 0; i < 3; i++) {
++        const char* h = list[i];
++        if (h == NULL || h[0] == '\0' || strcmp(h, "0.0.0.0") == 0) {
++            continue;
++        }
++        if (home != NULL && strcmp(h, home) == 0) {
++            continue;
++        }
++        int dup = 0;
++        for (int j = 0; j < n; j++) {
++            if (strcmp(cand[j], h) == 0) {
++                dup = 1;
++            }
++        }
++        if (!dup) {
++            cand[n++] = h;
++        }
++    }
++    if (n == 0 || out == NULL || out_size == 0) {
++        return 0;
++    }
++    const char* chosen = cand[(attempt < 0 ? 0 : attempt) % n];
++    size_t len = strlen(chosen);
++    if (len + 1 > out_size) {
++        return 0;
++    }
++    memcpy(out, chosen, len + 1);
++    return 1;
++}

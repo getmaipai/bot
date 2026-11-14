@@ -39,3 +39,9 @@ commit = "733bc4ee82630c88c0a619a883cd3a206efae977"
 path = "components/esp-now"
 ref = "c33383de97f3ed2fc52117f5ef04f71990432e5d"
 commit = "c33383de97f3ed2fc52117f5ef04f71990432e5d"
+
+# The tailnet client (patch 147): downloaded at this commit into the build root when recipe.sh gets --tailnet, never vendored.
+# MIT (github.com/Csontikka/microlink, the maintained MicroLink fork; its wireguard_lwip is BSD-3-Clause and x25519 public domain).
+[tailnet]
+repository = "https://github.com/Csontikka/microlink.git"
+commit = "a85e8c42ee2ed3223f8c3bd3766fc37af1985384"

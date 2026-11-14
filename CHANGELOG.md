@@ -5,6 +5,12 @@ All notable changes to MaiPai Bot. Format follows
 Everything stays `0.x` until the product passes its battle-tested
 checklist (`docs/dev.md`).
 
+## [Unreleased]
+
+### Added
+- The robot can join the household tailnet itself (firmware patches 147 to 149, `recipe.sh --tailnet`, off at run time until the host switches it on; MicroLink is downloaded at a pinned commit, never vendored): after Wi-Fi gets an address the unit registers on the tailnet and, after the home address fails, reaches the hub at its tailnet address from any Wi-Fi. `self.tailnet.status` and `self.tailnet.set` for the host; a boot-loop guard switches the client off after three crashed boots in a row. A private first-enrolment image takes its auth key from a mode 600 file (`--tailnet-authkey-file`); no key is ever committed or published. Compiled and host-tested only: nothing has run on a unit.
+- The stage plan for the permanent away-from-home experience and bot management (`docs/dev/stackchan-permanent-away-and-management-plan-2026-11-14.md`).
+
 ## [0.2.103] - 2026-11-14
 
 ### Added

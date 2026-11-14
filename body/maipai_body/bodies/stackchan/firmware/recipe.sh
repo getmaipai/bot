@@ -12,6 +12,8 @@ PERSISTENT_WEBSOCKET=""
 DEV_VOICE_URL=""
 DEV_AVATAR_URL=""
 DEV_TOKEN=""
+TAILNET=""
+TAILNET_AUTHKEY_FILE=""
 while (($#)); do
   case "$1" in
     --no-persistent-websocket)
@@ -53,6 +55,17 @@ while (($#)); do
     --dev-token)
       if (($# < 2)) || [[ -z "$2" ]]; then echo "--dev-token needs the token the development Bot app expects." >&2; exit 2; fi
       DEV_TOKEN="$2"; shift 2 ;;
+    # The tailnet client (patch 147): compile MicroLink in (off at run time until the host switches it on).
+    --tailnet)
+      TAILNET=y
+      shift
+      ;;
+    # A PRIVATE first-enrolment build only: the one-off tagged auth key is read from this file (mode 600, never committed, never
+    # printed) into the image. Never publish such an image; later images carry no key (the unit keeps its own node key).
+    --tailnet-authkey-file)
+      if (($# < 2)) || [[ -z "$2" ]]; then echo "--tailnet-authkey-file needs the path of a file that holds the auth key." >&2; exit 2; fi
+      TAILNET=y
+      TAILNET_AUTHKEY_FILE="$2"; shift 2 ;;
     *)
       echo "Unknown option: $1. Use --avatar-server-url ws://192.0.2.10:8766, --device-id <MAC> --client-id <UUID> --pairing-token <token>, --ca-file /path/to/ca.pem, --no-persistent-websocket, or the development overrides --dev-voice-url, --dev-avatar-url and --dev-token." >&2
       exit 2
@@ -373,6 +386,8 @@ apply_repo_patch 143-offline-label-after-45-s.patch "$SRC"
 apply_repo_patch 144-fallback-hub-endpoint.patch "$SRC"
 apply_repo_patch 145-app-version-from-release.patch "$SRC"
 apply_repo_patch 146-fallback-gateway-and-ssid-gate.patch "$SRC"
+apply_repo_patch 147-tailnet-client.patch "$SRC"
+apply_repo_patch 148-tailnet-endpoint.patch "$SRC"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"
@@ -402,6 +417,28 @@ if compgen -G "$HERE/assets/phrases/ph_*.ogg" >/dev/null; then
   cp "$HERE"/assets/phrases/ph_*.ogg "$FW/main/assets/assets_bin/"
 else
   echo "NO-PHRASES: firmware/assets/phrases has no ph_*.ogg; this build says only the tone while offline." >&2
+fi
+
+# The tailnet client (patches 147 to 149): MicroLink is downloaded at a pinned commit into the build root (never into the
+# StackChan tree, never committed), reset to that commit, given the library patch and named to CMake through
+# MAIPAI_MICROLINK_DIR. Without --tailnet nothing of it is fetched or built.
+if [[ "$TAILNET" == "y" ]]; then
+  ML_REPO=$(read_pin tailnet repository)
+  ML_COMMIT=$(read_pin tailnet commit)
+  ML_DIR="$BUILD_ROOT/deps/microlink"
+  mkdir -p "$BUILD_ROOT/deps"
+  if [[ ! -d "$ML_DIR/.git" ]]; then git clone --no-checkout "$ML_REPO" "$ML_DIR"; fi
+  git -C "$ML_DIR" fetch --no-tags "$ML_REPO" "$ML_COMMIT"
+  git -C "$ML_DIR" checkout --detach --force "$ML_COMMIT"
+  git -C "$ML_DIR" clean -fdq
+  [[ "$(git -C "$ML_DIR" rev-parse HEAD)" == "$ML_COMMIT" ]] || { echo "MicroLink checkout does not match pins.toml. Check the repository and retry." >&2; exit 1; }
+  sed -n '/^diff --git/,$p' "$HERE/patches/149-microlink-psram-stacks.patch" > "$BUILD_ROOT/patch.tmp"
+  git -C "$ML_DIR" apply --check "$BUILD_ROOT/patch.tmp" || { echo "Patch failed: 149-microlink-psram-stacks.patch at $ML_DIR" >&2; exit 1; }
+  git -C "$ML_DIR" apply "$BUILD_ROOT/patch.tmp"
+  echo "PATCH-OK: 149-microlink-psram-stacks.patch (MicroLink $ML_COMMIT)"
+  export MAIPAI_MICROLINK_DIR="$ML_DIR"
+else
+  unset MAIPAI_MICROLINK_DIR
 fi
 
 cat > "$FW/sdkconfig.defaults.local" <<CFG
@@ -458,6 +495,29 @@ else
 CONFIG_STACKCHAN_CA_PEM=""
 CONFIG_MBEDTLS_CUSTOM_CERTIFICATE_BUNDLE=n
 CFG
+fi
+
+if [[ "$TAILNET" == "y" ]]; then
+  cat >> "$FW/sdkconfig.defaults.local" <<'CFG'
+CONFIG_STACKCHAN_TAILNET=y
+CONFIG_MBEDTLS_CHACHA20_C=y
+CONFIG_MBEDTLS_POLY1305_C=y
+CONFIG_MBEDTLS_CHACHAPOLY_C=y
+CONFIG_MBEDTLS_HKDF_C=y
+CONFIG_LWIP_MAX_SOCKETS=16
+CONFIG_ML_MAX_PEERS=4
+CONFIG_ML_NVS_MAX_PEERS=16
+CONFIG_ML_H2_BUFFER_SIZE_KB=128
+CONFIG_ML_JSON_BUFFER_SIZE_KB=128
+CFG
+  if [[ -n "$TAILNET_AUTHKEY_FILE" ]]; then
+    [[ -r "$TAILNET_AUTHKEY_FILE" ]] || { echo "The auth key file is missing or unreadable: $TAILNET_AUTHKEY_FILE." >&2; exit 2; }
+    key=$(tr -d '[:space:]' < "$TAILNET_AUTHKEY_FILE")
+    [[ "$key" =~ ^tskey-[A-Za-z0-9_-]+$ ]] || { echo "The file does not hold a Tailscale auth key (tskey-...)." >&2; exit 2; }
+    printf 'CONFIG_STACKCHAN_TAILNET_AUTHKEY="%s"\n' "$key" >> "$FW/sdkconfig.defaults.local"
+    unset key
+    echo "PRIVATE-BUILD: this image carries a first-enrolment auth key; keep it on this Mac, never publish it, never commit its build tree."
+  fi
 fi
 
 if [[ "${STACKCHAN_CHECK_ONLY:-0}" == "1" ]]; then

@@ -1,0 +1,78 @@
+# Intent: the connection order with the tailnet (patch 147): while the tailnet is up, the hub's tailnet address is the first fallback after the home address (encrypted end to end, safe on every network), then the Wi-Fi gateway and the configured host on a network named with the owner's prefix (patch 146). A tailnet address gets a longer first probe (8 s) because the first packet starts the WireGuard handshake. Home is still tried first and retried about once a minute.
+# Check after a flash: away from home with the tailnet connected, the log says `fallback host for attempt N: 100.x.y.z (tailnet 100.x.y.z, gateway ...)` and the voice and avatar channels connect through it; back on the home network the unit returns home within about a minute.
+diff --git a/firmware/main/hal/maipai_fallback.cc b/firmware/main/hal/maipai_fallback.cc
+index e9f2b12..52e09a2 100644
+--- a/firmware/main/hal/maipai_fallback.cc
++++ b/firmware/main/hal/maipai_fallback.cc
+@@ -2,6 +2,8 @@
+  * SPDX-License-Identifier: MIT
+  */
+ #include "maipai_fallback.h"
++#include "maipai_tailnet.h"
++#include "maipai_tailnet_core.h"
+ #include "maipai_fallback_core.h"
+ 
+ #include <esp_log.h>
+@@ -54,6 +56,10 @@ bool maipai_url_parts(const std::string& url, std::string* host, int* port, std:
+ 
+ bool maipai_probe_tcp(const std::string& host, int port, int timeout_ms)
+ {
++    // A tailnet address (patch 148): the first packet starts the WireGuard handshake, which takes a few seconds.
++    if (mt_is_tailnet_ip(mt_parse_ip(host.c_str())) && timeout_ms < 8000) {
++        timeout_ms = 8000;
++    }
+     struct sockaddr_in addr;
+     memset(&addr, 0, sizeof(addr));
+     addr.sin_family = AF_INET;
+@@ -98,31 +104,40 @@ bool maipai_fallback_configured()
+ 
+ std::string maipai_fallback_host(int attempt, const std::string& home_host)
+ {
++    // 1. The tailnet (patch 148): while the unit is on the tailnet its hub address is reachable from any Wi-Fi, over
++    //    WireGuard (encrypted end to end), so it is safe on every network, a stranger's included.
++    std::string tailnet;
++    if (maipai_tailnet_ready()) {
++        tailnet = maipai_tailnet_peer_host();
++    }
++    // 2. The gateway and the configured host (patch 146): only on a network whose name starts with the owner's prefix,
++    //    because they receive the saved pairing token in the clear.
+     wifi_ap_record_t ap;
+     memset(&ap, 0, sizeof(ap));
+     const char* ssid = nullptr;
+     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+         ssid = reinterpret_cast<const char*>(ap.ssid);
+     }
+-    if (!mf_ssid_allowed(ssid, CONFIG_STACKCHAN_FALLBACK_SSID_PREFIX)) {
+-        static bool said = false;
+-        if (!said) {
+-            said = true;
+-            ESP_LOGI(TAG, "fallback not used: this Wi-Fi network is not a '%s*' network", CONFIG_STACKCHAN_FALLBACK_SSID_PREFIX);
+-        }
+-        return std::string();
+-    }
++    const bool lan_allowed = mf_ssid_allowed(ssid, CONFIG_STACKCHAN_FALLBACK_SSID_PREFIX) != 0;
+     char gateway[16] = {0};
+     esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+     esp_netif_ip_info_t ip;
+-    if (netif != nullptr && esp_netif_get_ip_info(netif, &ip) == ESP_OK && ip.gw.addr != 0) {
++    if (lan_allowed && netif != nullptr && esp_netif_get_ip_info(netif, &ip) == ESP_OK && ip.gw.addr != 0) {
+         esp_ip4addr_ntoa(&ip.gw, gateway, sizeof(gateway));
+     }
+     char host[16] = {0};
+-    if (!mf_pick_host(attempt, gateway, CONFIG_STACKCHAN_FALLBACK_HUB_HOST, home_host.c_str(), host, sizeof(host))) {
++    if (!mt_pick_host(attempt, tailnet.c_str(), gateway, lan_allowed ? CONFIG_STACKCHAN_FALLBACK_HUB_HOST : "",
++                      home_host.c_str(), host, sizeof(host))) {
++        static bool said = false;
++        if (!said && !lan_allowed) {
++            said = true;
++            ESP_LOGI(TAG, "fallback not used: this Wi-Fi network is not a '%s*' network and the tailnet is not up",
++                     CONFIG_STACKCHAN_FALLBACK_SSID_PREFIX);
++        }
+         return std::string();
+     }
+-    ESP_LOGI(TAG, "fallback host for attempt %d: %s (gateway %s)", attempt, host, gateway[0] != '\0' ? gateway : "none");
++    ESP_LOGI(TAG, "fallback host for attempt %d: %s (tailnet %s, gateway %s)", attempt, host,
++             tailnet.empty() ? "down" : tailnet.c_str(), gateway[0] != '\0' ? gateway : "none");
+     return std::string(host);
+ }
+ 
