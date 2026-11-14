@@ -5,6 +5,11 @@ All notable changes to MaiPai Bot. Format follows
 Everything stays `0.x` until the product passes its battle-tested
 checklist (`docs/dev.md`).
 
+## [0.2.98] - 2026-11-14
+
+### Fixed
+- The robot's own noise no longer keeps the dance going. 0.2.96 counted any loud window as music once a session ran; while it danced its own motors made loud, speech-like noise (levels 1600 to 9500, every window rejected as talker over music) and the dance sustained itself, "stuck dancing" with the wake word unable to fire (live log 2026-11-14 12:57 to 12:59). Only windows the judge accepts as clear music hold a session again, and a running dance stops 5 s after the last one (the end silence is 5 s, was 3 s). Between two dance rounds the robot now stands still for a 2 s listening gap: accepted music windows in the gap let the next round start, none pauses the dance, and with the motors still the wake word can be heard. A turn (the wake word fired) stops a running dance at once.
+
 ## [0.2.97] - 2026-11-14
 
 ### Added

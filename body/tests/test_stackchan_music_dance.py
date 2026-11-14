@@ -503,7 +503,7 @@ def test_a_forty_minute_song_dances_in_cycles_with_breaks_and_never_ends():
     states = [t for t in world.names("request_dance")]
     assert len(states) > 40  # rounds all the way through
     assert len(world.names("nod")) == 1
-    assert world.ctl.state in ("show", "break")  # still in the session after forty minutes
+    assert world.ctl.state in ("show", "break", "calm")  # still in the session after forty minutes
     assert world.ctl._cycle >= 6  # a block of 5 minutes and a break of 90 s: about one every 6.5
 
 
@@ -1059,7 +1059,9 @@ def test_the_break_is_a_slow_mood_the_dance_never_stops_while_music_plays():
     _song(world, 20 * 60)
     starts = world.names("request_dance")
     gaps = [b - a for a, b in zip(starts, starts[1:], strict=False)]
-    assert max(gaps) <= 31.0  # a new round at least every round: no 90 s of standing still
+    assert (
+        max(gaps) <= 34.0
+    )  # a new round at least every round (a 2 s still gap): no 90 s standing still
     assert world.ctl._cycle >= 3  # the slow mood and the slow start came round more than once
     assert not [1 for _, n, a in world.calls if n == "stop_dance" and a == "music ended"]
 
@@ -1118,15 +1120,15 @@ def test_after_a_pause_it_goes_right_back_to_the_mood_it_was_in():
 
 def test_the_shipped_waits_start_quickly_and_stop_quickly():
     t = M.NORMAL
-    assert (t.detect_s, t.nod_to_build_s, t.end_silence_s) == (3.0, 15.0, 3.0)
+    assert (t.detect_s, t.nod_to_build_s, t.end_silence_s) == (3.0, 15.0, 5.0)
     world = World(timing=M.NORMAL, charging=True)
     world.play(MUSIC, 4)  # music at +1, +2, +3, +4: a 3 s run: the nod at +4
     assert world.names("nod") == [4.0]
     world.play(MUSIC, 15)  # the dance starts 15 s after the nod, the head bobbing until then
     assert world.names("request_dance") == [19.0]
-    world.play(None, 2)
+    world.play(None, 4)
     assert world.dancing
-    world.play(None, 1)  # three seconds without music: the dance stops
+    world.play(None, 1)  # five seconds without music: the dance stops
     assert [a for _, n, a in world.calls if n == "stop_dance"] == ["music ended"]
 
 
@@ -1146,43 +1148,68 @@ def test_when_the_music_goes_the_robot_wonders_once_where_it_went():
     assert quiet.names("wonder") == []
 
 
-# ---- a song the beat finder doubts keeps the dance going (live log 2026-11-14 12:33 and 03:25)
+# ---- the robot's own noise is not music (live log 2026-11-14 12:57 to 12:59)
 
 # a live-log window (12:27:21): loud enough to be sent (level 403), weak_beat even when relaxed
 WEAK_LOUD = MusicFeat(lv=403, b=(66, 9, 4, 21), bpm=82, tc=9, fl=15, zc=180, zs=39, mo=7, ps=6)
+# what the unit hears while its own motors run: very loud, mostly high band, no beat at all
+SELF_NOISE = MusicFeat(lv=5000, b=(1, 5, 33, 61), bpm=0, tc=0, fl=80, zc=150, zs=40, mo=60, ps=30)
 
 
-def test_loud_sound_the_beat_finder_rejects_does_not_break_a_running_dance():
+def test_the_robots_own_noise_does_not_keep_the_dance_going():
     world = World(timing=M.NORMAL)
     world.play(MUSIC, 22)  # the nod, the build-up and the dance start
     assert world.ctl.state == "show"
-    assert len(world.names("request_dance")) == 1
-    for i in range(60):  # a minute of a song whose windows mostly fail the beat test
-        world.second(WEAK_LOUD if i % 4 else MUSIC)
-    assert world.ctl.state == "show"
     assert world.dancing
-    assert [a for _, n, a in world.calls if n == "stop_dance"] == []
-    assert len(world.names("request_dance")) == 1  # one continuous dance, no flap
-    assert world.names("wonder") == []
-    world.play(None, 6)  # the sound is really gone: it stops within a few seconds
-    assert not world.dancing
-    assert [a for _, n, a in world.calls if n == "stop_dance"] == ["music ended"]
+    stopped_at = None
+    for i in range(70):  # then only loud rejected windows, as the live log showed
+        world.second(SELF_NOISE)
+        if stopped_at is None and not world.dancing:
+            stopped_at = i + 1
+    assert stopped_at is not None and stopped_at <= 6  # no clear music: stops within about 5 s
+    assert [a for _, n, a in world.calls if n == "stop_dance"][:1] == ["music ended"]
+    assert world.ctl.state != "show"  # paused, then the session ends; it never restarts by itself
+    assert len(world.names("request_dance")) == 1
 
 
-def test_alternating_music_and_rejected_windows_every_few_seconds_make_one_dance():
+def test_clear_music_windows_every_few_seconds_keep_one_continuous_dance():
     world = World(timing=M.NORMAL)
     world.play(MUSIC, 22)
-    for _ in range(10):  # 3 s of weak windows, 3 s of music, over and over
+    for _ in range(12):  # a song the beat finder doubts: a clear window every 4 s
         world.play(WEAK_LOUD, 3)
-        world.play(MUSIC, 3)
+        world.play(MUSIC, 1)
     assert world.ctl.state == "show"
     assert len(world.names("request_dance")) == 1
     assert [a for _, n, a in world.calls if n == "stop_dance"] == []
 
 
-def test_the_session_does_not_end_while_the_sound_stays_loud():
+def test_between_rounds_the_robot_stands_still_and_listens():
     world = World(timing=M.NORMAL)
     world.play(MUSIC, 22)
-    world.play(WEAK_LOUD, 120)  # two minutes with no clear second at all, still loud
-    assert world.ctl.state in ("show", "calm")
-    assert world.names("wonder") == []
+    requests = len(world.names("request_dance"))
+    world.dancing = False  # the round ended
+    world.second(MUSIC)  # the still gap begins: no new round yet
+    assert len(world.names("request_dance")) == requests
+    world.second(MUSIC)  # clear music keeps arriving in the gap
+    world.second(MUSIC)
+    assert len(world.names("request_dance")) == requests + 1  # the next round after the gap
+
+
+def test_a_gap_with_only_the_robots_own_noise_pauses_the_dance():
+    world = World(timing=M.NORMAL)
+    world.play(MUSIC, 22)
+    requests = len(world.names("request_dance"))
+    world.dancing = False  # the round ended
+    world.play(SELF_NOISE, 4)  # nothing but loud rejected windows in the still gap
+    assert len(world.names("request_dance")) == requests
+    assert world.ctl.state == "break"
+
+
+def test_a_turn_stops_a_running_dance_at_once():
+    world = World(timing=M.NORMAL)
+    world.play(MUSIC, 22)
+    assert world.dancing
+    world.sit = replace(world.sit, in_turn=True)  # the wake word fired and a turn began
+    world.second(MUSIC)
+    assert not world.dancing
+    assert {a for _, n, a in world.calls if n == "stop_dance"} == {"a turn"}

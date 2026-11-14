@@ -238,8 +238,9 @@ class Timing:
     gap_s: float = 2.5  # one missed or doubtful second between music seconds is forgiven
     nod_to_build_s: float = 15.0  # the head bobs on the beat this long before the full dance
     end_silence_s: float = (
-        3.0  # no clear music this long pauses a running dance (it resumes at once)
+        5.0  # no clear music window this long stops a running dance (owner: within about 5 s)
     )
+    listen_gap_s: float = 2.0  # between dance rounds the robot stands still and listens this long
     rearm_quiet_s: float = 10.0  # quiet this long before another session can begin
     session_gap_s: float = 60.0  # a song change: gaps under this keep the music session going
     break_s: float = 90.0  # the slow mood between dance blocks: a gentle sway, not a stop
@@ -381,7 +382,7 @@ class MusicDance:
         self._break_at = float("-inf")
         self._run_start: float | None = None
         self._last_pos: float | None = None
-        self._last_loud: float | None = None  # the last window loud enough to be sound at all
+        self._gap_since: float | None = None  # the still listening gap between two dance rounds
         self._run_len_pos = 0
         self._nod_at = float("-inf")
         self._nod_cancel = False
@@ -422,8 +423,6 @@ class MusicDance:
             if not self._active():
                 return
             self._count_minute(now)
-            if feat.lv >= MIN_LEVEL:
-                self._last_loud = now
             relaxed = self.state in ("nod", "watch", "show", "calm", "break")
             verdict = judge(feat, self.settings.auto_sensitivity, relaxed=relaxed)
             self._talk.append(feat.ps >= TALKER_PS or feat.mo >= TALKER_MO)
@@ -522,12 +521,11 @@ class MusicDance:
         return self._last_pos - self._run_start
 
     def _sound_at(self) -> float | None:
-        """The last second of sound in a running session: a clear music window, or any window loud
-        enough to be sent. The beat finder doubts many real songs (weak beat, flat, a voice over
-        them); once a session started, only silence ends it (owner 2026-11-13: a song playing for
-        hours keeps dancing; live log 2026-11-14 12:33, the dance broke 4 s after it began)."""
-        seen = [t for t in (self._last_pos, self._last_loud) if t is not None]
-        return max(seen) if seen else None
+        """The last second of CLEAR music. Not any loud window: while the robot dances its own
+        motors and speaker make loud, speech-like noise (live log 2026-11-14 12:57: every window
+        rejected as talker_over_music at levels of 1600 to 9500) and counting that as music kept
+        the dance going on its own noise. Only windows the judge accepts hold a session."""
+        return self._last_pos
 
     def _music_gone(self, now: float) -> bool:
         """No sound for the end-silence time (a round stops, the dance pauses)."""
@@ -596,8 +594,11 @@ class MusicDance:
         """A dance block: rounds of dancing while the music goes on, then a break."""
         sit = self._hooks.situation()
         if self._hooks.dance_running():
+            self._gap_since = None
             if sit.muted or sit.full_quiet == "muted":
                 self._hooks.stop_dance("muted")
+            elif sit.in_turn or sit.live_cue:
+                self._hooks.stop_dance("a turn")  # the wake word fired: the dance stops at once
             elif self._music_gone(now):
                 self._hooks.stop_dance("music ended")
             elif now - self._notes_at >= 10.0:
@@ -609,7 +610,10 @@ class MusicDance:
         elif self._session_test or self._session_over(now):
             self._dance_over(now, wonder=True)
         elif self._music_gone(now):
+            self._gap_since = None
             self._pause(now, "show")
+        elif self._listening_gap(now) is not True:
+            return  # still listening, or the gap heard no clear music and the dance paused
         elif now - self._block_start >= self._block_s():
             why, nod_only = self._gate(now, for_nod=False)
             if why is not None and not nod_only:
@@ -629,6 +633,24 @@ class MusicDance:
                 self._dance_over(now)
                 return
             logger.info("StackChan music: cycle %d (dance round, music still going)", self._cycle)
+
+    def _listening_gap(self, now: float) -> bool | None:
+        """A short motionless gap between two dance rounds: the motors are still, so the room's
+        sound is the room's own (no self-noise) and the wake word can be heard. Clear music windows
+        accepted during the gap let the next round start; none pauses the dance. Returns None while
+        the gap runs, True when it ended with clear music, False when it paused the dance."""
+        if self._gap_since is None:
+            self._gap_since = now
+            return None
+        if now - self._gap_since < self._timing.listen_gap_s:
+            return None
+        started = self._gap_since
+        self._gap_since = None
+        if self._last_pos is not None and self._last_pos >= started:
+            return True
+        logger.info("StackChan music: no clear music in the still gap: pausing the dance")
+        self._pause(now, "show")
+        return False
 
     def _request(self, plan: str, now: float) -> tuple[bool, str]:
         self.plan = plan
@@ -949,7 +971,7 @@ class MusicDance:
             self._test_until = now + (30.0 if fast else TEST_S)
             self._test_next = now
             self.state = "idle"
-            self._run_start = self._last_pos = self._last_loud = None
+            self._run_start = self._last_pos = None
             logger.info("StackChan music test started (%s)", "fast" if fast else "normal")
             return True, ""
 
