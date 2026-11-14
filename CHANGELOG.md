@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.81] - 2026-11-13
+
+### Added
+- StackChan firmware patch 128: the dance sways on the beat of the song. The unit finds the beat from its onset signal (`maipai_beat.h`) and moves the head once per beat at the song's tempo, with a fallback to the Happy sway when no beat is clear. Written while the owner was away: built and compiled, not yet seen on the unit.
+
 ## [0.2.80] - 2026-11-13
 
 ### Changed

@@ -1,0 +1,320 @@
+# Intent: the head sways on the beat of the song (owner 2026-11-13: "any way to have StackChan dance to the beat of the song"; "sometimes it dances slow and then fast and then really fast randomly"). hal_music.cpp finds the beat from the last 6 s of the onset signal (maipai_beat.h, tested on synthetic beats: tempo folded into 70 to 140 BPM, beat phase, confidence) and publishes its period and the time of a recent beat; BeatSwayModifier moves the head once per beat (every second beat above about 133 BPM), side to side with a small bob, with the Happy dance's squint and open mouth, at a spring speed that fits the beat; without a fresh beat it plays the Happy keyframes so the head is never still. The firmware's own music dance (patch 121 and later) and the self.robot.dance tool for happy and robot use it when a beat is known; with no music a spoken dance plays the keyframes as before.
+# Upstream: MaiPai only (hal_music.cpp, hal_mcp.cpp, beat_sway.h, maipai_beat.h). Applies after 127.
+# Check after a flash: play a song with a clear beat: the head moves once per beat, in time; change songs: the speed follows; a spoken "dance" with no music plays the usual Happy sway.
+diff --git a/firmware/main/hal/hal_music.cpp b/firmware/main/hal/hal_music.cpp
+--- a/firmware/main/hal/hal_music.cpp
++++ b/firmware/main/hal/hal_music.cpp
+@@ -41,6 +41,7 @@
+ #include <boards/common/board.h>
+ #include "maipai_privacy.h"
+ #include "maipai_music_judge.h"
++#include "maipai_beat.h"
+ #include <application.h>
+ 
+ #include "maipai_music_core.h"
+@@ -48,6 +49,7 @@
+ void device_events_push_music(const char* extra);
+ void device_events_push_diag(const char* kind, const char* extra);
+ void maipai_music_dance_start();
++bool maipai_beat_get(uint32_t* period_ms, uint32_t* ref_ms);
+ void maipai_music_dance_stop();
+ 
+ 
+@@ -75,9 +77,43 @@
+ mm_an_t* s_an         = nullptr;
+ std::atomic<bool> s_muted{false};
+ std::atomic<bool> s_enabled{false};  // the host's switch (robot.dance.auto); off at boot until NVS or the host says on
++std::atomic<uint32_t> s_beat_period_ms{0};
++std::atomic<uint32_t> s_beat_ref_ms{0};
++std::atomic<uint32_t> s_beat_pub_ms{0};
++std::atomic<int> s_beat_conf{0};
+ std::atomic<uint32_t> s_dropped{0};
+ std::atomic<uint32_t> s_suppressed_chunks{0};
+ 
++// The beat of the song (patch 128): from the last 6 s of onset frames and the tempo estimate, find where the beats
++// fall and publish the period and the time of a recent beat for the dance (beat_sway.h).
++void publish_beat(const mm_feat_t& f, uint32_t now_ms)
++{
++    static uint32_t last_log_ms = 0;
++    const int n = s_an->count;
++    if (f.bpm <= 0 || f.tc < 15 || n < MM_MIN_FRAMES) {
++        s_beat_conf.store(0);
++        return;
++    }
++    int16_t onset[MM_RING];
++    for (int i = 0; i < n; ++i) {
++        onset[n - 1 - i] = s_an->onset[mm_ring_at(s_an, i)];  // oldest first
++    }
++    mb_beat_t beat;
++    const int conf = mb_phase(onset, n, 1000 / MM_FPS, f.bpm, &beat);
++    if (conf < 30 || beat.period_ms <= 0) {
++        s_beat_conf.store(0);
++        return;
++    }
++    s_beat_period_ms.store(static_cast<uint32_t>(beat.period_ms));
++    s_beat_ref_ms.store(now_ms - static_cast<uint32_t>(beat.last_beat_ms_ago));
++    s_beat_conf.store(conf);
++    s_beat_pub_ms.store(now_ms);
++    if (now_ms - last_log_ms >= 30000) {
++        last_log_ms = now_ms;
++        ESP_LOGI("HAL-Music", "beat: %d bpm (folded period %d ms), confidence %d", f.bpm, beat.period_ms, conf);
++    }
++}
++
+ void offline_music_notes(int count)
+ {
+     LvglLockGuard lock;
+@@ -219,6 +255,7 @@
+         }
+         const uint32_t now_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+         if (f.valid) {
++            publish_beat(f, now_ms);
+             ++seconds;
+             if (f.lv >= kGateRms) {
+                 ++loud;
+@@ -254,6 +291,18 @@
+ 
+ }  // namespace
+ 
++// The published beat, if it is fresh and sure (beat_sway.h).
++bool maipai_beat_get(uint32_t* period_ms, uint32_t* ref_ms)
++{
++    const uint32_t now = static_cast<uint32_t>(esp_timer_get_time() / 1000);
++    if (s_beat_conf.load() < 30 || now - s_beat_pub_ms.load() > 3000) {
++        return false;
++    }
++    *period_ms = s_beat_period_ms.load();
++    *ref_ms    = s_beat_ref_ms.load();
++    return *period_ms > 0;
++}
++
+ // Called by the audio input task (xiaozhi audio_service.cc) with every chunk read from the codec.
+ // `suppress` is true while the unit listens, speaks or plays a sound (and just after).
+ void maipai_music_tap(const int16_t* interleaved, size_t frames, int channels, int sample_rate, bool suppress)
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -10,6 +10,7 @@
+ #include <boards/common/board.h>
+ #include <stackchan/stackchan.h>
+ #include <stackchan/modifiers/dance.h>
++#include <stackchan/modifiers/beat_sway.h>
+ #include <apps/common/common.h>
+ #include <driver/i2c_master.h>
+ #include <esp_log.h>
+@@ -170,7 +171,12 @@
+         GetStackChan().removeModifier(s_dance_modifier_id);
+         s_dance_modifier_id = -1;
+     }
+-    s_dance_modifier_id = GetStackChan().addModifier(std::make_unique<DanceModifier>(DanceModifier::Happy));
++    uint32_t beat_period = 0, beat_ref = 0;
++    if (maipai_beat_get(&beat_period, &beat_ref)) {
++        s_dance_modifier_id = GetStackChan().addModifier(std::make_unique<BeatSwayModifier>());  // on the beat
++    } else {
++        s_dance_modifier_id = GetStackChan().addModifier(std::make_unique<DanceModifier>(DanceModifier::Happy));
++    }
+ }
+ 
+ void maipai_music_dance_stop()
+@@ -643,7 +649,13 @@
+                                GetStackChan().removeModifier(s_dance_modifier_id);
+                                s_dance_modifier_id = -1;
+                            }
+-                           s_dance_modifier_id = GetStackChan().addModifier(std::make_unique<DanceModifier>(*sequence));
++                           uint32_t beat_period = 0, beat_ref = 0;
++                           if ((name == "happy" || name == "robot") && maipai_beat_get(&beat_period, &beat_ref)) {
++                               // Music with a clear beat: the head sways on it (patch 128).
++                               s_dance_modifier_id = GetStackChan().addModifier(std::make_unique<BeatSwayModifier>());
++                           } else {
++                               s_dance_modifier_id = GetStackChan().addModifier(std::make_unique<DanceModifier>(*sequence));
++                           }
+ 
+                            return true;
+                        });
+diff --git a/firmware/main/hal/maipai_beat.h b/firmware/main/hal/maipai_beat.h
+new file mode 100644
+--- /dev/null
++++ b/firmware/main/hal/maipai_beat.h
+@@ -0,0 +1,96 @@
++#ifndef MAIPAI_BEAT_H
++#define MAIPAI_BEAT_H
++
++/* The beat of a song, from the onset signal the unit already measures (maipai_music_core.h): plain C99, no
++ * hardware. mb_fold_bpm folds the autocorrelation's tempo (often a half or a double) into 70 to 140 BPM;
++ * mb_phase finds where the beats fall in the last few seconds of the onset signal; mb_next_beat_ms says when
++ * the next one comes. The dance sways on those times and follows the tempo. */
++
++#include <stdint.h>
++
++#define MB_MAX_FRAMES 512
++#define MB_MAX_PERIOD_FRAMES 64
++
++typedef struct {
++    int confidence;       /* 0..100: how much better the best phase is than an average one */
++    int last_beat_ms_ago; /* from the newest frame back to the latest beat */
++    int period_ms;        /* one beat, after folding */
++} mb_beat_t;
++
++static inline int mb_fold_bpm(int bpm) {
++    if (bpm <= 0) return 0;
++    while (bpm < 70) bpm *= 2;
++    while (bpm > 140) bpm = (bpm + 1) / 2;
++    return bpm;
++}
++
++/* onset_oldest_first: n_frames values, one per frame_ms. Returns the confidence (0 when there is no usable
++ * beat). Recent beats weigh more, so a tempo that is a few percent off still lands the newest beat. */
++static inline int mb_phase(const int16_t *onset_oldest_first, int n_frames, int frame_ms, int bpm,
++                           mb_beat_t *out) {
++    int folded, period_ms, period_frames, offset, i, median = 0, best_offset = 0, last_idx;
++    int16_t sorted[MB_MAX_FRAMES];
++    int64_t total = 0, best = -1;
++    if (out == 0) return 0;
++    out->confidence = 0;
++    out->last_beat_ms_ago = 0;
++    out->period_ms = 0;
++    if (onset_oldest_first == 0 || n_frames <= 0 || frame_ms <= 0 || bpm <= 0) return 0;
++    folded = mb_fold_bpm(bpm);
++    period_ms = 60000 / folded;
++    period_frames = (period_ms + frame_ms / 2) / frame_ms;
++    if (period_frames < 2 || period_frames > MB_MAX_PERIOD_FRAMES) return 0;
++    if (n_frames > MB_MAX_FRAMES) {
++        onset_oldest_first += n_frames - MB_MAX_FRAMES; /* keep the newest */
++        n_frames = MB_MAX_FRAMES;
++    }
++    if (n_frames < 2 * period_frames) return 0;
++    for (i = 0; i < n_frames; i++) sorted[i] = onset_oldest_first[i];
++    for (i = 1; i < n_frames; i++) { /* insertion sort, n is at most 512 */
++        int16_t v = sorted[i];
++        int j;
++        for (j = i; j > 0 && sorted[j - 1] > v; j--) sorted[j] = sorted[j - 1];
++        sorted[j] = v;
++    }
++    median = sorted[n_frames / 2];
++    for (offset = 0; offset < period_frames; offset++) {
++        int64_t score = 0;
++        for (i = offset; i < n_frames; i += period_frames) {
++            int k, v = 0;
++            for (k = -1; k <= 1; k++) { /* one frame of jitter either side */
++                int at = i + k;
++                if (at >= 0 && at < n_frames && onset_oldest_first[at] - median > v)
++                    v = onset_oldest_first[at] - median;
++            }
++            score += (int64_t)v * (n_frames + 3 * i); /* newer beats weigh up to four times more */
++        }
++        total += score;
++        if (score > best) { best = score; best_offset = offset; }
++    }
++    if (best <= 0) return 0;
++    {
++        int64_t mean = total / period_frames;
++        int confidence = (int)(((best - mean) * 100) / best);
++        if (confidence < 0) confidence = 0;
++        if (confidence > 100) confidence = 100;
++        out->confidence = confidence;
++    }
++    last_idx = best_offset + ((n_frames - 1 - best_offset) / period_frames) * period_frames;
++    out->period_ms = period_ms;
++    out->last_beat_ms_ago = (n_frames - 1 - last_idx) * frame_ms;
++    return out->confidence;
++}
++
++/* The next beat on the caller's clock: the first beat time after now_ms, advancing by whole periods from the
++ * moment the phase was computed (computed_at_ms). Wrap safe. */
++static inline uint32_t mb_next_beat_ms(const mb_beat_t *b, uint32_t now_ms, uint32_t computed_at_ms) {
++    uint32_t elapsed, since, period, wait;
++    if (b == 0 || b->period_ms <= 0) return now_ms;
++    period = (uint32_t)b->period_ms;
++    elapsed = now_ms - computed_at_ms;
++    since = (uint32_t)b->last_beat_ms_ago + elapsed;
++    wait = period - (since % period);
++    return now_ms + wait;
++}
++
++#endif
+diff --git a/firmware/main/stackchan/modifiers/beat_sway.h b/firmware/main/stackchan/modifiers/beat_sway.h
+new file mode 100644
+--- /dev/null
++++ b/firmware/main/stackchan/modifiers/beat_sway.h
+@@ -0,0 +1,81 @@
++/*
++ * MaiPai patch 128: the head sways on the beat of the song (owner 2026-11-13: "any way to have StackChan dance to
++ * the beat of the song"). The music analysis (hal_music.cpp) publishes the song's beat period and the time of a
++ * recent beat; this modifier moves the head once per beat, side to side with a small bob, at the song's tempo, with
++ * the happy squint of the Happy dance. Without a fresh beat it plays the Happy keyframes instead, so the head never
++ * stands still while music plays. It never ends by itself: the dance code removes it.
++ */
++#pragma once
++#include "../modifiable.h"
++#include "../animation/animation.h"
++#include "dance.h"
++#include <esp_timer.h>
++#include <cstdint>
++
++// hal_music.cpp: true while a beat (period and the time of a recent beat, both on the esp_timer millisecond clock)
++// was measured in the last 3 seconds with a confidence of at least 30.
++bool maipai_beat_get(uint32_t* period_ms, uint32_t* ref_ms);
++
++namespace stackchan {
++
++class BeatSwayModifier : public Modifier {
++public:
++    BeatSwayModifier() : _fallback(DanceModifier::Happy, true)
++    {
++    }
++
++    void _update(Modifiable& stackchan) override
++    {
++        if (!stackchan.hasAvatar()) {
++            return;
++        }
++        uint32_t period = 0, ref = 0;
++        const uint32_t now = static_cast<uint32_t>(esp_timer_get_time() / 1000);
++        if (!maipai_beat_get(&period, &ref) || period < 250) {
++            // No beat to follow right now: the plain Happy sway keeps the head moving.
++            if (!_fallback_running) {
++                _fallback.start();
++                _fallback_running = true;
++            }
++            _fallback.update();
++            _have_beat = false;
++            return;
++        }
++        _fallback_running = false;
++        const int32_t step = period < 450 ? 2 : 1;  // above about 133 BPM: every second beat
++        const int32_t since = static_cast<int32_t>(now - ref);
++        const int32_t beat  = since >= 0 ? since / static_cast<int32_t>(period)
++                                         : -1 - ((-since - 1) / static_cast<int32_t>(period));
++        const int32_t b     = beat >= 0 ? beat / step : -1 - ((-beat - 1) / step);
++        if (_have_beat && b == _last_b) {
++            return;
++        }
++        _have_beat = true;
++        _last_b    = b;
++        const int side         = (b & 1) ? 1 : -1;
++        const uint32_t span_ms = period * static_cast<uint32_t>(step);
++        const int swing        = span_ms < 600 ? 200 : 300;  // smaller swings for quick songs
++        int speed              = static_cast<int>(240000U / span_ms);
++        speed                  = speed < 220 ? 220 : (speed > 600 ? 600 : speed);
++        // The Happy dance's own yaw and pitch (0.1 degree units): side to side, the head a little down, a small bob.
++        stackchan.motion().moveWithSpeed(side * swing, side > 0 ? -120 : -80, speed);
++        // The Happy squint: eyes at weight 50 shifted with the sway, the mouth open at weight 50, sizes neutral.
++        auto squint = [](avatar::Feature& feat, int x) {
++            feat.setPosition(uitk::Vector2i(x, 0));
++            feat.setRotation(0);
++            feat.setWeight(50);
++            feat.setSize(0);
++        };
++        squint(stackchan.avatar().leftEye(), side * 10);
++        squint(stackchan.avatar().rightEye(), side * 10);
++        squint(stackchan.avatar().mouth(), 0);
++    }
++
++private:
++    animation::Timeline _fallback;
++    bool _fallback_running = false;
++    bool _have_beat        = false;
++    int32_t _last_b        = 0;
++};
++
++}  // namespace stackchan
