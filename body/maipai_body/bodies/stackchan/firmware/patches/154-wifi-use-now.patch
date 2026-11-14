@@ -49,7 +49,7 @@ new file mode 100644
 index 0000000..e61b180
 --- /dev/null
 +++ b/firmware/main/hal/maipai_wifi_use.cc
-@@ -0,0 +1,243 @@
+@@ -0,0 +1,291 @@
 +/*
 + * SPDX-License-Identifier: MIT
 + */
@@ -238,6 +238,46 @@ index 0000000..e61b180
 +            return;
 +    }
 +}
++
++esp_timer_handle_t s_watch_timer = nullptr;
++
++// Forgetting the network the unit is joined to must drop it (owner 2026-11-14). The Wi-Fi component reconnects with the
++// station settings it already holds, so the settings are moved off the forgotten network first (to the first saved
++// network, or to a name nothing uses) and the link dropped second. Runs only when no use_now hold is active.
++void watch(void*)
++{
++    std::lock_guard<std::mutex> lock(s_lock);
++    if (s_state != State::Idle) {
++        return;
++    }
++    wifi_ap_record_t ap;
++    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
++        return;
++    }
++    const std::string now(reinterpret_cast<const char*>(ap.ssid));
++    if (now.empty()) {
++        return;
++    }
++    const auto& saved = SsidManager::GetInstance().GetSsidList();
++    for (const auto& item : saved) {
++        if (item.ssid == now) {
++            return;
++        }
++    }
++    wifi_config_t cfg;
++    memset(&cfg, 0, sizeof(cfg));
++    if (!saved.empty()) {
++        strlcpy(reinterpret_cast<char*>(cfg.sta.ssid), saved[0].ssid.c_str(), sizeof(cfg.sta.ssid));
++        strlcpy(reinterpret_cast<char*>(cfg.sta.password), saved[0].password.c_str(), sizeof(cfg.sta.password));
++    } else {
++        strlcpy(reinterpret_cast<char*>(cfg.sta.ssid), "maipai-no-network", sizeof(cfg.sta.ssid));
++    }
++    cfg.sta.listen_interval = 10;
++    ESP_LOGI(TAG, "the joined network is no longer saved: leaving it");
++    device_events_push_diag("wifi_forgot_current", "left_forgotten_network");
++    esp_wifi_set_config(WIFI_IF_STA, &cfg);
++    esp_wifi_disconnect();
++}
 +}  // namespace
 +
 +void maipai_wifi_use_release()
@@ -251,6 +291,14 @@ index 0000000..e61b180
 +
 +void maipai_wifi_use_register_tools()
 +{
++    if (s_watch_timer == nullptr) {
++        esp_timer_create_args_t watch_args = {};
++        watch_args.callback                = watch;
++        watch_args.name                    = "wifi_watch";
++        if (esp_timer_create(&watch_args, &s_watch_timer) == ESP_OK) {
++            esp_timer_start_periodic(s_watch_timer, 2 * 1000 * 1000);
++        }
++    }
 +    McpServer::GetInstance().AddTool(
 +        "self.wifi.use_now",
 +        "Leave the current Wi-Fi and join one saved network (index from self.wifi.list_saved) now. The saved list in "
