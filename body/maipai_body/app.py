@@ -25,6 +25,7 @@ import importlib.metadata
 import logging
 import math
 import os
+import random
 import signal
 import threading
 import time
@@ -49,6 +50,7 @@ from maipai_body.bodies.stackchan.head_search import (
     HeadSearch,
 )
 from maipai_body.bodies.stackchan.head_touch_filter import HEAD_KINDS, HeadTouchFilter
+from maipai_body.bodies.stackchan.idle_faces import IdleFaces
 from maipai_body.bodies.stackchan.person_tracker import (
     PERSON_HINT_SCORE,
     SPEAKER_PERSON_FRESH_S,
@@ -194,6 +196,7 @@ TURN_FACE_FRESH_S = 60.0  # turn toward a face seen this recently when a turn st
 LOST_AFTER_LOOKS = 4  # two seconds without the face it was following: it was lost
 TOUCH_POLL_S = 0.5  # asleep too: at 5 s a tap or shake took up to 5 s to wake the unit
 EVENT_POLL_S = 0.5  # touch, swipe and shake events are read this often while the robot is awake
+IDLE_FACES_ENABLED = True
 TOUCH_WAKE_COOLDOWN_S = 30.0
 IN_VIEW_S = 120.0  # a face seen this recently counts as someone being there to hear a line
 KEEP_AWAKE_S = 60.0  # how often the unit is told the hub is reachable (firmware patch 074)
@@ -272,6 +275,7 @@ class StackChanBehavior:
         # The music dance (music_dance.py, music_dance_wiring.py): the unit's per-second music
         # numbers and the hub's "music_test" device command.
         self.music_feat: Callable[[dict, float], object] | None = None
+        self.idle_faces: IdleFaces | None = None
         self.music_clip: Callable[[str, dict, float], object] | None = None
         self.music_command: Callable[[dict], dict | None] = lambda _payload: {
             "music_test": "refused",
@@ -1502,6 +1506,15 @@ class StackChanBehavior:
             return False
         paused = now - self._last_event_poll > 30.0
         self._last_event_poll = now
+
+        def tick_idle_faces() -> None:
+            if asleep or self.idle_faces is None:
+                return
+            try:
+                self.idle_faces.tick(now)
+            except Exception:
+                self._warn_limited("idle-faces", "StackChan idle face tick failed")
+
         events = self.event_poll()
         # A slider the person moved on the unit is a level to keep, never old news to drain.
         for event in events:
@@ -1618,6 +1631,8 @@ class StackChanBehavior:
             self._last_person_seen = now
             logger.info("StackChan woke up for a timer")
             return True
+        if not asleep and self.idle_faces is not None:
+            tick_idle_faces()
         if paused or not self._event_queue_drained:
             self._event_queue_drained = True
             return False
@@ -2324,7 +2339,7 @@ async def _serve_stackchan_channels(
             if value in ("on", "ask", "off"):
                 identify_setting_value[0] = value
 
-        wire_music_dance(
+        music_dance = wire_music_dance(
             behavior=behavior,
             runner=runner,
             move_head=_move_head,
@@ -2335,6 +2350,32 @@ async def _serve_stackchan_channels(
             identify_setting=identify_setting,
             identify_call_tool=voice.robot.client._call,
         )
+
+        def idle_face_allowed() -> bool:
+            if not IDLE_FACES_ENABLED or behavior._active.is_set():
+                return False
+            if behavior._rest.stage != "awake":
+                return False
+            if music_dance.state in {"nod", "watch", "show", "calm", "break"}:
+                return False
+            situation = runner.situation()
+            if (
+                situation.night
+                or not situation.awake
+                or situation.muted
+                or situation.full_quiet
+                or situation.camera_cue
+                or situation.live_cue
+            ):
+                return False
+            tracker = behavior._tracker
+            if getattr(tracker, "stage", "idle") in {"aiming", "follow", "face-search"}:
+                return False
+            if getattr(tracker, "following", False):
+                return False
+            return True
+
+        behavior.idle_faces = IdleFaces(behavior.show_face, idle_face_allowed, rng=random.Random())
         behavior.settings_listeners.append(apply_identify_setting)
         behavior.settings_listeners.append(music_switch.apply_settings)
         voice.session_listeners.append(music_switch.on_session)

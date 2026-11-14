@@ -8,6 +8,9 @@ checklist (`docs/dev.md`).
 ## [Unreleased]
 
 ### Added
+- Varied idle faces (owner: "right now it just sits there with the same expression blinking"): every 30 to 90 seconds of nothing happening the robot gives one brief look (mostly a small smile, a daydream look, a drowsy blink; sometimes a tiny startle or a wink), never twice the same in a row, never during a turn, a song, sleep, mute, night, a camera cue or while following a person.
+
+### Added
 - A person standing with their back to the robot still counts as present: a fast-detector person box no face covers adds one unknown `present` entry (SCENE-01g, `build_present`; the loop does not pass boxes yet).
 
 ## [0.2.85] - 2026-11-14
