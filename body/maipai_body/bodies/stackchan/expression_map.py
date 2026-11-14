@@ -89,12 +89,20 @@ CUE_FACE_MAP = {
 REPLY_MOOD_FACE_MAP = {
     "neutral": "neutral",
     "happiness": "happy",
+    "joy": "joy",
+    "excitement": "excited",
+    "surprise": "shocked",
+    "love": "love",
+    "affection": "love",
+    "adoration": "love",
+    "contentment": "content",
+    "playful": "silly",
     "anger": "angry",
     "sadness": "sad",
-    "fear": "surprised",
-    "doubt": "neutral",  # the doubt face reads as confusion
+    "fear": "worried",
+    "doubt": "curious",
     "sleepiness": "sleepy",
-    "wry": "neutral",
+    "wry": "wink",
 }
 
 # These deliberately small moves work within the two measured profile axes.
@@ -134,7 +142,7 @@ if set(PRIMITIVE_BODY_MAP) | set(UNSUPPORTED_PRIMITIVES) != set(PRIMITIVE_NAMES)
 
 _USED_FACES = (
     {frame.expression for frame in CUE_FACE_MAP.values()}
-    | set(REPLY_MOOD_FACE_MAP.values())
+    | {face for face in REPLY_MOOD_FACE_MAP.values() if face in SUPPORTED_FACES}
     | {action.face for action in PRIMITIVE_BODY_MAP.values() if action.face is not None}
 )
 for _face in sorted(_USED_FACES - SUPPORTED_FACES):

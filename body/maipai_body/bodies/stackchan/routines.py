@@ -46,6 +46,7 @@ class RestRenderer:
         blink_delay_s: float = 0.2,
         sleep=None,
         firmware_version=lambda: None,
+        sleep_z=None,
         quiet_s=lambda: 0,
         thresholds=lambda: (120, 300),
         night_active=lambda: False,
@@ -58,6 +59,7 @@ class RestRenderer:
         self._blink_delay_s = blink_delay_s
         self._sleep = sleep
         self._firmware_version = firmware_version
+        self._sleep_z = sleep_z
         self._quiet_s = quiet_s
         self._thresholds = thresholds
         self._night_active = night_active
@@ -127,6 +129,9 @@ class RestRenderer:
                 frame = sleeping_avatar()
                 if face == "sleepy":
                     frame.expression = "sleepy"
+                from .face_vocabulary import resolve_face
+
+                frame.expression = resolve_face(face, self._firmware_version())
                 face_ok = step(f"face {face} sent", lambda: sender(frame))
             if self._set_brightness is not None:
                 step(
@@ -140,7 +145,14 @@ class RestRenderer:
             if sender is not None:
                 step("wake blink on", lambda: sender(sleeping_avatar()))
                 step("wake blink delay", lambda: (self._sleep or time.sleep)(self._blink_delay_s))
-                face_ok = step("wake blink off", lambda: sender(control_avatar("neutral")))
+                from .face_vocabulary import resolve_face
+
+                face_ok = step(
+                    "wake blink off",
+                    lambda: sender(
+                        control_avatar(resolve_face("neutral", self._firmware_version()))
+                    ),
+                )
             if self._restore_brightness is not None and self._set_brightness is not None:
                 step(
                     "brightness restored", lambda: self._set_brightness(self._restore_brightness())
@@ -149,7 +161,16 @@ class RestRenderer:
                 step("ring restored", lambda: self._set_ring_sleeping(False))
         elif sender is not None:
             face_name = "sleepy" if stage == "drowsy" else "neutral"
+            from .face_vocabulary import resolve_face
+
+            face_name = resolve_face(face_name, self._firmware_version())
             face_ok = step(f"face {face_name} sent", lambda: sender(control_avatar(face_name)))
+
+        sleep_z = self._sleep_z or getattr(client, "sleep_z", None)
+        if sleep_z is not None:
+            method = {"drowsy": "drowsy", "asleep": "asleep", "awake": "off"}.get(stage)
+            if method is not None:
+                step(f"sleep animation {method}", getattr(sleep_z, method))
 
         if self._pose_stage != stage:
             # The head only travels up from level, so it cannot "drop" for drowsy or asleep: it

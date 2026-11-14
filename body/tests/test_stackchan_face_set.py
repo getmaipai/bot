@@ -41,7 +41,30 @@ def test_checked_in_map_faces_exist_in_face_set():
     used = {frame.expression for frame in expression_map.CUE_FACE_MAP.values()}
     used |= set(expression_map.REPLY_MOOD_FACE_MAP.values())
     used |= {action.face for action in expression_map.PRIMITIVE_BODY_MAP.values() if action.face}
-    assert used <= faces
+    assert used <= faces | {
+        "joy",
+        "content",
+        "excited",
+        "shocked",
+        "curious",
+        "love",
+        "worried",
+        "dizzy",
+        "silly",
+    }
+
+
+def test_logical_vocabulary_falls_back_until_new_firmware_and_rejects_unknown():
+    from maipai_body.bodies.stackchan.face_vocabulary import (
+        FACE_VOCABULARY,
+        resolve_face,
+    )
+
+    assert len(FACE_VOCABULARY) == 19  # the 18 logical faces and the sleeping face
+    assert resolve_face("joy", "0.2.86") == "happy"
+    assert resolve_face("curious", "0.2.86") == "doubt"
+    assert resolve_face("neutral", "0.2.86") == "neutral"
+    assert resolve_face("not-a-face", "0.2.86") == "neutral"
 
 
 def test_upstream_emotion_enum_has_no_joy_face():

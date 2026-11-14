@@ -23,6 +23,7 @@ from maipai_body.bodies.stackchan.music_dance import (
     DANCE_PLAN,
     MusicDance,
     MusicDanceHooks,
+    mood_for_genre,
     nod_steps,
     parse_music_feat,
 )
@@ -266,6 +267,9 @@ def wire_music_dance(
 
     behavior.music_feat = on_music_feat
     if identify is not None:
+        identify._hooks.on_result = lambda result: controller.set_mood_hint(
+            mood_for_genre(result.get("genre")) if isinstance(result.get("genre"), str) else None
+        )
         behavior.music_clip = identify.on_clip_event
     behavior.dance_events = on_events
     behavior.music_command = command

@@ -28,9 +28,9 @@ AXIS_POSES: dict[str, str] = {
 }
 FACE_FOR_POSE = {
     "upright": "neutral",
-    "left_side": "doubt",
-    "right_side": "doubt",
-    "upside_down": "surprised",
+    "left_side": "worried",
+    "right_side": "worried",
+    "upside_down": "shocked",
     "face_down": "sleepy",
     "on_back": "sleepy",
 }

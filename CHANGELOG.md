@@ -7,6 +7,10 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.92] - 2026-11-14
+
+- Add StackChan's logical face vocabulary with firmware fallbacks, event mappings, and optional sleep-Z and meeting face hooks.
+
 ## [0.2.91] - 2026-11-14
 
 ### Added

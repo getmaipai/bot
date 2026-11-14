@@ -1211,7 +1211,21 @@ class StackChanTurnBridge:
                 ]
                 mood = next((value for value in reversed(moods) if value), None)
                 if mood:
-                    self._emit_expression("reply_mood", mood=mood)
+                    cue = next(
+                        (
+                            getattr(event, "cue", None)
+                            for event in reversed(events)
+                            if getattr(getattr(event, "cue", None), "expressed_emotion", None)
+                        ),
+                        None,
+                    )
+                    excitement = bool(
+                        getattr(cue, "excitement", False)
+                        or getattr(cue, "expressed_excitement", False)
+                    )
+                    self._emit_expression(
+                        "reply_mood", mood="joy" if mood == "happiness" and excitement else mood
+                    )
                     self._notify(self.on_reply_mood, mood)
                 for index, sentence in enumerate(_sentences(reply)):
                     if asyncio.current_task().cancelling():

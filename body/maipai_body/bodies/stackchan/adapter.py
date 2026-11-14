@@ -427,6 +427,7 @@ class _ExpressionDevice:
     def __init__(self, robot: Robot, client: StackChanDeviceClient) -> None:
         self.robot = robot
         self.client = client
+        self.firmware_version: str | None = None  # the body actions use faces every firmware draws
         self.last_expression = "neutral"
         self.last_expression_ok = True
 

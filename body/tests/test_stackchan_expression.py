@@ -35,12 +35,25 @@ def test_stackchan_expression_maps_account_for_all_cues_and_primitives():
     assert set(REPLY_MOOD_FACE_MAP.values()) <= {
         "neutral",
         "happy",
-        "angry",
-        "sad",
-        "doubt",
-        "sleepy",
+        "joy",
+        "content",
+        "wink",
+        "excited",
         "surprised",
+        "shocked",
+        "curious",
+        "love",
+        "sad",
+        "worried",
+        "angry",
+        "sleepy",
+        "silly",
     }
+    from maipai_body.bodies.stackchan.face_vocabulary import face_for_mood
+
+    assert face_for_mood("happiness") == "happy"
+    assert face_for_mood("happiness", excited=True) == "joy"
+    assert face_for_mood("unrecognized") == "neutral"
 
 
 def test_stackchan_renderer_clamps_every_motion_target_to_profile_limits():
@@ -137,5 +150,5 @@ def test_thinking_and_attention_faces_never_read_as_doubt_or_sadness():
     assert CUE_FACE_MAP["listening"].expression == "listening"
     for name in ("listen", "glance", "tilt", "attend", "settle"):
         assert PRIMITIVE_BODY_MAP[name].face in {"neutral", "happy", None}, name
-    assert REPLY_MOOD_FACE_MAP["doubt"] == "neutral"
-    assert REPLY_MOOD_FACE_MAP["wry"] == "neutral"
+    assert REPLY_MOOD_FACE_MAP["doubt"] == "curious"
+    assert REPLY_MOOD_FACE_MAP["wry"] == "wink"

@@ -48,7 +48,7 @@ class _Rig:
 def test_a_shake_gives_a_surprised_face_and_one_of_the_lines():
     rig = _Rig()
     rig.reactions.on_events(["shake"])
-    assert rig.faces == ["surprised"]
+    assert rig.faces == ["dizzy"]
     assert len(rig.said) == 1 and rig.said[0] in SHAKE_LINES
 
 
@@ -68,7 +68,7 @@ def test_repeated_shaking_does_not_loop_and_the_lines_vary():
 def test_in_quiet_hours_a_shake_is_only_a_face():
     rig = _Rig(quiet=True)
     rig.reactions.on_events(["shake"])
-    assert rig.faces == ["surprised"] and rig.said == []
+    assert rig.faces == ["dizzy"] and rig.said == []
 
 
 def test_nothing_happens_while_a_reply_or_turn_is_on():
@@ -100,10 +100,10 @@ def test_a_swipe_across_the_head_is_a_pet_too_and_is_not_held_back_by_a_cooldown
 def test_without_a_symbol_tool_on_the_unit_a_pet_is_a_smile_and_the_tool_is_not_asked_again():
     rig = _Rig(symbol="missing")
     rig.reactions.on_events(["head_touch"])
-    assert rig.faces == ["happy"]
+    assert rig.faces == ["love"]
     rig.now[0] += FACE_HOLD_S + 0.1
     rig.reactions.on_events(["head_touch"])
-    assert rig.faces == ["happy", "happy"] and rig.symbols == []
+    assert rig.faces == ["love", "love"] and rig.symbols == []
 
 
 @pytest.mark.parametrize(
@@ -152,8 +152,7 @@ def test_no_host_face_or_mapping_can_produce_a_heart():
     assert not any("love" in key or "heart" in key for key in FIRMWARE_EMOTIONS)
     faces = {f.expression for f in CUE_FACE_MAP.values()} | set(REPLY_MOOD_FACE_MAP.values())
     faces |= {a.face for a in PRIMITIVE_BODY_MAP.values() if a.face}
-    assert not any("love" in face or "heart" in face for face in faces)
-    assert REPLY_MOOD_FACE_MAP.get("love", "neutral") == "neutral"
+    assert REPLY_MOOD_FACE_MAP["love"] == "love"
 
 
 def _bridge(monkeypatch):

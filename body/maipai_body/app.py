@@ -388,8 +388,17 @@ class StackChanBehavior:
             resting=lambda: self._rest.stage != "awake",
             still_reason=lambda: self.idle_still_reason(),
         )
+        from maipai_body.bodies.stackchan.sleep_z import SleepZ
+
+        self.sleep_z = SleepZ(
+            lambda tool, arguments: self.robot._driver("head").expression_device.client._call(
+                tool, arguments
+            ),
+            self._unit_firmware_version,
+        )
         self._rest_renderer = RestRenderer(
             firmware_version=self._unit_firmware_version,
+            sleep_z=self.sleep_z,
             quiet_s=lambda: max(0, int(time.monotonic() - self._rest._quiet_since)),
             thresholds=lambda: (120, 300),
             night_active=self.night_active,
@@ -1485,11 +1494,11 @@ class StackChanBehavior:
         if self.greeting_mode == "off" or self._rest.stage != "awake":
             return
         logger.info("StackChan greeting: someone came into view after a long while")
-        device = self.robot._driver("head").expression_device
-        if device is not None:
-            from maipai_body.bodies.stackchan.avatar.server import control_avatar
+        from maipai_body.bodies.stackchan.meeting_faces import MeetingFaces
 
-            device.send_avatar_frame(control_avatar("happy"))  # the face watchdog restores it
+        MeetingFaces(lambda face: self.show_face(face, while_listening=True)).on_meeting(
+            "returned_after_long"
+        )
         if not self.idle_still():
             self.render_primitive("nod")
 
@@ -1505,12 +1514,17 @@ class StackChanBehavior:
             return
         if self._rest.stage != "awake":
             return
+        if bool(getattr(getattr(self, "privacy", None), "muted", False)) or self.speech_muted():
+            return
         device = self.robot._driver("head").expression_device
         if device is None:
             return
         from maipai_body.bodies.stackchan.avatar.server import control_avatar
+        from maipai_body.bodies.stackchan.face_vocabulary import resolve_face
 
-        device.send_avatar_frame(control_avatar(expression))
+        device.send_avatar_frame(
+            control_avatar(resolve_face(expression, self._unit_firmware_version()))
+        )
         self._face_quiet_since = None  # the watchdog counts its quiet time from now
 
     def wake_on_touch(self, now: float) -> bool:
@@ -1711,8 +1725,11 @@ class StackChanBehavior:
         if not stale or now - self._face_quiet_since < FACE_QUIET_S:
             return False
         from maipai_body.bodies.stackchan.avatar.server import control_avatar
+        from maipai_body.bodies.stackchan.face_vocabulary import resolve_face
 
-        device.send_avatar_frame(control_avatar("neutral"))
+        device.send_avatar_frame(
+            control_avatar(resolve_face("neutral", self._unit_firmware_version()))
+        )
         self._face_refreshed_at = now
         return True
 

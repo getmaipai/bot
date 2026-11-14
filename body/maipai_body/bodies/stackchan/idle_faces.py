@@ -9,7 +9,16 @@ from collections.abc import Callable
 MIN_WAIT_S = 30.0
 MAX_WAIT_S = 90.0
 MIN_GAP_S = 25.0
-FACES = (("happy", 4), ("thinking", 3), ("sleepy", 2), ("surprised", 1), ("wink", 1))
+FACES = (
+    ("happy", 5),
+    ("content", 4),
+    ("curious", 3),
+    ("thinking", 3),
+    ("sleepy", 2),
+    ("wink", 2),
+    ("silly", 1),
+    ("surprised", 1),
+)
 
 
 class IdleFaces:

@@ -92,7 +92,7 @@ def test_quiet_suppresses_line_but_keeps_face_rotation_and_hold():
     assert h.event("+x")
     assert h.rotations == [0]
     assert h.holds == [True]
-    assert h.faces == ["doubt"]
+    assert h.faces == ["worried"]
     assert h.lines == []
 
 
@@ -149,7 +149,7 @@ def test_reassert_and_turn_end_restore_held_face_without_speech():
     h.reactions.reassert()
     h.reactions.on_turn_end()
     assert h.holds[-1] is True
-    assert h.faces == ["doubt", "doubt"]
+    assert h.faces == ["worried", "worried"]
     assert h.lines == lines
 
 
@@ -171,10 +171,10 @@ def test_tick_refreshes_face_at_interval_and_respects_upright_and_busy():
     h.event("+x")
     h.now += FACE_REFRESH_S - 0.01
     h.reactions.tick()
-    assert h.faces == ["doubt"]
+    assert h.faces == ["worried"]
     h.now += 0.01
     h.reactions.tick()
-    assert h.faces == ["doubt", "doubt"]
+    assert h.faces == ["worried", "worried"]
     h.busy = True
     h.now += FACE_REFRESH_S
     h.reactions.tick()

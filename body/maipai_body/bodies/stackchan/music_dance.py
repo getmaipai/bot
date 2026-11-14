@@ -70,6 +70,23 @@ from maipai_body.bodies.stackchan.dance import (
 
 logger = logging.getLogger("maipai_body.bodies.stackchan.music_dance")
 
+
+def mood_for_genre(genre: str | None) -> str | None:
+    """Return a logical face hint for a recognized music genre."""
+    if not isinstance(genre, str):
+        return None
+    value = genre.lower()
+    if any(word in value for word in ("aggressive", "metal", "punk", "hard")):
+        return "angry"
+    if any(word in value for word in ("ballad", "love", "soul")):
+        return "love"
+    if any(word in value for word in ("pop", "dance", "edm")):
+        return "excited"
+    if any(word in value for word in ("ambient", "chill", "lofi")):
+        return "sleepy"
+    return None
+
+
 LED_COUNT = 12
 
 # ---------------------------------------------------------------- the numbers from the unit
@@ -267,7 +284,7 @@ _BUILD_AND_DANCE: tuple[tuple[float, str, str], ...] = (
     (2 * HAPPY_S + GAP_FACE_S, "face", "happy"),
     # the dance: stiff turns and sways with the faces of the little dance
     (BUILD_S, "dance", "robot"),
-    (BUILD_S + ROBOT_S, "face", "surprised"),
+    (BUILD_S + ROBOT_S, "face", "excited"),
     (BUILD_S + ROBOT_S + GAP_FACE_S, "face", "happy"),
     (BUILD_S + ROBOT_S + GAP_FACE_S, "dance", "happy"),
     (BUILD_S + ROBOT_S + GAP_FACE_S + HAPPY_S, "face", "happy"),
@@ -346,6 +363,7 @@ class MusicDance:
         self.settings = settings
         self._spawn = spawn or self._thread
         self._choose_face = choose_face or (lambda: "happy")
+        self._mood_hint: str | None = None
         self._timing = timing
         self._normal_timing = timing
         self._lock = threading.RLock()
@@ -387,6 +405,10 @@ class MusicDance:
     @property
     def testing(self) -> bool:
         return self._test_until > 0
+
+    def set_mood_hint(self, face: str | None) -> None:
+        """Set the logical face used for the next music nod and dance face rotation."""
+        self._mood_hint = face
 
     def _active(self) -> bool:
         return self.settings.enabled and (self.settings.auto or self.testing or self._session_test)
@@ -737,7 +759,7 @@ class MusicDance:
                 except Exception:
                     logger.debug("StackChan music heard hook failed", exc_info=True)
             return
-        face = self._choose_face()
+        face = self._mood_hint or self._choose_face()
         self._session_test = self.testing
         self._nod_at = now
         if not self.testing:

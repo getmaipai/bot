@@ -95,7 +95,7 @@ class Reactions:
         if now - self._last_shake < SHAKE_COOLDOWN_S:
             return
         self._last_shake = now
-        self._face("surprised")
+        self._face("dizzy")
         self._hold_face()
         if self._quiet():
             logger.info("StackChan was shaken (quiet hours: face only)")
@@ -151,7 +151,7 @@ class Reactions:
                 # This firmware has no symbol tool yet: smile instead, and do not ask for a while.
                 self._symbol_retry_at = now + SYMBOL_RETRY_S
         if not shown:
-            self._face("happy")
+            self._face("love")
         self._hold_face()
         logger.info("StackChan heart (%s): %s", reason, "heart" if shown else "smile")
         return True

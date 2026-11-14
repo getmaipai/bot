@@ -355,6 +355,9 @@ class MusicIdentify:
             if not isinstance(result, dict):
                 logger.info("%s Home returned an unexpected response", LOG)
             return
+        genre_callback = getattr(self._hooks, "on_result", None)
+        if callable(genre_callback):
+            genre_callback(result)
         title = result.get("title")
         if not isinstance(title, str) or not title:
             logger.info("%s Home matched without a title", LOG)
