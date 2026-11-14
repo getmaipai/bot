@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.84] - 2026-11-14
+
+### Fixed
+- A song with strong vocals was taken for a person talking: the talker check counted a 3 to 6 Hz loudness rhythm of 28 or more as speech, and sung vocals measure 30 to 50, so real songs were vetoed (`talker_over_music`). The check now goes by near-silent frames (pauses) alone and only an extreme rhythm (60) also counts.
+
 ## [0.2.83] - 2026-11-14
 
 ### Added
