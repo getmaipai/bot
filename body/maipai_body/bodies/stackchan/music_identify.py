@@ -62,6 +62,7 @@ class MusicIdentify:
         self._capture_tries = 0
         self._retry_at: float | None = None
         self._adhoc = False
+        self._clip_handled = False
         self._lock = threading.Lock()
 
     def on_session_start(self, now: float) -> None:
@@ -146,6 +147,7 @@ class MusicIdentify:
         if started is True:
             with self._lock:
                 self._captured = True
+                self._clip_handled = False
                 self._pending_since = now
                 self._capture_tries += 1
                 self._retry_at = None
@@ -168,6 +170,7 @@ class MusicIdentify:
             if self._captured:
                 return {"listen_song": "refused", "why": "a clip is already in progress"}
             self._captured = True
+            self._clip_handled = False
             self._pending_since = now
             self._request_id = request_id
         try:
@@ -254,6 +257,7 @@ class MusicIdentify:
         with self._lock:
             self._pending_since = now
             request_id = self._request_id
+            self._clip_handled = True
         logger.info("%s clip ready: %d bytes", LOG, size)
         self._spawn(lambda: self._pull_clip(size, now, request_id))
 
@@ -373,6 +377,7 @@ class MusicIdentify:
 
     def _drop_state(self) -> None:
         with self._lock:
+            self._clip_handled = False
             self._pending_since = None
             self._captured = False
             self._request_id = None
@@ -427,15 +432,13 @@ class MusicIdentify:
             self._start_capture(now)
 
     def on_session_end(self) -> None:
-        # An explicit request belongs to its ready clip even while Home's turn runs.
         with self._lock:
-            explicit_pending = self._request_id is not None
-            dropped = self._captured
+            pending = self._captured and not self._clip_handled
             self._session_running = False
             self._retry_at = None
-        if dropped:
-            logger.info("%s session ended: dropped pending capture", LOG)
-        if not explicit_pending:
+        if pending:
+            logger.info("%s session ended: letting the pending capture finish", LOG)
+        else:
             self._drop_state()
         try:
             self._hooks.call_tool("self.face.song_title", {"text": ""})

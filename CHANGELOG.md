@@ -7,6 +7,11 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.90] - 2026-11-14
+
+### Fixed
+- A song-naming recording that was started during a short stretch of music is no longer thrown away when the music stops.
+
 ## [0.2.89] - 2026-11-14
 
 ### Fixed

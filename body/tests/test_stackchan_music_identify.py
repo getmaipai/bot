@@ -207,6 +207,50 @@ def test_oversize_clip_drops_without_reading():
     assert [name for name, _ in f.calls].count("self.music.drop_clip") == 1
 
 
+def test_pending_capture_finishes_after_session_ends():
+    f = Fixture()
+    f.read_answers = [answer(b"\xff", True)]
+    identify = f.build()
+    identify.on_session_start(0)
+    identify.on_session_end()
+    identify.on_clip_event("music_clip_ready", ready(1), 10)
+    assert sum(name == "self.music.read_clip" for name, _ in f.calls) == 1
+    assert sum(name == "post" for name, *_ in f.calls) == 1
+
+
+def test_pending_capture_times_out_after_session_ends_and_later_session_can_capture():
+    from maipai_body.bodies.stackchan.music_identify import READY_TIMEOUT_S
+
+    f = Fixture()
+    identify = f.build()
+    identify.on_session_start(0)
+    identify.on_session_end()
+    identify.tick(READY_TIMEOUT_S)
+    identify.on_session_start(READY_TIMEOUT_S + 1)
+    assert sum(name == "self.music.capture_clip" for name, _ in f.calls) == 2
+
+
+def test_cancelled_pending_capture_clears_after_session_ends():
+    f = Fixture()
+    identify = f.build()
+    identify.on_session_start(0)
+    identify.on_session_end()
+    identify.on_clip_event("music_clip_cancelled", {"why": "wake"}, 8)
+    identify.on_clip_event("music_clip_ready", ready(1), 9)
+    assert not any(name == "self.music.read_clip" for name, _ in f.calls)
+
+
+def test_new_session_does_not_capture_again_while_finished_clip_is_in_result_window():
+    f = Fixture()
+    f.read_answers = [answer(b"\xff", True)]
+    identify = f.build()
+    identify.on_session_start(0)
+    identify.on_session_end()
+    identify.on_clip_event("music_clip_ready", ready(1), 8)
+    identify.on_session_start(9)
+    assert sum(name == "self.music.capture_clip" for name, _ in f.calls) == 1
+
+
 def test_cancelled_event_clears_pending_capture():
     f = Fixture()
     identify = f.build()
