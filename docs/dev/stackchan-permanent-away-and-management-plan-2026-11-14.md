@@ -103,5 +103,12 @@ running, a chat turn over the tailnet from a phone hotspot, the same machine ent
 - Internal RAM is the real risk (estimate above). If the gate fails: trim the client's peer and buffer settings first, then the diagnostics page, then consider the
   plain WireGuard endpoint option from the earlier note.
 - A relay-only tailnet path is slow for large transfers (one measured OTA took 498 s against 26 s direct) but fine for voice; the updater should prefer the home path.
-- Owner decisions still open: WPA3-SAE counts as an encrypted channel for CREDENTIALS.md; NVS encryption (an eFuse that cannot be undone).
+- Owner decisions (2026-11-14): a WPA3-SAE hotspot with a single-use passphrase counts as an encrypted channel for CREDENTIALS.md; NVS encryption is NOT done now (an eFuse that
+  cannot be undone). The robot's own tailnet connection also counts as an encrypted channel (WireGuard): the check-in reports `link_encrypted` when the connection comes from
+  the unit's own tailnet address while its tailnet client says connected (bot 0.2.104).
+- Connection order of the trip firmware (the end-state design): the home address first, then the Studio over the tailnet, then the `maipai*` gateway fallback (the laptop relay,
+  compiled in with `STACKCHAN_FALLBACK_GATEWAY`, off in the end state with `--no-gateway-fallback`). The gateway fallback costs about 1 byte of static RAM; the setup window
+  (access point and page) is an estimated 20 to 30 KB of internal RAM only while it is open and nothing when closed (not measured).
+- Away test without moving the robot (ANYWHERE-08): `wifi_use` (patch 154, memory-only hold with an automatic return after 3 minutes without the hub) and `prefer_tailnet`
+  (patch 153); see `docs/dev/robot-wifi-command.md` in Home.
 - The Tailscale policy cannot be read from here: the grant JSON and the allow-all check are for Jesse's account (`tag:robot` to the Studio's two ports only).
