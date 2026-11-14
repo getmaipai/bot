@@ -7,6 +7,12 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.87] - 2026-11-14
+
+### Added
+- The robot answers the hub's `listen_song` command: it records a few seconds of what it hears and posts the clip so Home can name the song, and the title shows at the bottom of the screen.
+- Battery and heat warnings, a person-box present entry and a re-check of who is near after the body is handled (scene awareness; the first wiring into the running loop).
+
 ## [0.2.86] - 2026-11-14
 
 ### Changed
