@@ -92,6 +92,8 @@ def test_dances_and_event_kinds_export_the_supported_sets():
             "music_clip_cancelled",
             "privacy",
             "privacy_refused",
+            "sound_played",
+            "power_poll",
         }
     )
 
