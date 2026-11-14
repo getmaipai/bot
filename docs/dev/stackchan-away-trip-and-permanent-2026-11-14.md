@@ -120,3 +120,29 @@ An independent outline of the same plan (MicroLink in the firmware, prove it on 
 Proof order for the spike: identify the build framework (ESP-IDF 5.5.4 here, above the 5.3 floor), test on the unit with a spare image kept for restore (the
 full-flash backup `~/stackchan-backups/stackchan-full-2026-11-14.bin` exists), enroll on a phone hotspot, one outbound TCP connection to a tailnet
 address, one authenticated robot connection through the normal code path, reboot and switch Wi-Fi to confirm the same machine entry returns without a new key.
+
+## Self-healing for the trip: what exists and the gaps (2026-11-14)
+
+Asked by the owner: "any self healing on the script and the robot to connect, fix, anything to give me feedback on connection."
+
+What heals itself today:
+
+- **Relay v2 (laptop):** waits for Internet Sharing, binds on the sharing address whatever it is, restarts its listeners if they stop or the address
+  changes, retries the Studio every few seconds, notices a long sleep and starts again, never exits on an internal error; macOS notifications
+  (rate limited) for robot connected or lost, Studio unreachable, Tailscale off, Internet Sharing off; a local status page
+  (http://127.0.0.1:8899) and a log file without tokens.
+- **Robot (firmware 0.2.102):** retries the hub with growing pauses (up to about a minute), tries the Wi-Fi gateway after two failures on a
+  `maipai...` network, retries the home address about once a minute, shows "Offline" after 45 s without the hub, rolls a bad update back after 5 minutes without a hub link.
+- **Home (bot 0.2.103 and Home AWAY-LINK-01):** the Connection row says "Connected at home", "Connected away from home (through your laptop)" or
+  "Offline since 14:10" and what the unit says about its hub link (reconnecting, trying the laptop relay).
+
+Gaps, for the next over-the-air firmware image (none is built; the first USB flash is done):
+
+1. **Wi-Fi up, no hub for a long time:** if the unit stays on Wi-Fi but reaches no hub address for 10 minutes, it should restart its Wi-Fi, and
+   after 30 minutes reboot. Today it only keeps retrying.
+2. **On-screen cause:** the face says only "Offline". It should say why in one line ("Looking for your laptop", "No network in reach: join Xiaozhi-...").
+3. **The setup page opens only at power-up.** After N minutes without any saved network in reach it should open by itself, without a power cycle, and
+   a quick-settings entry should open it on purpose.
+4. **Switching saved Wi-Fi networks** by priority (patch 134) so a stronger friend's Wi-Fi never wins over `maipai-trip` on purpose.
+5. **A robot and a laptop on the same Wi-Fi** (not the laptop's own): needs the signed discovery beacon described above.
+6. **Relay on login:** not built (the owner runs it by hand); a launch-agent file would make it start by itself.

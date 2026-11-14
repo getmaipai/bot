@@ -5,6 +5,13 @@ All notable changes to MaiPai Bot. Format follows
 Everything stays `0.x` until the product passes its battle-tested
 checklist (`docs/dev.md`).
 
+## [0.2.103] - 2026-11-14
+
+### Added
+- The robot's check-in says how it is connected: `link_path` (`home`, `away` for a Tailscale address such as the laptop relay, `other`) and the unit's own hub link state and attempt (`link_state`, `link_attempt`), so Home can show "Connected away from home (through your laptop)".
+- Trip relay v2 (`body/scripts/trip_relay.py`): waits for Internet Sharing, restarts its listeners, notices sleep and wake, macOS notifications, a local status page on 127.0.0.1:8899, a log file without tokens, and a plain-English `--doctor`.
+- The trip card (`docs/dev/stackchan-trip-card-2026-11-14.md`) and the self-healing gaps list in the away-from-home note.
+
 ## [0.2.102] - 2026-11-14
 
 ### Added
