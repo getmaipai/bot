@@ -1,5 +1,5 @@
-# Intent: "Use this network now" for a real away test without carrying the unit out of range of the home Wi-Fi (owner 2026-11-14): self.wifi.use_now(index) leaves the current Wi-Fi and joins the chosen saved network. The Wi-Fi component joins the strongest saved network in range (the saved order does not matter), so the choice is a RAM-only hold: only the chosen network is left in the in-memory list the component scans, the saved list in flash is never written, and a restart brings every saved network back. If the hub is not reached on the new network within 3 minutes the full list is restored and the unit reconnects by itself (diagnostic event wifi_use_revert, or wifi_use_ok when the hub was reached and the hold ends). The three tools that add, forget or switch saved networks end a hold first.
-# Check after a flash: self.wifi.use_now(index of a hotspot in range) answers {"ok":true,"revert_in_s":180}; the unit joins that network and the hub sees it; self.wifi.list_saved still lists every network afterwards; with the chosen network out of range the unit is back on a saved network about 3 minutes later and the hub receives wifi_use_revert.
+# Intent: "Use this network now" for a real away test without carrying the unit out of range of the home Wi-Fi (owner 2026-11-14): self.wifi.use_now(index) sets the station to the chosen saved network and drops the old link, so the Wi-Fi component reconnects to the chosen one (a plain disconnect made it rejoin the old network, 2026-11-14). The join is bounded to 15 s: a network not found, a refused password or no address sends the unit back to the previous network at once with a plain reason (events wifi_use_step, wifi_use_revert); after an address, the hub must be reached within 3 minutes (wifi_use_ok) or the unit goes back. The saved list in flash and in memory is never edited. The three tools that add, forget or switch saved networks end a watch first.
+# Check after a flash: self.wifi.use_now(index of a network in range) answers {"ok":true,"revert_in_s":180,"join_limit_s":15}; the log shows steps switching, leaving_current_network, got_ip, hub_reached; a network out of range reverts within about 10 s with wifi_use_revert network_not_found; self.wifi.list_saved lists every network afterwards.
 diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
 index dd7efd8..9e65863 100644
 --- a/firmware/main/hal/hal_mcp.cpp
@@ -49,7 +49,7 @@ new file mode 100644
 index 0000000..e61b180
 --- /dev/null
 +++ b/firmware/main/hal/maipai_wifi_use.cc
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,243 @@
 +/*
 + * SPDX-License-Identifier: MIT
 + */
@@ -57,119 +57,229 @@ index 0000000..e61b180
 +#include "board/hal_bridge.h"
 +#include "device_events.h"
 +#include <mcp_server.h>
++#include <esp_event.h>
 +#include <esp_log.h>
 +#include <esp_timer.h>
 +#include <esp_wifi.h>
 +#include <ssid_manager.h>
++#include <atomic>
 +#include <cstdio>
++#include <cstring>
 +#include <mutex>
 +#include <string>
-+#include <vector>
 +
 +static const char* TAG = "MAIPAI-WIFIUSE";
 +
 +namespace {
-+constexpr int64_t kRevertUs = 180LL * 1000 * 1000;  // the hub must be reached on the new network within 3 minutes
-+constexpr int64_t kSwitchDelayUs = 1500LL * 1000;   // the answer leaves over the old network before the radio drops
++constexpr int64_t kHubWaitUs  = 180LL * 1000 * 1000;  // the hub must be reached on the new network within 3 minutes
++constexpr int64_t kJoinUs     = 15LL * 1000 * 1000;   // the chosen network must give an address within 15 seconds
++constexpr int64_t kSwitchUs   = 1500LL * 1000;        // the answer leaves over the old network before the radio drops
++constexpr int kReasonAssocLeave = 8;                  // our own disconnect
++
++enum class State { Idle, Armed, Joining, WaitHub, Reverting };
 +
 +std::mutex s_lock;
-+std::vector<SsidItem> s_saved;  // the full list, held while a network is pinned
-+bool s_pinned           = false;
-+int64_t s_deadline_us   = 0;
-+int64_t s_switch_at_us  = 0;
++State s_state = State::Idle;
++int64_t s_at_us       = 0;  // Armed: switch time; Joining: join deadline; WaitHub: hub deadline
 +std::string s_target;
++std::string s_password;
++wifi_config_t s_prev_cfg;  // the station settings before the switch, put back on a revert
++bool s_prev_valid = false;
 +esp_timer_handle_t s_timer = nullptr;
++bool s_events_registered   = false;
 +
-+// The in-memory list the Wi-Fi component scans against. Edited only here, never saved: SaveToNvs runs only inside
-+// AddSsid, RemoveSsid, SetDefaultSsid and Clear, which this file never calls.
-+std::vector<SsidItem>& list_ref()
++// Written by the event loop, read by the timer task.
++std::atomic<int> s_last_reason{0};
++std::atomic<bool> s_assoc_target{false};
++std::atomic<bool> s_got_ip{false};
++std::atomic<bool> s_disc_seen{false};
++
++void on_wifi_event(void*, esp_event_base_t base, int32_t id, void* data)
 +{
-+    return const_cast<std::vector<SsidItem>&>(SsidManager::GetInstance().GetSsidList());
++    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
++        auto* d = static_cast<wifi_event_sta_disconnected_t*>(data);
++        s_last_reason.store(d ? d->reason : 0);
++        s_got_ip.store(false);
++        s_assoc_target.store(false);
++        s_disc_seen.store(true);
++    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_CONNECTED) {
++        auto* c = static_cast<wifi_event_sta_connected_t*>(data);
++        std::string ssid;
++        if (c) {
++            ssid.assign(reinterpret_cast<const char*>(c->ssid), c->ssid_len);
++        }
++        s_assoc_target.store(ssid == s_target);
++    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
++        s_got_ip.store(true);
++    }
 +}
 +
-+std::string current_ssid()
++const char* plain_reason(int r)
 +{
-+    wifi_ap_record_t ap;
-+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
-+        return std::string(reinterpret_cast<const char*>(ap.ssid));
++    switch (r) {
++        case 201: return "network_not_found";
++        case 2: case 15: case 202: case 204: case 205: return "wrong_password";
++        case 3: case 4: case 5: case 6: case 7: case 8: case 200: case 203: case 206: case 207: case 208: return "network_refused";
++        default: return "join_failed";
 +    }
-+    return std::string();
 +}
 +
-+void release_locked()
++void step(const char* what)
 +{
-+    if (!s_pinned) {
-+        return;
++    ESP_LOGI(TAG, "step: %s", what);
++    device_events_push_diag("wifi_use_step", what);
++}
++
++void finish_locked()
++{
++    s_state = State::Idle;
++    s_prev_valid = false;
++    if (s_timer) {
++        esp_timer_stop(s_timer);
 +    }
-+    list_ref() = s_saved;
-+    s_saved.clear();
-+    s_pinned       = false;
-+    s_switch_at_us = 0;
-+    ESP_LOGI(TAG, "all saved networks are back in use");
++}
++
++// Put the previous station settings back and drop the link: the Wi-Fi component's own reconnect then uses them.
++void revert_locked(const char* why, int reason)
++{
++    ESP_LOGW(TAG, "going back to the previous network: %s (reason code %d)", why, reason);
++    device_events_push_diag("wifi_use_revert", why);
++    if (s_prev_valid) {
++        esp_wifi_set_config(WIFI_IF_STA, &s_prev_cfg);
++    }
++    s_state = State::Reverting;
++    s_at_us = esp_timer_get_time() + 20LL * 1000 * 1000;
++    s_got_ip.store(false);
++    esp_wifi_disconnect();
 +}
 +
 +void tick(void*)
 +{
 +    std::lock_guard<std::mutex> lock(s_lock);
-+    if (!s_pinned) {
-+        return;
-+    }
 +    const int64_t now = esp_timer_get_time();
-+    if (s_switch_at_us != 0 && now >= s_switch_at_us) {
-+        s_switch_at_us = 0;
-+        ESP_LOGI(TAG, "leaving the current network for the chosen one");
-+        esp_wifi_disconnect();
-+        return;
-+    }
-+    if (s_switch_at_us == 0 && current_ssid() == s_target && hal_bridge::hub_link_up()) {
-+        ESP_LOGI(TAG, "hub reached on the chosen network: the hold ends");
-+        device_events_push_diag("wifi_use_ok", "hub_reached");
-+        release_locked();
-+        esp_timer_stop(s_timer);
-+        return;
-+    }
-+    if (now >= s_deadline_us) {
-+        ESP_LOGW(TAG, "hub not reached on the chosen network in 3 minutes: going back");
-+        device_events_push_diag("wifi_use_revert", "no_hub_3min");
-+        release_locked();
-+        esp_wifi_disconnect();  // the Wi-Fi component now scans every saved network again and joins the strongest
-+        esp_timer_stop(s_timer);
++    switch (s_state) {
++        case State::Idle:
++            esp_timer_stop(s_timer);
++            return;
++        case State::Armed:
++            if (now < s_at_us) {
++                return;
++            }
++            {
++                wifi_config_t cfg;
++                memset(&cfg, 0, sizeof(cfg));
++                strlcpy(reinterpret_cast<char*>(cfg.sta.ssid), s_target.c_str(), sizeof(cfg.sta.ssid));
++                strlcpy(reinterpret_cast<char*>(cfg.sta.password), s_password.c_str(), sizeof(cfg.sta.password));
++                cfg.sta.listen_interval = 10;
++                s_prev_valid = esp_wifi_get_config(WIFI_IF_STA, &s_prev_cfg) == ESP_OK;
++                s_last_reason.store(0);
++                s_assoc_target.store(false);
++                s_got_ip.store(false);
++                s_disc_seen.store(false);
++                // The Wi-Fi component reconnects with whatever station settings are set when the link drops, so the
++                // chosen network is set first and the old link dropped second. The saved list is not touched.
++                if (esp_wifi_set_config(WIFI_IF_STA, &cfg) != ESP_OK) {
++                    revert_locked("join_failed", -1);
++                    return;
++                }
++                s_state = State::Joining;
++                s_at_us = now + kJoinUs;
++                step("leaving_current_network");
++                esp_wifi_disconnect();
++            }
++            return;
++        case State::Joining:
++            if (s_got_ip.load() && s_assoc_target.load()) {
++                step("got_ip");
++                s_state = State::WaitHub;
++                s_at_us = now + kHubWaitUs;
++                return;
++            }
++            if (s_assoc_target.load() && !s_got_ip.load() && now < s_at_us) {
++                return;  // joined, waiting for the address
++            }
++            if (s_disc_seen.load()) {
++                const int r = s_last_reason.load();
++                if (r != kReasonAssocLeave && r != 0) {
++                    // a real failure of the chosen network: say why and go back at once
++                    revert_locked(plain_reason(r), r);
++                    return;
++                }
++            }
++            if (now >= s_at_us) {
++                revert_locked(s_assoc_target.load() ? "no_address" : plain_reason(s_last_reason.load()), s_last_reason.load());
++            }
++            return;
++        case State::WaitHub:
++            if (!s_got_ip.load() && s_disc_seen.load() && s_last_reason.load() != kReasonAssocLeave) {
++                // the chosen network dropped: the Wi-Fi component keeps retrying it, the 3-minute limit still applies
++            }
++            if (hal_bridge::hub_link_up()) {
++                step("hub_reached");
++                device_events_push_diag("wifi_use_ok", "hub_reached");
++                finish_locked();
++                return;
++            }
++            if (now >= s_at_us) {
++                revert_locked("no_hub_3min", 0);
++            }
++            return;
++        case State::Reverting:
++            if (s_got_ip.load()) {
++                step("back_on_previous_network");
++                finish_locked();
++                return;
++            }
++            if (now >= s_at_us) {
++                // the Wi-Fi component is still retrying with the previous settings; stop watching
++                ESP_LOGW(TAG, "previous network not rejoined yet: the Wi-Fi component keeps trying");
++                finish_locked();
++            }
++            return;
 +    }
 +}
 +}  // namespace
 +
 +void maipai_wifi_use_release()
 +{
++    // A hold changes no saved data any more; the add, forget and switch tools only end the watch.
 +    std::lock_guard<std::mutex> lock(s_lock);
-+    release_locked();
++    if (s_state != State::Idle) {
++        finish_locked();
++    }
 +}
 +
 +void maipai_wifi_use_register_tools()
 +{
 +    McpServer::GetInstance().AddTool(
 +        "self.wifi.use_now",
-+        "Leave the current Wi-Fi and join one saved network (index from self.wifi.list_saved) now. Held in memory "
-+        "only: the saved list in flash is not changed. If the hub is not reached on that network within 3 minutes the "
-+        "unit goes back to the saved networks by itself (event wifi_use_revert). Answers JSON.",
++        "Leave the current Wi-Fi and join one saved network (index from self.wifi.list_saved) now. The saved list in "
++        "flash is not changed. If that network is not found, refuses the password or gives no address within 15 "
++        "seconds the unit goes back to the previous network at once; if the hub is not reached within 3 minutes it "
++        "goes back too. Events: wifi_use_step, wifi_use_ok, wifi_use_revert (detail is a plain reason). Answers JSON.",
 +        PropertyList({Property("index", kPropertyTypeInteger, -1)}),
 +        [](const PropertyList& properties) -> ReturnValue {
 +            const int index = properties["index"].value<int>();
 +            std::lock_guard<std::mutex> lock(s_lock);
-+            release_locked();  // a new request starts from the full list
-+            auto& list = list_ref();
++            const auto& list = SsidManager::GetInstance().GetSsidList();
 +            if (index < 0 || static_cast<size_t>(index) >= list.size()) {
 +                return std::string("{\"ok\":false,\"error\":\"no_such_network\"}");
 +            }
 +            const SsidItem chosen = list[index];
-+            if (current_ssid() == chosen.ssid && hal_bridge::hub_link_up()) {
++            wifi_ap_record_t ap;
++            if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK &&
++                chosen.ssid == std::string(reinterpret_cast<const char*>(ap.ssid)) && hal_bridge::hub_link_up()) {
 +                return std::string("{\"ok\":true,\"already\":true}");
 +            }
-+            s_saved = list;
-+            list.assign(1, chosen);
-+            s_target       = chosen.ssid;
-+            s_pinned       = true;
-+            s_deadline_us  = esp_timer_get_time() + kRevertUs;
-+            s_switch_at_us = esp_timer_get_time() + kSwitchDelayUs;
++            if (!s_events_registered) {
++                esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_wifi_event, nullptr);
++                esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_wifi_event, nullptr);
++                s_events_registered = true;
++            }
++            s_target   = chosen.ssid;
++            s_password = chosen.password;
++            s_state    = State::Armed;
++            s_at_us    = esp_timer_get_time() + kSwitchUs;
 +            if (s_timer == nullptr) {
 +                esp_timer_create_args_t args = {};
 +                args.callback                = tick;
@@ -177,9 +287,10 @@ index 0000000..e61b180
 +                esp_timer_create(&args, &s_timer);
 +            }
 +            esp_timer_stop(s_timer);
-+            esp_timer_start_periodic(s_timer, 1000 * 1000);
-+            ESP_LOGI(TAG, "use_now: switching in 1.5 s, back by itself after 3 minutes without the hub");
-+            return std::string("{\"ok\":true,\"revert_in_s\":180}");
++            esp_timer_start_periodic(s_timer, 500 * 1000);
++            ESP_LOGI(TAG, "use_now: switching in 1.5 s; back at once if the network fails, or after 3 minutes without the hub");
++            step("switching");
++            return std::string("{\"ok\":true,\"revert_in_s\":180,\"join_limit_s\":15}");
 +        });
 +}
 diff --git a/firmware/main/hal/maipai_wifi_use.h b/firmware/main/hal/maipai_wifi_use.h

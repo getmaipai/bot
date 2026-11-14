@@ -524,6 +524,8 @@ CONFIG_ML_MAX_PEERS=4
 CONFIG_ML_NVS_MAX_PEERS=16
 CONFIG_ML_H2_BUFFER_SIZE_KB=128
 CONFIG_ML_JSON_BUFFER_SIZE_KB=128
+# MicroLink logs 64-bit values with %llu before %s arguments; the nano printf drops the high word and the %s then reads garbage (crash in ml_coord, 2026-11-14).
+CONFIG_LIBC_NEWLIB_NANO_FORMAT=n
 CFG
   if [[ -n "$TAILNET_AUTHKEY_FILE" ]]; then
     [[ -r "$TAILNET_AUTHKEY_FILE" ]] || { echo "The auth key file is missing or unreadable: $TAILNET_AUTHKEY_FILE." >&2; exit 2; }
