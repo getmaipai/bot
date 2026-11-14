@@ -219,7 +219,7 @@ def judge(feat: MusicFeat, sensitivity: str = "medium", *, relaxed: bool = False
 class Timing:
     detect_s: float = 3.0  # clear music this long starts the nod
     gap_s: float = 2.5  # one missed or doubtful second between music seconds is forgiven
-    nod_to_build_s: float = 4.0  # from the nod's start to the build-up
+    nod_to_build_s: float = 15.0  # the head bobs on the beat this long before the full dance
     end_silence_s: float = (
         3.0  # no clear music this long pauses a running dance (it resumes at once)
     )
@@ -321,6 +321,10 @@ class MusicDanceHooks:
     notes: Callable[[int], object] | None = None  # music notes on the face: 0 hides, 1 nod, 3 dance
     on_session_start: Callable[[], object] | None = None
     on_session_end: Callable[[], object] | None = None
+    stop_bob: Callable[[], object] | None = None  # stops the up and down nodding on the unit
+    wonder: Callable[[], object] | None = (
+        None  # the curious look when the music is gone, then the usual face
+    )
 
 
 class MusicDance:
@@ -518,7 +522,6 @@ class MusicDance:
         elif self.state == "nod":
             if now - self._nod_at >= t.nod_s:
                 self._set_state("watch", "the nod is done; waiting to see if the music goes on")
-                self._hooks.restore_face()
             self._check_interrupt(now)
         elif self.state == "watch":
             if self._check_interrupt(now):
@@ -568,7 +571,7 @@ class MusicDance:
         if self._check_interrupt(now):
             self._dance_over(now)
         elif self._session_test or self._session_over(now):
-            self._dance_over(now)
+            self._dance_over(now, wonder=True)
         elif self._music_gone(now):
             self._pause(now, "show")
         elif now - self._block_start >= self._block_s():
@@ -602,6 +605,16 @@ class MusicDance:
         if not started:
             logger.info("StackChan music: no slow mood round (%s)", refused or "refused")
 
+    def _wonder(self) -> None:
+        """Music gone, dance stopped: a curious look, as if wondering where the music went."""
+        hook = self._hooks.wonder
+        if hook is None:
+            return
+        try:
+            hook()
+        except Exception:
+            logger.debug("StackChan music wonder look failed", exc_info=True)
+
     def _pause(self, now: float, from_state: str) -> None:
         """No music for a moment: stop dancing, but remember the mood (slow, medium for the
         build-up, fast) to go right back to when clear music returns."""
@@ -611,6 +624,7 @@ class MusicDance:
             mood = "full"  # still in the build-up: the medium mood
         else:
             mood = "dance"
+        self._wonder()
         self._resume = (from_state, mood)
         self._paused_at = now
         self._break_at = now
@@ -626,7 +640,7 @@ class MusicDance:
         if self._check_interrupt(now):
             self._dance_over(now)
         elif self._session_test or self._session_over(now):
-            self._dance_over(now)
+            self._dance_over(now, wonder=True)
         elif self._music_gone(now):
             if running:
                 self._hooks.stop_dance("music dipped")
@@ -753,7 +767,9 @@ class MusicDance:
         logger.info("StackChan music: cycle %d (slow start, then the dance)", self._cycle)
         self._set_state("show", "the build-up and the dance")
 
-    def _dance_over(self, now: float) -> None:
+    def _dance_over(self, now: float, *, wonder: bool = False) -> None:
+        if wonder and self.state in ("show", "calm"):
+            self._wonder()
         if not self._session_test:
             self._last_dance_end = now
         self._set_state("spent", "the dance is over")
@@ -798,6 +814,14 @@ class MusicDance:
         previous = self.state
         logger.info("StackChan music: stage %s -> %s (%s)", previous, state, why)
         self.state = state
+        if state == "spent" and previous in ("nod", "watch"):
+            # the session ended while the head was only nodding: stop it and give the face back
+            for hook in (self._hooks.stop_bob, self._hooks.restore_face):
+                if hook is not None:
+                    try:
+                        hook()
+                    except Exception:
+                        logger.debug("StackChan music nod stop failed", exc_info=True)
         if state == "spent" and previous != "spent" and self._hooks.on_session_end is not None:
             try:
                 self._hooks.on_session_end()

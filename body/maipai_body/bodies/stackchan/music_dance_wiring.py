@@ -114,8 +114,21 @@ def wire_music_dance(
     identify_call_tool: Callable[[str, dict], object] | None = None,
     identify_spawn: Callable[[Callable[[], None]], object] | None = None,
 ) -> MusicDance:
+    def stop_bob() -> None:
+        if switch is not None:
+            switch.call("self.robot.stop_dance", {})
+
     def nod(face: str, cancelled: Callable[[], bool]) -> None:
         behavior.show_face(face)
+        if switch is not None:
+            # The head nods up and down on the beat on the unit until the dance starts.
+            try:
+                switch.call("self.robot.dance", {"name": "bob"})
+                return
+            except Exception:
+                logger.debug(
+                    "StackChan music bob could not start; using the one nod", exc_info=True
+                )
         try:
             for yaw, pitch, move_speed, pause in nod_steps(centre_pitch, speed):
                 if cancelled():
@@ -127,6 +140,21 @@ def wire_music_dance(
                 move_head(0, centre_pitch, speed)  # one move back to level, always
             except Exception:
                 logger.debug("StackChan music nod could not level the head", exc_info=True)
+
+    def wonder() -> None:
+        # No music any more: the thinking look (eyes up and to the side), then the usual face,
+        # unless the music came back or something else took the face in the meantime.
+        if runner.situation().in_turn:
+            return
+        behavior.show_face("thinking")
+
+        def back() -> None:
+            if controller.state in ("break", "spent", "idle") and not runner.situation().in_turn:
+                behavior.show_face("neutral")
+
+        timer = threading.Timer(3.0, back)
+        timer.daemon = True
+        timer.start()
 
     def restore_face() -> None:
         if not runner.situation().in_turn:
@@ -162,6 +190,8 @@ def wire_music_dance(
             notes=(lambda count: switch.call(NOTES_TOOL, {"count": count})) if switch else None,
             on_session_start=(lambda: identify.on_session_start(clock())) if identify else None,
             on_session_end=identify.on_session_end if identify else None,
+            stop_bob=stop_bob if switch else None,
+            wonder=wonder,
         ),
         behavior.dance_settings,
     )

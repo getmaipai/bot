@@ -78,6 +78,8 @@ class World:
             nod=lambda face, cancelled: self.calls.append((self.t, "nod", face)),
             restore_face=lambda: self.calls.append((self.t, "restore_face", None)),
             situation=lambda: self.sit,
+            stop_bob=lambda: self.calls.append((self.t, "stop_bob", None)),
+            wonder=lambda: self.calls.append((self.t, "wonder", None)),
         )
         self.ctl = MusicDance(
             hooks,
@@ -209,12 +211,15 @@ def test_the_nod_face_alternates_between_happy_and_wink_by_the_hooks_choice():
     assert [a for _, n, a in world.calls if n == "nod"] == ["happy"]
 
 
-def test_the_nod_ends_after_three_seconds_and_the_face_is_restored():
+def test_the_nod_goes_on_as_bobbing_and_the_face_is_restored_when_the_session_ends():
     world = World()
     world.play(MUSIC, 5)
     world.play(MUSIC, 3)
     assert world.ctl.state == "watch"
-    assert world.names("restore_face")
+    assert world.names("restore_face") == []  # the head keeps bobbing with the happy face
+    world.play(None, 30)  # the music stops before the full dance
+    assert world.ctl.state in ("spent", "idle")
+    assert world.names("stop_bob") and world.names("restore_face")
 
 
 def test_a_run_of_music_with_one_missed_second_still_counts():
@@ -850,6 +855,7 @@ def test_wiring_the_whole_chain_ends_in_the_firmware_dance_and_a_touch_stops_it(
     behavior = _real_behavior()
     try:
         w = _wire(behavior)
+        w.controller._timing = LEGACY_TIMING  # the chain is timed for the old waits
         w.controller.settings.auto = True
         behavior.event_poll = lambda: []
         # drive the controller's own clock; the runner's fake clock advances in the same step
@@ -861,7 +867,8 @@ def test_wiring_the_whole_chain_ends_in_the_firmware_dance_and_a_touch_stops_it(
             ("dance", "happy"),
             ("dance", "happy"),
         ]
-        assert ("stop_dance",) in w.calls and w.faces[-1] == "neutral"
+        # the dance ends with the usual face or, when the music is gone, the curious look
+        assert ("stop_dance",) in w.calls and w.faces[-1] in ("neutral", "thinking")
     finally:
         behavior.close()
 
@@ -1095,13 +1102,29 @@ def test_after_a_pause_it_goes_right_back_to_the_mood_it_was_in():
 
 def test_the_shipped_waits_start_quickly_and_stop_quickly():
     t = M.NORMAL
-    assert (t.detect_s, t.nod_to_build_s, t.end_silence_s) == (3.0, 4.0, 3.0)
+    assert (t.detect_s, t.nod_to_build_s, t.end_silence_s) == (3.0, 15.0, 3.0)
     world = World(timing=M.NORMAL, charging=True)
     world.play(MUSIC, 4)  # music at +1, +2, +3, +4: a 3 s run: the nod at +4
     assert world.names("nod") == [4.0]
-    world.play(MUSIC, 4)  # the dance starts 4 s after the nod
-    assert world.names("request_dance") == [8.0]
+    world.play(MUSIC, 15)  # the dance starts 15 s after the nod, the head bobbing until then
+    assert world.names("request_dance") == [19.0]
     world.play(None, 2)
     assert world.dancing
     world.play(None, 1)  # three seconds without music: the dance stops
     assert [a for _, n, a in world.calls if n == "stop_dance"] == ["music ended"]
+
+
+def test_when_the_music_goes_the_robot_wonders_once_where_it_went():
+    world = World(charging=True)
+    _song(world, 60)
+    assert world.names("wonder") == []
+    world.play(None, 6)  # the music stops: the dance stops and the curious look shows, once
+    assert len(world.names("wonder")) == 1
+    world.play(None, 70)  # the long silence ends the session: no second look
+    assert len(world.names("wonder")) == 1
+    quiet = World(charging=True)
+    quiet.play(MUSIC, 5)
+    quiet.play(
+        None, 30
+    )  # the music stops while the head was only nodding: no dance to wonder about
+    assert quiet.names("wonder") == []

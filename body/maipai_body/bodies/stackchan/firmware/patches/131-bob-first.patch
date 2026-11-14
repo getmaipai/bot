@@ -1,0 +1,135 @@
+# Intent: a music session starts with the head nodding up and down on the beat, for a while, before the full dance (owner 2026-11-14: "nodding is up and down and that should probably go for a little bit before jumping into the more involved dancing where it looks everywhere and has lights on"; "ideally it would start head bobbing immediately to the beat"). BeatSwayModifier gets a bob-only mode: pitch up and down on every beat (every second beat above about 133 BPM), no side to side, no eye changes; it keeps the last known beat, or 600 ms, when the beat is unclear. self.robot.dance takes the name "bob" (the host asks for it at the nod), maipai_music_bob_start() is the unit's own offline nod, and the unit's session waits 15 s from the nod to the full dance (was 4 s).
+# Upstream: MaiPai only (beat_sway.h, hal_mcp.cpp, hal_music.cpp, maipai_music_judge.h). Applies after 130.
+# Check after a flash: play music: after about 3 s the head nods up and down in time; after about 15 s it changes to the full dance.
+diff --git a/firmware/main/hal/hal_music.cpp b/firmware/main/hal/hal_music.cpp
+--- a/firmware/main/hal/hal_music.cpp
++++ b/firmware/main/hal/hal_music.cpp
+@@ -52,6 +52,7 @@
+ void maipai_music_dance_start();
+ bool maipai_beat_get(uint32_t* period_ms, uint32_t* ref_ms);
+ void maipai_music_dance_stop();
++void maipai_music_bob_start();
+ void device_events_push(const char* kind, const char* extra);
+ 
+ 
+@@ -355,6 +356,10 @@
+             auto* display = Board::GetInstance().GetDisplay();
+             if (display != nullptr) display->SetEmotion("happy");
+         }
++        if (!dancing && (charging || battery >= 20)) {
++            maipai_music_bob_start();  // nodding on the beat for a while before the full dance
++            dancing = true;
++        }
+         offline_music_notes(1);
+     } else if (action == MMJ_ACTION_DANCE) {
+         if (charging || battery >= 40) {
+diff --git a/firmware/main/hal/hal_mcp.cpp b/firmware/main/hal/hal_mcp.cpp
+--- a/firmware/main/hal/hal_mcp.cpp
++++ b/firmware/main/hal/hal_mcp.cpp
+@@ -179,6 +179,18 @@
+     }
+ }
+ 
++// The first stage of a music session (owner 2026-11-14): the head nods up and down on the beat, for a while,
++// before the full dance with the looking around and the lights.
++void maipai_music_bob_start()
++{
++    LvglLockGuard lock;
++    if (s_dance_modifier_id >= 0) {
++        GetStackChan().removeModifier(s_dance_modifier_id);
++        s_dance_modifier_id = -1;
++    }
++    s_dance_modifier_id = GetStackChan().addModifier(std::make_unique<BeatSwayModifier>(true));
++}
++
+ void maipai_music_dance_stop()
+ {
+     LvglLockGuard lock;
+@@ -628,6 +640,11 @@
+                        [this](const PropertyList& properties) -> ReturnValue {
+                            auto name = properties["name"].value<std::string>();
+                            mclog::tagInfo(_tag, "dance: {}", name);
++
++                           if (name == "bob") {
++                               maipai_music_bob_start();  // up and down on the beat, no looking around
++                               return true;
++                           }
+ 
+                            const animation::KeyframeSequence* sequence = nullptr;
+                            if (name == "happy") {
+diff --git a/firmware/main/stackchan/modifiers/beat_sway.h b/firmware/main/stackchan/modifiers/beat_sway.h
+--- a/firmware/main/stackchan/modifiers/beat_sway.h
++++ b/firmware/main/stackchan/modifiers/beat_sway.h
+@@ -20,7 +20,12 @@
+ 
+ class BeatSwayModifier : public Modifier {
+ public:
+-    BeatSwayModifier() : _fallback(DanceModifier::Happy, true)
++    // bob_only: the head nods up and down on the beat and nothing else (the first stage of a music session,
++    // before the full dance); it keeps the last known beat, or 600 ms, when the beat is unclear.
++    explicit BeatSwayModifier(bool bob_only = false)
++        : _fallback(DanceModifier::Happy, true),
++          _bob_only(bob_only),
++          _t0(static_cast<uint32_t>(esp_timer_get_time() / 1000))
+     {
+     }
+ 
+@@ -31,7 +36,17 @@
+         }
+         uint32_t period = 0, ref = 0;
+         const uint32_t now = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+-        if (!maipai_beat_get(&period, &ref) || period < 250) {
++        bool have          = maipai_beat_get(&period, &ref) && period >= 250;
++        if (have) {
++            _last_period = period;
++            _last_ref    = ref;
++            _have_last   = true;
++        } else if (_bob_only) {
++            period = _have_last ? _last_period : 600;
++            ref    = _have_last ? _last_ref : _t0;
++            have   = true;
++        }
++        if (!have) {
+             // No beat to follow right now: the plain Happy sway keeps the head moving.
+             if (!_fallback_running) {
+                 _fallback.start();
+@@ -54,9 +69,14 @@
+         _last_b    = b;
+         const int side         = (b & 1) ? 1 : -1;
+         const uint32_t span_ms = period * static_cast<uint32_t>(step);
+-        const int swing        = span_ms < 600 ? 200 : 300;  // smaller swings for quick songs
+         int speed              = static_cast<int>(240000U / span_ms);
+         speed                  = speed < 220 ? 220 : (speed > 600 ? 600 : speed);
++        if (_bob_only) {
++            // Up and down only: the head nods on every beat (0.1 degree units, level is about -100).
++            stackchan.motion().moveWithSpeed(0, side > 0 ? -170 : -40, speed);
++            return;
++        }
++        const int swing = span_ms < 600 ? 200 : 300;  // smaller swings for quick songs
+         // The Happy dance's own yaw and pitch (0.1 degree units): side to side, the head a little down, a small bob.
+         stackchan.motion().moveWithSpeed(side * swing, side > 0 ? -120 : -80, speed);
+         // The Happy squint: eyes at weight 50 shifted with the sway, the mouth open at weight 50, sizes neutral.
+@@ -73,6 +93,11 @@
+ 
+ private:
+     animation::Timeline _fallback;
++    bool _bob_only         = false;
++    uint32_t _t0           = 0;
++    uint32_t _last_period  = 0;
++    uint32_t _last_ref     = 0;
++    bool _have_last        = false;
+     bool _fallback_running = false;
+     bool _have_beat        = false;
+     int32_t _last_b        = 0;
+diff --git a/firmware/main/hal/maipai_music_judge.h b/firmware/main/hal/maipai_music_judge.h
+--- a/firmware/main/hal/maipai_music_judge.h
++++ b/firmware/main/hal/maipai_music_judge.h
+@@ -13,7 +13,7 @@
+ #define MMJ_STEADY_FL_MAX 97
+ #define MMJ_DETECT_MS 3000U
+ #define MMJ_GAP_MS 2500U
+-#define MMJ_NOD_TO_DANCE_MS 4000U
++#define MMJ_NOD_TO_DANCE_MS 15000U
+ #define MMJ_END_SILENCE_MS 3000U
+ #define MMJ_MIN_GAP_MS 120000U
+ #define MMJ_SESSION_GAP_MS 60000U

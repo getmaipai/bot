@@ -7,11 +7,17 @@ checklist (`docs/dev.md`).
 
 ## [Unreleased]
 
+## [0.2.86] - 2026-11-14
+
+### Changed
+- A music session starts with the head nodding up and down on the beat for about 15 seconds before the full dance with the looking around and the lights (owner: "nodding is up and down and that should probably go for a little bit before jumping into the more involved dancing"). Firmware patch 131 (bob-only mode of the beat sway, `self.robot.dance` name "bob"); the unit's own session does the same.
+- When the music stops and the dance stops, the robot shows the thinking look for about 3 seconds, as if wondering where the music went, then the usual face.
+
 ### Added
 - Varied idle faces (owner: "right now it just sits there with the same expression blinking"): every 30 to 90 seconds of nothing happening the robot gives one brief look (mostly a small smile, a daydream look, a drowsy blink; sometimes a tiny startle or a wink), never twice the same in a row, never during a turn, a song, sleep, mute, night, a camera cue or while following a person.
 
-### Added
 - A person standing with their back to the robot still counts as present: a fast-detector person box no face covers adds one unknown `present` entry (SCENE-01g, `build_present`; the loop does not pass boxes yet).
+
 
 ## [0.2.85] - 2026-11-14
 
