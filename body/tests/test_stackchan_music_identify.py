@@ -30,7 +30,7 @@ class Fixture:
         return MusicIdentify(
             MusicIdentifyHooks(
                 call,
-                self.post,
+                self.post_with_request,
                 lambda: self.sit,
                 lambda: self.setting,
                 spawn=lambda worker: worker(),
@@ -38,9 +38,12 @@ class Fixture:
         )
 
     def post(self, pcm):
+        return self.post_with_request(pcm, None)
+
+    def post_with_request(self, pcm, request_id=None):
         if isinstance(self.result, Exception):
             raise self.result
-        self.calls.append(("post", pcm))
+        self.calls.append(("post", pcm) if request_id is None else ("post", pcm, request_id))
         return self.result
 
 
@@ -83,6 +86,92 @@ def test_full_pull_in_chunks_posts_decoded_pcm_and_sets_then_clears_title():
     assert f.calls[-1] == ("self.face.song_title", {"text": "Song - Artist"})
     identify.on_session_end()
     assert f.calls[-1] == ("self.face.song_title", {"text": ""})
+
+
+def test_explicit_request_ignores_setting_and_in_turn_and_posts_request_id():
+    f = Fixture(in_turn=True)
+    f.setting = "off"
+    f.read_answers = [answer(b"\xff", True)]
+    identify = f.build()
+    assert identify.listen_now("req7", 15, 0) == {"listen_song": "started", "why": ""}
+    assert ("self.music.capture_clip", {"seconds": 15}) in f.calls
+    identify.on_clip_event("music_clip_ready", ready(1), 1)
+    assert ("post", b"\x00\x00", "req7") in f.calls
+
+
+def test_explicit_request_refuses_when_muted_and_when_capture_busy():
+    muted = Fixture(muted=True).build()
+    assert muted.listen_now("a", 10, 0)["listen_song"] == "refused"
+    f = Fixture()
+    identify = f.build()
+    assert identify.listen_now("a", 10, 0)["listen_song"] == "started"
+    assert identify.listen_now("b", 10, 1)["listen_song"] == "refused"
+
+
+def test_second_explicit_request_works_after_the_first_finished():
+    f = Fixture()
+    f.read_answers = [answer(b"\xff", True), answer(b"\xff", True)]
+    identify = f.build()
+    assert identify.listen_now("one", 10, 0)["listen_song"] == "started"
+    identify.on_clip_event("music_clip_ready", ready(1), 1)
+    assert identify.listen_now("two", 10, 2)["listen_song"] == "started"
+
+
+def test_cancel_forgets_explicit_request_id():
+    f = Fixture()
+    identify = f.build()
+    identify.listen_now("a", 10, 0)
+    identify.on_clip_event("music_clip_cancelled", {"why": "wake"}, 1)
+    f.read_answers = [answer(b"\xff", True)]
+    identify.on_session_start(2)
+    identify.on_clip_event("music_clip_ready", ready(1), 3)
+    assert ("post", b"\x00\x00") in f.calls
+    assert not any(call[0] == "post" and len(call) == 3 for call in f.calls)
+
+
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        ({"request_id": "abc123"}, "started"),
+        ({"request_id": "abc123", "seconds": 5}, "started"),
+        ({"request_id": "", "seconds": 10}, "refused"),
+        ({"request_id": "bad-id", "seconds": 10}, "refused"),
+        ({"request_id": "x" * 65, "seconds": 10}, "refused"),
+        ({"request_id": "abc", "seconds": True}, "refused"),
+        ({"request_id": "abc", "seconds": 4}, "refused"),
+    ],
+)
+def test_listen_song_command_validates_payload(payload, expected):
+    from types import SimpleNamespace
+
+    from maipai_body.bodies.stackchan.music_dance_wiring import wire_music_dance
+
+    f = Fixture()
+    # Exercise command validation through the public behavior handler.
+    behavior = SimpleNamespace(
+        dance_settings=SimpleNamespace(), dance_events=None, show_face=lambda _face: None
+    )
+    runner = SimpleNamespace(
+        situation=lambda: f.sit,
+        request=lambda *_args: SimpleNamespace(started=True, why=""),
+        stop=lambda: None,
+        running=False,
+        tick=lambda _now: None,
+    )
+    wire_music_dance(
+        behavior=behavior,
+        runner=runner,
+        move_head=lambda *_args: None,
+        centre_pitch=0,
+        speed=1,
+        start_ticker=False,
+        identify_post=f.post_with_request,
+        identify_setting=lambda: f.setting,
+        identify_call_tool=lambda name, args: f.calls.append((name, args)) or True,
+        identify_spawn=lambda worker: None,
+    )
+    result = behavior.listen_song_command(payload)
+    assert result["listen_song"] == expected
 
 
 def test_eof_before_advertised_size_posts_received_bytes():

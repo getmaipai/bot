@@ -282,6 +282,10 @@ class StackChanBehavior:
             "music_test": "refused",
             "why": "the music dance is not ready",
         }
+        self.listen_song_command: Callable[[dict], dict | None] = lambda _payload: {
+            "listen_song": "refused",
+            "why": "song naming is not ready",
+        }
         self._last_event_poll = float("-inf")
         self._last_touch_wake = float("-inf")
         self._event_queue_drained = False
@@ -1857,6 +1861,7 @@ def _start_stackchan_night(
                 "dance": lambda payload: behavior.dance_command(payload),
                 **(hub_handlers or {}),
                 "music_test": lambda payload: behavior.music_command(payload),
+                "listen_song": lambda payload: behavior.listen_song_command(payload),
             },
             on_drop=link.channel_lost,
         )
@@ -2324,13 +2329,18 @@ async def _serve_stackchan_channels(
             silenced=lambda: bool(behavior.speech_muted() or _unit_muted(behavior)),
         )
 
-        def identify_post(pcm: bytes) -> dict | None:
+        def identify_post(pcm: bytes, request_id: str | None = None) -> dict | None:
             try:
                 import requests
 
                 cookie, base_url = _hub_credentials_reader(link, "")()
+                query = "kind=pcm16&rate=8000"
+                if request_id is not None:
+                    from urllib.parse import quote
+
+                    query += f"&request={quote(request_id, safe='')}"
                 response = requests.post(
-                    f"{base_url}/api/music/identify?kind=pcm16&rate=8000",
+                    f"{base_url}/api/music/identify?{query}",
                     data=pcm,
                     headers={
                         "Cookie": f"session={cookie}",

@@ -95,6 +95,16 @@ All at INFO in the bot log, logger `maipai_body.bodies.stackchan.music_dance`:
 Needs: the firmware with patches 100 and 101 flashed, the bot release with this change, Home registering the two settings and the
 `music_test` command. The unit awake, upright, daytime, battery 40 percent or more (or charging).
 
+### On-demand song naming
+
+Home can send the StackChan `listen_song` device command with `{request_id, seconds?}`. The body
+validates a 1 to 64 character alphanumeric request id and a capture length from 5 to 15 seconds
+(10 seconds by default), then posts the clip to Home with that request id so the waiting chat turn
+can receive the match. This explicit request can capture while ambient song naming is set to ask or
+off, and while a chat turn is active. It is refused while muted, in full quiet, disconnected or
+offline, or while another clip is being captured. Malformed payloads are refused as well. A cancelled
+capture or one that does not become ready within 25 seconds releases the pending request.
+
 1. In the robot's settings turn **Dance to music** on (`robot.dance.auto`); leave sensitivity on medium.
 2. Check without music first: press **Test music dance** (`music_test`, add `fast` for a 40 s run). You should see the nod,
    then the build-up and the dance with the ring, and the log lines above. This proves the host half and the dance, not the

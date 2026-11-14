@@ -41,7 +41,7 @@ def _thread(callback: Callable[[], None]) -> None:
 @dataclass
 class MusicIdentifyHooks:
     call_tool: Callable[[str, dict], object]
-    post_clip: Callable[[bytes], dict | None]
+    post_clip: Callable[..., dict | None]
     situation: Callable[[], DanceSituation]
     setting: Callable[[], str]
     clock: Callable[[], float] = time.monotonic
@@ -55,12 +55,15 @@ class MusicIdentify:
         self._pending_since: float | None = None
         self._last_result = float("-inf")
         self._captured = False
+        self._request_id: str | None = None
         self._lock = threading.Lock()
 
     def on_session_start(self, now: float) -> None:
-        if self._captured:
-            return
-        self._drop_state()
+        with self._lock:
+            if self._captured:
+                return
+            self._pending_since = None
+            self._request_id = None
         sit = self._hooks.situation()
         setting = self._hooks.setting()
         if setting == "ask":
@@ -82,14 +85,43 @@ class MusicIdentify:
         except Exception:
             return
         if started is True:
+            with self._lock:
+                self._captured = True
+                self._pending_since = now
+
+    def listen_now(self, request_id: str, seconds: int, now: float) -> dict:
+        """Capture one explicitly requested clip, independent of ambient naming settings."""
+        sit = self._hooks.situation()
+        if sit.muted:
+            return {"listen_song": "refused", "why": "the robot is muted"}
+        if sit.full_quiet:
+            return {"listen_song": "refused", "why": "full quiet is on"}
+        if not sit.connected or sit.offline:
+            return {"listen_song": "refused", "why": "the robot is offline"}
+        with self._lock:
+            if self._captured:
+                return {"listen_song": "refused", "why": "a clip is already in progress"}
             self._captured = True
             self._pending_since = now
+            self._request_id = request_id
+        try:
+            started = self._hooks.call_tool(
+                "self.music.capture_clip", {"seconds": max(5, min(15, seconds))}
+            )
+        except Exception:
+            started = False
+        if started is not True:
+            self._drop_state()
+            return {"listen_song": "refused", "why": "clip capture could not start"}
+        return {"listen_song": "started", "why": ""}
 
     def on_clip_event(self, kind: str, extra: dict, now: float) -> None:
         if kind == "music_clip_cancelled":
             self._drop_state()
             return
-        if kind != "music_clip_ready" or not self._captured:
+        with self._lock:
+            captured = self._captured
+        if kind != "music_clip_ready" or not captured:
             return
         try:
             size = extra["bytes"]
@@ -105,10 +137,12 @@ class MusicIdentify:
         except Exception:
             self._discard_clip()
             return
-        self._pending_since = None
-        self._spawn(lambda: self._pull_clip(size, now))
+        with self._lock:
+            self._pending_since = now
+            request_id = self._request_id
+        self._spawn(lambda: self._pull_clip(size, now, request_id))
 
-    def _pull_clip(self, size: int, now: float) -> None:
+    def _pull_clip(self, size: int, now: float, request_id: str | None = None) -> None:
         encoded = bytearray()
         offset = 0
         try:
@@ -152,14 +186,26 @@ class MusicIdentify:
         except Exception:
             pass
         pcm = b"".join(int(MULAW[sample]).to_bytes(2, "little", signed=True) for sample in encoded)
-        self._identify(pcm, now)
+        self._identify(pcm, now, request_id)
 
-    def _identify(self, pcm: bytes, now: float) -> None:
+    def _identify(self, pcm: bytes, now: float, request_id: str | None = None) -> None:
         result = None
         try:
-            result = self._hooks.post_clip(pcm)
+            result = (
+                self._hooks.post_clip(pcm, request_id)
+                if request_id is not None
+                else self._hooks.post_clip(pcm)
+            )
         except Exception:
             return
+        finally:
+            if request_id is not None:
+                with self._lock:
+                    if self._request_id == request_id:
+                        # No music session ends an explicit request: free the slot.
+                        self._request_id = None
+                        self._captured = False
+                        self._pending_since = None
         self._last_result = now
         if not isinstance(result, dict) or result.get("status") != "matched":
             return
@@ -184,15 +230,23 @@ class MusicIdentify:
         with self._lock:
             self._pending_since = None
             self._captured = False
+            self._request_id = None
 
     def tick(self, now: float) -> None:
         with self._lock:
             pending = self._pending_since
-        if pending is not None and now - pending >= READY_TIMEOUT_S:
-            self._drop_state()
+            expired = pending is not None and now - pending >= READY_TIMEOUT_S
+            if expired:
+                self._pending_since = None
+                self._captured = False
+                self._request_id = None
 
     def on_session_end(self) -> None:
-        self._drop_state()
+        # An explicit request belongs to its ready clip even while Home's turn runs.
+        with self._lock:
+            explicit_pending = self._request_id is not None
+        if not explicit_pending:
+            self._drop_state()
         try:
             self._hooks.call_tool("self.face.song_title", {"text": ""})
         except Exception:

@@ -214,11 +214,27 @@ def wire_music_dance(
         ok, why = controller.start_test(clock(), fast=bool(payload.get("fast")))
         return {"music_test": "started" if ok else "refused", "why": why}
 
+    def listen_song_command(payload: dict) -> dict:
+        request_id = payload.get("request_id") if isinstance(payload, dict) else None
+        seconds = payload.get("seconds", 10) if isinstance(payload, dict) else None
+        if (
+            not isinstance(request_id, str)
+            or not 1 <= len(request_id) <= 64
+            or any(not (char.isascii() and (char.isalnum())) for char in request_id)
+        ):
+            return {"listen_song": "refused", "why": "request_id must be 1 to 64 letters or digits"}
+        if not isinstance(seconds, int) or isinstance(seconds, bool) or not 5 <= seconds <= 15:
+            return {"listen_song": "refused", "why": "seconds must be an integer from 5 to 15"}
+        if identify is None:
+            return {"listen_song": "refused", "why": "song naming is not ready"}
+        return identify.listen_now(request_id, seconds, clock())
+
     behavior.music_feat = on_music_feat
     if identify is not None:
         behavior.music_clip = identify.on_clip_event
     behavior.dance_events = on_events
     behavior.music_command = command
+    behavior.listen_song_command = listen_song_command
 
     if start_ticker:
 
