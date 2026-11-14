@@ -29,6 +29,8 @@ class SuppressionContext(BaseModel):
     tool_failure: bool = False
     no_fresh_target: bool = False
     held: bool = False
+    low_power: bool = False  # SELF-SCENE-02: from the 15 percent rung, head moves and breathing off
+    heat_stop: bool = False  # SELF-SCENE-02: critical heat, no motion at all
     alarm: bool = False  # ALARM-PLAY-01: the pose is held still until the hub clears it
 
 
@@ -48,6 +50,15 @@ def suppression_reason(primitive: str, context: SuppressionContext) -> str | Non
     # ALARM-PLAY-01: a live safety alarm holds its pose; no cue moves the body.
     if context.alarm:
         return "alarm"
+
+    # SELF-SCENE-02: critical heat stops all motion; low power stops head moves, the look
+    # and breathing. The listening posture is not a head move and stays.
+    if context.heat_stop:
+        return "heat_stop"
+    if context.low_power and (
+        primitive in _GESTURES or primitive in ("breathe", "track", "glance")
+    ):
+        return "low_power"
 
     # MOVE-CARRY-01: lifted or carried, the body commands no motion at all.
     if context.held:

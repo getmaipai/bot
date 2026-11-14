@@ -4,6 +4,8 @@ FACE_COLOR_KEY = "robot.face.color"
 NIGHT_MODE_KEY = "robot.night.mode"
 QUIET_FROM_KEY = "household.quiet_hours.from"
 QUIET_TO_KEY = "household.quiet_hours.to"
+POWER_WARN_AT_KEY = "robot.power.warn_at"
+DEFAULT_POWER_WARN_AT = 20
 FACE_PALETTES = frozenset({"mint", "sky", "peach", "lavender", "lemon", "rose", "cloud"})
 
 
@@ -45,3 +47,16 @@ LOCAL_UNMUTE_KEY = "robot.mute.local_unmute"
 # ignore "off" and the night rule; the hard mute (MUTED_KEY, QUIET_KEY) silences all of them.
 SOUNDS_ENABLED_KEY = "robot.sounds.enabled"
 SOUNDS_NIGHT_KEY = "robot.sounds.night"
+
+
+# SELF-SCENE-02: the battery percent at which the robot gives its one short low-battery line
+# (admin-moved; default 20). Degrade, dock and sleep stay at 15, 10 and 5, so the value is
+# kept between 16 and 50.
+def power_warn_at(values: object) -> int:
+    """Read ``robot.power.warn_at``; malformed or absent values use the default 20."""
+    if not isinstance(values, dict):
+        return DEFAULT_POWER_WARN_AT
+    value = values.get(POWER_WARN_AT_KEY, DEFAULT_POWER_WARN_AT)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return DEFAULT_POWER_WARN_AT
+    return max(16, min(50, value))

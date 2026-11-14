@@ -61,7 +61,21 @@ CARRY_LINES = ("line.carry.1", "line.carry.2", "line.carry.3")
 # is a bundle clip too once Home makes one; until then none plays.
 ALARM_GENERIC = "alarm-generic"
 ALARM_CHILD = "alarm-child"
-PHRASES = (UNREACHABLE, FREEFALL, RECONNECT, THERMAL, *CARRY_LINES)
+# SELF-SCENE-02: the battery and heat ladder's fixed lines, an adult pool and a child pool per
+# rung (`line.power.<rung>` and `line.power.<rung>_child`, variants `.1`, `.2`). The child pool
+# never says a percentage, fault, critical or error. The goodbye is the one line that plays
+# through quiet hours.
+POWER_LINES = (
+    "line.power.warn",
+    "line.power.warn_child",
+    "line.power.dock",
+    "line.power.dock_child",
+    "line.power.goodbye",
+    "line.power.goodbye_child",
+    "line.power.heat",
+    "line.power.heat_child",
+)
+PHRASES = (UNREACHABLE, FREEFALL, RECONNECT, THERMAL, *CARRY_LINES, *POWER_LINES)
 
 
 def char_clip_id(char: str) -> str:

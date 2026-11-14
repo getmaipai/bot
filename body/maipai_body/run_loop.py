@@ -26,7 +26,7 @@ import re
 import threading
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
@@ -56,6 +56,13 @@ from maipai_body.presence.funnel import FunnelState, FunnelView, SettleGate
 from maipai_body.presence.knock import KnockDetector
 from maipai_body.presence.motion_state import MotionState, MotionStateMachine
 from maipai_body.presence.observations import PresenceObservation, read_presence
+from maipai_body.presence.power import (
+    HeatLadder,
+    PowerLadder,
+    PowerLevel,
+    child_pool,
+    line_id,
+)
 from maipai_body.presence.sleep_auto import SleepAutoPolicy
 from maipai_body.presence.thermal import ThermalState
 from maipai_body.presence.touch import AntennaTouchDetector
@@ -110,6 +117,7 @@ _WAKE_ACK_PRIMITIVE = "perk"
 # KNOCK-01: the IMU is polled this often while the robot sleeps (UNVERIFIED rate;
 # the unit row decides whether the IMU read is fast enough or the mic onset is needed).
 _KNOCK_INTERVAL_S = 0.02
+_POWER_INTERVAL_S = 5.0  # SELF-SCENE-02: how often the battery is read
 _TOUCH_INTERVAL_S = 0.05  # TOUCH-01: 20 Hz reads of the worker's cached antenna probe
 _TOUCH_DRIVE_WINDOW_S = 0.06  # a write this recent counts as the worker driving the antennas
 
@@ -232,6 +240,9 @@ class ConversationLoop:
         sleep_auto: SleepAutoPolicy | None = None,
         luma_source: Callable[[], float | None] | None = None,
         quiet_hours: Callable[[], bool] | None = None,
+        battery_status: Callable[[], Mapping[str, object] | None] | None = None,
+        power_warn_at: Callable[[], int] | None = None,
+        screen_dim: Callable[[bool], object] | None = None,
         sleep_clock: Callable[[], float] = time.monotonic,
         touch_interval_s: float = _TOUCH_INTERVAL_S,
         touch_clock: Callable[[], float] = time.monotonic,
@@ -361,6 +372,18 @@ class ConversationLoop:
         self._luma_source = luma_source
         self._quiet_hours = quiet_hours or (lambda: False)
         self._sleep_clock = sleep_clock
+        # SELF-SCENE-02: the battery and heat ladder. The body keeps its own counters and
+        # lines; `battery_status` is `get_battery_status`'s shape (percent, charging), read
+        # at most every `_POWER_INTERVAL_S`. Without it no battery ladder runs, and the
+        # state frame reports the level as unknown.
+        self._battery_status = battery_status
+        self._power_warn_at = power_warn_at
+        self._screen_dim = screen_dim
+        self._power = PowerLadder()
+        self._heat = HeatLadder()
+        self._power_next_at = float("-inf")
+        self._power_dimmed = False
+        self._power_asleep = False
         if sleep_auto is not None:
             ladder_asleep, ladder_wake = is_asleep, self._wake_from_sleep
 
@@ -485,7 +508,13 @@ class ConversationLoop:
             thermal_pressure=self._thermal_state.idle_still,
             thermal_gestures=self._thermal_state.gestures_suspended,
             alarm=self._safety_alarm,
+            low_power=self._power.low_power,
+            heat_stop=self._heat.motion_stopped,
         )
+
+    def _power_motion_off(self) -> bool:
+        """Degrade and beyond, or critical heat: no head moves from tracking or reacts."""
+        return self._power.low_power or self._heat.motion_stopped
 
     @property
     def thermal_state(self) -> ThermalState:
@@ -671,6 +700,14 @@ class ConversationLoop:
         thermal = self.thermal_frame()
         if thermal is not None:
             frame["thermal"] = thermal
+        # SELF-SCENE-02: reported only where a battery source is wired (omission means "this
+        # producer does not report it"). `low_power` is true from the degrade rung on.
+        if self._battery_status is not None:
+            frame["battery_level"] = self._power.percent
+            frame["charging"] = self._power.charging
+            frame["low_power"] = self._power.low_power
+            if self._power.charging is not None:
+                frame["on_battery"] = not self._power.charging
         return frame
 
     def set_watch_level(self, level: Literal["off", "presence", "identify"]) -> None:
@@ -1284,6 +1321,9 @@ class ConversationLoop:
         if self._thermal_state.gestures_suspended:
             logger.info("react move %r skipped: gestures are suspended while warm", move)
             return
+        if self._power_motion_off():
+            logger.info("react move %r skipped: low power or too hot", move)
+            return
         try:
             self._react_hook(
                 move,
@@ -1462,7 +1502,7 @@ class ConversationLoop:
     def _drive_attention(self, observation: PresenceObservation, held: bool) -> None:
         """S-EXPR-04: feed gaze and idle, or release both when motion may not drive."""
         assert self._attention is not None
-        if held or not self._tracking_allowed():
+        if held or self._power_motion_off() or not self._tracking_allowed():
             self._attention.release()
             return
         try:
@@ -1521,6 +1561,7 @@ class ConversationLoop:
         if observation.face_detected and self._vision_watch is None:
             self._maybe_check_face(stop_event)
         self._safety_ticks(held)
+        self._power_tick(held)
         self._sleep_tick(observation, held)
 
     def _sleep_tick(self, observation: PresenceObservation, held: bool) -> None:
@@ -1550,6 +1591,84 @@ class ConversationLoop:
                 self._expression.sleep_breathe(now)
         except Exception:
             logger.warning("auto sleep tick failed", exc_info=True)
+
+    def _power_tick(self, held: bool) -> None:
+        """SELF-SCENE-02: one battery and heat step. A bug here is logged, never raised."""
+        try:
+            now = self._sleep_clock()
+            self._heat_step()
+            if self._battery_status is not None:
+                self._battery_step(now)
+            self._power_lines(held)
+            self._power_sleep(now, held)
+        except Exception:
+            logger.warning("power ladder tick failed", exc_info=True)
+
+    def _heat_step(self) -> None:
+        if self._thermal is None:
+            return
+        before = self._heat.level
+        self._heat.update(self._thermal_state.temp_c)
+        if self._heat.level != before and self._on_change is not None:
+            self._on_change()
+
+    def _battery_step(self, now: float) -> None:
+        if now >= self._power_next_at:
+            self._power_next_at = now + _POWER_INTERVAL_S
+            status = self._battery_status() if self._battery_status is not None else None
+            if status is not None:
+                percent, charging = status.get("percent"), status.get("charging")
+                if self._power_warn_at is not None:
+                    self._power.set_warn_at(self._power_warn_at())
+                before = (self._power.level, self._power.percent, self._power.charging)
+                self._power.update(
+                    percent if isinstance(percent, int) and not isinstance(percent, bool) else None,
+                    charging if isinstance(charging, bool) else None,
+                    now,
+                )
+                if before != (self._power.level, self._power.percent, self._power.charging):
+                    if self._on_change is not None:
+                        self._on_change()
+        dim = self._power.low_power
+        if dim != self._power_dimmed:
+            self._power_dimmed = dim
+            if self._screen_dim is not None:
+                self._screen_dim(dim)
+        if self._power.level is PowerLevel.OK and self._power_asleep:
+            self._power_wake()
+
+    def _power_lines(self, held: bool) -> None:
+        """The ladder's lines, each once. Warn needs someone near; quiet hours hold every
+        line but the goodbye; a running turn, mute or a lift defer them."""
+        entries = self._presence_entries() if self._presence_entries is not None else None
+        kinds = [entry.kind for entry in entries] if entries else []
+        may_speak = self._current_funnel() is FunnelState.IDLE and not self._is_muted() and not held
+        quiet = self._quiet_hours()
+        rung = self._power.take_line(near=bool(kinds), quiet=quiet, may_speak=may_speak)
+        if rung is None:
+            rung = self._heat.take_line(quiet=quiet, may_speak=may_speak)
+        if rung is not None:
+            self._say_clip(line_id(rung, child=child_pool(kinds)))
+
+    def _power_sleep(self, now: float, held: bool) -> None:
+        """At the lowest rung: after the goodbye grace, the safe pose, then sleep, once per
+        discharge. A carried body waits until it is put down."""
+        if held or self._power_asleep or not self._power.sleep_due(now):
+            return
+        self._power.forgo_line()
+        self._power_asleep = True
+        self._expression.render_primitive("settle", self._suppression_context())
+        self._expression.set_sleep(True, ArbitrationState())
+        if self._sleep_auto is not None:
+            self._sleep_auto.asleep = True
+
+    def _power_wake(self) -> None:
+        """Charging cleared the ladder: leave the power sleep."""
+        self._power_asleep = False
+        if self._sleep_auto is not None:
+            self._leave_auto_sleep()
+        else:
+            self._expression.set_sleep(False, ArbitrationState())
 
     def _leave_auto_sleep(self) -> None:
         """A knock or touch woke the robot: the policy and the pose follow."""

@@ -3398,11 +3398,13 @@ def run_paired_body(
                     "battery_level": None,
                     **versions,
                 }
+            # SELF-SCENE-02: the loop's own battery fields (battery_level, charging,
+            # low_power, on_battery) win over the unknown defaults when it reports them.
             return {
-                **loop_result[0].snapshot(),
-                "clock_synced": _clock_synced(link),
                 "on_battery": None,
                 "battery_level": None,
+                **loop_result[0].snapshot(),
+                "clock_synced": _clock_synced(link),
                 **versions,
             }
 
