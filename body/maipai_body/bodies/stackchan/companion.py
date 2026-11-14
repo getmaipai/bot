@@ -50,6 +50,8 @@ DIAGNOSTIC_KINDS = frozenset(
         "sound_played",  # firmware patch 141: which cue the unit played and what asked for it
         "power_poll",  # firmware patch 141: the charger reading and its flap count, once a minute
         "tailnet_state",  # firmware patch 147: the tailnet client's state and address (state, ip)
+        "wifi_use_ok",  # firmware patch 154: a switched network reached the hub
+        "wifi_use_revert",  # firmware patch 154: no hub in 3 minutes, back to the saved networks
         # Mute, vision off and full quiet (patch 106): the new state, and a refused face unmute.
         "privacy",
         "privacy_refused",

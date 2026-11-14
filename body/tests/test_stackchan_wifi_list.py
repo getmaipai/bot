@@ -225,3 +225,129 @@ def test_prefer_tailnet_passes_minutes_and_reports_a_tailnet_that_is_not_up():
     assert prefer_tailnet(unit.call, {"minutes": 5})["tailnet"] == "refused"
     for bad in ({}, {"minutes": -1}, {"minutes": 500}, {"minutes": "x"}, {"minutes": True}, None):
         assert prefer_tailnet(unit.call, bad)["tailnet"] == "refused"
+
+
+class FakeClock:
+    def __init__(self, now=1_000_000.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+
+def test_every_change_records_a_result_the_card_can_show(caplog):
+    caplog.set_level(logging.INFO)
+    unit = Unit(["home"])
+    clock = FakeClock()
+    changed = []
+    wifi = WifiList(unit.call, on_changed=lambda: changed.append(1), clock=clock)
+
+    assert wifi.add("phone-hotspot", "secret-pw") == {"wifi": "saved"}
+    assert wifi.last == {"action": "add", "result": "ok", "name": "phone-hotspot", "at": clock.now}
+    assert wifi.saved_at == clock.now and wifi.change_seq == 1 and changed
+    assert wifi.saved() == ["phone-hotspot", "home"]
+
+    assert wifi.use("phone-hotspot") == {"wifi": "switching"}
+    assert wifi.last["action"] == "use" and wifi.last["result"] == "switching"
+
+    assert wifi.forget("home") == {"wifi": "forgotten"}
+    assert wifi.last["result"] == "ok" and wifi.change_seq == 3
+
+    lines = [r.getMessage() for r in caplog.records if "robot activity" in r.getMessage()]
+    assert "robot activity: wifi_add result=ok" in lines
+    assert "robot activity: wifi_use result=switching" in lines
+    assert "robot activity: wifi_forget result=ok" in lines
+    assert "secret-pw" not in caplog.text and "phone-hotspot" not in "\n".join(lines)
+
+
+def test_add_says_why_when_the_unit_cannot_be_read_or_is_full():
+    unit = Unit([f"n{i}" for i in range(10)])
+    wifi = WifiList(unit.call, clock=FakeClock())
+    assert wifi.add("extra", "pw")["wifi"] == "refused"
+    assert wifi.last["result"] == "full" and wifi.last["name"] == "extra"
+
+    def broken(tool, args):
+        raise RuntimeError("no StackChan is connected")
+
+    down = WifiList(broken, clock=FakeClock())
+    assert down.add("net", "pw") == {"wifi": "refused", "why": "The robot could not be reached."}
+    assert down.last["result"] == "unreachable" and down.saved_at is None
+    assert down.has_saved is False
+
+
+def test_a_refused_add_from_the_unit_is_recorded():
+    class Refusing(Unit):
+        def call(self, tool, args):
+            if tool == "self.wifi.add":
+                return False
+            return super().call(tool, args)
+
+    wifi = WifiList(Refusing([]).call, clock=FakeClock())
+    assert wifi.add("net", "pw")["wifi"] == "refused"
+    assert wifi.last["result"] == "refused"
+
+
+def test_the_units_own_answer_to_a_switch_is_recorded_and_stale_ones_are_ignored():
+    unit = Unit(["home", "hotspot"])
+    clock = FakeClock()
+    wifi = WifiList(unit.call, clock=clock)
+    wifi.note_use_event("wifi_use_ok")  # no switch was asked for: ignored
+    assert wifi.last is None
+    wifi.use("hotspot")
+    wifi.note_use_event("wifi_use_revert")
+    assert wifi.last == {"action": "use", "result": "reverted", "name": "hotspot", "at": clock.now}
+    wifi.use("hotspot")
+    wifi.note_use_event("wifi_use_ok")
+    assert wifi.last["result"] == "joined"
+    clock.now += 601  # too late to belong to that switch
+    before = wifi.change_seq
+    wifi.note_use_event("wifi_use_revert")
+    assert wifi.change_seq == before
+
+
+def test_checkin_carries_when_the_list_was_read_what_the_last_change_did_and_the_current_network():
+    payload = build_payload(
+        device_id="d",
+        address="192.0.2.7",
+        connected_since=0.0,
+        facts={},
+        status={"network": {"signal": "strong", "ssid": "home"}},
+        bot_version="0.2.0",
+        now=10.0,
+        wifi_saved=["home", "hotspot"],
+        wifi_saved_at=1_700_000_000.0,
+        wifi_last={"action": "add", "result": "ok", "name": "hotspot", "at": 1_700_000_005.0},
+    )
+    assert payload["wifi_saved"] == ["home", "hotspot"]
+    assert payload["wifi_current"] == "home"
+    assert payload["wifi_saved_at"].startswith("2023-11-14T")
+    assert payload["wifi_last"]["action"] == "add" and payload["wifi_last"]["result"] == "ok"
+    assert payload["wifi_last"]["name"] == "hotspot" and payload["wifi_last"]["at"].startswith(
+        "2023-11-14T"
+    )
+
+
+def test_the_current_network_is_never_named_unless_it_is_a_saved_one():
+    payload = build_payload(
+        device_id="d",
+        address="192.0.2.7",
+        connected_since=0.0,
+        facts={},
+        status={"network": {"signal": "strong", "ssid": "someone-elses"}},
+        bot_version="0.2.0",
+        now=10.0,
+        wifi_saved=["home"],
+    )
+    assert "wifi_current" not in payload and "someone-elses" not in str(payload)
+    bad = build_payload(
+        device_id="d",
+        address=None,
+        connected_since=None,
+        facts={},
+        status=None,
+        bot_version=None,
+        now=0.0,
+        wifi_saved_at=True,
+        wifi_last={"action": "drop-table", "result": "ok", "at": 1.0},
+    )
+    assert "wifi_saved_at" not in bad and "wifi_last" not in bad

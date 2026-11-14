@@ -155,6 +155,8 @@ def build_payload(
     update_progress: int | None = None,
     wifi_saved: list[str] | None = None,
     link_encrypted: bool = False,
+    wifi_saved_at: float | None = None,
+    wifi_last: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The check-in body. Every key is always present; unknown values are null."""
     battery = (status or {}).get("battery")
@@ -215,6 +217,30 @@ def build_payload(
     if isinstance(wifi_saved, list):
         names = [name[:32] for name in wifi_saved if isinstance(name, str) and name]
         payload["wifi_saved"] = names[:10]
+        # The network the unit is on is named only when it is one of the saved names Home already
+        # shows, so the card can mark it "Connected now" without telling Home anything new.
+        ssid = network.get("ssid")
+        if isinstance(ssid, str) and ssid[:32] in names:
+            payload["wifi_current"] = ssid[:32]
+    if isinstance(wifi_saved_at, (int, float)) and not isinstance(wifi_saved_at, bool):
+        payload["wifi_saved_at"] = datetime.fromtimestamp(wifi_saved_at, UTC).isoformat(
+            timespec="seconds"
+        )
+    if isinstance(wifi_last, Mapping):
+        action, result, at = wifi_last.get("action"), wifi_last.get("result"), wifi_last.get("at")
+        if (
+            action in ("add", "forget", "use")
+            and isinstance(result, str)
+            and isinstance(at, (int, float))
+            and not isinstance(at, bool)
+        ):
+            name = wifi_last.get("name")
+            payload["wifi_last"] = {
+                "action": action,
+                "result": result[:16],
+                "name": name[:32] if isinstance(name, str) else "",
+                "at": datetime.fromtimestamp(at, UTC).isoformat(timespec="seconds"),
+            }
     return payload
 
 

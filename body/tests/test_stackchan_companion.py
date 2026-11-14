@@ -95,6 +95,8 @@ def test_dances_and_event_kinds_export_the_supported_sets():
             "sound_played",
             "power_poll",
             "tailnet_state",
+            "wifi_use_ok",
+            "wifi_use_revert",
         }
     )
 

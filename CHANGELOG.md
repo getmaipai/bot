@@ -5,6 +5,13 @@ All notable changes to MaiPai Bot. Format follows
 Everything stays `0.x` until the product passes its battle-tested
 checklist (`docs/dev.md`).
 
+## [0.2.105] - 2026-11-14
+
+### Added
+- Robot Wi-Fi results (owner 2026-11-14: "I don't know if it worked"): every add, forget and switch records what happened (`ok`, `full`, `unreachable`, `refused`, `switching`, then the unit's own `joined` or `reverted` from firmware patch 154's `wifi_use_ok` and `wifi_use_revert` events) and the check-in carries it as `wifi_last` with `wifi_saved_at` (when the list was read) and `wifi_current` (the network the unit is on, only when it is one of the saved names). One word-only `robot activity: wifi_add result=...` log line each, no names or passwords.
+- The saved list is read again at every check-in (about a minute) and at once after any change; it was every five minutes.
+- The check-in link log line (hub link class) from 0.2.104 work.
+
 ## [0.2.104] - 2026-11-14
 
 ### Added

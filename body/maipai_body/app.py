@@ -1615,6 +1615,10 @@ class StackChanBehavior:
                 extra = getattr(event, "extra", None) or {}
                 if self.unit_facts is not None:
                     self.unit_facts.observe(event.kind, extra)
+                if event.kind in ("wifi_use_ok", "wifi_use_revert"):
+                    wifi_list = getattr(self, "wifi_list", None)
+                    if wifi_list is not None:
+                        wifi_list.note_use_event(event.kind)
                 if self.on_unit_event is not None:
                     try:
                         self.on_unit_event(event.kind, extra)
@@ -3496,6 +3500,7 @@ def _start_robot_checkin(voice: Any, behavior: Any, link: LinkLifecycle, stop_ev
     connected = threading.Event()
     voice.session_listeners.append(lambda _device_id: connected.set())
     wifi_cache: list[Any] = [float("-inf"), None]
+    wifi_cache_seq: list[int] = [-1]
     wifi_lock = threading.Lock()
 
     def collect() -> dict[str, Any]:
@@ -3517,19 +3522,26 @@ def _start_robot_checkin(voice: Any, behavior: Any, link: LinkLifecycle, stop_ev
             except Exception:
                 logger.debug("robot check-in could not read the unit's status", exc_info=True)
         wifi_saved = None
+        wifi_saved_at = None
+        wifi_last = None
         wifi_list = getattr(behavior, "wifi_list", None)
         if wifi_list is not None:
             with wifi_lock:
                 now_mono = time.monotonic()
-                if now_mono - wifi_cache[0] >= 300:
+                # Read the unit's list again every check-in (about a minute) and at once after any
+                # add, forget or switch: Jesse could not see whether an add had worked (2026-11-14).
+                if now_mono - wifi_cache[0] >= 55 or wifi_cache_seq[0] != wifi_list.change_seq:
                     # saved() retains its last readable list on failure; an initial failure is
                     # represented as absent so Home can distinguish unknown from an empty list.
                     try:
                         queried = wifi_list.saved()
-                        wifi_cache[:] = [now_mono, queried if wifi_list.available else None]
+                        wifi_cache[:] = [now_mono, queried if wifi_list.has_saved else None]
                     except Exception:
                         wifi_cache[:] = [now_mono, None]
+                    wifi_cache_seq[0] = wifi_list.change_seq
                 wifi_saved = wifi_cache[1]
+                wifi_saved_at = wifi_list.saved_at
+                wifi_last = wifi_list.last
         payload = build_payload(
             device_id=device_id,
             address=address,
@@ -3544,6 +3556,8 @@ def _start_robot_checkin(voice: Any, behavior: Any, link: LinkLifecycle, stop_ev
             update_progress=getattr(voice, "firmware_update_status", (None, None))[1],
             wifi_saved=wifi_saved,
             link_encrypted=UNIT_LINK_ENCRYPTED,
+            wifi_saved_at=wifi_saved_at,
+            wifi_last=wifi_last,
         )
         # Log how the link looks to Home when it changes (a class, never an address).
         line = link_class_line(payload, facts.snapshot())
