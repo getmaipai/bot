@@ -107,6 +107,8 @@ from maipai_body.vision.embed import ensure_embedder
 from maipai_body.vision.gallery import FaceGallery
 from maipai_body.vision.models import SFACE
 
+UNIT_LINK_ENCRYPTED = False  # StackChan currently connects to this service over plain ws.
+
 try:
     if os.environ.get("MAIPAI_HUB_HOST") == "1":
         # A body hosted by Home (StackChan) never drives a Reachy daemon: the hub bundle ships no
@@ -285,6 +287,14 @@ class StackChanBehavior:
         self.listen_song_command: Callable[[dict], dict | None] = lambda _payload: {
             "listen_song": "refused",
             "why": "song naming is not ready",
+        }
+        self.wifi_add_command: Callable[[dict], dict | None] = lambda _payload: {
+            "wifi": "refused",
+            "why": "Wi-Fi management is not ready",
+        }
+        self.wifi_forget_command: Callable[[dict], dict | None] = lambda _payload: {
+            "wifi": "refused",
+            "why": "Wi-Fi management is not ready",
         }
         self.song_title_command: Callable[[dict], dict | None] = lambda _payload: {
             "song_title": "unavailable",
@@ -1882,6 +1892,8 @@ def _start_stackchan_night(
                 **(hub_handlers or {}),
                 "music_test": lambda payload: behavior.music_command(payload),
                 "listen_song": lambda payload: behavior.listen_song_command(payload),
+                "wifi_add": lambda payload: behavior.wifi_add_command(payload),
+                "wifi_forget": lambda payload: behavior.wifi_forget_command(payload),
                 "song_title": lambda payload: behavior.song_title_command(payload),
             },
             on_drop=link.channel_lost,
@@ -2138,6 +2150,7 @@ async def _serve_stackchan_channels(
     link: LinkLifecycle | None = None,
     offline: OfflineRungs | None = None,
 ) -> None:
+    global UNIT_LINK_ENCRYPTED
     from maipai_body.bodies.stackchan.adapter import StackChanRobotAdapter
     from maipai_body.bodies.stackchan.avatar.server import AvatarServer
     from maipai_body.bodies.stackchan.turn import StackChanTurnBridge
@@ -2162,6 +2175,7 @@ async def _serve_stackchan_channels(
     cert_path = os.environ.get("MAIPAI_XIAOZHI_TLS_CERT")
     key_path = os.environ.get("MAIPAI_XIAOZHI_TLS_KEY")
     tls_context = server_ssl_context(cert_path, key_path)
+    UNIT_LINK_ENCRYPTED = tls_context is not None
     voice.robot = StackChanRobotAdapter(XiaozhiDeviceClient(voice))
     voice._avatar_frame_sender = avatar.send_frame
     camera_driver = voice.robot.robot._driver("camera")
@@ -2443,6 +2457,17 @@ async def _serve_stackchan_channels(
             voice.robot.client._call,
             auto=lambda: behavior.dance_settings.auto,
             silenced=lambda: bool(behavior.speech_muted() or _unit_muted(behavior)),
+        )
+        from maipai_body.bodies.stackchan.wifi_list import WifiList
+
+        wifi_list = WifiList(music_switch.call, on_changed=behavior.unit_facts.changed.set)
+        behavior.wifi_list = wifi_list
+        behavior.wifi_add_command = lambda payload: wifi_list.add(
+            payload.get("ssid") if isinstance(payload, dict) else None,
+            payload.get("password") if isinstance(payload, dict) else None,
+        )
+        behavior.wifi_forget_command = lambda payload: wifi_list.forget(
+            payload.get("ssid") if isinstance(payload, dict) else None
         )
 
         def identify_post(pcm: bytes, request_id: str | None = None) -> dict | None:
@@ -3429,6 +3454,8 @@ def _start_robot_checkin(voice: Any, behavior: Any, link: LinkLifecycle, stop_ev
     behavior.unit_facts = facts
     connected = threading.Event()
     voice.session_listeners.append(lambda _device_id: connected.set())
+    wifi_cache: list[Any] = [float("-inf"), None]
+    wifi_lock = threading.Lock()
 
     def collect() -> dict[str, Any]:
         sessions = list(voice._sessions)
@@ -3448,6 +3475,20 @@ def _start_robot_checkin(voice: Any, behavior: Any, link: LinkLifecycle, stop_ev
                 }
             except Exception:
                 logger.debug("robot check-in could not read the unit's status", exc_info=True)
+        wifi_saved = None
+        wifi_list = getattr(behavior, "wifi_list", None)
+        if wifi_list is not None:
+            with wifi_lock:
+                now_mono = time.monotonic()
+                if now_mono - wifi_cache[0] >= 300:
+                    # saved() retains its last readable list on failure; an initial failure is
+                    # represented as absent so Home can distinguish unknown from an empty list.
+                    try:
+                        queried = wifi_list.saved()
+                        wifi_cache[:] = [now_mono, queried if wifi_list.available else None]
+                    except Exception:
+                        wifi_cache[:] = [now_mono, None]
+                wifi_saved = wifi_cache[1]
         return build_payload(
             device_id=device_id,
             address=address,
@@ -3460,6 +3501,8 @@ def _start_robot_checkin(voice: Any, behavior: Any, link: LinkLifecycle, stop_ev
             timers_active=behavior.timers.active_count() if behavior.timers is not None else None,
             updating=getattr(voice, "firmware_update_status", (None, None))[0],
             update_progress=getattr(voice, "firmware_update_status", (None, None))[1],
+            wifi_saved=wifi_saved,
+            link_encrypted=UNIT_LINK_ENCRYPTED,
         )
 
     reporter = RobotCheckin(

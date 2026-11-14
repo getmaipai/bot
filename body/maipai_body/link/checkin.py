@@ -88,6 +88,8 @@ def build_payload(
     timers_active: int | None = None,
     updating: bool | None = None,
     update_progress: int | None = None,
+    wifi_saved: list[str] | None = None,
+    link_encrypted: bool = False,
 ) -> dict[str, Any]:
     """The check-in body. Every key is always present; unknown values are null."""
     battery = (status or {}).get("battery")
@@ -95,7 +97,7 @@ def build_payload(
     network = (status or {}).get("network")
     network = network if isinstance(network, Mapping) else {}
     signal = network.get("signal")
-    return {
+    payload = {
         "device_id": device_id,
         "board": BOARD,
         "online": device_id is not None,
@@ -136,7 +138,12 @@ def build_payload(
         "mute_source": facts.get("mute_source")
         if isinstance(facts.get("mute_source"), str)
         else None,
+        "link_encrypted": bool(link_encrypted),
     }
+    if isinstance(wifi_saved, list):
+        names = [name[:32] for name in wifi_saved if isinstance(name, str) and name]
+        payload["wifi_saved"] = names[:10]
+    return payload
 
 
 class RobotCheckin:

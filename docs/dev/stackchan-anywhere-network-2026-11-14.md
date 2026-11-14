@@ -105,6 +105,8 @@ We do not choose B, C or D silently. Option A's gate decides.
 
 The unit's own setup page and Bluetooth setup stay as the last resort.
 
+What shipped on the body: it handles Home's `wifi_add` and `wifi_forget` commands through the unit's existing tools, reports saved network names in check-in when the unit can be queried, and reports whether the unit link uses TLS. Passwords are never logged or included in check-in.
+
 ## Part C: a settings page on the robot itself (owner request 2026-11-14)
 
 Jesse, 2026-11-14: "ideally we can connect to the bot directly over Wi-Fi and change its settings (password protected of course)". Item id: ANYWHERE-03. Design only; nothing is built before the architect has looked.
