@@ -544,6 +544,24 @@ if [[ "${STACKCHAN_CHECK_ONLY:-0}" == "1" ]]; then
 else
   (cd "$FW" && idf.py fullclean)
   rm -f "$SDKCONFIG"
+  # The Wi-Fi setup page stays open after a network is saved, so several networks go in one visit (the page
+  # normally jumps to its done page, which restarts the unit). It lives in a downloaded component, so it is
+  # edited here after idf.py reconfigure fetches it. Check after a flash: add a network, the page says Saved.
+  (cd "$FW" && idf.py reconfigure)
+  SETUP_PAGE=$(ls "$FW"/managed_components/*esp-wifi-connect/assets/wifi_configuration.html)
+  python3 - "$SETUP_PAGE" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = "                button.disabled = false;\n                window.location.href = '/done.html';"
+new = ("                button.disabled = false;\n                loadingOverlay.classList.remove('show');\n"
+       "                event.target.reset();\n                error.style.color = '#2e7d32';\n"
+       "                error.innerHTML = 'Saved. Add another network above, or <a href=\"/done.html\"><b>Finish</b></a> when you are done.';\n"
+       "                loadSavedList();")
+if "Add another network above" not in s:
+    assert s.count(old) == 1, "setup page changed upstream: update the multi-network edit in recipe.sh"
+    open(p, "w").write(s.replace(old, new))
+PY
   (cd "$FW" && idf.py build)
 fi
 # The core dump goes to flash (patch 084): the unit reports its last panic at the next boot.
