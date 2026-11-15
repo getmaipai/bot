@@ -398,6 +398,7 @@ apply_repo_patch 151-charged-once-per-session.patch "$SRC"
 apply_repo_patch 152-gateway-fallback-kconfig-flag.patch "$SRC"
 apply_repo_patch 153-prefer-tailnet-hook.patch "$SRC"
 apply_repo_patch 154-wifi-use-now.patch "$SRC"
+apply_repo_patch 155-setup-hotspot-name.patch "$FW/xiaozhi-esp32"
 # The release version the unit reports to the hub (patch 062); "unknown" for a build with no release.
 printf '#pragma once\n#define MAIPAI_FIRMWARE_VERSION "%s"\n' "${MAIPAI_FIRMWARE_VERSION:-unknown}" \
   > "$SRC/firmware/main/hal/maipai_version.h"

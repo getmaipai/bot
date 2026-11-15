@@ -1,0 +1,9 @@
+# Intent: the Wi-Fi setup hotspot is named stackchan-XXXX (the last two bytes of the unit's MAC) instead of Xiaozhi-XXXX, so several robots in setup mode show as different, recognisable networks.
+# Upstream: main/boards/common/wifi_board.cc of the xiaozhi-esp32 repo (BSD, 78/xiaozhi-esp32). Applies to the xiaozhi-esp32 checkout with --unidiff-zero.
+# Check after a flash: forget every network, power-cycle, the unit shows a hotspot called stackchan-<4 hex digits>.
+diff --git a/main/boards/common/wifi_board.cc b/main/boards/common/wifi_board.cc
+--- a/main/boards/common/wifi_board.cc
++++ b/main/boards/common/wifi_board.cc
+@@ -57 +57 @@ void WifiBoard::StartNetwork() {
+-    config.ssid_prefix = "Xiaozhi";
++    config.ssid_prefix = "stackchan";
