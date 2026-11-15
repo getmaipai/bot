@@ -117,7 +117,7 @@ new file mode 100644
 index 0000000..5bebf6a
 --- /dev/null
 +++ b/firmware/main/hal/maipai_tailnet.cc
-@@ -0,0 +1,293 @@
+@@ -0,0 +1,291 @@
 +/*
 + * SPDX-License-Identifier: MIT
 + *
@@ -157,7 +157,7 @@ index 0000000..5bebf6a
 +
 +static const char* TAG        = "MAIPAI-TAILNET";
 +static const char* kNamespace = "maipai_tn";  // our own: never the websocket namespace, never MicroLink's "microlink"/"ml_peers"
-+static const char* kKeyOn     = "on";
++static const char* kKeyOn     = "on2";  // renamed 2026-11-14: an old saved "off" from the boot-loop guard must not keep the client off for good
 +
 +static RTC_NOINIT_ATTR mt_guard_t s_guard;  // survives a crash reset, not a power cycle
 +static volatile bool s_enabled   = false;
@@ -282,6 +282,7 @@ index 0000000..5bebf6a
 +    config.enable_disco    = true;
 +    config.max_peers       = CONFIG_STACKCHAN_TAILNET_MAX_PEERS;
 +    config.priority_peer_ip = mt_parse_ip(CONFIG_STACKCHAN_TAILNET_PEER_IP);
++    config.preferred_derp_region = 1;  // New York: the hub (Studio) sits on this relay; peers must share a relay to handshake (0.2.211)
 +    ESP_LOGI(TAG, "starting the tailnet client (internal free %u, largest block %u)",
 +             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
 +             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
@@ -345,10 +346,7 @@ index 0000000..5bebf6a
 +    if (!allowed) {
 +        // Three crashed boots in a row with the client running: switch it off by itself (saved), say so to the host.
 +        s_guard_off = true;
-+        if (s_enabled) {
-+            s_enabled = false;
-+            save_enabled(false);
-+        }
++        s_enabled = false;  // this boot only, never saved: the next boot tries the client again (away from home it is the only way to the hub)
 +        ESP_LOGW(TAG, "the boot-loop guard switched the tailnet client off (%d crashed boots in a row)", MT_GUARD_CRASHES);
 +        device_events_push("tailnet_state", "\"state\":\"guard_off\",\"ip\":\"\"");
 +        mt_guard_stable(&s_guard);

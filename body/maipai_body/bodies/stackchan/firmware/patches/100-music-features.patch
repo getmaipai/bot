@@ -638,7 +638,7 @@ new file mode 100644
 +        s_queue = nullptr;
 +        return;
 +    }
-+    xTaskCreatePinnedToCoreWithCaps(worker_task, "musicfeat", 4096, nullptr, 1, nullptr, 1, MALLOC_CAP_SPIRAM);
++    xTaskCreatePinnedToCoreWithCaps(worker_task, "musicfeat", 10240, nullptr, 1, nullptr, 1, MALLOC_CAP_SPIRAM);
 +    mclog::tagInfo(_tag, "music features ready: {} byte history, gate rms {}", sizeof(mm_an_t), kGateRms);
 +    // Off at boot unless the host last turned it on (stored in flash); the boot log says which.
 +    maipai_music_set_enabled(nvs_enabled(), false);
