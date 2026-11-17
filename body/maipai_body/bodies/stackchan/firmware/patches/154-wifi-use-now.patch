@@ -49,7 +49,7 @@ new file mode 100644
 index 0000000..e61b180
 --- /dev/null
 +++ b/firmware/main/hal/maipai_wifi_use.cc
-@@ -0,0 +1,291 @@
+@@ -0,0 +1,308 @@
 +/*
 + * SPDX-License-Identifier: MIT
 + */
@@ -257,6 +257,23 @@ index 0000000..e61b180
 +    const std::string now(reinterpret_cast<const char*>(ap.ssid));
 +    if (now.empty()) {
 +        return;
++    }
++    // Roaming (owner 2026-11-15: carried upstairs it stayed on the far access point of a mesh that shares one name,
++    // then the self-heal restarted it). The unit pins one access point (patch 044) and the radio never leaves it. When the
++    // signal stays weaker than -70 dBm for 10 s, start a scan: the Wi-Fi component picks the strongest access point of the
++    // saved networks from the result and reconnects. At most one scan a minute.
++    static int s_weak_ticks = 0;
++    static int64_t s_last_roam_us = 0;
++    if (ap.rssi < -70) {
++        const int64_t now_us = esp_timer_get_time();
++        if (++s_weak_ticks >= 5 && now_us - s_last_roam_us > 60 * 1000000LL) {
++            s_weak_ticks = 0;
++            s_last_roam_us = now_us;
++            device_events_push_diag("wifi_roam_scan", "weak_signal");
++            esp_wifi_scan_start(nullptr, false);
++        }
++    } else {
++        s_weak_ticks = 0;
 +    }
 +    const auto& saved = SsidManager::GetInstance().GetSsidList();
 +    for (const auto& item : saved) {

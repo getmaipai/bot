@@ -547,6 +547,8 @@ else
   # The Wi-Fi setup page stays open after a network is saved, so several networks go in one visit (the page
   # normally jumps to its done page, which restarts the unit). It lives in a downloaded component, so it is
   # edited here after idf.py reconfigure fetches it. Check after a flash: add a network, the page says Saved.
+  # A copy edited by an earlier build would fail the component manager's checksum test: fetch a fresh one.
+  rm -rf "$FW"/managed_components/*esp-wifi-connect
   (cd "$FW" && idf.py reconfigure)
   SETUP_PAGE=$(ls "$FW"/managed_components/*esp-wifi-connect/assets/wifi_configuration.html)
   python3 - "$SETUP_PAGE" <<'PY'
